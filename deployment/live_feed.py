@@ -26,9 +26,10 @@ ALL_SYMS = list({p[SYM_A] for p in PAIRS} | {p[SYM_B] for p in PAIRS})
 FYERS_SYMBOLS = [f"NSE:{sym}-EQ" for sym in ALL_SYMS]
 
 _live_prices: dict[str, float] = {}
-_lock = threading.Lock()
-_ws_client = None
-_running   = False
+_lock          = threading.Lock()
+_ws_client     = None
+_running       = False
+_extra_symbols: list[str] = []   # DualMom or other additional subscriptions
 
 
 def get_live_prices() -> dict[str, float]:
@@ -60,7 +61,8 @@ def _on_close(msg):
 
 def _on_open():
     print("  [live_feed] WebSocket connected. Subscribing...")
-    _ws_client.subscribe(symbols=FYERS_SYMBOLS, data_type="SymbolUpdate")
+    all_syms = FYERS_SYMBOLS + [f"NSE:{s}-EQ" for s in _extra_symbols if f"NSE:{s}-EQ" not in FYERS_SYMBOLS]
+    _ws_client.subscribe(symbols=all_syms, data_type="SymbolUpdate")
 
 
 def start_feed() -> bool:
@@ -113,3 +115,19 @@ def stop_feed() -> None:
 
 def is_running() -> bool:
     return _running
+
+
+def add_symbols(symbols: list[str]) -> None:
+    """Subscribe additional symbols (e.g. DualMom portfolio stocks) to live feed."""
+    global _extra_symbols
+    new_syms = [s for s in symbols if s not in ALL_SYMS and s not in _extra_symbols]
+    if not new_syms:
+        return
+    _extra_symbols.extend(new_syms)
+    if _running and _ws_client:
+        fyers_syms = [f"NSE:{s}-EQ" for s in new_syms]
+        try:
+            _ws_client.subscribe(symbols=fyers_syms, data_type="SymbolUpdate")
+            print(f"  [live_feed] Added {len(new_syms)} DualMom symbols to subscription.")
+        except Exception as e:
+            print(f"  [live_feed] add_symbols error: {e}")

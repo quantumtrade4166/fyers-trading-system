@@ -97,10 +97,11 @@ def _run_signal_check():
 
 
 def _eod_run():
-    """15:35 EOD — reload prices from disk, run final signal check."""
+    """15:35 EOD — reload prices from disk, refresh DualMom signal."""
     print("  [scheduler] EOD run — reloading prices...")
-    from deployment import signal_engine
+    from deployment import signal_engine, dualmom_engine
     signal_engine.reload_prices()
+    dualmom_engine.refresh()
     print("  [scheduler] EOD run complete.")
 
 

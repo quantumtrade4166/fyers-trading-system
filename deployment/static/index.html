@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Pairs MR — Dashboard</title>
+<title>Trading Dashboard</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
 <style>
@@ -11,10 +11,13 @@
   .card { background: #1a1f2e; border: 1px solid #2d3748; border-radius: 12px; }
   .badge-paper { background: #1a3a2a; color: #4ade80; border: 1px solid #16a34a; }
   .badge-live  { background: #3a1a1a; color: #f87171; border: 1px solid #dc2626; }
-  .z-bar { height: 6px; border-radius: 3px; background: #2d3748; position: relative; overflow: visible; }
+  .badge-in    { background: #1a3a2a; color: #4ade80; border: 1px solid #16a34a; }
+  .badge-out   { background: #2a2a1a; color: #facc15; border: 1px solid #ca8a04; }
+  .badge-unk   { background: #1e2533; color: #64748b; border: 1px solid #334155; }
+  .z-bar  { height: 6px; border-radius: 3px; background: #2d3748; position: relative; overflow: visible; }
   .z-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
   .z-marker { position: absolute; top: -4px; width: 2px; height: 14px; border-radius: 1px; }
-  .pair-card { transition: border-color 0.3s; }
+  .pair-card  { transition: border-color 0.3s; }
   .pair-card:hover { border-color: #4a5568; }
   .pos-long  { color: #4ade80; }
   .pos-short { color: #f87171; }
@@ -25,18 +28,37 @@
   .dot-dead { width:8px; height:8px; border-radius:50%; background:#64748b; display:inline-block; margin-right:6px; }
   @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
   .z-chart { height: 80px; }
-  scrollbar-width: thin; scrollbar-color: #2d3748 transparent;
+
+  /* tabs */
+  .tab-btn { padding: 8px 20px; border-radius: 8px 8px 0 0; font-size: 13px; font-weight: 500;
+             color: #64748b; border: 1px solid transparent; cursor: pointer; transition: all 0.2s; }
+  .tab-btn:hover { color: #94a3b8; }
+  .tab-btn.active { color: #e2e8f0; background: #1a1f2e; border-color: #2d3748;
+                    border-bottom-color: #1a1f2e; position: relative; top: 1px; }
+  .tab-bar { border-bottom: 1px solid #2d3748; margin-bottom: 0; }
+
+  /* dualmom stock table */
+  .dm-table th { color: #475569; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
+                 padding: 6px 8px; border-bottom: 1px solid #2d3748; text-align: right; white-space: nowrap; }
+  .dm-table th:first-child { text-align: left; }
+  .dm-table td { padding: 5px 8px; border-bottom: 1px solid #1e2533; font-size: 12px;
+                 text-align: right; white-space: nowrap; }
+  .dm-table td:first-child { text-align: left; }
+  .dm-table tbody tr:hover { background: #1e2533; }
+
+  /* signal meter */
+  .nifty-gap-bar { height: 8px; border-radius: 4px; background: #2d3748; position: relative; overflow: hidden; }
+  .nifty-gap-fill { height: 100%; border-radius: 4px; transition: width 0.6s ease; }
 </style>
 </head>
 <body class="min-h-screen p-4">
-
 <div class="max-w-screen-2xl mx-auto">
 
-  <!-- Header -->
-  <div class="flex items-center justify-between mb-6">
+  <!-- ── Global Header ── -->
+  <div class="flex items-center justify-between mb-4">
     <div>
-      <h1 class="text-2xl font-semibold text-white tracking-tight">StatArb.MR-First10</h1>
-      <p class="text-sm text-slate-500 mt-0.5">Statistical Arbitrage · Mean Reversion · 10 Pairs · NSE F&O</p>
+      <h1 class="text-xl font-semibold text-white tracking-tight">Trading Dashboard</h1>
+      <p class="text-xs text-slate-500 mt-0.5">StatArb · DualMom · Paper Trading · NSE</p>
     </div>
     <div class="flex items-center gap-3">
       <span id="feed-dot" class="dot-dead"></span>
@@ -46,81 +68,315 @@
     </div>
   </div>
 
-  <!-- Metric cards -->
-  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-    <div class="card p-4">
-      <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Cumulative P&L</p>
-      <p id="m-cumul" class="text-2xl font-semibold text-white">₹0</p>
-      <p class="text-xs text-slate-600 mt-1">paper trades</p>
-    </div>
-    <div class="card p-4">
-      <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Today P&L</p>
-      <p id="m-today" class="text-2xl font-semibold text-white">₹0</p>
-      <p class="text-xs text-slate-600 mt-1">closed trades today</p>
-    </div>
-    <div class="card p-4">
-      <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Open Pairs</p>
-      <p id="m-open" class="text-2xl font-semibold text-white">0 / 10</p>
-      <p class="text-xs text-slate-600 mt-1">deployed</p>
-    </div>
-    <div class="card p-4">
-      <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Last Update</p>
-      <p id="m-ts" class="text-2xl font-semibold text-white font-mono">--:--:--</p>
-      <p class="text-xs text-slate-600 mt-1">IST</p>
-    </div>
+  <!-- ── Tab Bar ── -->
+  <div class="tab-bar flex gap-1 mb-6">
+    <button class="tab-btn active" id="tab-statarb" onclick="switchTab('statarb')">
+      📊 StatArb.MR-First10
+    </button>
+    <button class="tab-btn" id="tab-dualmom" onclick="switchTab('dualmom')">
+      🚀 DualMom.Liq.Nifty50
+    </button>
   </div>
 
-  <!-- Equity curve -->
-  <div class="card p-5 mb-6">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-sm font-medium text-slate-300">Equity Curve (paper P&L)</h2>
-      <span class="text-xs text-slate-600">cumulative from first trade</span>
-    </div>
-    <div id="equity-chart" style="height:180px;"></div>
-  </div>
 
-  <!-- Pair cards grid -->
-  <h2 class="text-sm font-medium text-slate-400 uppercase tracking-wide mb-3">Pair Monitor</h2>
-  <div id="pairs-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5 gap-4 mb-6"></div>
+  <!-- ══════════════════════════════════════════════════════════
+       TAB 1 — StatArb.MR-First10
+  ══════════════════════════════════════════════════════════ -->
+  <div id="page-statarb">
 
-  <!-- Bottom tables -->
-  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
-
-    <!-- Open positions -->
-    <div class="card p-5">
-      <h2 class="text-sm font-medium text-slate-300 mb-4">Open Positions</h2>
-      <div id="positions-table" class="text-sm"></div>
+    <div class="flex items-center justify-between mb-5">
+      <div>
+        <h2 class="text-lg font-semibold text-white">StatArb.MR-First10</h2>
+        <p class="text-xs text-slate-500">Statistical Arbitrage · Mean Reversion · 10 Pairs · NSE F&O</p>
+      </div>
     </div>
 
-    <!-- Trade log -->
-    <div class="card p-5">
-      <h2 class="text-sm font-medium text-slate-300 mb-4">Trade Log</h2>
-      <div id="trades-table" class="text-sm"></div>
+    <!-- Metric cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+      <div class="card p-4">
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Cumulative P&L</p>
+        <p id="m-cumul" class="text-2xl font-semibold text-white">₹0</p>
+        <p class="text-xs text-slate-600 mt-1">paper trades</p>
+      </div>
+      <div class="card p-4">
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Today P&L</p>
+        <p id="m-today" class="text-2xl font-semibold text-white">₹0</p>
+        <p class="text-xs text-slate-600 mt-1">closed trades today</p>
+      </div>
+      <div class="card p-4">
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Open Pairs</p>
+        <p id="m-open" class="text-2xl font-semibold text-white">0 / 10</p>
+        <p class="text-xs text-slate-600 mt-1">deployed</p>
+      </div>
+      <div class="card p-4">
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Last Update</p>
+        <p id="m-ts" class="text-2xl font-semibold text-white font-mono">--:--:--</p>
+        <p class="text-xs text-slate-600 mt-1">IST</p>
+      </div>
     </div>
 
-  </div>
-</div>
+    <!-- Equity curve -->
+    <div class="card p-5 mb-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="text-sm font-medium text-slate-300">Equity Curve (paper P&L)</h2>
+        <span class="text-xs text-slate-600">cumulative from first trade</span>
+      </div>
+      <div id="equity-chart" style="height:180px;"></div>
+    </div>
+
+    <!-- Pair cards grid -->
+    <h2 class="text-sm font-medium text-slate-400 uppercase tracking-wide mb-3">Pair Monitor</h2>
+    <div id="pairs-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5 gap-4 mb-6"></div>
+
+    <!-- Bottom tables -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div class="card p-5">
+        <h2 class="text-sm font-medium text-slate-300 mb-4">Open Positions</h2>
+        <div id="positions-table" class="text-sm"></div>
+      </div>
+      <div class="card p-5">
+        <h2 class="text-sm font-medium text-slate-300 mb-4">Trade Log</h2>
+        <div id="trades-table" class="text-sm"></div>
+      </div>
+    </div>
+
+  </div><!-- /page-statarb -->
+
+
+  <!-- ══════════════════════════════════════════════════════════
+       TAB 2 — DualMom.Liq.Nifty50
+  ══════════════════════════════════════════════════════════ -->
+  <div id="page-dualmom" style="display:none">
+
+    <div class="flex items-center justify-between mb-5">
+      <div>
+        <h2 class="text-lg font-semibold text-white">DualMom.Liq.Nifty50</h2>
+        <p class="text-xs text-slate-500">Nifty 500 · Monthly · Top-50 Momentum Weighted · Nifty 100MA Filter</p>
+      </div>
+      <span id="dm-signal-badge" class="badge-unk text-xs font-medium px-3 py-1 rounded-full">— —</span>
+    </div>
+
+    <!-- Strategy stats banner -->
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+      <div class="card p-4 text-center">
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">CAGR</p>
+        <p class="text-2xl font-bold text-emerald-400">33.9%</p>
+        <p class="text-xs text-slate-600 mt-1">2006–2026</p>
+      </div>
+      <div class="card p-4 text-center">
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Sharpe</p>
+        <p class="text-2xl font-bold text-sky-400">1.59</p>
+        <p class="text-xs text-slate-600 mt-1">monthly</p>
+      </div>
+      <div class="card p-4 text-center">
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Max DD</p>
+        <p class="text-2xl font-bold text-rose-400">-15.1%</p>
+        <p class="text-xs text-slate-600 mt-1">from peak</p>
+      </div>
+      <div class="card p-4 text-center">
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">₹10L → </p>
+        <p class="text-2xl font-bold text-violet-400">₹38.4Cr</p>
+        <p class="text-xs text-slate-600 mt-1">20 years</p>
+      </div>
+      <div class="card p-4 text-center">
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Top-N Stocks</p>
+        <p class="text-2xl font-bold text-white">50</p>
+        <p class="text-xs text-slate-600 mt-1">momentum weighted</p>
+      </div>
+    </div>
+
+    <!-- Signal + Equity row -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+
+      <!-- Nifty signal card -->
+      <div class="card p-5">
+        <h3 class="text-sm font-medium text-slate-300 mb-4">Absolute Momentum Filter</h3>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center">
+            <span class="text-xs text-slate-500">Nifty 50</span>
+            <span id="dm-nifty-price" class="text-lg font-mono font-semibold text-white">—</span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-xs text-slate-500">100-Day MA</span>
+            <span id="dm-nifty-ma" class="text-lg font-mono font-semibold text-slate-300">—</span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-xs text-slate-500">Gap</span>
+            <span id="dm-nifty-gap" class="text-base font-mono font-semibold">—</span>
+          </div>
+          <!-- gap bar -->
+          <div class="nifty-gap-bar">
+            <div id="dm-gap-bar" class="nifty-gap-fill bg-slate-600" style="width:50%"></div>
+          </div>
+          <div class="flex justify-between items-center pt-1">
+            <span class="text-xs text-slate-500">Signal</span>
+            <span id="dm-signal-text" class="text-sm font-semibold text-slate-400">—</span>
+          </div>
+          <div class="text-xs text-slate-600" id="dm-as-of">As of —</div>
+          <div class="mt-3 pt-3 border-t border-slate-800">
+            <p class="text-xs text-slate-500">Rule: Invest when Nifty > 100MA at month-end</p>
+            <p class="text-xs text-slate-600 mt-1">OUT → 100% Liquid Fund (6% p.a.)</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Backtest equity curve -->
+      <div class="card p-5 lg:col-span-2">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-medium text-slate-300">Backtest Equity Curve</h3>
+          <span class="text-xs text-slate-600">₹10L initial · 20-year · momentum weighted</span>
+        </div>
+        <div id="dm-equity-chart" style="height:200px;"></div>
+      </div>
+
+    </div>
+
+    <!-- Portfolio section — OUT state -->
+    <div id="dm-out-state" class="card p-6 mb-6 text-center" style="display:none">
+      <div class="text-4xl mb-3">💰</div>
+      <h3 class="text-base font-semibold text-yellow-300 mb-1">Currently in Liquid Fund</h3>
+      <p class="text-sm text-slate-400 mb-3">Nifty 50 is below its 100-day MA — no equity exposure.</p>
+      <p class="text-xs text-slate-500">Earning ~6% p.a. | Re-entry: Nifty closes above 100MA at any month-end</p>
+      <div id="dm-liquid-accrual" class="mt-4 text-sm text-emerald-400 font-mono"></div>
+    </div>
+
+    <!-- Portfolio section — IN state -->
+    <div id="dm-in-state" style="display:none">
+      <!-- Portfolio summary cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+        <div class="card p-4">
+          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Portfolio Value</p>
+          <p id="dm-total-value" class="text-xl font-semibold text-white">—</p>
+          <p class="text-xs text-slate-600 mt-1">₹10L notional</p>
+        </div>
+        <div class="card p-4">
+          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Live P&L</p>
+          <p id="dm-total-pnl" class="text-xl font-semibold text-white">—</p>
+          <p class="text-xs text-slate-600 mt-1">vs entry (last rebal)</p>
+        </div>
+        <div class="card p-4">
+          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">P&L %</p>
+          <p id="dm-total-pnl-pct" class="text-xl font-semibold text-white">—</p>
+          <p class="text-xs text-slate-600 mt-1">total return</p>
+        </div>
+        <div class="card p-4">
+          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Stocks Held</p>
+          <p id="dm-stocks-held" class="text-xl font-semibold text-white">—</p>
+          <p class="text-xs text-slate-600 mt-1">top 50 momentum</p>
+        </div>
+      </div>
+
+      <!-- Top gainers / losers quick strip -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+        <div class="card p-4">
+          <h3 class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Top Gainers Today</h3>
+          <div id="dm-top-gainers" class="space-y-1 text-xs"></div>
+        </div>
+        <div class="card p-4">
+          <h3 class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Top Losers Today</h3>
+          <div id="dm-top-losers" class="space-y-1 text-xs"></div>
+        </div>
+      </div>
+
+      <!-- Full portfolio table -->
+      <div class="card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-sm font-medium text-slate-300">Portfolio — Top 50 Stocks</h3>
+          <span class="text-xs text-slate-600" id="dm-rebal-note">Monthly rebalance · momentum weighted</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="dm-table w-full">
+            <thead>
+              <tr>
+                <th style="text-align:left">#</th>
+                <th style="text-align:left">Symbol</th>
+                <th>Weight</th>
+                <th>12m Ret</th>
+                <th>Entry ₹</th>
+                <th>Live ₹</th>
+                <th>Chg%</th>
+                <th>P&L ₹</th>
+                <th>Alloc ₹</th>
+              </tr>
+            </thead>
+            <tbody id="dm-portfolio-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div><!-- /dm-in-state -->
+
+    <!-- Unknown state -->
+    <div id="dm-unknown-state" class="card p-6 mb-6 text-center">
+      <div class="text-3xl mb-2">⏳</div>
+      <p class="text-sm text-slate-400">Loading signal data... (requires market access token)</p>
+    </div>
+
+  </div><!-- /page-dualmom -->
+
+</div><!-- /max-w -->
 
 <script>
 // ── state ─────────────────────────────────────────────────────────────────────
 const pairCharts = {};
 let eqChart, eqSeries;
+let dmEqChart, dmEqSeries;
 let _signals = {}, _positions = {}, _equity = {}, _trades = [];
+let _dmSignal = {}, _dmPortfolio = {}, _dmEquity = [];
+let _activeTab = 'statarb';
 
-// ── init charts after DOM ready ───────────────────────────────────────────────
+// ── tab switching ─────────────────────────────────────────────────────────────
+function switchTab(tab) {
+  _activeTab = tab;
+  document.getElementById('page-statarb').style.display = tab === 'statarb' ? '' : 'none';
+  document.getElementById('page-dualmom').style.display = tab === 'dualmom'  ? '' : 'none';
+  document.getElementById('tab-statarb').classList.toggle('active', tab === 'statarb');
+  document.getElementById('tab-dualmom').classList.toggle('active', tab === 'dualmom');
+
+  // resize charts after browser has painted the visible tab
+  requestAnimationFrame(() => {
+    if (tab === 'statarb') {
+      try { eqChart && eqChart.timeScale().fitContent(); } catch(e) {}
+    } else {
+      // force resize so chart fills the now-visible div
+      const el = document.getElementById('dm-equity-chart');
+      if (el && dmEqChart) {
+        try {
+          dmEqChart.resize(el.clientWidth, 200);
+          dmEqChart.timeScale().fitContent();
+        } catch(e) {}
+      }
+    }
+  });
+}
+
+// ── init charts ───────────────────────────────────────────────────────────────
 function initCharts() {
+  // StatArb equity
   eqChart = LightweightCharts.createChart(document.getElementById('equity-chart'), {
     layout:     { background: { color: 'transparent' }, textColor: '#64748b' },
     grid:       { vertLines: { color: '#1e2533' }, horzLines: { color: '#1e2533' } },
     crosshair:  { mode: LightweightCharts.CrosshairMode.Magnet },
     rightPriceScale: { borderColor: '#2d3748' },
     timeScale:  { borderColor: '#2d3748', timeVisible: true },
-    handleScroll: true,
-    handleScale:  true,
+    handleScroll: true, handleScale: true,
   });
   eqSeries = eqChart.addAreaSeries({
     lineColor: '#10b981', topColor: 'rgba(16,185,129,0.25)',
     bottomColor: 'rgba(16,185,129,0.0)', lineWidth: 2,
+  });
+
+  // DualMom backtest equity — NAV in lakhs on Y-axis
+  dmEqChart = LightweightCharts.createChart(document.getElementById('dm-equity-chart'), {
+    layout:     { background: { color: 'transparent' }, textColor: '#64748b' },
+    grid:       { vertLines: { color: '#1e2533' }, horzLines: { color: '#1e2533' } },
+    crosshair:  { mode: LightweightCharts.CrosshairMode.Magnet },
+    rightPriceScale: { borderColor: '#2d3748' },
+    timeScale:  { borderColor: '#2d3748', timeVisible: false },
+    handleScroll: true, handleScale: true,
+  });
+  dmEqSeries = dmEqChart.addAreaSeries({
+    lineColor: '#a78bfa', topColor: 'rgba(167,139,250,0.3)',
+    bottomColor: 'rgba(167,139,250,0.0)', lineWidth: 2,
   });
 }
 
@@ -132,8 +388,7 @@ function initPairChart(name, el) {
     leftPriceScale:  { visible: false },
     timeScale: { visible: false },
     crosshair: { mode: LightweightCharts.CrosshairMode.Hidden },
-    handleScroll: false,
-    handleScale:  false,
+    handleScroll: false, handleScale: false,
   });
   const s = c.addLineSeries({ color: '#6366f1', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false });
   pairCharts[name] = { chart: c, series: s };
@@ -141,6 +396,15 @@ function initPairChart(name, el) {
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
+function fmtRs(n) {
+  if (n == null || isNaN(n)) return '—';
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : '+';
+  if (abs >= 1e7) return sign + '₹' + (abs/1e7).toFixed(2) + 'Cr';
+  if (abs >= 1e5) return sign + '₹' + (abs/1e5).toFixed(2) + 'L';
+  return sign + '₹' + Math.round(abs).toLocaleString('en-IN');
+}
+
 function fmt(n) {
   if (n == null || isNaN(n)) return '—';
   const abs = Math.abs(n);
@@ -153,6 +417,12 @@ function fmtPnl(n) {
   if (n == null) return '<span class="text-slate-600">—</span>';
   const cls = n >= 0 ? 'pnl-pos' : 'pnl-neg';
   return `<span class="${cls}">${fmt(n)}</span>`;
+}
+
+function fmtPnlLarge(n) {
+  if (n == null) return '<span class="text-slate-600">—</span>';
+  const cls = n >= 0 ? 'pnl-pos' : 'pnl-neg';
+  return `<span class="${cls}">${fmtRs(n)}</span>`;
 }
 
 function zColor(z, entryZ) {
@@ -169,7 +439,7 @@ function dirLabel(direction) {
   return direction;
 }
 
-// ── build / update pair cards ─────────────────────────────────────────────────
+// ── StatArb: pair cards ───────────────────────────────────────────────────────
 function renderPairs(signals, positions) {
   const grid = document.getElementById('pairs-grid');
   const names = Object.keys(signals);
@@ -190,18 +460,14 @@ function renderPairs(signals, positions) {
       grid.appendChild(card);
     }
 
-    // z-score gauge: map z from [-sz, +sz] to [0, 100%], center = 50%
     const zPct    = z != null ? Math.min(Math.max(((z + sz) / (2 * sz)) * 100, 0), 100) : 50;
     const entryLo = (((-ez) + sz) / (2 * sz)) * 100;
     const entryHi = (((+ez) + sz) / (2 * sz)) * 100;
-    const stopLo  = 0;
-    const stopHi  = 100;
 
-    // live P&L for open position
     let livePnl = null;
     if (pos) {
-      const pa = s.price_a ?? 0;
-      const pb = s.price_b ?? 0;
+      const pa   = s.price_a ?? 0;
+      const pb   = s.price_b ?? 0;
       const sign = pos.direction === 'long_spread' ? 1 : -1;
       const gross = ((pa - pos.entry_price_a) * pos.qty_a
                    - (pb - pos.entry_price_b) * pos.qty_b) * sign;
@@ -213,7 +479,6 @@ function renderPairs(signals, positions) {
     const span = s.price_a && s.price_b
       ? ((s.price_a * (s.qty_a??0) + s.price_b * (s.qty_b??0)) * 0.15)
       : null;
-
     const daysIn = pos ? Math.max(0, Math.round((Date.now() - new Date(pos.entry_date)) / 864e5)) : null;
 
     card.innerHTML = `
@@ -227,243 +492,316 @@ function renderPairs(signals, positions) {
           ${pos ? `<p class="text-xs text-emerald-500 mt-0.5 font-mono">▶ ${daysIn}d in trade</p>` : '<p class="text-xs text-slate-600 mt-0.5">—</p>'}
         </div>
       </div>
-
-      <!-- Z-score display -->
       <div class="flex items-baseline gap-2 mb-2">
         <span class="text-lg font-mono font-semibold" style="color:${zColor(z,ez)}">${z != null ? z.toFixed(3) : '—'}</span>
         <span class="text-xs text-slate-600">z-score</span>
         <span class="ml-auto text-xs text-slate-500">β=${s.beta != null ? s.beta.toFixed(3) : '—'}</span>
       </div>
-
-      <!-- Z gauge bar -->
       <div class="z-bar mb-3">
         <div class="z-fill" style="width:${zPct}%;background:${zColor(z,ez)};"></div>
         <div class="z-marker" style="left:${entryLo}%;background:#facc15;"></div>
         <div class="z-marker" style="left:${entryHi}%;background:#facc15;"></div>
         <div class="z-marker" style="left:50%;background:#475569;"></div>
       </div>
-
-      <!-- Z history chart -->
       <div id="zchart-${name.replace(/\//g,'_')}" class="z-chart mb-3"></div>
-
-      <!-- Stats row -->
       <div class="grid grid-cols-3 gap-2 text-xs">
-        <div>
-          <p class="text-slate-600">Price A</p>
-          <p class="text-slate-300 font-mono">₹${s.price_a != null ? s.price_a.toFixed(1) : '—'}</p>
-        </div>
-        <div>
-          <p class="text-slate-600">Price B</p>
-          <p class="text-slate-300 font-mono">₹${s.price_b != null ? s.price_b.toFixed(1) : '—'}</p>
-        </div>
-        <div>
-          <p class="text-slate-600">HL / max</p>
-          <p class="text-slate-300 font-mono">${s.hl ?? '—'} / ${s.max_hl ?? '—'}d</p>
-        </div>
+        <div><p class="text-slate-600">Price A</p><p class="text-slate-300 font-mono">₹${s.price_a != null ? s.price_a.toFixed(1) : '—'}</p></div>
+        <div><p class="text-slate-600">Price B</p><p class="text-slate-300 font-mono">₹${s.price_b != null ? s.price_b.toFixed(1) : '—'}</p></div>
+        <div><p class="text-slate-600">HL / max</p><p class="text-slate-300 font-mono">${s.hl ?? '—'} / ${s.max_hl ?? '—'}d</p></div>
       </div>
       <div class="grid grid-cols-3 gap-2 text-xs mt-2">
-        <div>
-          <p class="text-slate-600">Entry Z</p>
-          <p class="text-slate-300 font-mono">±${ez}</p>
-        </div>
-        <div>
-          <p class="text-slate-600">Stop Z</p>
-          <p class="text-slate-300 font-mono">±${sz}</p>
-        </div>
-        <div>
-          <p class="text-slate-600">Live P&L</p>
-          <p class="font-mono">${fmtPnl(livePnl)}</p>
-        </div>
+        <div><p class="text-slate-600">Entry Z</p><p class="text-slate-300 font-mono">±${ez}</p></div>
+        <div><p class="text-slate-600">Stop Z</p><p class="text-slate-300 font-mono">±${sz}</p></div>
+        <div><p class="text-slate-600">Live P&L</p><p class="font-mono">${fmtPnl(livePnl)}</p></div>
       </div>
       ${span ? `<div class="mt-2 text-xs text-slate-600">SPAN ≈ ₹${Math.round(span).toLocaleString('en-IN')}</div>` : ''}
     `;
 
-    // defer chart init until browser has painted the new innerHTML
-    const _name = name;
-    const _s    = s;
     requestAnimationFrame(() => {
-      const key     = 'pc-' + _name.replace(/\//g,'_');
-      const chartEl = document.getElementById('zchart-' + _name.replace(/\//g,'_'));
-      if (!chartEl || !_s.dates || !_s.spread_history) return;
-
-      if (pairCharts[key]) {
-        try { pairCharts[key].chart.remove(); } catch(e) {}
-        delete pairCharts[key];
-      }
-
+      const key     = 'pc-' + name.replace(/\//g,'_');
+      const chartEl = document.getElementById('zchart-' + name.replace(/\//g,'_'));
+      if (!chartEl || !s.dates || !s.spread_history) return;
+      if (pairCharts[key]) { try { pairCharts[key].chart.remove(); } catch(e) {} delete pairCharts[key]; }
       initPairChart(key, chartEl);
-
-      const pts = _s.dates.map((d,i) => ({
-        time:  d,
-        value: _s.spread_history[i] ?? 0,
-      })).filter(p => p.value != null);
-
+      const pts = s.dates.map((d,i) => ({ time: d, value: s.spread_history[i] ?? 0 })).filter(p => p.value != null);
       if (pts.length) pairCharts[key].series.setData(pts);
     });
   });
 }
 
-// ── equity chart update ───────────────────────────────────────────────────────
+// ── StatArb: equity ───────────────────────────────────────────────────────────
 function updateEquity(equity) {
   const history = equity?.history ?? [];
   if (!history.length) return;
-
   const byDate = {};
-  history.forEach(h => {
-    const d = h.date;
-    byDate[d] = (byDate[d] ?? 0) + (h.pnl ?? 0);
-  });
-
+  history.forEach(h => { const d = h.date; byDate[d] = (byDate[d] ?? 0) + (h.pnl ?? 0); });
   let cumul = 0;
-  const pts = Object.keys(byDate).sort().map(d => {
-    cumul += byDate[d];
-    return { time: d, value: Math.round(cumul) };
-  });
-
+  const pts = Object.keys(byDate).sort().map(d => { cumul += byDate[d]; return { time: d, value: Math.round(cumul) }; });
   eqSeries.setData(pts);
   eqChart.timeScale().fitContent();
 }
 
-// ── positions table ───────────────────────────────────────────────────────────
+// ── StatArb: positions table ──────────────────────────────────────────────────
 function updatePositions(positions, signals) {
   const el = document.getElementById('positions-table');
   const entries = Object.entries(positions);
-  if (!entries.length) {
-    el.innerHTML = '<p class="text-slate-600 text-xs">No open positions.</p>';
-    return;
-  }
+  if (!entries.length) { el.innerHTML = '<p class="text-slate-600 text-xs">No open positions.</p>'; return; }
   let html = `<table class="w-full text-xs"><thead><tr class="text-slate-600 border-b border-slate-800">
     <th class="text-left pb-2">Pair</th><th class="text-left pb-2">Dir</th>
     <th class="text-right pb-2">Entry</th><th class="text-right pb-2">Days</th>
     <th class="text-right pb-2">Live P&L</th></tr></thead><tbody>`;
-
   entries.forEach(([name, pos]) => {
     const s    = signals?.[name] ?? {};
     const sign = pos.direction === 'long_spread' ? 1 : -1;
-    const pa   = s.price_a ?? 0;
-    const pb   = s.price_b ?? 0;
-    const gross = ((pa - pos.entry_price_a) * pos.qty_a
-                 - (pb - pos.entry_price_b) * pos.qty_b) * sign;
-    const cost  = (pos.entry_price_a*pos.qty_a + pos.entry_price_b*pos.qty_b
-                 + pa*pos.qty_a + pb*pos.qty_b) * 0.0003;
+    const pa   = s.price_a ?? 0, pb = s.price_b ?? 0;
+    const gross = ((pa - pos.entry_price_a) * pos.qty_a - (pb - pos.entry_price_b) * pos.qty_b) * sign;
+    const cost  = (pos.entry_price_a*pos.qty_a + pos.entry_price_b*pos.qty_b + pa*pos.qty_a + pb*pos.qty_b) * 0.0003;
     const net   = gross - cost;
     const days  = Math.round((Date.now() - new Date(pos.entry_date)) / 864e5);
     const dir   = pos.direction === 'long_spread' ? '▲ Long' : '▼ Short';
     const dircls= pos.direction === 'long_spread' ? 'pos-long' : 'pos-short';
-
     html += `<tr class="border-b border-slate-800/50">
       <td class="py-2 text-slate-300">${name}</td>
-      <td class="py-2 <span class="${dircls}">${dir}</span></td>
+      <td class="py-2"><span class="${dircls}">${dir}</span></td>
       <td class="py-2 text-right text-slate-400">${pos.entry_date}</td>
       <td class="py-2 text-right text-slate-400">${days}d</td>
       <td class="py-2 text-right">${fmtPnl(net)}</td>
     </tr>`;
   });
-
   el.innerHTML = html + '</tbody></table>';
 }
 
-// ── trades table ──────────────────────────────────────────────────────────────
+// ── StatArb: trades table ─────────────────────────────────────────────────────
 function updateTrades(trades) {
   const el = document.getElementById('trades-table');
-  if (!trades.length) {
-    el.innerHTML = '<p class="text-slate-600 text-xs">No closed trades yet.</p>';
-    return;
-  }
+  if (!trades.length) { el.innerHTML = '<p class="text-slate-600 text-xs">No closed trades yet.</p>'; return; }
   let html = `<table class="w-full text-xs"><thead><tr class="text-slate-600 border-b border-slate-800">
     <th class="text-left pb-2">Pair</th><th class="text-left pb-2">Dir</th>
     <th class="text-right pb-2">Exit</th><th class="text-right pb-2">Days</th>
     <th class="text-right pb-2">P&L</th><th class="text-right pb-2">Reason</th></tr></thead><tbody>`;
-
   trades.slice(0,20).forEach(t => {
     const dir    = t.direction === 'long_spread' ? '▲' : '▼';
     const dircls = t.direction === 'long_spread' ? 'pos-long' : 'pos-short';
     html += `<tr class="border-b border-slate-800/50">
       <td class="py-1.5 text-slate-300">${t.pair}</td>
-      <td class="py-1.5 <span class="${dircls}">${dir}</span></td>
+      <td class="py-1.5"><span class="${dircls}">${dir}</span></td>
       <td class="py-1.5 text-right text-slate-500">${t.exit_date}</td>
       <td class="py-1.5 text-right text-slate-500">${t.hold_days}d</td>
       <td class="py-1.5 text-right">${fmtPnl(t.net_pnl)}</td>
       <td class="py-1.5 text-right text-slate-600">${t.exit_reason}</td>
     </tr>`;
   });
-
   el.innerHTML = html + '</tbody></table>';
 }
 
-// ── metric cards update ───────────────────────────────────────────────────────
+// ── StatArb: metric cards ─────────────────────────────────────────────────────
 function updateMetrics(equity, positions, trades, ts) {
   const cumul = equity?.cumul_pnl ?? 0;
-  document.getElementById('m-cumul').innerHTML =
-    `<span class="${cumul >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt(cumul)}</span>`;
-
+  document.getElementById('m-cumul').innerHTML = `<span class="${cumul >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt(cumul)}</span>`;
   const today = new Date().toISOString().slice(0,10);
-  const todayPnl = (trades ?? [])
-    .filter(t => t.exit_date === today)
-    .reduce((s, t) => s + (t.net_pnl ?? 0), 0);
-  document.getElementById('m-today').innerHTML =
-    `<span class="${todayPnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt(todayPnl)}</span>`;
-
-  const nOpen = Object.keys(positions ?? {}).length;
-  document.getElementById('m-open').textContent = `${nOpen} / 10`;
-
+  const todayPnl = (trades ?? []).filter(t => t.exit_date === today).reduce((s, t) => s + (t.net_pnl ?? 0), 0);
+  document.getElementById('m-today').innerHTML = `<span class="${todayPnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt(todayPnl)}</span>`;
+  document.getElementById('m-open').textContent = `${Object.keys(positions ?? {}).length} / 10`;
   if (ts) document.getElementById('m-ts').textContent = ts;
 }
 
 // ── feed indicator ────────────────────────────────────────────────────────────
 function updateFeedStatus(active, mode) {
-  const dot   = document.getElementById('feed-dot');
-  const label = document.getElementById('feed-label');
+  document.getElementById('feed-dot').className   = active ? 'dot-live' : 'dot-dead';
+  document.getElementById('feed-label').textContent = active ? 'live feed' : 'feed offline';
   const badge = document.getElementById('mode-badge');
-
-  dot.className   = active ? 'dot-live' : 'dot-dead';
-  label.textContent = active ? 'live feed' : 'feed offline';
   badge.textContent = mode ?? 'PAPER';
-  badge.className   = (mode === 'LIVE')
-    ? 'badge-live text-xs font-medium px-3 py-1 rounded-full'
-    : 'badge-paper text-xs font-medium px-3 py-1 rounded-full';
+  badge.className   = (mode === 'LIVE') ? 'badge-live text-xs font-medium px-3 py-1 rounded-full'
+                                        : 'badge-paper text-xs font-medium px-3 py-1 rounded-full';
 }
 
 // ── clock ─────────────────────────────────────────────────────────────────────
 function tickClock() {
-  const ist = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
-  document.getElementById('clock').textContent = 'IST ' + ist;
+  document.getElementById('clock').textContent = 'IST ' + new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
 }
 setInterval(tickClock, 1000);
 tickClock();
 
-// ── initial data load ─────────────────────────────────────────────────────────
 
+// ════════════════════════════════════════════════════════════
+//  DualMom rendering
+// ════════════════════════════════════════════════════════════
+
+function updateDmSignal(signal) {
+  if (!signal || !signal.signal) return;
+  const sig = signal.signal;   // "IN" / "OUT" / "UNKNOWN"
+  const px  = signal.nifty_price;
+  const ma  = signal.ma100;
+  const gap = signal.gap_pct;
+
+  // badge + signal text
+  const badge = document.getElementById('dm-signal-badge');
+  const sigTxt = document.getElementById('dm-signal-text');
+  if (sig === 'IN') {
+    badge.className = 'badge-in text-xs font-medium px-3 py-1 rounded-full';
+    badge.textContent = '✅ IN — Equity';
+    sigTxt.className = 'text-sm font-semibold text-emerald-400';
+    sigTxt.textContent = 'IN — Nifty above 100MA';
+  } else if (sig === 'OUT') {
+    badge.className = 'badge-out text-xs font-medium px-3 py-1 rounded-full';
+    badge.textContent = '⚠️ OUT — Liquid Fund';
+    sigTxt.className = 'text-sm font-semibold text-yellow-400';
+    sigTxt.textContent = 'OUT — Nifty below 100MA';
+  } else {
+    badge.className = 'badge-unk text-xs font-medium px-3 py-1 rounded-full';
+    badge.textContent = '— Unknown';
+    sigTxt.className = 'text-sm font-semibold text-slate-400';
+    sigTxt.textContent = 'Unknown';
+  }
+
+  // prices
+  const fmt2 = n => n ? n.toLocaleString('en-IN', {maximumFractionDigits:0}) : '—';
+  document.getElementById('dm-nifty-price').textContent = px ? '₹' + fmt2(px) : '—';
+  document.getElementById('dm-nifty-ma').textContent    = ma ? '₹' + fmt2(ma) : '—';
+
+  if (sig !== 'UNKNOWN' && gap != null) {
+    const gapEl = document.getElementById('dm-nifty-gap');
+    gapEl.textContent = (gap >= 0 ? '+' : '') + gap.toFixed(2) + '%';
+    gapEl.className = 'text-base font-mono font-semibold ' + (gap >= 0 ? 'text-emerald-400' : 'text-rose-400');
+
+    // gap bar: center=50%, ±10% maps to 0-100%
+    const barPct = Math.min(Math.max(50 + gap * 2, 5), 95);
+    const bar = document.getElementById('dm-gap-bar');
+    bar.style.width = barPct + '%';
+    bar.className = 'nifty-gap-fill ' + (gap >= 0 ? 'bg-emerald-500' : 'bg-rose-500');
+  } else {
+    document.getElementById('dm-nifty-gap').textContent = '—';
+    document.getElementById('dm-nifty-gap').className = 'text-base font-mono font-semibold text-slate-500';
+    const bar = document.getElementById('dm-gap-bar');
+    bar.style.width = '50%';
+    bar.className = 'nifty-gap-fill bg-slate-600';
+  }
+
+  if (signal.as_of) document.getElementById('dm-as-of').textContent = 'As of ' + signal.as_of;
+
+  // show/hide portfolio states
+  document.getElementById('dm-unknown-state').style.display = 'none';
+  document.getElementById('dm-out-state').style.display  = sig === 'OUT'  ? '' : 'none';
+  document.getElementById('dm-in-state').style.display   = sig === 'IN'   ? '' : 'none';
+  if (sig === 'UNKNOWN') document.getElementById('dm-unknown-state').style.display = '';
+}
+
+function updateDmPortfolio(data) {
+  if (!data || data.status === 'out') {
+    // liquid fund accrual display
+    const accrual = document.getElementById('dm-liquid-accrual');
+    if (accrual) {
+      const dailyRate = 0.06 / 365;
+      const today = new Date();
+      const dayOfYear = Math.floor((today - new Date(today.getFullYear(), 0, 0)) / 864e5);
+      const accrued = 1_000_000 * ((1 + dailyRate) ** dayOfYear - 1);
+      accrual.textContent = `YTD accrual on ₹10L: +₹${Math.round(accrued).toLocaleString('en-IN')}`;
+    }
+    return;
+  }
+
+  const positions = data.positions ?? [];
+  const totalPnl  = data.total_pnl ?? 0;
+  const totalPnlP = data.total_pnl_pct ?? 0;
+  const totalVal  = data.total_value ?? 0;
+
+  // summary cards
+  document.getElementById('dm-total-value').innerHTML = `<span class="text-white">₹${(totalVal/1e5).toFixed(2)}L</span>`;
+  document.getElementById('dm-total-pnl').innerHTML  = fmtPnl(totalPnl);
+  document.getElementById('dm-total-pnl-pct').innerHTML = `<span class="${totalPnlP >= 0 ? 'pnl-pos' : 'pnl-neg'}">${totalPnlP >= 0 ? '+' : ''}${totalPnlP.toFixed(2)}%</span>`;
+  document.getElementById('dm-stocks-held').textContent = positions.length + ' / 50';
+
+  // top gainers / losers (top 5 each)
+  const sorted = [...positions].sort((a,b) => b.pnl_pct - a.pnl_pct);
+  const gainers = sorted.slice(0, 5);
+  const losers  = sorted.slice(-5).reverse();
+
+  const renderMiniRow = (p) => `
+    <div class="flex justify-between items-center py-0.5">
+      <span class="text-slate-300 font-mono">${p.sym}</span>
+      <div class="flex gap-3">
+        <span class="text-slate-500">${p.weight.toFixed(1)}%</span>
+        <span class="${p.pnl_pct >= 0 ? 'pnl-pos' : 'pnl-neg'} font-mono">${p.pnl_pct >= 0 ? '+' : ''}${p.pnl_pct.toFixed(2)}%</span>
+        <span class="${p.pnl >= 0 ? 'pnl-pos' : 'pnl-neg'} font-mono w-20 text-right">${p.pnl >= 0 ? '+' : ''}₹${Math.round(Math.abs(p.pnl)).toLocaleString('en-IN')}</span>
+      </div>
+    </div>`;
+
+  document.getElementById('dm-top-gainers').innerHTML = gainers.map(renderMiniRow).join('');
+  document.getElementById('dm-top-losers').innerHTML  = losers.map(renderMiniRow).join('');
+
+  // full table
+  let tbody = '';
+  positions.forEach(p => {
+    const pnlCls = p.pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+    const chgCls = p.pnl_pct >= 0 ? 'pnl-pos' : 'pnl-neg';
+    const isLive = p.live_price !== p.entry_price;
+    tbody += `<tr>
+      <td class="text-slate-500">${p.rank}</td>
+      <td class="text-slate-200 font-medium">${p.sym}</td>
+      <td class="text-slate-400">${p.weight.toFixed(1)}%</td>
+      <td class="text-sky-400">${p.mom_return >= 0 ? '+' : ''}${p.mom_return.toFixed(1)}%</td>
+      <td class="text-slate-400 font-mono">₹${p.entry_price.toLocaleString('en-IN', {maximumFractionDigits:1})}</td>
+      <td class="font-mono ${isLive ? 'text-white' : 'text-slate-500'}">₹${p.live_price.toLocaleString('en-IN', {maximumFractionDigits:1})}</td>
+      <td class="${chgCls} font-mono">${p.pnl_pct >= 0 ? '+' : ''}${p.pnl_pct.toFixed(2)}%</td>
+      <td class="${pnlCls} font-mono">${p.pnl >= 0 ? '+' : ''}₹${Math.round(Math.abs(p.pnl)).toLocaleString('en-IN')}</td>
+      <td class="text-slate-500">₹${(p.allocated/1000).toFixed(1)}K</td>
+    </tr>`;
+  });
+  document.getElementById('dm-portfolio-body').innerHTML = tbody;
+}
+
+function updateDmEquity(equityArr) {
+  if (!equityArr || !equityArr.length) return;
+  // scale to crores so Y-axis shows e.g. 0.1 → 38.4 (readable)
+  const pts = equityArr.map(e => ({ time: e.date, value: +(e.nav / 1e7).toFixed(3) }));
+  dmEqSeries.setData(pts);
+  dmEqChart.timeScale().fitContent();
+}
+
+
+// ── initial data load ─────────────────────────────────────────────────────────
 async function fetchAll() {
   try {
-    const [sigRes, posRes, eqRes, trRes, modeRes] = await Promise.all([
+    const [sigRes, posRes, eqRes, trRes, modeRes, dmSigRes, dmPortRes, dmEqRes] = await Promise.all([
       fetch('/api/signals'),
       fetch('/api/positions'),
       fetch('/api/equity'),
       fetch('/api/trades'),
       fetch('/api/mode'),
+      fetch('/api/dualmom/signal'),
+      fetch('/api/dualmom/portfolio'),
+      fetch('/api/dualmom/equity'),
     ]);
-    _signals   = await sigRes.json();
-    _positions = await posRes.json();
-    _equity    = await eqRes.json();
-    _trades    = await trRes.json();
-    const modeData = await modeRes.json();
+    _signals        = await sigRes.json();
+    _positions      = await posRes.json();
+    _equity         = await eqRes.json();
+    _trades         = await trRes.json();
+    const modeData  = await modeRes.json();
+    _dmSignal       = await dmSigRes.json();
+    _dmPortfolio    = await dmPortRes.json();
+    _dmEquity       = await dmEqRes.json();
 
     const feedRes = await fetch('/api/status');
     const status  = await feedRes.json();
 
+    // StatArb
     renderPairs(_signals, _positions);
     updateEquity(_equity);
     updatePositions(_positions, _signals);
     updateTrades(_trades);
     updateMetrics(_equity, _positions, _trades, null);
     updateFeedStatus(status.feed_active, modeData.mode);
+
+    // DualMom
+    updateDmSignal(_dmSignal);
+    updateDmPortfolio(_dmPortfolio);
+    updateDmEquity(_dmEquity);
   } catch(e) {
     console.error('fetchAll error', e);
   }
 }
 
-// ── WebSocket push handler ────────────────────────────────────────────────────
+// ── WebSocket push ────────────────────────────────────────────────────────────
 function connectWS() {
   const ws = new WebSocket(`ws://${location.host}/ws`);
 
@@ -480,17 +818,18 @@ function connectWS() {
       updatePositions(_positions, _signals);
       updateMetrics(_equity, _positions, _trades, d.ts);
       updateFeedStatus(d.feed, d.mode);
+
+      // DualMom live P&L (refresh every push cycle)
+      fetch('/api/dualmom/portfolio').then(r => r.json()).then(data => {
+        _dmPortfolio = data;
+        updateDmPortfolio(data);
+      }).catch(()=>{});
     } catch(err) { console.error(err); }
   };
 
-  ws.onclose = () => {
-    updateFeedStatus(false, null);
-    setTimeout(connectWS, 5000);
-  };
-
+  ws.onclose = () => { updateFeedStatus(false, null); setTimeout(connectWS, 5000); };
   ws.onerror = () => ws.close();
-
-  ws.onopen = () => ws.send('ping');
+  ws.onopen  = () => ws.send('ping');
 }
 
 initCharts();

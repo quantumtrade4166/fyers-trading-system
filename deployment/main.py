@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 import uvicorn
 
 from deployment.scheduler import create_scheduler
-from deployment import signal_engine, positions as pos_store, live_feed
+from deployment import signal_engine, positions as pos_store, live_feed, dualmom_engine
 
 MODE = os.getenv("TRADING_MODE", "paper").upper()
 
@@ -33,6 +33,7 @@ async def lifespan(app: FastAPI):
     global _scheduler
     print(f"\n  ── Pairs Dashboard starting ({MODE} mode) ──")
     signal_engine.init_engine()
+    dualmom_engine.refresh()
 
     _scheduler = create_scheduler()
     _scheduler.start()
@@ -113,6 +114,32 @@ async def api_equity():
 @app.get("/api/mode")
 async def api_mode():
     return {"mode": MODE}
+
+
+# ── DualMom endpoints ──────────────────────────────────────────────────────────
+
+@app.get("/api/dualmom/stats")
+async def api_dualmom_stats():
+    return {
+        **dualmom_engine.get_stats(),
+        "last_updated": dualmom_engine.get_last_updated(),
+    }
+
+
+@app.get("/api/dualmom/signal")
+async def api_dualmom_signal():
+    return dualmom_engine.get_signal()
+
+
+@app.get("/api/dualmom/portfolio")
+async def api_dualmom_portfolio():
+    live_prices = live_feed.get_live_prices() or {}
+    return dualmom_engine.get_live_pnl(live_prices)
+
+
+@app.get("/api/dualmom/equity")
+async def api_dualmom_equity():
+    return dualmom_engine.get_equity()
 
 
 # ── WebSocket — push updates every 60s during market hours, 5 min otherwise ──
