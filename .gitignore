@@ -1,0 +1,29 @@
+# Virtual environment
+.venv/
+
+# Sensitive files
+config/access_token.txt
+deployment/.env
+
+# Large data files
+Nifty 500 Daily Data/
+data/
+
+# Position/trade state (VPS manages its own)
+deployment/positions.json
+deployment/trades.json
+deployment/equity.json
+deployment/logs/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/

@@ -1,0 +1,1342 @@
+{
+  "last_updated": "2026-06-21 16:06:43.076295",
+  "symbols": {
+    "NSE:NIFTY50-INDEX": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:NIFTYBANK-INDEX": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:AARTIIND-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ABB-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ABBOTINDIA-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ABCAPITAL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ABFRL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ACC-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:RELIANCE-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:INFY-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ADANIENT-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ADANIPORTS-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ALKEM-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:AMBUJACEM-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:APOLLOHOSP-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:APOLLOTYRE-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ASHOKLEY-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ASIANPAINT-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ASTRAL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ATUL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:AUBANK-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:AUROPHARMA-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:AXISBANK-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BAJAJ-AUTO-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BAJAJFINSV-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BAJFINANCE-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BALKRISIND-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BANDHANBNK-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BANKBARODA-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BATAINDIA-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BEL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BERGEPAINT-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BHARATFORG-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BHARTIARTL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BHEL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BIOCON-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BOSCHLTD-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BPCL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BRITANNIA-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:BSOFT-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:CANBK-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:CANFINHOME-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:CHAMBLFERT-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:CHOLAFIN-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:CIPLA-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:COALINDIA-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:COFORGE-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:COLPAL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:CONCOR-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:COROMANDEL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:CROMPTON-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:CUB-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:CUMMINSIND-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:DABUR-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:DALBHARAT-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:DEEPAKNTR-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:DELTACORP-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:DIVISLAB-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:DIXON-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:DLF-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:DRREDDY-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:EICHERMOT-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ESCORTS-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:EXIDEIND-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:FEDERALBNK-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:GAIL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:GLENMARK-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:GMRINFRA-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:GNFC-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:GODREJCP-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:GODREJPROP-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:GRANULES-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:GRASIM-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:GSPL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:GUJGASLTD-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:HAL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:HAVELLS-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:HCLTECH-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:HDFCAMC-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:HDFCBANK-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:HDFCLIFE-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:HEROMOTOCO-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:HINDALCO-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:HINDCOPPER-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:HINDPETRO-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:HINDUNILVR-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:HONAUT-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ICICIBANK-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ICICIGI-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ICICIPRULI-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:IDEA-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:IDFCFIRSTB-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:IEX-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:IGL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:INDHOTEL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:INDIAMART-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:INDUSINDBK-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:INDUSTOWER-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:INTELLECT-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:IOC-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:IPCALAB-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:IRCTC-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:ITC-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:JINDALSTEL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:JKCEMENT-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:JSL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:JSWSTEEL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:JUBLFOOD-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:KOTAKBANK-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:L&TFH-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:LALPATHLAB-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:LAURUSLABS-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:LICHSGFIN-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:LT-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:LTIM-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:LTTS-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:LUPIN-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:M&M-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:M&MFIN-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:MANAPPURAM-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:MARICO-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:MARUTI-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:MCDOWELL-N-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:MCX-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:METROPOLIS-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:MFSL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:MGL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-21"
+    },
+    "NSE:MIDCPNIFTY-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-19"
+    },
+    "NSE:MINDTREE-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-19"
+    },
+    "NSE:MMTC-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:MOTHERSON-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:MPHASIS-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:MRF-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:MUTHOOTFIN-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:NATIONALUM-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:NAUKRI-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:NAVINFLUOR-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:NESTLEIND-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:NMDC-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:NTPC-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:OBEROIRLTY-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:OFSS-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:ONGC-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:PAGEIND-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:PEL-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-19"
+    },
+    "NSE:PERSISTENT-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:PETRONET-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:PFC-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:PIDILITIND-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:PIIND-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:PNB-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:POLYCAB-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:POWERGRID-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:PVRINOX-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:RAMCOCEM-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:RBLBANK-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:RECLTD-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:SAIL-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:SBICARD-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:SBILIFE-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:SBIN-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:SHREECEM-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:SHRIRAMFIN-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:SIEMENS-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:SRF-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:SUNPHARMA-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:SUNTV-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:SUPREMEIND-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:SUZLON-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:SYNGENE-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:TATACHEM-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:TATACOMM-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:TATACONSUM-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:TATAMOTORS-EQ": {
+      "status": "no_data",
+      "bars_total": 0,
+      "date_from": null,
+      "date_to": null,
+      "last_checked": "2026-06-19"
+    },
+    "NSE:TATAPOWER-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:TATASTEEL-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:TCS-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:TECHM-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:TIINDIA-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:TITAN-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:TORNTPHARM-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:TORNTPOWER-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:TRENT-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:TVSMOTOR-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:UBL-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:ULTRACEMCO-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:UPL-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:VEDL-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:VOLTAS-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:WIPRO-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    },
+    "NSE:ZYDUSLIFE-EQ": {
+      "status": "success",
+      "bars_total": 225,
+      "date_from": "2026-06-16",
+      "date_to": "2026-06-18",
+      "last_checked": "2026-06-19"
+    }
+  }
+}

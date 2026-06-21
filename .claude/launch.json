@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "pairs-dashboard",
+      "runtimeExecutable": "G:\\fyers_data_pipeline\\.venv\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "deployment.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"],
+      "port": 8000
+    }
+  ]
+}

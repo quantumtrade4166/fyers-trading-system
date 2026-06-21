@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(Get-ChildItem G:\\\\fyers_data_pipeline -Directory | Where-Object { $_.Name -ne '.venv' } | Select-Object Name)",
+      "Skill(update-config)",
+      "Skill(update-config:*)"
+    ]
+  }
+}

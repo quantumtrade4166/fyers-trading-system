@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pairs MR — Dashboard</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  body { background: #0f1117; color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; }
+  .card { background: #1a1f2e; border: 1px solid #2d3748; border-radius: 12px; }
+  .badge-paper { background: #1a3a2a; color: #4ade80; border: 1px solid #16a34a; }
+  .badge-live  { background: #3a1a1a; color: #f87171; border: 1px solid #dc2626; }
+  .z-bar { height: 6px; border-radius: 3px; background: #2d3748; position: relative; overflow: visible; }
+  .z-fill { height: 100%; border-radius: 3px; transition: width 0.5s ease; }
+  .z-marker { position: absolute; top: -4px; width: 2px; height: 14px; border-radius: 1px; }
+  .pair-card { transition: border-color 0.3s; }
+  .pair-card:hover { border-color: #4a5568; }
+  .pos-long  { color: #4ade80; }
+  .pos-short { color: #f87171; }
+  .pos-flat  { color: #64748b; }
+  .pnl-pos { color: #4ade80; }
+  .pnl-neg { color: #f87171; }
+  .dot-live { width:8px; height:8px; border-radius:50%; background:#4ade80; animation: pulse 2s infinite; display:inline-block; margin-right:6px; }
+  .dot-dead { width:8px; height:8px; border-radius:50%; background:#64748b; display:inline-block; margin-right:6px; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  .z-chart { height: 80px; }
+  scrollbar-width: thin; scrollbar-color: #2d3748 transparent;
+</style>
+</head>
+<body class="min-h-screen p-4">
+
+<div class="max-w-screen-2xl mx-auto">
+
+  <!-- Header -->
+  <div class="flex items-center justify-between mb-6">
+    <div>
+      <h1 class="text-2xl font-semibold text-white tracking-tight">Pairs Mean Reversion</h1>
+      <p class="text-sm text-slate-500 mt-0.5">Statistical Arbitrage · 10 Pairs · NSE F&O</p>
+    </div>
+    <div class="flex items-center gap-3">
+      <span id="feed-dot" class="dot-dead"></span>
+      <span id="feed-label" class="text-sm text-slate-400">feed offline</span>
+      <span id="mode-badge" class="badge-paper text-xs font-medium px-3 py-1 rounded-full">PAPER</span>
+      <span id="clock" class="text-sm text-slate-500 font-mono ml-2"></span>
+    </div>
+  </div>
+
+  <!-- Metric cards -->
+  <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+    <div class="card p-4">
+      <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Cumulative P&L</p>
+      <p id="m-cumul" class="text-2xl font-semibold text-white">₹0</p>
+      <p class="text-xs text-slate-600 mt-1">paper trades</p>
+    </div>
+    <div class="card p-4">
+      <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Today P&L</p>
+      <p id="m-today" class="text-2xl font-semibold text-white">₹0</p>
+      <p class="text-xs text-slate-600 mt-1">closed trades today</p>
+    </div>
+    <div class="card p-4">
+      <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Open Pairs</p>
+      <p id="m-open" class="text-2xl font-semibold text-white">0 / 10</p>
+      <p class="text-xs text-slate-600 mt-1">deployed</p>
+    </div>
+    <div class="card p-4">
+      <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Last Update</p>
+      <p id="m-ts" class="text-2xl font-semibold text-white font-mono">--:--:--</p>
+      <p class="text-xs text-slate-600 mt-1">IST</p>
+    </div>
+  </div>
+
+  <!-- Equity curve -->
+  <div class="card p-5 mb-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-sm font-medium text-slate-300">Equity Curve (paper P&L)</h2>
+      <span class="text-xs text-slate-600">cumulative from first trade</span>
+    </div>
+    <div id="equity-chart" style="height:180px;"></div>
+  </div>
+
+  <!-- Pair cards grid -->
+  <h2 class="text-sm font-medium text-slate-400 uppercase tracking-wide mb-3">Pair Monitor</h2>
+  <div id="pairs-grid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-5 gap-4 mb-6"></div>
+
+  <!-- Bottom tables -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+    <!-- Open positions -->
+    <div class="card p-5">
+      <h2 class="text-sm font-medium text-slate-300 mb-4">Open Positions</h2>
+      <div id="positions-table" class="text-sm"></div>
+    </div>
+
+    <!-- Trade log -->
+    <div class="card p-5">
+      <h2 class="text-sm font-medium text-slate-300 mb-4">Trade Log</h2>
+      <div id="trades-table" class="text-sm"></div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ── state ─────────────────────────────────────────────────────────────────────
+const pairCharts = {};
+let eqChart, eqSeries;
+let _signals = {}, _positions = {}, _equity = {}, _trades = [];
+
+// ── init charts after DOM ready ───────────────────────────────────────────────
+function initCharts() {
+  eqChart = LightweightCharts.createChart(document.getElementById('equity-chart'), {
+    layout:     { background: { color: 'transparent' }, textColor: '#64748b' },
+    grid:       { vertLines: { color: '#1e2533' }, horzLines: { color: '#1e2533' } },
+    crosshair:  { mode: LightweightCharts.CrosshairMode.Magnet },
+    rightPriceScale: { borderColor: '#2d3748' },
+    timeScale:  { borderColor: '#2d3748', timeVisible: true },
+    handleScroll: true,
+    handleScale:  true,
+  });
+  eqSeries = eqChart.addAreaSeries({
+    lineColor: '#10b981', topColor: 'rgba(16,185,129,0.25)',
+    bottomColor: 'rgba(16,185,129,0.0)', lineWidth: 2,
+  });
+}
+
+function initPairChart(name, el) {
+  const c = LightweightCharts.createChart(el, {
+    layout:    { background: { color: 'transparent' }, textColor: '#475569' },
+    grid:      { vertLines: { color: 'transparent' }, horzLines: { color: '#1e2533' } },
+    rightPriceScale: { visible: false },
+    leftPriceScale:  { visible: false },
+    timeScale: { visible: false },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Hidden },
+    handleScroll: false,
+    handleScale:  false,
+  });
+  const s = c.addLineSeries({ color: '#6366f1', lineWidth: 1.5, priceLineVisible: false });
+  pairCharts[name] = { chart: c, series: s };
+  return pairCharts[name];
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+function fmt(n) {
+  if (n == null || isNaN(n)) return '—';
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : '+';
+  if (abs >= 1e5) return sign + '₹' + (abs/1e5).toFixed(2) + 'L';
+  return sign + '₹' + Math.round(abs).toLocaleString('en-IN');
+}
+
+function fmtPnl(n) {
+  if (n == null) return '<span class="text-slate-600">—</span>';
+  const cls = n >= 0 ? 'pnl-pos' : 'pnl-neg';
+  return `<span class="${cls}">${fmt(n)}</span>`;
+}
+
+function zColor(z, entryZ) {
+  if (z == null) return '#475569';
+  if (Math.abs(z) >= entryZ * 1.5) return '#f87171';
+  if (Math.abs(z) >= entryZ)       return '#facc15';
+  return '#6366f1';
+}
+
+function dirLabel(direction) {
+  if (!direction) return '<span class="pos-flat">FLAT</span>';
+  if (direction === 'long_spread')  return '<span class="pos-long">▲ LONG SPREAD</span>';
+  if (direction === 'short_spread') return '<span class="pos-short">▼ SHORT SPREAD</span>';
+  return direction;
+}
+
+// ── build / update pair cards ─────────────────────────────────────────────────
+function renderPairs(signals, positions) {
+  const grid = document.getElementById('pairs-grid');
+  const names = Object.keys(signals);
+
+  names.forEach(name => {
+    const s   = signals[name];
+    const pos = positions[name];
+    const z   = s.z;
+    const ez  = s.entry_z ?? 2.0;
+    const sz  = s.stop_z  ?? 3.5;
+    const direction = pos?.direction ?? null;
+
+    let card = document.getElementById('pc-' + name.replace(/\//g,'_'));
+    if (!card) {
+      card = document.createElement('div');
+      card.id = 'pc-' + name.replace(/\//g,'_');
+      card.className = 'card pair-card p-4';
+      grid.appendChild(card);
+    }
+
+    // z-score gauge: map z from [-sz, +sz] to [0, 100%], center = 50%
+    const zPct    = z != null ? Math.min(Math.max(((z + sz) / (2 * sz)) * 100, 0), 100) : 50;
+    const entryLo = (((-ez) + sz) / (2 * sz)) * 100;
+    const entryHi = (((+ez) + sz) / (2 * sz)) * 100;
+    const stopLo  = 0;
+    const stopHi  = 100;
+
+    // live P&L for open position
+    let livePnl = null;
+    if (pos) {
+      const pa = s.price_a ?? 0;
+      const pb = s.price_b ?? 0;
+      const sign = pos.direction === 'long_spread' ? 1 : -1;
+      const gross = ((pa - pos.entry_price_a) * pos.qty_a
+                   - (pb - pos.entry_price_b) * pos.qty_b) * sign;
+      const cost  = (pos.entry_price_a * pos.qty_a + pos.entry_price_b * pos.qty_b
+                   + pa * pos.qty_a + pb * pos.qty_b) * 0.0003;
+      livePnl = gross - cost;
+    }
+
+    const span = s.price_a && s.price_b
+      ? ((s.price_a * (s.qty_a??0) + s.price_b * (s.qty_b??0)) * 0.15)
+      : null;
+
+    card.innerHTML = `
+      <div class="flex items-start justify-between mb-3">
+        <div>
+          <p class="text-xs font-semibold text-slate-300 tracking-wide">${name}</p>
+          <p class="text-xs text-slate-600 mt-0.5">${s.sym_a ?? ''} / ${s.sym_b ?? ''}</p>
+        </div>
+        <div class="text-right">
+          ${dirLabel(direction)}
+          ${pos ? `<p class="text-xs text-slate-600 mt-0.5">${pos.entry_date} · ${Math.round((Date.now() - new Date(pos.entry_date))/(864e5))}d</p>` : ''}
+        </div>
+      </div>
+
+      <!-- Z-score display -->
+      <div class="flex items-baseline gap-2 mb-2">
+        <span class="text-lg font-mono font-semibold" style="color:${zColor(z,ez)}">${z != null ? z.toFixed(3) : '—'}</span>
+        <span class="text-xs text-slate-600">z-score</span>
+        <span class="ml-auto text-xs text-slate-500">β=${s.beta != null ? s.beta.toFixed(3) : '—'}</span>
+      </div>
+
+      <!-- Z gauge bar -->
+      <div class="z-bar mb-3">
+        <div class="z-fill" style="width:${zPct}%;background:${zColor(z,ez)};"></div>
+        <div class="z-marker" style="left:${entryLo}%;background:#facc15;"></div>
+        <div class="z-marker" style="left:${entryHi}%;background:#facc15;"></div>
+        <div class="z-marker" style="left:50%;background:#475569;"></div>
+      </div>
+
+      <!-- Z history chart -->
+      <div id="zchart-${name.replace(/\//g,'_')}" class="z-chart mb-3"></div>
+
+      <!-- Stats row -->
+      <div class="grid grid-cols-3 gap-2 text-xs">
+        <div>
+          <p class="text-slate-600">Price A</p>
+          <p class="text-slate-300 font-mono">₹${s.price_a != null ? s.price_a.toFixed(1) : '—'}</p>
+        </div>
+        <div>
+          <p class="text-slate-600">Price B</p>
+          <p class="text-slate-300 font-mono">₹${s.price_b != null ? s.price_b.toFixed(1) : '—'}</p>
+        </div>
+        <div>
+          <p class="text-slate-600">HL / max</p>
+          <p class="text-slate-300 font-mono">${s.hl ?? '—'} / ${s.max_hl ?? '—'}d</p>
+        </div>
+      </div>
+      <div class="grid grid-cols-3 gap-2 text-xs mt-2">
+        <div>
+          <p class="text-slate-600">Entry Z</p>
+          <p class="text-slate-300 font-mono">±${ez}</p>
+        </div>
+        <div>
+          <p class="text-slate-600">Stop Z</p>
+          <p class="text-slate-300 font-mono">±${sz}</p>
+        </div>
+        <div>
+          <p class="text-slate-600">Live P&L</p>
+          <p class="font-mono">${fmtPnl(livePnl)}</p>
+        </div>
+      </div>
+      ${span ? `<div class="mt-2 text-xs text-slate-600">SPAN ≈ ₹${Math.round(span).toLocaleString('en-IN')}</div>` : ''}
+    `;
+
+    // defer chart init until browser has painted the new innerHTML
+    const _name = name;
+    const _s    = s;
+    requestAnimationFrame(() => {
+      const key     = 'pc-' + _name.replace(/\//g,'_');
+      const chartEl = document.getElementById('zchart-' + _name.replace(/\//g,'_'));
+      if (!chartEl || !_s.dates || !_s.spread_history) return;
+
+      if (pairCharts[key]) {
+        try { pairCharts[key].chart.remove(); } catch(e) {}
+        delete pairCharts[key];
+      }
+
+      initPairChart(key, chartEl);
+
+      const pts = _s.dates.map((d,i) => ({
+        time:  d,
+        value: _s.spread_history[i] ?? 0,
+      })).filter(p => p.value != null);
+
+      if (pts.length) pairCharts[key].series.setData(pts);
+    });
+  });
+}
+
+// ── equity chart update ───────────────────────────────────────────────────────
+function updateEquity(equity) {
+  const history = equity?.history ?? [];
+  if (!history.length) return;
+
+  const byDate = {};
+  history.forEach(h => {
+    const d = h.date;
+    byDate[d] = (byDate[d] ?? 0) + (h.pnl ?? 0);
+  });
+
+  let cumul = 0;
+  const pts = Object.keys(byDate).sort().map(d => {
+    cumul += byDate[d];
+    return { time: d, value: Math.round(cumul) };
+  });
+
+  eqSeries.setData(pts);
+  eqChart.timeScale().fitContent();
+}
+
+// ── positions table ───────────────────────────────────────────────────────────
+function updatePositions(positions, signals) {
+  const el = document.getElementById('positions-table');
+  const entries = Object.entries(positions);
+  if (!entries.length) {
+    el.innerHTML = '<p class="text-slate-600 text-xs">No open positions.</p>';
+    return;
+  }
+  let html = `<table class="w-full text-xs"><thead><tr class="text-slate-600 border-b border-slate-800">
+    <th class="text-left pb-2">Pair</th><th class="text-left pb-2">Dir</th>
+    <th class="text-right pb-2">Entry</th><th class="text-right pb-2">Days</th>
+    <th class="text-right pb-2">Live P&L</th></tr></thead><tbody>`;
+
+  entries.forEach(([name, pos]) => {
+    const s    = signals?.[name] ?? {};
+    const sign = pos.direction === 'long_spread' ? 1 : -1;
+    const pa   = s.price_a ?? 0;
+    const pb   = s.price_b ?? 0;
+    const gross = ((pa - pos.entry_price_a) * pos.qty_a
+                 - (pb - pos.entry_price_b) * pos.qty_b) * sign;
+    const cost  = (pos.entry_price_a*pos.qty_a + pos.entry_price_b*pos.qty_b
+                 + pa*pos.qty_a + pb*pos.qty_b) * 0.0003;
+    const net   = gross - cost;
+    const days  = Math.round((Date.now() - new Date(pos.entry_date)) / 864e5);
+    const dir   = pos.direction === 'long_spread' ? '▲ Long' : '▼ Short';
+    const dircls= pos.direction === 'long_spread' ? 'pos-long' : 'pos-short';
+
+    html += `<tr class="border-b border-slate-800/50">
+      <td class="py-2 text-slate-300">${name}</td>
+      <td class="py-2 <span class="${dircls}">${dir}</span></td>
+      <td class="py-2 text-right text-slate-400">${pos.entry_date}</td>
+      <td class="py-2 text-right text-slate-400">${days}d</td>
+      <td class="py-2 text-right">${fmtPnl(net)}</td>
+    </tr>`;
+  });
+
+  el.innerHTML = html + '</tbody></table>';
+}
+
+// ── trades table ──────────────────────────────────────────────────────────────
+function updateTrades(trades) {
+  const el = document.getElementById('trades-table');
+  if (!trades.length) {
+    el.innerHTML = '<p class="text-slate-600 text-xs">No closed trades yet.</p>';
+    return;
+  }
+  let html = `<table class="w-full text-xs"><thead><tr class="text-slate-600 border-b border-slate-800">
+    <th class="text-left pb-2">Pair</th><th class="text-left pb-2">Dir</th>
+    <th class="text-right pb-2">Exit</th><th class="text-right pb-2">Days</th>
+    <th class="text-right pb-2">P&L</th><th class="text-right pb-2">Reason</th></tr></thead><tbody>`;
+
+  trades.slice(0,20).forEach(t => {
+    const dir    = t.direction === 'long_spread' ? '▲' : '▼';
+    const dircls = t.direction === 'long_spread' ? 'pos-long' : 'pos-short';
+    html += `<tr class="border-b border-slate-800/50">
+      <td class="py-1.5 text-slate-300">${t.pair}</td>
+      <td class="py-1.5 <span class="${dircls}">${dir}</span></td>
+      <td class="py-1.5 text-right text-slate-500">${t.exit_date}</td>
+      <td class="py-1.5 text-right text-slate-500">${t.hold_days}d</td>
+      <td class="py-1.5 text-right">${fmtPnl(t.net_pnl)}</td>
+      <td class="py-1.5 text-right text-slate-600">${t.exit_reason}</td>
+    </tr>`;
+  });
+
+  el.innerHTML = html + '</tbody></table>';
+}
+
+// ── metric cards update ───────────────────────────────────────────────────────
+function updateMetrics(equity, positions, trades, ts) {
+  const cumul = equity?.cumul_pnl ?? 0;
+  document.getElementById('m-cumul').innerHTML =
+    `<span class="${cumul >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt(cumul)}</span>`;
+
+  const today = new Date().toISOString().slice(0,10);
+  const todayPnl = (trades ?? [])
+    .filter(t => t.exit_date === today)
+    .reduce((s, t) => s + (t.net_pnl ?? 0), 0);
+  document.getElementById('m-today').innerHTML =
+    `<span class="${todayPnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt(todayPnl)}</span>`;
+
+  const nOpen = Object.keys(positions ?? {}).length;
+  document.getElementById('m-open').textContent = `${nOpen} / 10`;
+
+  if (ts) document.getElementById('m-ts').textContent = ts;
+}
+
+// ── feed indicator ────────────────────────────────────────────────────────────
+function updateFeedStatus(active, mode) {
+  const dot   = document.getElementById('feed-dot');
+  const label = document.getElementById('feed-label');
+  const badge = document.getElementById('mode-badge');
+
+  dot.className   = active ? 'dot-live' : 'dot-dead';
+  label.textContent = active ? 'live feed' : 'feed offline';
+  badge.textContent = mode ?? 'PAPER';
+  badge.className   = (mode === 'LIVE')
+    ? 'badge-live text-xs font-medium px-3 py-1 rounded-full'
+    : 'badge-paper text-xs font-medium px-3 py-1 rounded-full';
+}
+
+// ── clock ─────────────────────────────────────────────────────────────────────
+function tickClock() {
+  const ist = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+  document.getElementById('clock').textContent = 'IST ' + ist;
+}
+setInterval(tickClock, 1000);
+tickClock();
+
+// ── initial data load ─────────────────────────────────────────────────────────
+
+async function fetchAll() {
+  try {
+    const [sigRes, posRes, eqRes, trRes, modeRes] = await Promise.all([
+      fetch('/api/signals'),
+      fetch('/api/positions'),
+      fetch('/api/equity'),
+      fetch('/api/trades'),
+      fetch('/api/mode'),
+    ]);
+    _signals   = await sigRes.json();
+    _positions = await posRes.json();
+    _equity    = await eqRes.json();
+    _trades    = await trRes.json();
+    const modeData = await modeRes.json();
+
+    const feedRes = await fetch('/api/status');
+    const status  = await feedRes.json();
+
+    renderPairs(_signals, _positions);
+    updateEquity(_equity);
+    updatePositions(_positions, _signals);
+    updateTrades(_trades);
+    updateMetrics(_equity, _positions, _trades, null);
+    updateFeedStatus(status.feed_active, modeData.mode);
+  } catch(e) {
+    console.error('fetchAll error', e);
+  }
+}
+
+// ── WebSocket push handler ────────────────────────────────────────────────────
+function connectWS() {
+  const ws = new WebSocket(`ws://${location.host}/ws`);
+
+  ws.onmessage = e => {
+    try {
+      const d = JSON.parse(e.data);
+      if (d.type !== 'update') return;
+      _signals   = d.signals   ?? _signals;
+      _positions = d.positions ?? _positions;
+      _equity    = d.equity    ?? _equity;
+
+      renderPairs(_signals, _positions);
+      updateEquity(_equity);
+      updatePositions(_positions, _signals);
+      updateMetrics(_equity, _positions, _trades, d.ts);
+      updateFeedStatus(d.feed, d.mode);
+    } catch(err) { console.error(err); }
+  };
+
+  ws.onclose = () => {
+    updateFeedStatus(false, null);
+    setTimeout(connectWS, 5000);
+  };
+
+  ws.onerror = () => ws.close();
+
+  ws.onopen = () => ws.send('ping');
+}
+
+initCharts();
+fetchAll();
+connectWS();
+</script>
+</body>
+</html>

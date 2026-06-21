@@ -1,0 +1,203 @@
+# ============================================================
+# Nifty F&O Stocks — Symbol & Lot Sizes
+# Source: NSE F&O segment (as of June 2026)
+# ⚠️  Lot sizes change periodically — verify before trading
+# Format: SYMBOL | LOT_SIZE | SECTOR
+# ============================================================
+
+SYMBOL            | LOT_SIZE | SECTOR
+------------------|----------|-------------------------
+AARTIIND          |      500 | Chemicals
+ABB               |      125 | Capital Goods
+ABBOTINDIA        |       50 | Pharma
+ABCAPITAL         |     2800 | NBFC
+ABFRL             |     2000 | Retail
+ACC               |      500 | Cement
+ADANIENT          |      400 | Conglomerate
+ADANIPORTS        |      625 | Infrastructure
+ALKEM             |      125 | Pharma
+AMBUJACEM         |      625 | Cement
+APOLLOHOSP        |      125 | Healthcare
+APOLLOTYRE        |     1000 | Auto Ancillary
+ASHOKLEY          |     3000 | Auto
+ASIANPAINT        |      200 | Paints
+ASTRAL             |      375 | Pipes
+ATUL              |      100 | Chemicals
+AUBANK            |      500 | Banking
+AUROPHARMA        |      650 | Pharma
+AXISBANK          |     1200 | Banking
+BAJAJ-AUTO        |       75 | Auto
+BAJAJFINSV        |      125 | NBFC
+BAJFINANCE        |      125 | NBFC
+BALKRISIND        |      200 | Auto Ancillary
+BANDHANBNK        |     1800 | Banking
+BANKBARODA        |     3000 | Banking
+BATAINDIA         |      275 | FMCG
+BEL               |     2900 | Defence
+BERGEPAINT        |     550  | Paints
+BHARATFORG        |      500 | Auto Ancillary
+BHARTIARTL        |      500 | Telecom
+BHEL              |     2800 | Capital Goods
+BIOCON            |     2800 | Pharma
+BOSCHLTD          |       25 | Auto Ancillary
+BPCL              |     1800 | Oil & Gas
+BRITANNIA         |      100 | FMCG
+BSOFT             |     1400 | IT
+CANBK             |     2800 | Banking
+CANFINHOME        |      500 | Housing Finance
+CHAMBLFERT        |     1000 | Fertilizers
+CHOLAFIN          |      625 | NBFC
+CIPLA             |      650 | Pharma
+COALINDIA         |     1400 | Mining
+COFORGE           |      150 | IT
+COLPAL            |      350 | FMCG
+CONCOR            |      600 | Logistics
+COROMANDEL        |      350 | Agrochemicals
+CROMPTON          |     1800 | Consumer Durables
+CUB               |     2800 | Banking
+CUMMINSIND        |      300 | Capital Goods
+DABUR             |     1250 | FMCG
+DALBHARAT         |      200 | Cement
+DEEPAKNTR         |      150 | Chemicals
+DELTACORP         |     2800 | Gaming
+DIVISLAB          |      200 | Pharma
+DIXON             |       70 | Electronics
+DLF               |     825  | Real Estate
+DRREDDY           |      125 | Pharma
+EICHERMOT         |      175 | Auto
+ESCORTS           |      275 | Auto
+EXIDEIND          |     1400 | Auto Ancillary
+FEDERALBNK        |     5000 | Banking
+GAIL              |     3000 | Oil & Gas
+GLENMARK          |      700 | Pharma
+GMRINFRA          |     7500 | Infrastructure
+GNFC              |      600 | Chemicals
+GODREJCP          |      500 | FMCG
+GODREJPROP        |      425 | Real Estate
+GRANULES          |     2000 | Pharma
+GRASIM            |      375 | Conglomerate
+GSPL              |     1700 | Gas Distribution
+GUJGASLTD         |      750 | Gas Distribution
+HAL               |      150 | Defence
+HAVELLS           |      500 | Consumer Durables
+HCLTECH           |      700 | IT
+HDFCAMC           |      150 | AMC
+HDFCBANK          |      550 | Banking
+HDFCLIFE          |     1100 | Insurance
+HEROMOTOCO        |      300 | Auto
+HINDALCO          |     1400 | Metals
+HINDCOPPER        |     2800 | Metals
+HINDPETRO         |     1700 | Oil & Gas
+HINDUNILVR        |      300 | FMCG
+HONAUT            |       15 | Capital Goods
+ICICIBANK         |      700 | Banking
+ICICIGI           |      250 | Insurance
+ICICIPRULI        |      700 | Insurance
+IDEA              |    35000 | Telecom
+IDFCFIRSTB        |     8000 | Banking
+IEX               |     3750 | Power Exchange
+IGL               |     1375 | Gas Distribution
+INDHOTEL          |     1400 | Hotels
+INDIAMART         |       75 | E-Commerce
+INDUSINDBK        |      700 | Banking
+INDUSTOWER        |     2800 | Telecom Infrastructure
+INFY              |      400 | IT
+INTELLECT         |      700 | IT
+IOC               |     4000 | Oil & Gas
+IPCALAB           |      400 | Pharma
+IRCTC             |      875 | Railways
+ITC               |     1600 | FMCG
+JINDALSTEL        |      625 | Steel
+JKCEMENT          |      100 | Cement
+JSL               |     1500 | Steel
+JSWSTEEL          |      675 | Steel
+JUBLFOOD          |      625 | QSR
+KOTAKBANK         |      400 | Banking
+LALPATHLAB        |      200 | Diagnostics
+LAURUSLABS        |     1400 | Pharma
+LICHSGFIN         |      800 | Housing Finance
+LT                |      175 | Capital Goods
+LTIM              |      150 | IT
+LTTS              |      100 | IT
+LUPIN             |      425 | Pharma
+M&M               |      700 | Auto
+M&MFIN            |     2000 | NBFC
+MANAPPURAM        |     3000 | NBFC / Gold Finance
+MARICO            |     1200 | FMCG
+MARUTI            |      100 | Auto
+MCX               |      250 | Exchange
+METROPOLIS        |      200 | Diagnostics
+MFSL              |      800 | Insurance
+MGL               |      550 | Gas Distribution
+MOTHERSON         |     5000 | Auto Ancillary
+MPHASIS           |      175 | IT
+MRF               |       10 | Tyres
+MUTHOOTFIN        |      400 | Gold Finance
+NATIONALUM        |     3000 | Metals
+NAUKRI            |      100 | Internet / Jobs
+NAVINFLUOR        |      100 | Chemicals
+NESTLEIND         |       40 | FMCG
+NMDC              |     3000 | Mining
+NTPC              |     2250 | Power
+OBEROIRLTY        |      400 | Real Estate
+OFSS              |       50 | IT
+ONGC              |     1925 | Oil & Gas
+PAGEIND           |       15 | Apparel
+PERSISTENT        |       90 | IT
+PETRONET          |     3000 | Oil & Gas
+PFC               |     1500 | Power Finance
+PIDILITIND        |      250 | Adhesives
+PIIND             |      125 | Agrochemicals
+PNB               |     8000 | Banking
+POLYCAB           |      125 | Cables & Wires
+POWERGRID         |     2250 | Power
+PVRINOX           |      400 | Entertainment
+RAMCOCEM          |      500 | Cement
+RBLBANK           |     3000 | Banking
+RECLTD            |     2000 | Power Finance
+RELIANCE          |      250 | Oil & Telecom
+SAIL              |     4300 | Steel
+SBICARD           |      800 | Credit Cards
+SBILIFE           |      750 | Insurance
+SBIN              |     1500 | Banking
+SHREECEM          |       25 | Cement
+SHRIRAMFIN        |      300 | NBFC
+SIEMENS           |       75 | Capital Goods
+SRF               |      125 | Chemicals
+SUNPHARMA         |      350 | Pharma
+SUNTV             |     1000 | Media
+SUPREMEIND        |      125 | Plastics
+SUZLON            |     7000 | Renewables
+SYNGENE           |      650 | CRO / Pharma
+TATACHEM          |      500 | Chemicals
+TATACOMM          |      275 | Telecom
+TATACONSUM        |      825 | FMCG
+TATAMOTORS        |      550 | Auto
+TATAPOWER         |     2700 | Power
+TATASTEEL         |     1650 | Steel
+TCS               |      175 | IT
+TECHM             |      600 | IT
+TIINDIA           |      175 | Auto Ancillary
+TITAN             |      375 | Jewellery
+TORNTPHARM        |      250 | Pharma
+TORNTPOWER        |      500 | Power
+TRENT             |      275 | Retail
+TVSMOTOR          |      350 | Auto
+UBL               |      400 | Beverages
+ULTRACEMCO        |      100 | Cement
+UPL               |     1300 | Agrochemicals
+VEDL              |     2000 | Metals
+VOLTAS            |      500 | Consumer Durables
+WIPRO             |     1500 | IT
+ZYDUSLIFE         |      700 | Pharma
+
+# ============================================================
+# NOTES:
+# 1. Lot sizes revised by SEBI periodically (usually every 6 months)
+#    Always verify at: https://www.nseindia.com/products-services/equity-derivatives-list-underlyings-info
+# 2. Stocks marked with * may have been added/removed from F&O recently
+# 3. For backtesting use lot sizes only for margin/position sizing
+# 4. Some stocks in this list may not have data in Nifty 500 Daily Data folder
+#    (e.g. GMRINFRA, GSPL, L&TFH, MCDOWELL-N, MIDCPNIFTY, MINDTREE, PEL, TATAMOTORS)
+# 5. Total F&O stocks as of June 2026: 182
+# ============================================================

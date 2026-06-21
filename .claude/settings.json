@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "defaultMode": "bypassPermissions",
+    "allow": [
+      "Bash(*)",
+      "Edit(*)",
+      "Write(*)",
+      "Read(*)",
+      "Glob(*)",
+      "Grep(*)",
+      "PowerShell(*)",
+      "WebFetch(*)",
+      "WebSearch(*)",
+      "mcp__*"
+    ],
+    "deny": []
+  },
+  "skipDangerousModePermissionPrompt": true
+}

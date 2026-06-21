@@ -1,0 +1,115 @@
+"""
+live_feed.py
+Fyers WebSocket live price feed.
+Subscribes to all 20 symbols, updates in-memory price dict every tick.
+"""
+import sys
+sys.stdout.reconfigure(encoding="utf-8")
+sys.stderr.reconfigure(encoding="utf-8")
+
+import os
+import threading
+from pathlib import Path
+
+from fyers_apiv3 import fyersModel
+from fyers_apiv3.FyersWebsocket import data_ws
+
+from deployment.pair_config import PAIRS, SYM_A, SYM_B
+
+ACCESS_TOKEN_PATH = Path(os.getenv(
+    "ACCESS_TOKEN_PATH",
+    r"G:\fyers_data_pipeline\config\access_token.txt"
+))
+APP_ID = os.getenv("FYERS_APP_ID", "W09OMXQB8J-100")
+
+ALL_SYMS = list({p[SYM_A] for p in PAIRS} | {p[SYM_B] for p in PAIRS})
+FYERS_SYMBOLS = [f"NSE:{sym}-EQ" for sym in ALL_SYMS]
+
+_live_prices: dict[str, float] = {}
+_lock = threading.Lock()
+_ws_client = None
+_running   = False
+
+
+def get_live_prices() -> dict[str, float]:
+    with _lock:
+        return dict(_live_prices)
+
+
+def _on_message(msg):
+    if not isinstance(msg, dict):
+        return
+    sym_raw = msg.get("symbol", "")
+    ltp     = msg.get("ltp")
+    if not sym_raw or ltp is None:
+        return
+    sym = sym_raw.replace("NSE:", "").replace("-EQ", "")
+    with _lock:
+        _live_prices[sym] = float(ltp)
+
+
+def _on_error(msg):
+    print(f"  [live_feed] WebSocket error: {msg}")
+
+
+def _on_close(msg):
+    print(f"  [live_feed] WebSocket closed: {msg}")
+    global _running
+    _running = False
+
+
+def _on_open():
+    print("  [live_feed] WebSocket connected. Subscribing...")
+    _ws_client.subscribe(symbols=FYERS_SYMBOLS, data_type="SymbolUpdate")
+
+
+def start_feed() -> bool:
+    global _ws_client, _running
+
+    token_path = ACCESS_TOKEN_PATH
+    if not token_path.exists():
+        print(f"  [live_feed] Token file not found: {token_path}")
+        return False
+
+    access_token = token_path.read_text(encoding="utf-8").strip()
+    if not access_token:
+        print("  [live_feed] Empty access token.")
+        return False
+
+    client_id    = f"{APP_ID}:{access_token}"
+
+    _ws_client = data_ws.FyersDataSocket(
+        access_token=client_id,
+        log_path="",
+        litemode=False,
+        write_to_file=False,
+        reconnect=True,
+        on_connect=_on_open,
+        on_close=_on_close,
+        on_error=_on_error,
+        on_message=_on_message,
+    )
+
+    def _run():
+        global _running
+        _running = True
+        print("  [live_feed] Starting WebSocket thread...")
+        _ws_client.connect()
+
+    thread = threading.Thread(target=_run, daemon=True, name="FyersWS")
+    thread.start()
+    return True
+
+
+def stop_feed() -> None:
+    global _running
+    if _ws_client:
+        try:
+            _ws_client.close_connection()
+        except Exception:
+            pass
+    _running = False
+
+
+def is_running() -> bool:
+    return _running
