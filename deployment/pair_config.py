@@ -1,5 +1,5 @@
 """
-Definitive config for all 10 live pairs.
+StatArb.MR-first10 — Definitive config for all 10 live pairs.
 Source of truth for the deployment dashboard and signal engine.
 All values extracted from portfolio_pairs_summary_v2.csv (Session 10, 2026-06-20).
 
