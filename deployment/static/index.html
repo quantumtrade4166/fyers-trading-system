@@ -128,14 +128,14 @@ function initPairChart(name, el) {
   const c = LightweightCharts.createChart(el, {
     layout:    { background: { color: 'transparent' }, textColor: '#475569' },
     grid:      { vertLines: { color: 'transparent' }, horzLines: { color: '#1e2533' } },
-    rightPriceScale: { visible: false },
+    rightPriceScale: { visible: true, borderColor: 'transparent', textColor: '#475569', scaleMargins: { top: 0.1, bottom: 0.1 } },
     leftPriceScale:  { visible: false },
     timeScale: { visible: false },
     crosshair: { mode: LightweightCharts.CrosshairMode.Hidden },
     handleScroll: false,
     handleScale:  false,
   });
-  const s = c.addLineSeries({ color: '#6366f1', lineWidth: 1.5, priceLineVisible: false });
+  const s = c.addLineSeries({ color: '#6366f1', lineWidth: 1.5, priceLineVisible: false, lastValueVisible: false });
   pairCharts[name] = { chart: c, series: s };
   return pairCharts[name];
 }
@@ -214,15 +214,19 @@ function renderPairs(signals, positions) {
       ? ((s.price_a * (s.qty_a??0) + s.price_b * (s.qty_b??0)) * 0.15)
       : null;
 
+    const daysIn = pos ? Math.max(0, Math.round((Date.now() - new Date(pos.entry_date)) / 864e5)) : null;
+    const lotsA  = s.qty_a ? Math.round(s.qty_a / 1) : null;
+    const lotsB  = s.qty_b ? Math.round(s.qty_b / 1) : null;
+
     card.innerHTML = `
       <div class="flex items-start justify-between mb-3">
         <div>
           <p class="text-xs font-semibold text-slate-300 tracking-wide">${name}</p>
-          <p class="text-xs text-slate-600 mt-0.5">${s.sym_a ?? ''} / ${s.sym_b ?? ''}</p>
+          <p class="text-xs text-slate-600 mt-0.5">${s.qty_a ?? '—'} × A / ${s.qty_b ?? '—'} × B</p>
         </div>
         <div class="text-right">
           ${dirLabel(direction)}
-          ${pos ? `<p class="text-xs text-slate-600 mt-0.5">${pos.entry_date} · ${Math.round((Date.now() - new Date(pos.entry_date))/(864e5))}d</p>` : ''}
+          ${pos ? `<p class="text-xs text-emerald-600 mt-0.5 font-mono">▶ ${daysIn}d in trade</p>` : ''}
         </div>
       </div>
 
