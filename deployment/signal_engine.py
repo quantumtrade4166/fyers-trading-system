@@ -25,7 +25,7 @@ EXIT_Z   = 0.5
 COOLDOWN = 5
 
 # ── collect all unique symbols ────────────────────────────────────────────────
-from deployment.pair_config import PAIRS, NAME, SYM_A, QTY_A, SYM_B, QTY_B, LOOKBACK, ENTRY_Z, STOP_Z, ANNUAL_STOP, SPAN_FACTOR
+from deployment.pair_config import PAIRS, NAME, SYM_A, QTY_A, LOTS_A, SYM_B, QTY_B, LOTS_B, LOOKBACK, ENTRY_Z, STOP_Z, ANNUAL_STOP, SPAN_FACTOR
 
 ALL_SYMS = list({p[SYM_A] for p in PAIRS} | {p[SYM_B] for p in PAIRS})
 
@@ -212,7 +212,9 @@ def get_all_signals(today_prices: dict | None = None) -> dict:
             "sym_a":    sym_a,
             "sym_b":    sym_b,
             "qty_a":    p[QTY_A],
+            "lots_a":   p[LOTS_A],
             "qty_b":    p[QTY_B],
+            "lots_b":   p[LOTS_B],
             "entry_z":  entry_z,
             "stop_z":   stop_z,
             "exit_z":   EXIT_Z,

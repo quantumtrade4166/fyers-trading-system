@@ -24,7 +24,7 @@ COOLDOWN_BARS = 5
 def _run_signal_check():
     """Per-minute intraday job — check signals, fire paper entries/exits."""
     from deployment import signal_engine, order_router, live_feed, positions as pos_store
-    from deployment.pair_config import PAIRS, NAME, SYM_A, SYM_B, QTY_A, QTY_B, ENTRY_Z, STOP_Z, ANNUAL_STOP, EXIT_Z
+    from deployment.pair_config import PAIRS, NAME, SYM_A, SYM_B, QTY_A, QTY_B, LOTS_A, LOTS_B, ENTRY_Z, STOP_Z, ANNUAL_STOP, EXIT_Z
 
     live_prices = live_feed.get_live_prices() if live_feed.is_running() else {}
     signals = signal_engine.get_all_signals(today_prices=live_prices or None)

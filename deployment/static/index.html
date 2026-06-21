@@ -215,18 +215,16 @@ function renderPairs(signals, positions) {
       : null;
 
     const daysIn = pos ? Math.max(0, Math.round((Date.now() - new Date(pos.entry_date)) / 864e5)) : null;
-    const lotsA  = s.qty_a ? Math.round(s.qty_a / 1) : null;
-    const lotsB  = s.qty_b ? Math.round(s.qty_b / 1) : null;
 
     card.innerHTML = `
       <div class="flex items-start justify-between mb-3">
         <div>
           <p class="text-xs font-semibold text-slate-300 tracking-wide">${name}</p>
-          <p class="text-xs text-slate-600 mt-0.5">${s.qty_a ?? '—'} × A / ${s.qty_b ?? '—'} × B</p>
+          <p class="text-xs text-slate-600 mt-0.5">${s.lots_a ?? '—'}L × A / ${s.lots_b ?? '—'}L × B</p>
         </div>
         <div class="text-right">
           ${dirLabel(direction)}
-          ${pos ? `<p class="text-xs text-emerald-600 mt-0.5 font-mono">▶ ${daysIn}d in trade</p>` : ''}
+          ${pos ? `<p class="text-xs text-emerald-500 mt-0.5 font-mono">▶ ${daysIn}d in trade</p>` : '<p class="text-xs text-slate-600 mt-0.5">—</p>'}
         </div>
       </div>
 
