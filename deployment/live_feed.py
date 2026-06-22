@@ -109,10 +109,13 @@ def start_feed() -> bool:
         import json as _json
         payload      = _json.loads(raw)
         access_token = payload["token"]
-    except Exception:
-        access_token = raw   # fallback: plain token string
+        print(f"  [live_feed] Token parsed from JSON. date={payload.get('date')} len={len(access_token)} prefix={access_token[:12]}")
+    except Exception as e:
+        access_token = raw
+        print(f"  [live_feed] Token read as plain string. len={len(raw)} (JSON parse error: {e})")
 
     client_id    = f"{APP_ID}:{access_token}"
+    print(f"  [live_feed] Token path: {token_path}")
 
     _ws_client = data_ws.FyersDataSocket(
         access_token=client_id,
