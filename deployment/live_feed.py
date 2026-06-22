@@ -30,6 +30,7 @@ _lock          = threading.Lock()
 _ws_client     = None
 _running       = False
 _extra_symbols: list[str] = []   # DualMom or other additional subscriptions
+_raw_samples: list = []          # DEBUG: store first 3 raw messages
 
 
 def get_live_prices() -> dict[str, float]:
@@ -38,6 +39,11 @@ def get_live_prices() -> dict[str, float]:
 
 
 def _on_message(msg):
+    # DEBUG: capture first 3 raw messages to inspect format
+    if len(_raw_samples) < 3:
+        _raw_samples.append(msg)
+        print(f"  [live_feed DEBUG] raw msg #{len(_raw_samples)}: {str(msg)[:300]}")
+
     # Fyers v3 WebSocket wraps ticks in {"d": [{symbol, ltp, ...}, ...]}
     # Some builds send the dict directly; handle both formats.
     ticks = []
