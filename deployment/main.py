@@ -166,7 +166,9 @@ async def _push_loop():
     IST = pytz.timezone("Asia/Kolkata")
 
     while True:
-        await asyncio.sleep(60)
+        now = datetime.now(IST)
+        market_open = now.weekday() < 5 and (9, 15) <= (now.hour, now.minute) <= (15, 30)
+        await asyncio.sleep(15 if market_open else 60)
         if not _ws_clients:
             continue
         try:

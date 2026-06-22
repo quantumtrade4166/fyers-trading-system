@@ -94,9 +94,9 @@
     <!-- Metric cards -->
     <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
       <div class="card p-4">
-        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Cumulative P&L</p>
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Total P&L</p>
         <p id="m-cumul" class="text-2xl font-semibold text-white">₹0</p>
-        <p class="text-xs text-slate-600 mt-1">paper trades</p>
+        <p class="text-xs text-slate-600 mt-1">closed + unrealised</p>
       </div>
       <div class="card p-4">
         <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Today P&L</p>
@@ -597,12 +597,33 @@ function updateTrades(trades) {
 // ── StatArb: metric cards ─────────────────────────────────────────────────────
 function updateMetrics(equity, positions, trades, ts) {
   const cumul = equity?.cumul_pnl ?? 0;
-  document.getElementById('m-cumul').innerHTML = `<span class="${cumul >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt(cumul)}</span>`;
+
+  // sum unrealised P&L across all open positions using current signal prices
+  let openPnl = 0;
+  Object.entries(positions ?? {}).forEach(([name, pos]) => {
+    const s  = _signals?.[name] ?? {};
+    const pa = s.price_a ?? 0;
+    const pb = s.price_b ?? 0;
+    if (pa && pb && pos.entry_price_a && pos.entry_price_b) {
+      const sign  = pos.direction === 'long_spread' ? 1 : -1;
+      const gross = ((pa - pos.entry_price_a) * pos.qty_a
+                   - (pb - pos.entry_price_b) * pos.qty_b) * sign;
+      const cost  = (pos.entry_price_a * pos.qty_a + pos.entry_price_b * pos.qty_b
+                   + pa * pos.qty_a + pb * pos.qty_b) * 0.0003;
+      openPnl += gross - cost;
+    }
+  });
+
+  const totalPnl = cumul + openPnl;
+  document.getElementById('m-cumul').innerHTML = `<span class="${totalPnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt(totalPnl)}</span>`;
+
   const today = new Date().toISOString().slice(0,10);
   const todayPnl = (trades ?? []).filter(t => t.exit_date === today).reduce((s, t) => s + (t.net_pnl ?? 0), 0);
   document.getElementById('m-today').innerHTML = `<span class="${todayPnl >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt(todayPnl)}</span>`;
   document.getElementById('m-open').textContent = `${Object.keys(positions ?? {}).length} / 10`;
-  if (ts) document.getElementById('m-ts').textContent = ts;
+
+  const nowTs = new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: false });
+  document.getElementById('m-ts').textContent = ts ?? nowTs;
 }
 
 // ── feed indicator ────────────────────────────────────────────────────────────
