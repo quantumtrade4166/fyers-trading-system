@@ -105,6 +105,17 @@ def _eod_run():
     print("  [scheduler] EOD run complete.")
 
 
+def _dualmom_eod():
+    """16:00 EOD — record DualMom paper NAV, run month-end rebalance if needed."""
+    print("  [scheduler] DualMom EOD run...")
+    from deployment import dualmom_paper
+    dualmom_paper.record_daily_nav()
+    if dualmom_paper.is_last_trading_day():
+        print("  [scheduler] Last trading day of month — running rebalance...")
+        dualmom_paper.run_month_end_rebalance()
+    print("  [scheduler] DualMom EOD run complete.")
+
+
 def _start_feed():
     print("  [scheduler] Market open — starting live feed...")
     from deployment import live_feed
@@ -137,5 +148,9 @@ def create_scheduler() -> BackgroundScheduler:
     # EOD price reload at 15:35
     sched.add_job(_eod_run, CronTrigger(
         day_of_week="mon-fri", hour=15, minute=35, timezone=IST))
+
+    # DualMom paper NAV + month-end rebalance at 16:00
+    sched.add_job(_dualmom_eod, CronTrigger(
+        day_of_week="mon-fri", hour=16, minute=0, timezone=IST))
 
     return sched

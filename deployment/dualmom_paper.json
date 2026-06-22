@@ -1,0 +1,10 @@
+{
+  "status": "unknown",
+  "start_date": "2026-06-22",
+  "start_capital": 1000000,
+  "current_nav": 1000000,
+  "rebal_date": null,
+  "holdings": [],
+  "liquid_fund_entry_nav": 1000000,
+  "liquid_fund_entry_date": "2026-06-22"
+}

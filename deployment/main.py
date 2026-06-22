@@ -20,7 +20,7 @@ from fastapi.responses import FileResponse
 import uvicorn
 
 from deployment.scheduler import create_scheduler
-from deployment import signal_engine, positions as pos_store, live_feed, dualmom_engine
+from deployment import signal_engine, positions as pos_store, live_feed, dualmom_engine, dualmom_paper
 
 MODE = os.getenv("TRADING_MODE", "paper").upper()
 
@@ -34,6 +34,7 @@ async def lifespan(app: FastAPI):
     print(f"\n  ── Pairs Dashboard starting ({MODE} mode) ──")
     signal_engine.init_engine()
     dualmom_engine.refresh()
+    dualmom_paper.init()
 
     _scheduler = create_scheduler()
     _scheduler.start()
@@ -162,6 +163,21 @@ async def api_dualmom_portfolio():
 @app.get("/api/dualmom/equity")
 async def api_dualmom_equity():
     return dualmom_engine.get_equity()
+
+
+@app.get("/api/dualmom/paper")
+async def api_dualmom_paper():
+    return dualmom_paper.get_paper_state()
+
+
+@app.get("/api/dualmom/paper_equity")
+async def api_dualmom_paper_equity():
+    return dualmom_paper.get_paper_equity()
+
+
+@app.get("/api/dualmom/signal_log")
+async def api_dualmom_signal_log():
+    return dualmom_paper.get_signal_log()
 
 
 # ── WebSocket — push updates every 60s during market hours, 5 min otherwise ──

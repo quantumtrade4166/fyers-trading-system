@@ -156,8 +156,175 @@
       <span id="dm-signal-badge" class="badge-unk text-xs font-medium px-3 py-1 rounded-full">— —</span>
     </div>
 
-    <!-- Strategy stats banner -->
-    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+    <!-- ── SECTION 1: Paper Trading ── -->
+    <div class="mb-2 flex items-center gap-3">
+      <h3 class="text-sm font-semibold text-slate-200 uppercase tracking-wide">Paper Trading</h3>
+      <span class="text-xs text-slate-600">₹10L starting capital · live from <span id="dm-paper-start-date">—</span></span>
+      <span class="ml-auto text-xs text-slate-600">Next rebal: <span id="dm-next-rebal" class="text-slate-400 font-mono">—</span></span>
+    </div>
+
+    <!-- Paper metric cards -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+      <div class="card p-4">
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Current NAV</p>
+        <p id="dm-paper-nav" class="text-2xl font-semibold text-white">₹10.00L</p>
+        <p class="text-xs text-slate-600 mt-1">started ₹10L</p>
+      </div>
+      <div class="card p-4">
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Total P&L</p>
+        <p id="dm-paper-pnl" class="text-2xl font-semibold text-white">—</p>
+        <p class="text-xs text-slate-600 mt-1">since start</p>
+      </div>
+      <div class="card p-4">
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">P&L %</p>
+        <p id="dm-paper-pnl-pct" class="text-2xl font-semibold text-white">—</p>
+        <p class="text-xs text-slate-600 mt-1">total return</p>
+      </div>
+      <div class="card p-4">
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Status</p>
+        <p id="dm-paper-status" class="text-2xl font-semibold text-slate-400">—</p>
+        <p id="dm-paper-status-sub" class="text-xs text-slate-600 mt-1">—</p>
+      </div>
+    </div>
+
+    <!-- Paper equity curve -->
+    <div class="card p-5 mb-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-medium text-slate-300">Paper Equity Curve</h3>
+        <span class="text-xs text-slate-600">EOD NAV · updated daily at 16:00</span>
+      </div>
+      <div id="dm-paper-equity-chart" style="height:160px;"></div>
+      <div id="dm-paper-eq-empty" class="text-center py-8 text-slate-600 text-xs" style="display:none">
+        No data yet — first entry recorded at 16:00 on the next trading day.
+      </div>
+    </div>
+
+    <!-- Daily returns table -->
+    <div class="card p-5 mb-6">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-medium text-slate-300">Daily Returns</h3>
+        <span class="text-xs text-slate-600">last 30 trading days</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="dm-table w-full">
+          <thead>
+            <tr>
+              <th style="text-align:left">Date</th>
+              <th>Status</th>
+              <th>Liquid ₹</th>
+              <th>Stocks ₹</th>
+              <th>Total ₹</th>
+              <th>Day %</th>
+              <th>NAV</th>
+            </tr>
+          </thead>
+          <tbody id="dm-daily-returns-body">
+            <tr><td colspan="7" class="py-4 text-center text-slate-600 text-xs">No daily returns recorded yet.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Holdings / Liquid fund (depends on status) -->
+    <div id="dm-paper-out-card" class="card p-5 mb-6" style="display:none">
+      <div class="flex items-center gap-3 mb-3">
+        <span class="text-yellow-400 text-lg">💰</span>
+        <h3 class="text-sm font-semibold text-yellow-300">Currently in Liquid Fund</h3>
+        <span class="ml-auto text-xs text-emerald-400 font-mono" id="dm-paper-daily-accrual">+₹164/day</span>
+      </div>
+      <p class="text-xs text-slate-400 mb-1">Nifty below 100MA — no equity exposure. Earning 6% p.a. (~₹164/day on ₹10L)</p>
+      <p class="text-xs text-slate-600">Re-entry: Nifty closes above 100MA at any month-end rebalance.</p>
+    </div>
+
+    <div id="dm-paper-in-card" class="mb-6" style="display:none">
+      <!-- Holdings table -->
+      <div class="card p-5">
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-sm font-medium text-slate-300">Current Holdings — Top 50 Stocks</h3>
+          <span class="text-xs text-slate-600" id="dm-paper-rebal-note">Last rebal: —</span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="dm-table w-full">
+            <thead>
+              <tr>
+                <th style="text-align:left">#</th>
+                <th style="text-align:left">Symbol</th>
+                <th>Weight</th>
+                <th>12m Ret</th>
+                <th>Entry ₹</th>
+                <th>Last ₹</th>
+                <th>Alloc ₹</th>
+              </tr>
+            </thead>
+            <tbody id="dm-paper-holdings-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div id="dm-paper-unknown-card" class="card p-5 mb-6 text-center">
+      <p class="text-slate-500 text-sm">Paper trading not yet initialised. First rebalance runs at 16:00 on the last trading day of this month.</p>
+    </div>
+
+    <!-- ── SECTION 2: Nifty Signal (middle) ── -->
+    <div class="mb-2 mt-2">
+      <h3 class="text-sm font-semibold text-slate-200 uppercase tracking-wide mb-4">Nifty Signal (Absolute Momentum Filter)</h3>
+    </div>
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
+      <div class="card p-5">
+        <div class="space-y-3">
+          <div class="flex justify-between items-center">
+            <span class="text-xs text-slate-500">Nifty 50</span>
+            <span id="dm-nifty-price" class="text-lg font-mono font-semibold text-white">—</span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-xs text-slate-500">100-Day MA</span>
+            <span id="dm-nifty-ma" class="text-lg font-mono font-semibold text-slate-300">—</span>
+          </div>
+          <div class="flex justify-between items-center">
+            <span class="text-xs text-slate-500">Gap</span>
+            <span id="dm-nifty-gap" class="text-base font-mono font-semibold">—</span>
+          </div>
+          <div class="nifty-gap-bar">
+            <div id="dm-gap-bar" class="nifty-gap-fill bg-slate-600" style="width:50%"></div>
+          </div>
+          <div class="flex justify-between items-center pt-1">
+            <span class="text-xs text-slate-500">Signal</span>
+            <span id="dm-signal-text" class="text-sm font-semibold text-slate-400">—</span>
+          </div>
+          <div class="text-xs text-slate-600" id="dm-as-of">As of —</div>
+          <div class="mt-3 pt-3 border-t border-slate-800">
+            <p class="text-xs text-slate-500">Rule: Invest when Nifty > 100MA at month-end</p>
+            <p class="text-xs text-slate-600 mt-1">OUT → 100% Liquid Fund (6% p.a.)</p>
+          </div>
+        </div>
+      </div>
+      <div class="card p-5 lg:col-span-2">
+        <h3 class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Signal History (month-end flips)</h3>
+        <div class="overflow-x-auto">
+          <table class="dm-table w-full">
+            <thead>
+              <tr>
+                <th style="text-align:left">Date</th>
+                <th>Signal</th>
+                <th>Nifty</th>
+                <th>100MA</th>
+                <th>Gap %</th>
+              </tr>
+            </thead>
+            <tbody id="dm-signal-log-body">
+              <tr><td colspan="5" class="py-3 text-center text-slate-600 text-xs">No signal history yet.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── SECTION 3: Backtest Reference (bottom) ── -->
+    <div class="mb-2">
+      <h3 class="text-sm font-semibold text-slate-200 uppercase tracking-wide mb-4">Backtest Reference (2006–2026)</h3>
+    </div>
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
       <div class="card p-4 text-center">
         <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">CAGR</p>
         <p class="text-2xl font-bold text-emerald-400">33.9%</p>
@@ -174,141 +341,22 @@
         <p class="text-xs text-slate-600 mt-1">from peak</p>
       </div>
       <div class="card p-4 text-center">
-        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">₹10L → </p>
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">₹10L →</p>
         <p class="text-2xl font-bold text-violet-400">₹38.4Cr</p>
         <p class="text-xs text-slate-600 mt-1">20 years</p>
       </div>
       <div class="card p-4 text-center">
-        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Top-N Stocks</p>
+        <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Top-N</p>
         <p class="text-2xl font-bold text-white">50</p>
         <p class="text-xs text-slate-600 mt-1">momentum weighted</p>
       </div>
     </div>
-
-    <!-- Signal + Equity row -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
-
-      <!-- Nifty signal card -->
-      <div class="card p-5">
-        <h3 class="text-sm font-medium text-slate-300 mb-4">Absolute Momentum Filter</h3>
-        <div class="space-y-3">
-          <div class="flex justify-between items-center">
-            <span class="text-xs text-slate-500">Nifty 50</span>
-            <span id="dm-nifty-price" class="text-lg font-mono font-semibold text-white">—</span>
-          </div>
-          <div class="flex justify-between items-center">
-            <span class="text-xs text-slate-500">100-Day MA</span>
-            <span id="dm-nifty-ma" class="text-lg font-mono font-semibold text-slate-300">—</span>
-          </div>
-          <div class="flex justify-between items-center">
-            <span class="text-xs text-slate-500">Gap</span>
-            <span id="dm-nifty-gap" class="text-base font-mono font-semibold">—</span>
-          </div>
-          <!-- gap bar -->
-          <div class="nifty-gap-bar">
-            <div id="dm-gap-bar" class="nifty-gap-fill bg-slate-600" style="width:50%"></div>
-          </div>
-          <div class="flex justify-between items-center pt-1">
-            <span class="text-xs text-slate-500">Signal</span>
-            <span id="dm-signal-text" class="text-sm font-semibold text-slate-400">—</span>
-          </div>
-          <div class="text-xs text-slate-600" id="dm-as-of">As of —</div>
-          <div class="mt-3 pt-3 border-t border-slate-800">
-            <p class="text-xs text-slate-500">Rule: Invest when Nifty > 100MA at month-end</p>
-            <p class="text-xs text-slate-600 mt-1">OUT → 100% Liquid Fund (6% p.a.)</p>
-          </div>
-        </div>
+    <div class="card p-5 mb-6">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-medium text-slate-300">Backtest Equity Curve</h3>
+        <span class="text-xs text-slate-600">₹10L initial · 20-year · momentum weighted</span>
       </div>
-
-      <!-- Backtest equity curve -->
-      <div class="card p-5 lg:col-span-2">
-        <div class="flex items-center justify-between mb-3">
-          <h3 class="text-sm font-medium text-slate-300">Backtest Equity Curve</h3>
-          <span class="text-xs text-slate-600">₹10L initial · 20-year · momentum weighted</span>
-        </div>
-        <div id="dm-equity-chart" style="height:200px;"></div>
-      </div>
-
-    </div>
-
-    <!-- Portfolio section — OUT state -->
-    <div id="dm-out-state" class="card p-6 mb-6 text-center" style="display:none">
-      <div class="text-4xl mb-3">💰</div>
-      <h3 class="text-base font-semibold text-yellow-300 mb-1">Currently in Liquid Fund</h3>
-      <p class="text-sm text-slate-400 mb-3">Nifty 50 is below its 100-day MA — no equity exposure.</p>
-      <p class="text-xs text-slate-500">Earning ~6% p.a. | Re-entry: Nifty closes above 100MA at any month-end</p>
-      <div id="dm-liquid-accrual" class="mt-4 text-sm text-emerald-400 font-mono"></div>
-    </div>
-
-    <!-- Portfolio section — IN state -->
-    <div id="dm-in-state" style="display:none">
-      <!-- Portfolio summary cards -->
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-        <div class="card p-4">
-          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Portfolio Value</p>
-          <p id="dm-total-value" class="text-xl font-semibold text-white">—</p>
-          <p class="text-xs text-slate-600 mt-1">₹10L notional</p>
-        </div>
-        <div class="card p-4">
-          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Live P&L</p>
-          <p id="dm-total-pnl" class="text-xl font-semibold text-white">—</p>
-          <p class="text-xs text-slate-600 mt-1">vs entry (last rebal)</p>
-        </div>
-        <div class="card p-4">
-          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">P&L %</p>
-          <p id="dm-total-pnl-pct" class="text-xl font-semibold text-white">—</p>
-          <p class="text-xs text-slate-600 mt-1">total return</p>
-        </div>
-        <div class="card p-4">
-          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Stocks Held</p>
-          <p id="dm-stocks-held" class="text-xl font-semibold text-white">—</p>
-          <p class="text-xs text-slate-600 mt-1">top 50 momentum</p>
-        </div>
-      </div>
-
-      <!-- Top gainers / losers quick strip -->
-      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        <div class="card p-4">
-          <h3 class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Top Gainers Today</h3>
-          <div id="dm-top-gainers" class="space-y-1 text-xs"></div>
-        </div>
-        <div class="card p-4">
-          <h3 class="text-xs font-medium text-slate-500 uppercase tracking-wide mb-3">Top Losers Today</h3>
-          <div id="dm-top-losers" class="space-y-1 text-xs"></div>
-        </div>
-      </div>
-
-      <!-- Full portfolio table -->
-      <div class="card p-5">
-        <div class="flex items-center justify-between mb-4">
-          <h3 class="text-sm font-medium text-slate-300">Portfolio — Top 50 Stocks</h3>
-          <span class="text-xs text-slate-600" id="dm-rebal-note">Monthly rebalance · momentum weighted</span>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="dm-table w-full">
-            <thead>
-              <tr>
-                <th style="text-align:left">#</th>
-                <th style="text-align:left">Symbol</th>
-                <th>Weight</th>
-                <th>12m Ret</th>
-                <th>Entry ₹</th>
-                <th>Live ₹</th>
-                <th>Chg%</th>
-                <th>P&L ₹</th>
-                <th>Alloc ₹</th>
-              </tr>
-            </thead>
-            <tbody id="dm-portfolio-body"></tbody>
-          </table>
-        </div>
-      </div>
-    </div><!-- /dm-in-state -->
-
-    <!-- Unknown state -->
-    <div id="dm-unknown-state" class="card p-6 mb-6 text-center">
-      <div class="text-3xl mb-2">⏳</div>
-      <p class="text-sm text-slate-400">Loading signal data... (requires market access token)</p>
+      <div id="dm-equity-chart" style="height:200px;"></div>
     </div>
 
   </div><!-- /page-dualmom -->
@@ -320,8 +368,9 @@
 const pairCharts = {};
 let eqChart, eqSeries;
 let dmEqChart, dmEqSeries;
+let dmPaperEqChart, dmPaperEqSeries;
 let _signals = {}, _positions = {}, _equity = {}, _trades = [];
-let _dmSignal = {}, _dmPortfolio = {}, _dmEquity = [];
+let _dmSignal = {}, _dmEquity = [], _dmPaper = {}, _dmPaperEquity = {};
 let _activeTab = 'statarb';
 
 // ── tab switching ─────────────────────────────────────────────────────────────
@@ -332,18 +381,17 @@ function switchTab(tab) {
   document.getElementById('tab-statarb').classList.toggle('active', tab === 'statarb');
   document.getElementById('tab-dualmom').classList.toggle('active', tab === 'dualmom');
 
-  // resize charts after browser has painted the visible tab
   requestAnimationFrame(() => {
     if (tab === 'statarb') {
       try { eqChart && eqChart.timeScale().fitContent(); } catch(e) {}
     } else {
-      // force resize so chart fills the now-visible div
-      const el = document.getElementById('dm-equity-chart');
-      if (el && dmEqChart) {
-        try {
-          dmEqChart.resize(el.clientWidth, 200);
-          dmEqChart.timeScale().fitContent();
-        } catch(e) {}
+      const el1 = document.getElementById('dm-paper-equity-chart');
+      if (el1 && dmPaperEqChart) {
+        try { dmPaperEqChart.resize(el1.clientWidth, 160); dmPaperEqChart.timeScale().fitContent(); } catch(e) {}
+      }
+      const el2 = document.getElementById('dm-equity-chart');
+      if (el2 && dmEqChart) {
+        try { dmEqChart.resize(el2.clientWidth, 200); dmEqChart.timeScale().fitContent(); } catch(e) {}
       }
     }
   });
@@ -361,6 +409,20 @@ function initCharts() {
     handleScroll: true, handleScale: true,
   });
   eqSeries = eqChart.addAreaSeries({
+    lineColor: '#10b981', topColor: 'rgba(16,185,129,0.25)',
+    bottomColor: 'rgba(16,185,129,0.0)', lineWidth: 2,
+  });
+
+  // DualMom paper equity curve
+  dmPaperEqChart = LightweightCharts.createChart(document.getElementById('dm-paper-equity-chart'), {
+    layout:     { background: { color: 'transparent' }, textColor: '#64748b' },
+    grid:       { vertLines: { color: '#1e2533' }, horzLines: { color: '#1e2533' } },
+    crosshair:  { mode: LightweightCharts.CrosshairMode.Magnet },
+    rightPriceScale: { borderColor: '#2d3748' },
+    timeScale:  { borderColor: '#2d3748', timeVisible: false },
+    handleScroll: true, handleScale: true,
+  });
+  dmPaperEqSeries = dmPaperEqChart.addAreaSeries({
     lineColor: '#10b981', topColor: 'rgba(16,185,129,0.25)',
     bottomColor: 'rgba(16,185,129,0.0)', lineWidth: 2,
   });
@@ -648,34 +710,38 @@ tickClock();
 //  DualMom rendering
 // ════════════════════════════════════════════════════════════
 
+const fmtNav = n => {
+  if (n == null || isNaN(n)) return '—';
+  if (n >= 1e7) return '₹' + (n/1e7).toFixed(2) + 'Cr';
+  return '₹' + (n/1e5).toFixed(2) + 'L';
+};
+
 function updateDmSignal(signal) {
   if (!signal || !signal.signal) return;
-  const sig = signal.signal;   // "IN" / "OUT" / "UNKNOWN"
+  const sig = signal.signal;
   const px  = signal.nifty_price;
   const ma  = signal.ma100;
   const gap = signal.gap_pct;
 
-  // badge + signal text
-  const badge = document.getElementById('dm-signal-badge');
+  const badge  = document.getElementById('dm-signal-badge');
   const sigTxt = document.getElementById('dm-signal-text');
   if (sig === 'IN') {
-    badge.className = 'badge-in text-xs font-medium px-3 py-1 rounded-full';
-    badge.textContent = '✅ IN — Equity';
-    sigTxt.className = 'text-sm font-semibold text-emerald-400';
+    badge.className  = 'badge-in text-xs font-medium px-3 py-1 rounded-full';
+    badge.textContent = 'IN — Equity';
+    sigTxt.className  = 'text-sm font-semibold text-emerald-400';
     sigTxt.textContent = 'IN — Nifty above 100MA';
   } else if (sig === 'OUT') {
-    badge.className = 'badge-out text-xs font-medium px-3 py-1 rounded-full';
-    badge.textContent = '⚠️ OUT — Liquid Fund';
-    sigTxt.className = 'text-sm font-semibold text-yellow-400';
+    badge.className  = 'badge-out text-xs font-medium px-3 py-1 rounded-full';
+    badge.textContent = 'OUT — Liquid Fund';
+    sigTxt.className  = 'text-sm font-semibold text-yellow-400';
     sigTxt.textContent = 'OUT — Nifty below 100MA';
   } else {
-    badge.className = 'badge-unk text-xs font-medium px-3 py-1 rounded-full';
+    badge.className  = 'badge-unk text-xs font-medium px-3 py-1 rounded-full';
     badge.textContent = '— Unknown';
-    sigTxt.className = 'text-sm font-semibold text-slate-400';
+    sigTxt.className  = 'text-sm font-semibold text-slate-400';
     sigTxt.textContent = 'Unknown';
   }
 
-  // prices
   const fmt2 = n => n ? n.toLocaleString('en-IN', {maximumFractionDigits:0}) : '—';
   document.getElementById('dm-nifty-price').textContent = px ? '₹' + fmt2(px) : '—';
   document.getElementById('dm-nifty-ma').textContent    = ma ? '₹' + fmt2(ma) : '—';
@@ -683,97 +749,157 @@ function updateDmSignal(signal) {
   if (sig !== 'UNKNOWN' && gap != null) {
     const gapEl = document.getElementById('dm-nifty-gap');
     gapEl.textContent = (gap >= 0 ? '+' : '') + gap.toFixed(2) + '%';
-    gapEl.className = 'text-base font-mono font-semibold ' + (gap >= 0 ? 'text-emerald-400' : 'text-rose-400');
-
-    // gap bar: center=50%, ±10% maps to 0-100%
+    gapEl.className   = 'text-base font-mono font-semibold ' + (gap >= 0 ? 'text-emerald-400' : 'text-rose-400');
     const barPct = Math.min(Math.max(50 + gap * 2, 5), 95);
     const bar = document.getElementById('dm-gap-bar');
     bar.style.width = barPct + '%';
-    bar.className = 'nifty-gap-fill ' + (gap >= 0 ? 'bg-emerald-500' : 'bg-rose-500');
+    bar.className   = 'nifty-gap-fill ' + (gap >= 0 ? 'bg-emerald-500' : 'bg-rose-500');
   } else {
     document.getElementById('dm-nifty-gap').textContent = '—';
-    document.getElementById('dm-nifty-gap').className = 'text-base font-mono font-semibold text-slate-500';
-    const bar = document.getElementById('dm-gap-bar');
-    bar.style.width = '50%';
-    bar.className = 'nifty-gap-fill bg-slate-600';
+    document.getElementById('dm-nifty-gap').className   = 'text-base font-mono font-semibold text-slate-500';
+    document.getElementById('dm-gap-bar').style.width   = '50%';
+    document.getElementById('dm-gap-bar').className     = 'nifty-gap-fill bg-slate-600';
   }
-
   if (signal.as_of) document.getElementById('dm-as-of').textContent = 'As of ' + signal.as_of;
-
-  // show/hide portfolio states
-  document.getElementById('dm-unknown-state').style.display = 'none';
-  document.getElementById('dm-out-state').style.display  = sig === 'OUT'  ? '' : 'none';
-  document.getElementById('dm-in-state').style.display   = sig === 'IN'   ? '' : 'none';
-  if (sig === 'UNKNOWN') document.getElementById('dm-unknown-state').style.display = '';
 }
 
-function updateDmPortfolio(data) {
-  if (!data || data.status === 'out') {
-    // liquid fund accrual display
-    const accrual = document.getElementById('dm-liquid-accrual');
-    if (accrual) {
-      const dailyRate = 0.06 / 365;
-      const today = new Date();
-      const dayOfYear = Math.floor((today - new Date(today.getFullYear(), 0, 0)) / 864e5);
-      const accrued = 1_000_000 * ((1 + dailyRate) ** dayOfYear - 1);
-      accrual.textContent = `YTD accrual on ₹10L: +₹${Math.round(accrued).toLocaleString('en-IN')}`;
-    }
-    return;
+function updateDmPaper(state) {
+  if (!state) return;
+  const status  = state.status;
+  const nav     = state.current_nav   ?? 1_000_000;
+  const pnl     = state.total_pnl     ?? 0;
+  const pnlPct  = state.total_pnl_pct ?? 0;
+  const daily   = state.liquid_daily_abs ?? 0;
+
+  // metric cards
+  document.getElementById('dm-paper-nav').textContent      = fmtNav(nav);
+  document.getElementById('dm-paper-nav').className        = 'text-2xl font-semibold ' + (nav >= 1e6 ? 'text-white' : 'text-rose-400');
+  document.getElementById('dm-paper-pnl').innerHTML        = `<span class="${pnl >= 0 ? 'pnl-pos':'pnl-neg'}">${pnl >= 0 ? '+':'-'}₹${Math.round(Math.abs(pnl)).toLocaleString('en-IN')}</span>`;
+  document.getElementById('dm-paper-pnl-pct').innerHTML    = `<span class="${pnlPct >= 0 ? 'pnl-pos':'pnl-neg'}">${pnlPct >= 0 ? '+':''}${pnlPct.toFixed(2)}%</span>`;
+  document.getElementById('dm-paper-start-date').textContent = state.start_date ?? '—';
+  document.getElementById('dm-next-rebal').textContent       = state.next_rebal_date ?? '—';
+
+  const statusEl    = document.getElementById('dm-paper-status');
+  const statusSubEl = document.getElementById('dm-paper-status-sub');
+  if (status === 'in') {
+    statusEl.textContent = 'IN';
+    statusEl.className   = 'text-2xl font-semibold text-emerald-400';
+    statusSubEl.textContent = `${state.holdings_count ?? 0} stocks held`;
+  } else if (status === 'out') {
+    statusEl.textContent = 'OUT';
+    statusEl.className   = 'text-2xl font-semibold text-yellow-400';
+    statusSubEl.textContent = 'liquid fund';
+  } else {
+    statusEl.textContent = '—';
+    statusEl.className   = 'text-2xl font-semibold text-slate-500';
+    statusSubEl.textContent = 'not started';
   }
 
-  const positions = data.positions ?? [];
-  const totalPnl  = data.total_pnl ?? 0;
-  const totalPnlP = data.total_pnl_pct ?? 0;
-  const totalVal  = data.total_value ?? 0;
+  // show/hide state cards
+  const isOut     = status === 'out';
+  const isIn      = status === 'in';
+  const isUnknown = status === 'unknown' || !status;
+  document.getElementById('dm-paper-out-card').style.display     = isOut     ? '' : 'none';
+  document.getElementById('dm-paper-in-card').style.display      = isIn      ? '' : 'none';
+  document.getElementById('dm-paper-unknown-card').style.display = isUnknown ? '' : 'none';
 
-  // summary cards
-  document.getElementById('dm-total-value').innerHTML = `<span class="text-white">₹${(totalVal/1e5).toFixed(2)}L</span>`;
-  document.getElementById('dm-total-pnl').innerHTML  = fmtPnl(totalPnl);
-  document.getElementById('dm-total-pnl-pct').innerHTML = `<span class="${totalPnlP >= 0 ? 'pnl-pos' : 'pnl-neg'}">${totalPnlP >= 0 ? '+' : ''}${totalPnlP.toFixed(2)}%</span>`;
-  document.getElementById('dm-stocks-held').textContent = positions.length + ' / 50';
+  if (isOut) {
+    const dailyEl = document.getElementById('dm-paper-daily-accrual');
+    if (dailyEl) dailyEl.textContent = `+₹${Math.round(daily).toLocaleString('en-IN')}/day`;
+  }
 
-  // top gainers / losers (top 5 each)
-  const sorted = [...positions].sort((a,b) => b.pnl_pct - a.pnl_pct);
-  const gainers = sorted.slice(0, 5);
-  const losers  = sorted.slice(-5).reverse();
+  if (isIn && state.holdings && state.holdings.length) {
+    const rebalNote = document.getElementById('dm-paper-rebal-note');
+    if (rebalNote) rebalNote.textContent = `Last rebal: ${state.rebal_date ?? '—'}`;
+    let tbody = '';
+    state.holdings.forEach(h => {
+      tbody += `<tr>
+        <td class="text-slate-500">${h.rank}</td>
+        <td class="text-slate-200 font-medium">${h.sym}</td>
+        <td class="text-slate-400">${h.weight.toFixed(1)}%</td>
+        <td class="text-sky-400">${h.mom_return >= 0 ? '+' : ''}${h.mom_return.toFixed(1)}%</td>
+        <td class="text-slate-400 font-mono">₹${h.entry_price.toLocaleString('en-IN', {maximumFractionDigits:1})}</td>
+        <td class="font-mono text-slate-300">₹${(h.current_price??h.entry_price).toLocaleString('en-IN', {maximumFractionDigits:1})}</td>
+        <td class="text-slate-500">₹${(h.allocated/1000).toFixed(1)}K</td>
+      </tr>`;
+    });
+    document.getElementById('dm-paper-holdings-body').innerHTML = tbody;
+  }
+}
 
-  const renderMiniRow = (p) => `
-    <div class="flex justify-between items-center py-0.5">
-      <span class="text-slate-300 font-mono">${p.sym}</span>
-      <div class="flex gap-3">
-        <span class="text-slate-500">${p.weight.toFixed(1)}%</span>
-        <span class="${p.pnl_pct >= 0 ? 'pnl-pos' : 'pnl-neg'} font-mono">${p.pnl_pct >= 0 ? '+' : ''}${p.pnl_pct.toFixed(2)}%</span>
-        <span class="${p.pnl >= 0 ? 'pnl-pos' : 'pnl-neg'} font-mono w-20 text-right">${p.pnl >= 0 ? '+' : ''}₹${Math.round(Math.abs(p.pnl)).toLocaleString('en-IN')}</span>
-      </div>
-    </div>`;
+function updateDmPaperEquity(data) {
+  const history = data?.history ?? [];
+  const emptyEl = document.getElementById('dm-paper-eq-empty');
+  const chartEl = document.getElementById('dm-paper-equity-chart');
+  if (!history.length) {
+    if (emptyEl) { emptyEl.style.display = ''; chartEl.style.display = 'none'; }
+    return;
+  }
+  if (emptyEl) { emptyEl.style.display = 'none'; chartEl.style.display = ''; }
+  const pts = history.map(e => ({ time: e.date, value: +(e.nav / 1e5).toFixed(3) }));
+  dmPaperEqSeries.setData(pts);
+  dmPaperEqChart.timeScale().fitContent();
+}
 
-  document.getElementById('dm-top-gainers').innerHTML = gainers.map(renderMiniRow).join('');
-  document.getElementById('dm-top-losers').innerHTML  = losers.map(renderMiniRow).join('');
-
-  // full table
-  let tbody = '';
-  positions.forEach(p => {
-    const pnlCls = p.pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
-    const chgCls = p.pnl_pct >= 0 ? 'pnl-pos' : 'pnl-neg';
-    const isLive = p.live_price !== p.entry_price;
-    tbody += `<tr>
-      <td class="text-slate-500">${p.rank}</td>
-      <td class="text-slate-200 font-medium">${p.sym}</td>
-      <td class="text-slate-400">${p.weight.toFixed(1)}%</td>
-      <td class="text-sky-400">${p.mom_return >= 0 ? '+' : ''}${p.mom_return.toFixed(1)}%</td>
-      <td class="text-slate-400 font-mono">₹${p.entry_price.toLocaleString('en-IN', {maximumFractionDigits:1})}</td>
-      <td class="font-mono ${isLive ? 'text-white' : 'text-slate-500'}">₹${p.live_price.toLocaleString('en-IN', {maximumFractionDigits:1})}</td>
-      <td class="${chgCls} font-mono">${p.pnl_pct >= 0 ? '+' : ''}${p.pnl_pct.toFixed(2)}%</td>
-      <td class="${pnlCls} font-mono">${p.pnl >= 0 ? '+' : ''}₹${Math.round(Math.abs(p.pnl)).toLocaleString('en-IN')}</td>
-      <td class="text-slate-500">₹${(p.allocated/1000).toFixed(1)}K</td>
+function updateDmDailyReturns(data) {
+  const history = data?.history ?? [];
+  const tbody   = document.getElementById('dm-daily-returns-body');
+  if (!history.length) {
+    tbody.innerHTML = '<tr><td colspan="7" class="py-4 text-center text-slate-600 text-xs">No daily returns recorded yet.</td></tr>';
+    return;
+  }
+  const rows = [...history].reverse().slice(0, 30);
+  let html = '';
+  rows.forEach(r => {
+    const tot = r.total_return_pct ?? 0;
+    const totAbs = r.total_return_abs ?? 0;
+    const liqAbs = r.liquid_return_abs ?? 0;
+    const stkAbs = r.stock_return_abs  ?? 0;
+    const cls    = tot >= 0 ? 'pnl-pos' : 'pnl-neg';
+    const sign   = v => v >= 0 ? '+' : '';
+    const rs     = v => `${sign(v)}₹${Math.round(Math.abs(v)).toLocaleString('en-IN')}`;
+    const badge  = r.status === 'in'
+      ? '<span class="text-emerald-400 text-xs">IN</span>'
+      : r.status === 'out'
+        ? '<span class="text-yellow-400 text-xs">OUT</span>'
+        : '<span class="text-slate-500 text-xs">—</span>';
+    html += `<tr>
+      <td class="text-slate-400 font-mono">${r.date}</td>
+      <td class="text-center">${badge}</td>
+      <td class="${liqAbs >= 0 ? 'pnl-pos':'pnl-neg'} font-mono">${rs(liqAbs)}</td>
+      <td class="${stkAbs >= 0 ? 'pnl-pos':'pnl-neg'} font-mono">${rs(stkAbs)}</td>
+      <td class="${cls} font-mono">${rs(totAbs)}</td>
+      <td class="${cls} font-mono">${sign(tot)}${tot.toFixed(3)}%</td>
+      <td class="text-slate-300 font-mono">${fmtNav(r.nav)}</td>
     </tr>`;
   });
-  document.getElementById('dm-portfolio-body').innerHTML = tbody;
+  tbody.innerHTML = html;
+}
+
+function updateDmSignalLog(log) {
+  const tbody = document.getElementById('dm-signal-log-body');
+  if (!log || !log.length) {
+    tbody.innerHTML = '<tr><td colspan="5" class="py-3 text-center text-slate-600 text-xs">No signal history yet.</td></tr>';
+    return;
+  }
+  let html = '';
+  [...log].reverse().forEach(entry => {
+    const isin  = entry.signal === 'IN';
+    const sigCls = isin ? 'text-emerald-400' : 'text-yellow-400';
+    const gapCls = (entry.gap_pct ?? 0) >= 0 ? 'pnl-pos' : 'pnl-neg';
+    html += `<tr>
+      <td class="text-slate-400 font-mono">${entry.date}</td>
+      <td class="text-center"><span class="${sigCls} font-semibold">${entry.signal}</span></td>
+      <td class="text-slate-300 font-mono">₹${Math.round(entry.nifty_price).toLocaleString('en-IN')}</td>
+      <td class="text-slate-400 font-mono">₹${Math.round(entry.ma100).toLocaleString('en-IN')}</td>
+      <td class="${gapCls} font-mono">${entry.gap_pct >= 0 ? '+':''}${entry.gap_pct.toFixed(2)}%</td>
+    </tr>`;
+  });
+  tbody.innerHTML = html;
 }
 
 function updateDmEquity(equityArr) {
   if (!equityArr || !equityArr.length) return;
-  // scale to crores so Y-axis shows e.g. 0.1 → 38.4 (readable)
   const pts = equityArr.map(e => ({ time: e.date, value: +(e.nav / 1e7).toFixed(3) }));
   dmEqSeries.setData(pts);
   dmEqChart.timeScale().fitContent();
@@ -783,27 +909,31 @@ function updateDmEquity(equityArr) {
 // ── initial data load ─────────────────────────────────────────────────────────
 async function fetchAll() {
   try {
-    const [sigRes, posRes, eqRes, trRes, modeRes, dmSigRes, dmPortRes, dmEqRes] = await Promise.all([
+    const [sigRes, posRes, eqRes, trRes, modeRes, dmSigRes, dmEqRes,
+           dmPaperRes, dmPaperEqRes, dmSigLogRes, statusRes] = await Promise.all([
       fetch('/api/signals'),
       fetch('/api/positions'),
       fetch('/api/equity'),
       fetch('/api/trades'),
       fetch('/api/mode'),
       fetch('/api/dualmom/signal'),
-      fetch('/api/dualmom/portfolio'),
       fetch('/api/dualmom/equity'),
+      fetch('/api/dualmom/paper'),
+      fetch('/api/dualmom/paper_equity'),
+      fetch('/api/dualmom/signal_log'),
+      fetch('/api/status'),
     ]);
-    _signals        = await sigRes.json();
-    _positions      = await posRes.json();
-    _equity         = await eqRes.json();
-    _trades         = await trRes.json();
-    const modeData  = await modeRes.json();
-    _dmSignal       = await dmSigRes.json();
-    _dmPortfolio    = await dmPortRes.json();
-    _dmEquity       = await dmEqRes.json();
-
-    const feedRes = await fetch('/api/status');
-    const status  = await feedRes.json();
+    _signals       = await sigRes.json();
+    _positions     = await posRes.json();
+    _equity        = await eqRes.json();
+    _trades        = await trRes.json();
+    const modeData = await modeRes.json();
+    _dmSignal      = await dmSigRes.json();
+    _dmEquity      = await dmEqRes.json();
+    _dmPaper       = await dmPaperRes.json();
+    _dmPaperEquity = await dmPaperEqRes.json();
+    const sigLog   = await dmSigLogRes.json();
+    const status   = await statusRes.json();
 
     // StatArb
     renderPairs(_signals, _positions);
@@ -815,7 +945,10 @@ async function fetchAll() {
 
     // DualMom
     updateDmSignal(_dmSignal);
-    updateDmPortfolio(_dmPortfolio);
+    updateDmPaper(_dmPaper);
+    updateDmPaperEquity(_dmPaperEquity);
+    updateDmDailyReturns(_dmPaperEquity);
+    updateDmSignalLog(Array.isArray(sigLog) ? sigLog : []);
     updateDmEquity(_dmEquity);
   } catch(e) {
     console.error('fetchAll error', e);
@@ -839,12 +972,6 @@ function connectWS() {
       updatePositions(_positions, _signals);
       updateMetrics(_equity, _positions, _trades, d.ts);
       updateFeedStatus(d.feed, d.mode);
-
-      // DualMom live P&L (refresh every push cycle)
-      fetch('/api/dualmom/portfolio').then(r => r.json()).then(data => {
-        _dmPortfolio = data;
-        updateDmPortfolio(data);
-      }).catch(()=>{});
     } catch(err) { console.error(err); }
   };
 

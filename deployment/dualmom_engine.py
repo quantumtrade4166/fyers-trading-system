@@ -193,16 +193,6 @@ def refresh() -> None:
     portfolio = _compute_portfolio(prices, signal)
     equity    = _load_equity()
 
-    # subscribe DualMom stocks to live feed if signal is IN
-    if signal["signal"] == "IN" and portfolio:
-        try:
-            from deployment import live_feed
-            extra = [pos["sym"] for pos in portfolio]
-            live_feed.add_symbols(extra)
-            print(f"  [dualmom] Subscribed {len(extra)} stocks to live feed.")
-        except Exception as e:
-            print(f"  [dualmom] Feed subscription skip: {e}")
-
     with _lock:
         _cache["signal"]       = signal
         _cache["portfolio"]    = portfolio
