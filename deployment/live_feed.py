@@ -38,15 +38,30 @@ def get_live_prices() -> dict[str, float]:
 
 
 def _on_message(msg):
-    if not isinstance(msg, dict):
-        return
-    sym_raw = msg.get("symbol", "")
-    ltp     = msg.get("ltp")
-    if not sym_raw or ltp is None:
-        return
-    sym = sym_raw.replace("NSE:", "").replace("-EQ", "")
-    with _lock:
-        _live_prices[sym] = float(ltp)
+    # Fyers v3 WebSocket wraps ticks in {"d": [{symbol, ltp, ...}, ...]}
+    # Some builds send the dict directly; handle both formats.
+    ticks = []
+    if isinstance(msg, dict):
+        d = msg.get("d")
+        if isinstance(d, list):
+            ticks = d
+        elif isinstance(d, dict):
+            ticks = [d]
+        else:
+            ticks = [msg]          # flat format fallback
+    elif isinstance(msg, list):
+        ticks = msg
+
+    for tick in ticks:
+        if not isinstance(tick, dict):
+            continue
+        sym_raw = tick.get("symbol", "")
+        ltp     = tick.get("ltp")
+        if not sym_raw or ltp is None:
+            continue
+        sym = sym_raw.replace("NSE:", "").replace("-EQ", "")
+        with _lock:
+            _live_prices[sym] = float(ltp)
 
 
 def _on_error(msg):
