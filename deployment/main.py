@@ -39,6 +39,16 @@ async def lifespan(app: FastAPI):
     _scheduler.start()
     print("  [main] Scheduler started.")
 
+    # if server starts during market hours, kick off the live feed immediately
+    import pytz
+    from datetime import datetime
+    _ist = pytz.timezone("Asia/Kolkata")
+    _now = datetime.now(_ist)
+    _market_open = _now.weekday() < 5 and (9, 15) <= (_now.hour, _now.minute) <= (15, 30)
+    if _market_open:
+        print("  [main] Market is open — starting live feed immediately.")
+        live_feed.start_feed()
+
     asyncio.create_task(_push_loop())
     yield
 
