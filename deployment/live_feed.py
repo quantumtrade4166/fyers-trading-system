@@ -30,7 +30,8 @@ _lock          = threading.Lock()
 _ws_client     = None
 _running       = False
 _extra_symbols: list[str] = []   # DualMom or other additional subscriptions
-_raw_samples: list = []          # DEBUG: store first 3 raw messages
+_raw_samples: list  = []          # DEBUG: store first 3 raw messages
+_debug_log:   list  = []          # DEBUG: connection lifecycle events
 
 
 def get_live_prices() -> dict[str, float]:
@@ -72,18 +73,22 @@ def _on_message(msg):
 
 def _on_error(msg):
     print(f"  [live_feed] WebSocket error: {msg}")
+    _debug_log.append({"event": "error", "msg": str(msg)[:200]})
 
 
 def _on_close(msg):
     print(f"  [live_feed] WebSocket closed: {msg}")
+    _debug_log.append({"event": "close", "msg": str(msg)[:200]})
     global _running
     _running = False
 
 
 def _on_open():
     print("  [live_feed] WebSocket connected. Subscribing...")
+    _debug_log.append({"event": "open", "syms": len(FYERS_SYMBOLS)})
     all_syms = FYERS_SYMBOLS + [f"NSE:{s}-EQ" for s in _extra_symbols if f"NSE:{s}-EQ" not in FYERS_SYMBOLS]
     _ws_client.subscribe(symbols=all_syms, data_type="SymbolUpdate")
+    _debug_log.append({"event": "subscribed", "count": len(all_syms)})
 
 
 def start_feed() -> bool:

@@ -128,12 +128,13 @@ async def api_mode():
 
 @app.get("/api/debug/feed")
 async def api_debug_feed():
-    from deployment.live_feed import _raw_samples, _live_prices, _running
+    from deployment.live_feed import _raw_samples, _live_prices, _running, _debug_log
     return {
         "running":      _running,
         "prices_count": len(_live_prices),
         "prices":       dict(list(_live_prices.items())[:5]),
         "raw_samples":  _raw_samples,
+        "log":          _debug_log,
     }
 
 
