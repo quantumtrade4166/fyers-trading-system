@@ -241,7 +241,28 @@
       <div class="card p-5">
         <div class="flex items-center justify-between mb-4">
           <h3 class="text-sm font-medium text-slate-300">Current Holdings — Top 50 Stocks</h3>
-          <span class="text-xs text-slate-600" id="dm-paper-rebal-note">Last rebal: —</span>
+          <div class="flex items-center gap-3">
+            <span class="text-xs text-slate-600" id="dm-paper-rebal-note">Last rebal: —</span>
+            <button onclick="refreshLiveQuotes()" id="dm-quotes-btn"
+              class="text-xs px-3 py-1 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors">
+              ⟳ Live Prices
+            </button>
+            <span id="dm-quotes-ts" class="text-xs text-slate-600"></span>
+          </div>
+        </div>
+        <div id="dm-quotes-pnl-bar" class="hidden mb-3 grid grid-cols-3 gap-3">
+          <div class="card p-3 text-center">
+            <p class="text-xs text-slate-500 mb-1">Live Portfolio Value</p>
+            <p id="dm-lq-value" class="text-lg font-semibold text-white">—</p>
+          </div>
+          <div class="card p-3 text-center">
+            <p class="text-xs text-slate-500 mb-1">Live P&L</p>
+            <p id="dm-lq-pnl" class="text-lg font-semibold">—</p>
+          </div>
+          <div class="card p-3 text-center">
+            <p class="text-xs text-slate-500 mb-1">Live P&L %</p>
+            <p id="dm-lq-pnl-pct" class="text-lg font-semibold">—</p>
+          </div>
         </div>
         <div class="overflow-x-auto">
           <table class="dm-table w-full">
@@ -252,7 +273,9 @@
                 <th>Weight</th>
                 <th>12m Ret</th>
                 <th>Entry ₹</th>
-                <th>Last ₹</th>
+                <th>LTP ₹</th>
+                <th>P&L ₹</th>
+                <th>P&L %</th>
                 <th>Alloc ₹</th>
               </tr>
             </thead>
@@ -813,13 +836,19 @@ function updateDmPaper(state) {
     if (rebalNote) rebalNote.textContent = `Last rebal: ${state.rebal_date ?? '—'}`;
     let tbody = '';
     state.holdings.forEach(h => {
+      const cur    = h.current_price ?? h.entry_price;
+      const pnl    = (cur - h.entry_price) * h.shares;
+      const pnlPct = (cur / h.entry_price - 1) * 100;
+      const pnlCls = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
       tbody += `<tr>
         <td class="text-slate-500">${h.rank}</td>
         <td class="text-slate-200 font-medium">${h.sym}</td>
         <td class="text-slate-400">${h.weight.toFixed(1)}%</td>
         <td class="text-sky-400">${h.mom_return >= 0 ? '+' : ''}${h.mom_return.toFixed(1)}%</td>
-        <td class="text-slate-400 font-mono">₹${h.entry_price.toLocaleString('en-IN', {maximumFractionDigits:1})}</td>
-        <td class="font-mono text-slate-300">₹${(h.current_price??h.entry_price).toLocaleString('en-IN', {maximumFractionDigits:1})}</td>
+        <td class="text-slate-400 font-mono">₹${h.entry_price.toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
+        <td class="font-mono text-slate-300">₹${cur.toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
+        <td class="${pnlCls} font-mono">${pnl >= 0 ? '+':''}₹${Math.round(Math.abs(pnl)).toLocaleString('en-IN')}</td>
+        <td class="${pnlCls} font-mono">${pnlPct >= 0 ? '+':''}${pnlPct.toFixed(2)}%</td>
         <td class="text-slate-500">₹${(h.allocated/1000).toFixed(1)}K</td>
       </tr>`;
     });
@@ -896,6 +925,55 @@ function updateDmSignalLog(log) {
     </tr>`;
   });
   tbody.innerHTML = html;
+}
+
+async function refreshLiveQuotes() {
+  const btn = document.getElementById('dm-quotes-btn');
+  const ts  = document.getElementById('dm-quotes-ts');
+  btn.textContent = '⟳ Fetching...';
+  btn.disabled = true;
+  try {
+    const resp = await fetch('/api/dualmom/live_quotes');
+    const data = await resp.json();
+    if (data.error) { ts.textContent = 'Error: ' + data.error; return; }
+    if (data.status !== 'in' || !data.quotes.length) { ts.textContent = 'No holdings.'; return; }
+
+    // summary bar
+    const bar = document.getElementById('dm-quotes-pnl-bar');
+    bar.classList.remove('hidden');
+    bar.classList.add('grid');
+    document.getElementById('dm-lq-value').textContent   = fmtNav(data.total_value);
+    const pnl  = data.total_pnl ?? 0;
+    const pnlP = data.total_pnl_pct ?? 0;
+    document.getElementById('dm-lq-pnl').innerHTML     = `<span class="${pnl  >= 0 ? 'pnl-pos':'pnl-neg'}">${pnl >= 0 ? '+':''}₹${Math.round(Math.abs(pnl)).toLocaleString('en-IN')}</span>`;
+    document.getElementById('dm-lq-pnl-pct').innerHTML = `<span class="${pnlP >= 0 ? 'pnl-pos':'pnl-neg'}">${pnlP >= 0 ? '+':''}${pnlP.toFixed(2)}%</span>`;
+
+    // rebuild table with LTP + P&L
+    let tbody = '';
+    data.quotes.forEach(h => {
+      const pnlCls = h.pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
+      tbody += `<tr>
+        <td class="text-slate-500">${h.rank}</td>
+        <td class="text-slate-200 font-medium">${h.sym}</td>
+        <td class="text-slate-400">${h.weight.toFixed(1)}%</td>
+        <td class="text-sky-400">${h.mom_return >= 0 ? '+':''}${h.mom_return.toFixed(1)}%</td>
+        <td class="text-slate-400 font-mono">₹${h.entry_price.toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
+        <td class="text-white font-mono">₹${h.ltp.toLocaleString('en-IN',{maximumFractionDigits:1})}</td>
+        <td class="${pnlCls} font-mono">${h.pnl >= 0 ? '+':''}₹${Math.round(Math.abs(h.pnl)).toLocaleString('en-IN')}</td>
+        <td class="${pnlCls} font-mono">${h.pnl_pct >= 0 ? '+':''}${h.pnl_pct.toFixed(2)}%</td>
+        <td class="text-slate-500">₹${(h.allocated/1000).toFixed(1)}K</td>
+      </tr>`;
+    });
+    document.getElementById('dm-paper-holdings-body').innerHTML = tbody;
+
+    const now = new Date().toLocaleTimeString('en-IN', {timeZone:'Asia/Kolkata', hour12:false});
+    ts.textContent = 'Updated ' + now;
+  } catch(e) {
+    ts.textContent = 'Failed: ' + e.message;
+  } finally {
+    btn.textContent = '⟳ Live Prices';
+    btn.disabled = false;
+  }
 }
 
 function updateDmEquity(equityArr) {

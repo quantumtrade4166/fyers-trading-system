@@ -180,6 +180,13 @@ async def api_dualmom_signal_log():
     return dualmom_paper.get_signal_log()
 
 
+@app.get("/api/dualmom/live_quotes")
+async def api_dualmom_live_quotes():
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, dualmom_paper.get_live_quotes)
+
+
 # ── WebSocket — push updates every 60s during market hours, 5 min otherwise ──
 
 @app.websocket("/ws")

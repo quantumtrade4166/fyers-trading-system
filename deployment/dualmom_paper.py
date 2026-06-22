@@ -59,25 +59,28 @@ def _get_fyers():
     )
 
 
-def _fetch_close(fyers, sym: str) -> float | None:
-    """Fetch the most recent daily close for a symbol."""
+def _fetch_quotes_batch(fyers, symbols: list[str]) -> dict[str, float]:
+    """Fetch LTP for up to 50 symbols in a single Quotes API call.
+    Returns {sym: ltp} dict. Symbols should be plain NSE names (no prefix)."""
+    if not symbols:
+        return {}
     try:
-        today    = date.today()
-        start_ep = int(time.mktime((today - timedelta(days=7)).timetuple()))
-        end_ep   = int(time.mktime(today.timetuple()))
-        resp = fyers.history({
-            "symbol":      f"NSE:{sym}-EQ",
-            "resolution":  "D",
-            "date_format": "1",
-            "range_from":  str(start_ep),
-            "range_to":    str(end_ep),
-            "cont_flag":   "1",
-        })
-        if resp.get("s") == "ok" and resp.get("candles"):
-            return float(resp["candles"][-1][4])
+        syms_str = ",".join(f"NSE:{s}-EQ" for s in symbols)
+        resp = fyers.quotes({"symbols": syms_str})
+        if resp.get("s") != "ok":
+            print(f"  [paper] quotes API error: {resp.get('message')}")
+            return {}
+        result = {}
+        for item in resp.get("d", []):
+            raw_sym = item.get("n", "")          # "NSE:TCS-EQ"
+            ltp     = item.get("v", {}).get("lp")
+            if raw_sym and ltp:
+                sym = raw_sym.replace("NSE:", "").replace("-EQ", "")
+                result[sym] = float(ltp)
+        return result
     except Exception as e:
-        print(f"  [paper] fetch_close error {sym}: {e}")
-    return None
+        print(f"  [paper] quotes batch error: {e}")
+        return {}
 
 
 def _fetch_return_12m(fyers, sym: str) -> tuple:
@@ -221,13 +224,14 @@ def record_daily_nav():
 
     elif state["status"] == "in" and state["holdings"]:
         try:
-            fyers       = _get_fyers()
-            total_val   = 0.0
-            failed      = 0
+            fyers      = _get_fyers()
+            syms       = [h["sym"] for h in state["holdings"]]
+            prices     = _fetch_quotes_batch(fyers, syms)
+            total_val  = 0.0
+            failed     = 0
             for h in state["holdings"]:
                 sym   = h["sym"]
-                price = _fetch_close(fyers, sym)
-                time.sleep(RATE_LIMIT_SLEEP)
+                price = prices.get(sym)
                 if price and price > 0:
                     h["current_price"] = round(price, 2)
                     total_val += price * h["shares"]
@@ -236,7 +240,7 @@ def record_daily_nav():
                     failed += 1
             today_nav  = total_val
             stock_abs  = today_nav - prev_nav
-            print(f"  [paper] Stocks NAV: ₹{today_nav:,.0f} ({stock_abs:+,.0f}) [{failed} failed]")
+            print(f"  [paper] Stocks NAV: ₹{today_nav:,.0f} ({stock_abs:+,.0f}) [quotes API, {failed} failed]")
         except Exception as e:
             print(f"  [paper] EOD stock price error: {e}")
     else:
@@ -414,3 +418,49 @@ def get_signal_log() -> list:
     with _lock:
         sl = _load_signal_log()
     return sl.get("log", [])
+
+
+def get_live_quotes() -> dict:
+    """Fetch current LTP for all held stocks via Quotes API. Called on demand."""
+    with _lock:
+        state = _load_paper()
+    if state["status"] != "in" or not state["holdings"]:
+        return {"status": state["status"], "quotes": [], "error": None}
+    try:
+        fyers  = _get_fyers()
+        syms   = [h["sym"] for h in state["holdings"]]
+        prices = _fetch_quotes_batch(fyers, syms)
+        quotes = []
+        total_val  = 0.0
+        total_cost = 0.0
+        for h in state["holdings"]:
+            sym        = h["sym"]
+            ltp        = prices.get(sym, h["entry_price"])
+            entry      = h["entry_price"]
+            shares     = h["shares"]
+            val        = ltp * shares
+            cost       = entry * shares
+            pnl        = val - cost
+            pnl_pct    = (ltp / entry - 1) * 100 if entry > 0 else 0.0
+            total_val  += val
+            total_cost += cost
+            quotes.append({
+                **h,
+                "ltp":          round(ltp, 2),
+                "current_value": round(val, 0),
+                "pnl":          round(pnl, 0),
+                "pnl_pct":      round(pnl_pct, 2),
+            })
+        quotes.sort(key=lambda x: x["pnl_pct"], reverse=True)
+        total_pnl   = total_val - total_cost
+        total_pnl_p = total_pnl / total_cost * 100 if total_cost > 0 else 0.0
+        return {
+            "status":        "in",
+            "quotes":        quotes,
+            "total_value":   round(total_val, 0),
+            "total_pnl":     round(total_pnl, 0),
+            "total_pnl_pct": round(total_pnl_p, 2),
+            "error":         None,
+        }
+    except Exception as e:
+        return {"status": "in", "quotes": [], "error": str(e)}
