@@ -184,21 +184,25 @@ async def _push_loop():
     """Background task: push signal + position snapshot to all connected browsers."""
     import json
     from datetime import datetime
+    from functools import partial
     import pytz
     IST = pytz.timezone("Asia/Kolkata")
+    loop = asyncio.get_event_loop()
 
     while True:
-        now = datetime.now(IST)
-        market_open = now.weekday() < 5 and (9, 15) <= (now.hour, now.minute) <= (15, 30)
-        await asyncio.sleep(15 if market_open else 60)
+        await asyncio.sleep(60)
         if not _ws_clients:
             continue
         try:
             today_prices = live_feed.get_live_prices() or None
+            # run CPU-heavy OLS computation off the event loop to avoid blocking WebSocket
+            signals = await loop.run_in_executor(
+                None, partial(signal_engine.get_all_signals, today_prices)
+            )
             payload = {
                 "type":      "update",
                 "ts":        datetime.now(IST).strftime("%H:%M:%S"),
-                "signals":   signal_engine.get_all_signals(today_prices),
+                "signals":   signals,
                 "positions": pos_store.get_positions(),
                 "equity":    pos_store.get_equity(),
                 "mode":      MODE,
