@@ -99,10 +99,18 @@ def start_feed() -> bool:
         print(f"  [live_feed] Token file not found: {token_path}")
         return False
 
-    access_token = token_path.read_text(encoding="utf-8").strip()
-    if not access_token:
+    raw = token_path.read_text(encoding="utf-8").strip()
+    if not raw:
         print("  [live_feed] Empty access token.")
         return False
+
+    # token file is JSON: {"token": "...", "date": "..."}
+    try:
+        import json as _json
+        payload      = _json.loads(raw)
+        access_token = payload["token"]
+    except Exception:
+        access_token = raw   # fallback: plain token string
 
     client_id    = f"{APP_ID}:{access_token}"
 
