@@ -15,6 +15,9 @@ deployment/trades.json
 deployment/equity.json
 deployment/logs/
 
+# Local backups from VPS (scp'd daily)
+deployment/backups/
+
 # Python cache
 __pycache__/
 *.pyc
