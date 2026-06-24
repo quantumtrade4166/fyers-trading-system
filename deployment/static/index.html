@@ -711,23 +711,76 @@ function updatePositions(positions, signals) {
 function updateTrades(trades) {
   const el = document.getElementById('trades-table');
   if (!trades.length) { el.innerHTML = '<p class="text-slate-600 text-xs">No closed trades yet.</p>'; return; }
+
   let html = `<table class="w-full text-xs"><thead><tr class="text-slate-600 border-b border-slate-800">
-    <th class="text-left pb-2">Pair</th><th class="text-left pb-2">Dir</th>
-    <th class="text-right pb-2">Exit</th><th class="text-right pb-2">Days</th>
-    <th class="text-right pb-2">P&L</th><th class="text-right pb-2">Reason</th></tr></thead><tbody>`;
-  trades.slice(0,20).forEach(t => {
+    <th class="text-left pb-2">Pair</th>
+    <th class="text-left pb-2">Dir</th>
+    <th class="text-right pb-2">Exit</th>
+    <th class="text-right pb-2">Days</th>
+    <th class="text-right pb-2">Net P&L</th>
+    <th class="text-right pb-2">Reason</th>
+  </tr></thead><tbody>`;
+
+  trades.slice(0, 20).forEach((t, i) => {
     const dir    = t.direction === 'long_spread' ? '▲' : '▼';
     const dircls = t.direction === 'long_spread' ? 'pos-long' : 'pos-short';
-    html += `<tr class="border-b border-slate-800/50">
+    const rowId  = `trade-detail-${i}`;
+
+    // individual leg P&L (gross, before combined cost)
+    const sign   = t.direction === 'long_spread' ? 1 : -1;
+    const pnl_a  = (t.exit_price_a - t.entry_price_a) * t.qty_a * sign;
+    const pnl_b  = -(t.exit_price_b - t.entry_price_b) * t.qty_b * sign;
+
+    // leg labels from pair name
+    const [symA, symB] = t.pair.split('/');
+
+    html += `
+    <tr class="border-b border-slate-800/50 cursor-pointer hover:bg-slate-800/30"
+        onclick="document.getElementById('${rowId}').classList.toggle('hidden')">
       <td class="py-1.5 text-slate-300">${t.pair}</td>
       <td class="py-1.5"><span class="${dircls}">${dir}</span></td>
       <td class="py-1.5 text-right text-slate-500">${t.exit_date}</td>
       <td class="py-1.5 text-right text-slate-500">${t.hold_days}d</td>
       <td class="py-1.5 text-right">${fmtPnl(t.net_pnl)}</td>
       <td class="py-1.5 text-right text-slate-600">${t.exit_reason}</td>
+    </tr>
+    <tr id="${rowId}" class="hidden bg-slate-900/60 border-b border-slate-800/30">
+      <td colspan="6" class="px-3 py-2">
+        <table class="w-full text-xs text-slate-400">
+          <thead><tr class="text-slate-600 text-[10px]">
+            <th class="text-left pb-1">Leg</th>
+            <th class="text-right pb-1">Entry</th>
+            <th class="text-right pb-1">Exit</th>
+            <th class="text-right pb-1">Qty</th>
+            <th class="text-right pb-1">Leg P&L</th>
+          </tr></thead>
+          <tbody>
+            <tr>
+              <td class="py-0.5 text-slate-300">${symA}</td>
+              <td class="py-0.5 text-right">₹${t.entry_price_a.toFixed(2)}</td>
+              <td class="py-0.5 text-right">₹${t.exit_price_a.toFixed(2)}</td>
+              <td class="py-0.5 text-right">${t.qty_a.toLocaleString('en-IN')}</td>
+              <td class="py-0.5 text-right ${pnl_a >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt(pnl_a)}</td>
+            </tr>
+            <tr>
+              <td class="py-0.5 text-slate-300">${symB}</td>
+              <td class="py-0.5 text-right">₹${t.entry_price_b.toFixed(2)}</td>
+              <td class="py-0.5 text-right">₹${t.exit_price_b.toFixed(2)}</td>
+              <td class="py-0.5 text-right">${t.qty_b.toLocaleString('en-IN')}</td>
+              <td class="py-0.5 text-right ${pnl_b >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt(pnl_b)}</td>
+            </tr>
+            <tr class="border-t border-slate-800 text-slate-500">
+              <td colspan="4" class="pt-1">Net P&L (after costs)</td>
+              <td class="pt-1 text-right ${t.net_pnl >= 0 ? 'pnl-pos' : 'pnl-neg'} font-semibold">${fmtPnl(t.net_pnl)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
     </tr>`;
   });
+
   el.innerHTML = html + '</tbody></table>';
+  el.insertAdjacentHTML('beforeend', '<p class="text-[10px] text-slate-700 mt-2">Click a row to expand leg details</p>');
 }
 
 // ── StatArb: metric cards ─────────────────────────────────────────────────────
