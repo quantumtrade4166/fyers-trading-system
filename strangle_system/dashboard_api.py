@@ -27,6 +27,7 @@ if str(_ROOT) not in sys.path:
 from strangle_system import config
 from strangle_system.data.chain_loader import ChainLoader
 from strangle_system.decision_runner import decide
+from strangle_system.layers.l4_gex import compute_l4, per_strike_gex
 from strangle_system.backtest.vrp_validation import MIN_USABLE_ROWS
 
 IST = timezone(timedelta(hours=5, minutes=30))
@@ -78,6 +79,26 @@ def _data_collection() -> dict:
     }
 
 
+def _gex_block(u: str, asof: date, loader: ChainLoader) -> dict:
+    """GEX levels + a trimmed per-strike profile (ATM ± 15 strikes) for the chart."""
+    sig = compute_l4(u, asof, loader)
+    snap = loader.snapshot_asof(u, asof)
+    profile = []
+    if snap is not None and not snap.empty:
+        from strangle_system.data.chain_loader import ChainLoader as CL
+        prof = per_strike_gex(snap, u, CL.nearest_expiry(snap))
+        spot = CL.spot(snap)
+        if not prof.empty and spot is not None:
+            prof = prof.iloc[(prof["strike"] - spot).abs().argsort()[:31]].sort_values("strike")
+            profile = [{"strike": float(r.strike), "net_gex": float(r.net_gex)} for r in prof.itertuples()]
+    return {
+        "net_gex": sig.net_gex, "gamma_flip": sig.gamma_flip,
+        "call_wall": sig.call_wall, "put_wall": sig.put_wall,
+        "regime": sig.gex_regime.value if sig.gex_regime else None,
+        "validated": sig.validated, "profile": profile,
+    }
+
+
 def _underlying_block(u: str, asof: date, loader: ChainLoader) -> dict:
     dec, raw = decide(u, asof, loader)
     l1, l2, l3 = raw["l1"], raw["l2"], raw["l3"]
@@ -93,6 +114,7 @@ def _underlying_block(u: str, asof: date, loader: ChainLoader) -> dict:
                "event_veto": l2.get("event_veto"), "event_reason": l2.get("event_reason")},
         "l3": {"term_state": l3.get("term_state"), "term_structure_slope": l3.get("term_structure_slope"),
                "skew_state": l3.get("skew_state"), "skew_25d": l3.get("skew_25d")},
+        "gex": _gex_block(u, asof, loader),
     }
 
 

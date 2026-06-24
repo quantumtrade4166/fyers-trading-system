@@ -45,14 +45,14 @@ UNDERLYINGS = {
         "strike_step": 50,
         "expiry_weekday": 1,        # Tuesday (NSE shifted from Thursday)
         "exchange": "NSE",
-        "lot_size": None,           # resolved from symbol master
+        "lot_size": 65,             # NSE_FO master col3, as of 2026-06-24 (re-verify on revisions)
     },
     "SENSEX": {
         "index_symbol": "BSE:SENSEX-INDEX",
         "strike_step": 100,
         "expiry_weekday": 3,        # Thursday
         "exchange": "BSE",
-        "lot_size": None,           # resolved from symbol master
+        "lot_size": 20,             # BSE_FO master col3, as of 2026-06-24 (re-verify on revisions)
     },
 }
 
@@ -140,6 +140,17 @@ TERM_STATE_THRESHOLD = 0.005          # 0.5 vol points
 #   > +thresh → PUT_SKEW (puts richer, typical index); < −thresh → CALL_SKEW.
 SKEW_DELTA = 0.25
 SKEW_STATE_THRESHOLD = 0.005          # 0.5 vol points
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# LAYER 4 — GEX (GATED)
+# ──────────────────────────────────────────────────────────────────────────
+# strike_gex = gamma × OI × lot_size × spot² × 0.01 ; calls +, puts −.
+# GATE: GEX must NOT influence any live decision until gex_validation.py shows
+# it separates realized vol on Nifty. Until then GEX_VALIDATED stays False →
+# GexSignal.validated=False → L5 weight w5=0. Flip this only after the backtest.
+GEX_VALIDATED = False
+GEX_EXPIRY_MODE = "nearest"           # which expiry's chain to build GEX on
 
 
 # ──────────────────────────────────────────────────────────────────────────

@@ -405,6 +405,13 @@
     <!-- Verdict cards (one per underlying, built in JS) -->
     <div id="str-cards" class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6"></div>
 
+    <!-- Gamma Exposure (GEX) — UNVALIDATED, not used in decisions -->
+    <div class="flex items-center gap-3 mb-3">
+      <h2 class="text-sm font-medium text-slate-300">Gamma Exposure (GEX)</h2>
+      <span style="background:rgba(245,158,11,.12);color:#f59e0b" class="text-xs font-medium px-2 py-0.5 rounded-full">UNVALIDATED · not used in decisions</span>
+    </div>
+    <div id="str-gex" class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6"></div>
+
     <!-- Data collection / forward-accumulation status -->
     <div class="card p-5">
       <div class="flex items-center justify-between mb-3">
@@ -1152,6 +1159,47 @@ function renderStrangle(d) {
         </div>
         ${l2.event_veto ? `<p class="text-xs text-red-400 mt-3">⚠ event veto: ${l2.event_reason}</p>` : ''}
       </div>`;
+  }).join('');
+
+  // GEX panels (unvalidated)
+  const bigN = v => {
+    if (v == null) return '—';
+    const a = Math.abs(v), s = v < 0 ? '-' : '';
+    if (a >= 1e12) return s + (a / 1e12).toFixed(2) + 'T';
+    if (a >= 1e9)  return s + (a / 1e9).toFixed(2) + 'B';
+    if (a >= 1e6)  return s + (a / 1e6).toFixed(2) + 'M';
+    return s + a.toFixed(0);
+  };
+  const gexEl = document.getElementById('str-gex');
+  if (gexEl) gexEl.innerHTML = d.underlyings.map(u => {
+    const g = u.gex || {}, prof = g.profile || [];
+    const maxAbs = prof.reduce((m, p) => Math.max(m, Math.abs(p.net_gex)), 0) || 1;
+    const regCol = g.regime === 'POSITIVE' ? '#10b981' : '#ef4444';
+    const bars = prof.map(p => {
+      const w = (Math.abs(p.net_gex) / maxAbs) * 50;
+      const pos = p.net_gex >= 0;
+      const tag = p.strike === g.call_wall ? '<span style="color:#10b981"> CW</span>'
+                : p.strike === g.put_wall ? '<span style="color:#ef4444"> PW</span>' : '';
+      return `<div style="display:flex;align-items:center;gap:6px;font-size:10px;height:13px">
+        <span style="width:64px;text-align:right;color:#64748b">${p.strike}${tag}</span>
+        <div style="flex:1;position:relative;height:9px;background:#11161f;border-radius:2px">
+          <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:#334155"></div>
+          <div style="position:absolute;top:1px;bottom:1px;${pos ? 'left:50%' : 'right:50%'};width:${w}%;background:${pos ? '#10b981' : '#ef4444'};opacity:.8;border-radius:1px"></div>
+        </div></div>`;
+    }).join('');
+    return `<div class="card p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-base font-semibold text-white">${u.underlying}</h3>
+        <span style="background:${regCol}22;color:${regCol}" class="text-xs font-semibold px-3 py-1 rounded-full">${g.regime || '—'} GAMMA</span>
+      </div>
+      <div class="grid grid-cols-4 gap-2 mb-4 text-center">
+        <div><p class="text-xs text-slate-500 mb-1">Net GEX</p><p class="text-sm font-semibold" style="color:${(g.net_gex||0)>=0?'#10b981':'#ef4444'}">${bigN(g.net_gex)}</p></div>
+        <div><p class="text-xs text-slate-500 mb-1">γ Flip</p><p class="text-sm font-semibold text-slate-200">${g.gamma_flip ?? '—'}</p></div>
+        <div><p class="text-xs text-slate-500 mb-1">Call Wall</p><p class="text-sm font-semibold" style="color:#10b981">${g.call_wall ?? '—'}</p></div>
+        <div><p class="text-xs text-slate-500 mb-1">Put Wall</p><p class="text-sm font-semibold" style="color:#ef4444">${g.put_wall ?? '—'}</p></div>
+      </div>
+      <div style="max-height:230px;overflow-y:auto">${bars || '<p class="text-xs text-slate-600">no profile</p>'}</div>
+    </div>`;
   }).join('');
 
   // data collection panel
