@@ -103,6 +103,33 @@ VRP_MIN_FAVORABLE = 0.0              # placeholder; tuned via backtest, not gues
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# LAYER 2 — EVENT & REGIME GUARDRAILS
+# ──────────────────────────────────────────────────────────────────────────
+# Manual event calendar the user maintains. CSV columns: date,event,severity
+#   severity ∈ {high, medium, low}; "high" → hard veto, "medium" → size-down.
+EVENT_CALENDAR_FILE = PROJECT_ROOT / "strangle_system" / "data" / "event_calendar.csv"
+
+# Trend regime via ADX + EMA stack on daily spot.
+ADX_PERIOD = 14
+ADX_RANGE_MAX = 20.0     # adx < this → RANGE (friendly to short strangles)
+ADX_TREND_MIN = 25.0     # adx ≥ this → STRONG_TREND (hostile)
+EMA_STACK = [20, 50]     # alignment check
+
+# Expiry-day handling: selling on expiry day is extreme gamma risk.
+EXPIRY_DAY_VETO = True
+
+# v1 decision flag (Layers 1+2 only). The full weighted L5 score replaces this
+# in Phase 5; this is a deployable interim. Thresholds are PLACEHOLDERS pending
+# the VRP-validation backtest — not tuned values.
+V1_VRP_TRADE_MIN = 0.02          # require ≥2 vol-points of VRP to sell
+V1_VETO_STRONG_TREND = True      # STRONG_TREND → no-trade in v1
+
+# Decision output + paper log (the morning flag and its audit trail).
+FLAG_DIR = PROJECT_ROOT / "strangle_system" / "flags"
+PAPER_LOG_FILE = FLAG_DIR / "paper_signal_log.csv"
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────
 def reconfigure_stdout():

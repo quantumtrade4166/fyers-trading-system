@@ -9,6 +9,9 @@ deployment/.env
 Nifty 500 Daily Data/
 /data/
 
+# Strangle system runtime artifacts (flags + paper log are VPS-generated state)
+strangle_system/flags/
+
 # Position/trade state (VPS manages its own)
 deployment/positions.json
 deployment/trades.json

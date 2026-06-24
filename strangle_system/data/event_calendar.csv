@@ -1,0 +1,10 @@
+date,event,severity
+# Manually maintained high-impact event calendar for the strangle system.
+# date: YYYY-MM-DD | event: short label | severity: high|medium|low
+# high   -> hard veto (no-trade that day)
+# medium -> size-down (handled in L5 sizing)
+# low    -> informational only
+# Examples (replace with real scheduled events: RBI policy, Union Budget,
+# India CPI/IIP, US FOMC/CPI, major index-heavyweight earnings):
+# 2026-08-06,RBI MPC decision,high
+# 2026-07-15,India CPI,medium
