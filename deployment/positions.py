@@ -139,7 +139,9 @@ def get_equity() -> dict:
 # ── annual PnL tracker ────────────────────────────────────────────────────────
 
 def get_annual_pnl(pair_name: str) -> float:
-    """Sum of net_pnl for this pair in the current calendar year."""
+    """Sum of net_pnl for closed trades this calendar year.
+    MTM of any open position is added by the caller (scheduler) to handle year-boundary correctly.
+    """
     this_year = str(date.today().year)
     trades = _read_json(TRADES_FILE, [])
     return sum(

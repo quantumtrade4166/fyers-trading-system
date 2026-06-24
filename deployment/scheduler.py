@@ -13,12 +13,23 @@ sys.stderr.reconfigure(encoding="utf-8")
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 import pytz
+import numpy as np
+from datetime import date
 
 IST = pytz.timezone("Asia/Kolkata")
 
-# cooldown tracking: pair_name -> bars since last trade closed
-_cooldown: dict[str, int] = {}
-COOLDOWN_BARS = 5
+# cooldown tracking: pair_name -> exit date (calendar date, not bar counter)
+# Bug 2 fix: cooldown must be 5 TRADING DAYS, not 5 signal-check bars (5 bars = 25 min intraday)
+_cooldown_exit_date: dict[str, date] = {}
+COOLDOWN_DAYS = 5
+
+
+def _trading_days_since(exit_dt: date) -> int:
+    """Count trading days (business days) between exit_dt and today."""
+    today = date.today()
+    if today <= exit_dt:
+        return 0
+    return int(np.busday_count(exit_dt.isoformat(), today.isoformat()))
 
 
 def _run_signal_check():
@@ -47,41 +58,56 @@ def _run_signal_check():
         hl_ok   = stats.get("hl_ok", False)
 
         existing  = pos_store.get_position(name)
+
+        # ── Bug 3 fix: annual P&L includes open position MTM for year-boundary safety ──
         annual_pl = pos_store.get_annual_pnl(name)
-        annual_ok = annual_pl > -ann_stp
+        if existing:
+            # add unrealised MTM so annual stop accounts for open loss
+            sign  = 1 if existing["direction"] == "long_spread" else -1
+            mtm   = ((price_a - existing["entry_price_a"]) * existing["qty_a"]
+                     - (price_b - existing["entry_price_b"]) * existing["qty_b"]) * sign
+            annual_pl_with_mtm = annual_pl + mtm
+        else:
+            annual_pl_with_mtm = annual_pl
+        annual_ok = annual_pl_with_mtm > -ann_stp
 
         # ── manage existing position ──────────────────────────────────────────
         if existing:
             direction   = existing["direction"]
-            should_stop = abs(z) >= stop_z
+            should_stop = abs(z) >= stop_z or not annual_ok
             should_exit = (
                 (direction == "long_spread"  and z >= -EXIT_Z) or
                 (direction == "short_spread" and z <=  EXIT_Z)
             )
 
             if should_stop:
+                reason = "annual_stop" if not annual_ok else "z_stop"
                 order_router.execute_signal(
                     name, "stop", price_a, price_b,
-                    qty_a, qty_b, z, beta, exit_reason="z_stop"
+                    qty_a, qty_b, z, beta, exit_reason=reason
                 )
-                _cooldown[name] = COOLDOWN_BARS
+                _cooldown_exit_date[name] = date.today()
             elif should_exit:
                 order_router.execute_signal(
                     name, "exit", price_a, price_b,
                     qty_a, qty_b, z, beta, exit_reason="z_exit"
                 )
-                _cooldown[name] = COOLDOWN_BARS
+                _cooldown_exit_date[name] = date.today()
             continue
 
-        # ── decrement cooldown ────────────────────────────────────────────────
-        if _cooldown.get(name, 0) > 0:
-            _cooldown[name] -= 1
+        # ── Bug 2 fix: cooldown in trading days, not signal-check bars ────────
+        exit_dt = _cooldown_exit_date.get(name)
+        if exit_dt is not None and _trading_days_since(exit_dt) < COOLDOWN_DAYS:
             continue
 
         # ── check for new entry ───────────────────────────────────────────────
         if not annual_ok:
             continue
         if not hl_ok:
+            continue
+
+        # ── Bug 1 fix: never enter if z already at or beyond stop level ───────
+        if abs(z) >= stop_z:
             continue
 
         if z < -entry_z:
