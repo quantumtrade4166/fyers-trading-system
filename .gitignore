@@ -7,7 +7,7 @@ deployment/.env
 
 # Large data files
 Nifty 500 Daily Data/
-data/
+/data/
 
 # Position/trade state (VPS manages its own)
 deployment/positions.json
