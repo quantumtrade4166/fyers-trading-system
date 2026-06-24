@@ -76,6 +76,9 @@
     <button class="tab-btn" id="tab-dualmom" onclick="switchTab('dualmom')">
       🚀 DualMom.Liq.Nifty50
     </button>
+    <button class="tab-btn" id="tab-strangle" onclick="switchTab('strangle')">
+      🎯 Strangle System
+    </button>
   </div>
 
 
@@ -384,6 +387,44 @@
 
   </div><!-- /page-dualmom -->
 
+
+  <!-- ══════════════════════════════════════════════════════════
+       TAB 3 — Strangle System
+  ══════════════════════════════════════════════════════════ -->
+  <div id="page-strangle" style="display:none">
+
+    <div class="flex items-center justify-between mb-2">
+      <div>
+        <h2 class="text-lg font-semibold text-white">Strangle System</h2>
+        <p class="text-xs text-slate-500">Nifty &amp; Sensex · Variance Risk Premium · short-strangle decision engine</p>
+      </div>
+      <span class="text-xs text-slate-600" id="str-generated">—</span>
+    </div>
+    <p id="str-phase" class="text-xs text-amber-500/80 mb-5"></p>
+
+    <!-- Verdict cards (one per underlying, built in JS) -->
+    <div id="str-cards" class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6"></div>
+
+    <!-- Data collection / forward-accumulation status -->
+    <div class="card p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-medium text-slate-300">Data Collection (forward accumulation)</h2>
+        <span class="text-xs text-slate-600" id="str-dc-updated">—</span>
+      </div>
+      <div class="mb-3">
+        <div class="flex justify-between text-xs text-slate-500 mb-1">
+          <span>VRP-validation readiness</span>
+          <span id="str-dc-progress-label">—</span>
+        </div>
+        <div style="background:#1e2533;border-radius:6px;height:8px;overflow:hidden;">
+          <div id="str-dc-bar" style="height:8px;width:0%;background:#10b981;transition:width .4s;"></div>
+        </div>
+      </div>
+      <div id="str-dc-table" class="text-sm"></div>
+    </div>
+
+  </div><!-- /page-strangle -->
+
 </div><!-- /max-w -->
 
 <script>
@@ -399,10 +440,13 @@ let _activeTab = 'statarb';
 // ── tab switching ─────────────────────────────────────────────────────────────
 function switchTab(tab) {
   _activeTab = tab;
-  document.getElementById('page-statarb').style.display = tab === 'statarb' ? '' : 'none';
-  document.getElementById('page-dualmom').style.display = tab === 'dualmom'  ? '' : 'none';
-  document.getElementById('tab-statarb').classList.toggle('active', tab === 'statarb');
-  document.getElementById('tab-dualmom').classList.toggle('active', tab === 'dualmom');
+  ['statarb', 'dualmom', 'strangle'].forEach(t => {
+    const pg = document.getElementById('page-' + t);
+    if (pg) pg.style.display = (t === tab) ? '' : 'none';
+    const btn = document.getElementById('tab-' + t);
+    if (btn) btn.classList.toggle('active', t === tab);
+  });
+  if (tab === 'strangle') fetchStrangle();
 
   requestAnimationFrame(() => {
     if (tab === 'statarb') {
@@ -1056,6 +1100,83 @@ function connectWS() {
   ws.onclose = () => { updateFeedStatus(false, null); setTimeout(connectWS, 5000); };
   ws.onerror = () => ws.close();
   ws.onopen  = () => ws.send('ping');
+}
+
+// ── Strangle System tab ─────────────────────────────────────────────────────
+async function fetchStrangle() {
+  try {
+    const r = await fetch('/api/strangle/status');
+    renderStrangle(await r.json());
+  } catch (e) { console.error('strangle fetch', e); }
+}
+
+function renderStrangle(d) {
+  if (!d || !d.underlyings) return;
+  const pc1 = v => (v == null ? '—' : (v * 100).toFixed(1) + '%');
+  const sgn = v => (v == null ? '—' : (v >= 0 ? '+' : '') + (v * 100).toFixed(2) + '%');
+  const col = v => (v == null ? '#94a3b8' : v > 0 ? '#10b981' : v < 0 ? '#ef4444' : '#94a3b8');
+
+  document.getElementById('str-generated').textContent = 'as of ' + (d.generated_at || '—');
+  document.getElementById('str-phase').textContent = d.phase || '';
+
+  // verdict cards
+  document.getElementById('str-cards').innerHTML = d.underlyings.map(u => {
+    const l1 = u.l1 || {}, l2 = u.l2 || {}, l3 = u.l3 || {};
+    const badge = u.trade
+      ? '<span style="background:rgba(16,185,129,.15);color:#10b981" class="text-xs font-semibold px-3 py-1 rounded-full">TRADE</span>'
+      : '<span style="background:rgba(148,163,184,.12);color:#94a3b8" class="text-xs font-semibold px-3 py-1 rounded-full">NO-TRADE</span>';
+    const cell = (label, val, sub) =>
+      `<div><p class="text-xs text-slate-500 uppercase tracking-wide mb-1">${label}</p>
+        <p class="text-base font-semibold" style="color:${sub || '#e2e8f0'}">${val}</p></div>`;
+    return `
+      <div class="card p-5">
+        <div class="flex items-center justify-between mb-1">
+          <h3 class="text-base font-semibold text-white">${u.underlying}</h3>${badge}
+        </div>
+        <p class="text-xs text-slate-400 mb-4">${u.verdict_reason || ''}</p>
+        <div class="grid grid-cols-3 gap-3 mb-3">
+          ${cell('VRP', sgn(l1.vrp), col(l1.vrp))}
+          ${cell('ATM IV', pc1(l1.atm_iv))}
+          ${cell('RV forecast', pc1(l1.rv_forecast))}
+          ${cell('RV 20d', pc1(l1.rv_20))}
+          ${cell('IV rank', l1.iv_rank == null ? '— <span class="text-slate-600">accruing</span>' : l1.iv_rank.toFixed(0))}
+          ${cell('Horizon', (l1.horizon_days ?? '—') + 'd')}
+        </div>
+        <div class="grid grid-cols-3 gap-3 pt-3" style="border-top:1px solid #1e2533">
+          ${cell('Trend', (l2.trend_regime || '—'), l2.trend_regime === 'STRONG_TREND' ? '#ef4444' : '#e2e8f0')}
+          ${cell('ADX', l2.adx == null ? '—' : l2.adx.toFixed(1))}
+          ${cell('To expiry', (l2.is_expiry_day ? 'EXPIRY' : (l2.days_to_expiry ?? '—') + 'd'), l2.is_expiry_day ? '#ef4444' : '#e2e8f0')}
+          ${cell('Term', (l3.term_state || '—'), l3.term_state === 'BACKWARDATION' ? '#f59e0b' : '#e2e8f0')}
+          ${cell('Term slope', sgn(l3.term_structure_slope))}
+          ${cell('Skew 25Δ', sgn(l3.skew_25d), col(l3.skew_25d))}
+        </div>
+        ${l2.event_veto ? `<p class="text-xs text-red-400 mt-3">⚠ event veto: ${l2.event_reason}</p>` : ''}
+      </div>`;
+  }).join('');
+
+  // data collection panel
+  const dc = d.data_collection || {};
+  document.getElementById('str-dc-updated').textContent = dc.last_updated ? ('last capture ' + dc.last_updated) : 'no captures yet';
+  document.getElementById('str-dc-bar').style.width = (dc.validation_progress_pct || 0) + '%';
+  document.getElementById('str-dc-progress-label').textContent =
+    `${dc.distinct_days || 0} / ${dc.validation_needed || 40} days · ${dc.validation_status || ''}`;
+  const rows = (dc.per_underlying || []).map(p => `
+    <tr>
+      <td style="padding:5px 8px;border-bottom:1px solid #1e2533;text-align:left">${p.underlying}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #1e2533">${p.snapshot_days}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #1e2533">${p.latest_date || '—'}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #1e2533">${p.rows ?? '—'}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #1e2533">${p.spot ?? '—'}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #1e2533">${p.greeks_present ? '✓' : '—'}</td>
+      <td style="padding:5px 8px;border-bottom:1px solid #1e2533">${p.drive_uploaded == null ? '<span class="text-slate-600">no creds</span>' : (p.drive_uploaded ? '✓' : '✗')}</td>
+    </tr>`).join('');
+  document.getElementById('str-dc-table').innerHTML = `
+    <table class="w-full" style="border-collapse:collapse">
+      <thead><tr style="color:#475569;font-size:11px;text-transform:uppercase">
+        <th style="padding:5px 8px;text-align:left">Underlying</th><th style="padding:5px 8px">Days</th>
+        <th style="padding:5px 8px">Latest</th><th style="padding:5px 8px">Rows</th>
+        <th style="padding:5px 8px">Spot</th><th style="padding:5px 8px">Greeks</th><th style="padding:5px 8px">Drive</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
 }
 
 initCharts();

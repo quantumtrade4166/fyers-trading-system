@@ -187,6 +187,17 @@ async def api_dualmom_live_quotes():
     return await loop.run_in_executor(None, dualmom_paper.get_live_quotes)
 
 
+# ── Strangle System endpoint ─────────────────────────────────────────────────
+
+@app.get("/api/strangle/status")
+async def api_strangle_status():
+    """L1/L2/L3 signals + verdict + data-collection status for the strangle tab."""
+    import asyncio
+    from strangle_system import dashboard_api as strangle_api
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, strangle_api.get_status)
+
+
 # ── WebSocket — push updates every 60s during market hours, 5 min otherwise ──
 
 @app.websocket("/ws")
