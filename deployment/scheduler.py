@@ -123,9 +123,14 @@ def _run_signal_check():
 
 
 def _eod_run():
-    """15:35 EOD — reload prices from disk, refresh DualMom signal."""
-    print("  [scheduler] EOD run — reloading prices...")
+    """15:35 EOD — update daily parquet data, reload prices, refresh DualMom signal."""
+    print("  [scheduler] EOD run — updating daily data...")
     from deployment import signal_engine, dualmom_engine
+    from deployment.update_pair_data import update_symbols
+    try:
+        update_symbols()
+    except Exception as e:
+        print(f"  [scheduler] daily data update failed: {e}")
     signal_engine.reload_prices()
     dualmom_engine.refresh()
     print("  [scheduler] EOD run complete.")
