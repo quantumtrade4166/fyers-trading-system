@@ -46,6 +46,7 @@ from strangle_system.signals import Decision, DataQuality
 from strangle_system.data.chain_loader import ChainLoader
 from strangle_system.layers.l1_volatility import compute_l1
 from strangle_system.layers.l2_guardrails import compute_l2
+from strangle_system.layers.l3_term_structure import compute_l3
 
 config.reconfigure_stdout()
 
@@ -57,6 +58,7 @@ def decide(underlying: str, asof: Optional[date] = None,
     loader = loader or ChainLoader()
     l1 = compute_l1(underlying, asof, loader)
     l2 = compute_l2(underlying, asof, loader)
+    l3 = compute_l3(underlying, asof, loader)   # informational in v1 (feeds L5 later)
 
     reasons = []
     trade = True
@@ -91,15 +93,18 @@ def decide(underlying: str, asof: Optional[date] = None,
         verdict_reason="; ".join(reasons),
         score=None,                       # no weighted score in v1 (Phase 5)
         regime={"trend": l2.trend_regime.value,
+                "term": l3.term_state.value, "skew": l3.skew_state,
                 "iv_rank": l1.iv_rank, "data_quality": l1.data_quality.value},
         suggested={},                     # strike selection = Phase 5
         size={},                          # sizing = Phase 5
         guardrails={"event_veto": l2.event_veto, "is_expiry_day": l2.is_expiry_day,
                     "days_to_expiry": l2.days_to_expiry, "adx": l2.adx},
     )
-    raw = {"l1": l1.to_dict(), "l2": {**asdict(l2),
-                                      "trend_regime": l2.trend_regime.value,
-                                      "data_quality": l2.data_quality.value}}
+    raw = {"l1": l1.to_dict(),
+           "l2": {**asdict(l2), "trend_regime": l2.trend_regime.value,
+                  "data_quality": l2.data_quality.value},
+           "l3": {**asdict(l3), "term_state": l3.term_state.value,
+                  "data_quality": l3.data_quality.value}}
     return dec, raw
 
 
@@ -115,7 +120,10 @@ def _write_outputs(dec: Decision, raw: dict):
     row = {"date": dec.date, "underlying": dec.underlying, "trade": dec.trade,
            "vrp": raw["l1"].get("vrp"), "atm_iv": raw["l1"].get("atm_iv"),
            "rv_forecast": raw["l1"].get("rv_forecast"),
-           "trend": dec.regime.get("trend"), "dte": dec.guardrails.get("days_to_expiry"),
+           "trend": dec.regime.get("trend"),
+           "term": dec.regime.get("term"), "term_slope": raw["l3"].get("term_structure_slope"),
+           "skew": dec.regime.get("skew"), "skew_25d": raw["l3"].get("skew_25d"),
+           "dte": dec.guardrails.get("days_to_expiry"),
            "reason": dec.verdict_reason}
     log = config.PAPER_LOG_FILE
     df_new = pd.DataFrame([row])

@@ -130,6 +130,19 @@ PAPER_LOG_FILE = FLAG_DIR / "paper_signal_log.csv"
 
 
 # ──────────────────────────────────────────────────────────────────────────
+# LAYER 3 — TERM STRUCTURE & SKEW
+# ──────────────────────────────────────────────────────────────────────────
+# Term structure: far ATM IV − near ATM IV (annualized decimal vol points).
+#   slope > +thresh → CONTANGO (calm, supportive); < −thresh → BACKWARDATION.
+TERM_STATE_THRESHOLD = 0.005          # 0.5 vol points
+
+# Skew: 25-delta put IV − 25-delta call IV (decimal vol points).
+#   > +thresh → PUT_SKEW (puts richer, typical index); < −thresh → CALL_SKEW.
+SKEW_DELTA = 0.25
+SKEW_STATE_THRESHOLD = 0.005          # 0.5 vol points
+
+
+# ──────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────
 def reconfigure_stdout():
