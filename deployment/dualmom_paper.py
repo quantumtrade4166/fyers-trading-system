@@ -197,6 +197,43 @@ def _next_rebalance_date() -> str:
 
 # ── Daily NAV ────────────────────────────────────────────────────────────────
 
+def _backfill_liquid_days(state: dict, eq: dict):
+    """Fill any calendar days missing from equity history when status=out.
+    Only safe to call while holding _lock and only for liquid-fund periods."""
+    history    = eq["history"]
+    entry_nav  = float(state["liquid_fund_entry_nav"])
+    entry_date = date.fromisoformat(state["liquid_fund_entry_date"])
+    existing   = {h["date"] for h in history}
+    today      = date.today()
+
+    d = (date.fromisoformat(history[-1]["date"]) + timedelta(days=1)) if history else entry_date
+    while d < today:
+        ds = d.isoformat()
+        if ds not in existing:
+            days_in  = (d - entry_date).days
+            days_pre = days_in - 1
+            nav_d    = entry_nav * ((1 + LIQUID_PA / 365) ** days_in)
+            nav_p    = entry_nav * ((1 + LIQUID_PA / 365) ** days_pre)
+            ret      = nav_d - nav_p
+            ret_pct  = round(ret / nav_p * 100, 4) if nav_p > 0 else 0.0
+            history.append({
+                "date":              ds,
+                "nav":               round(nav_d, 2),
+                "status":            "out",
+                "liquid_return_abs": round(ret, 2),
+                "liquid_return_pct": ret_pct,
+                "stock_return_abs":  0.0,
+                "stock_return_pct":  0.0,
+                "total_return_abs":  round(ret, 2),
+                "total_return_pct":  ret_pct,
+            })
+            print(f"  [paper] Backfilled missing day: {ds} NAV=₹{nav_d:,.0f}")
+        d += timedelta(days=1)
+
+    # keep history sorted
+    eq["history"] = sorted(history, key=lambda x: x["date"])
+
+
 def record_daily_nav():
     """Called at 16:00 daily. Fetches EOD prices, records NAV and daily returns."""
     today_str = date.today().isoformat()
@@ -205,6 +242,11 @@ def record_daily_nav():
     with _lock:
         state = _load_paper()
         eq    = _load_equity()
+
+        # Auto-backfill any missed calendar days (liquid fund only — safe, math only)
+        if state["status"] == "out" and eq["history"]:
+            _backfill_liquid_days(state, eq)
+            _save_equity(eq)
 
     if eq["history"] and eq["history"][-1]["date"] == today_str:
         print(f"  [paper] NAV already recorded for {today_str}. Skipping.")
