@@ -153,6 +153,7 @@ def compute_pair_zscore(
 
 _prices_cache: dict[str, pd.Series] = {}
 _max_hl_cache: dict[str, float]     = {}
+_today_override: dict[str, float]   = {}   # Fyers EOD snapshot injected after market close
 
 
 def init_engine() -> None:
@@ -176,8 +177,11 @@ def get_all_signals(today_prices: dict | None = None) -> dict:
     """
     Compute z-scores for all 10 pairs.
     today_prices = {sym: live_price} from WebSocket (optional).
+    Falls back to _today_override (Fyers EOD snapshot) when feed is off.
     Returns dict keyed by pair name.
     """
+    if today_prices is None and _today_override:
+        today_prices = _today_override
     results = {}
     for p in PAIRS:
         name     = p[NAME]
@@ -229,7 +233,14 @@ def get_all_signals(today_prices: dict | None = None) -> dict:
 
 
 def reload_prices() -> None:
-    """Reload parquet files from disk (call after EOD download completes)."""
-    global _prices_cache
+    """Reload parquet files from disk, then inject today's Fyers EOD snapshot."""
+    global _prices_cache, _today_override
     _prices_cache = load_prices()
-    print("  [signal_engine] Prices reloaded from disk.")
+    from deployment.live_feed import get_eod_snapshot
+    snap = get_eod_snapshot()
+    if snap:
+        _today_override = snap
+        print(f"  [signal_engine] Prices reloaded. EOD snapshot injected ({len(snap)} symbols).")
+    else:
+        _today_override = {}
+        print("  [signal_engine] Prices reloaded from disk (no EOD snapshot for today).")

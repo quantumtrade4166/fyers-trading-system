@@ -91,12 +91,22 @@ async def api_signals():
 async def api_positions():
     positions = pos_store.get_positions()
     live_prices = live_feed.get_live_prices() or {}
+    eod_snap    = live_feed.get_eod_snapshot()
     signals = signal_engine.get_all_signals(live_prices or None)
 
     for name, pos in positions.items():
-        sig = signals.get(name, {})
-        cur_a = live_prices.get(pos.get("sym_a", ""), sig.get("price_a", pos["entry_price_a"]))
-        cur_b = live_prices.get(pos.get("sym_b", ""), sig.get("price_b", pos["entry_price_b"]))
+        sig   = signals.get(name, {})
+        sym_a = pos.get("sym_a", "")
+        sym_b = pos.get("sym_b", "")
+        # priority: live feed → Fyers EOD snapshot (15:30 close) → parquet via signal
+        cur_a = (live_prices.get(sym_a)
+                 or eod_snap.get(sym_a)
+                 or sig.get("price_a")
+                 or pos["entry_price_a"])
+        cur_b = (live_prices.get(sym_b)
+                 or eod_snap.get(sym_b)
+                 or sig.get("price_b")
+                 or pos["entry_price_b"])
         qty_a = pos["qty_a"]
         qty_b = pos["qty_b"]
         sign  = 1 if pos["direction"] == "long_spread" else -1

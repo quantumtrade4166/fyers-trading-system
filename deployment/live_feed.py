@@ -7,6 +7,7 @@ import sys
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
+import json
 import os
 import threading
 from pathlib import Path
@@ -140,8 +141,37 @@ def start_feed() -> bool:
     return True
 
 
+EOD_SNAPSHOT_FILE = Path(__file__).parent / "eod_prices.json"
+
+
+def save_eod_snapshot() -> None:
+    """Persist last live prices as today's EOD close."""
+    with _lock:
+        prices = dict(_live_prices)
+    if prices:
+        from datetime import date
+        data = {"date": date.today().isoformat(), "prices": prices}
+        EOD_SNAPSHOT_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        print(f"  [live_feed] EOD snapshot saved: {len(prices)} symbols")
+
+
+def get_eod_snapshot() -> dict[str, float]:
+    """Return today's EOD close prices (empty dict if no snapshot or stale date)."""
+    if not EOD_SNAPSHOT_FILE.exists():
+        return {}
+    try:
+        from datetime import date
+        data = json.loads(EOD_SNAPSHOT_FILE.read_text(encoding="utf-8"))
+        if data.get("date") == date.today().isoformat():
+            return data.get("prices", {})
+    except Exception:
+        pass
+    return {}
+
+
 def stop_feed() -> None:
     global _running
+    save_eod_snapshot()
     if _ws_client:
         try:
             _ws_client.close_connection()
