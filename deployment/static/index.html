@@ -689,11 +689,14 @@ function updatePositions(positions, signals) {
   entries.forEach(([name, pos], i) => {
     const s    = signals?.[name] ?? {};
     const sign = pos.direction === 'long_spread' ? 1 : -1;
-    const pa   = s.price_a ?? pos.entry_price_a;
-    const pb   = s.price_b ?? pos.entry_price_b;
-    const gross = ((pa - pos.entry_price_a) * pos.qty_a - (pb - pos.entry_price_b) * pos.qty_b) * sign;
-    const cost  = (pos.entry_price_a*pos.qty_a + pos.entry_price_b*pos.qty_b + pa*pos.qty_a + pb*pos.qty_b) * 0.0003;
-    const net   = gross - cost;
+    // prefer server-computed current prices (from /api/positions) over signals
+    const pa   = pos.current_price_a ?? s.price_a ?? pos.entry_price_a;
+    const pb   = pos.current_price_b ?? s.price_b ?? pos.entry_price_b;
+    const net   = pos.unrealised_pnl ?? (() => {
+      const gross = ((pa - pos.entry_price_a) * pos.qty_a - (pb - pos.entry_price_b) * pos.qty_b) * sign;
+      const cost  = (pos.entry_price_a*pos.qty_a + pos.entry_price_b*pos.qty_b + pa*pos.qty_a + pb*pos.qty_b) * 0.0003;
+      return gross - cost;
+    })();
     const days  = Math.round((Date.now() - new Date(pos.entry_date)) / 864e5);
     const dir   = pos.direction === 'long_spread' ? '▲ Long' : '▼ Short';
     const dircls= pos.direction === 'long_spread' ? 'pos-long' : 'pos-short';
@@ -702,7 +705,8 @@ function updatePositions(positions, signals) {
     const [symA, symB] = name.split('/');
     const pnl_a = (pa - pos.entry_price_a) * pos.qty_a * sign;
     const pnl_b = -(pb - pos.entry_price_b) * pos.qty_b * sign;
-    const liveTag = s.price_a ? '' : '<span class="text-slate-700 ml-1">(stale)</span>';
+    const isStale = pa === pos.entry_price_a && pb === pos.entry_price_b;
+    const liveTag = isStale ? '<span class="text-slate-700 ml-1">(stale)</span>' : '';
 
     html += `
     <tr class="border-b border-slate-800/50 cursor-pointer hover:bg-slate-800/30"
