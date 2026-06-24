@@ -686,25 +686,69 @@ function updatePositions(positions, signals) {
     <th class="text-left pb-2">Pair</th><th class="text-left pb-2">Dir</th>
     <th class="text-right pb-2">Entry</th><th class="text-right pb-2">Days</th>
     <th class="text-right pb-2">Live P&L</th></tr></thead><tbody>`;
-  entries.forEach(([name, pos]) => {
+  entries.forEach(([name, pos], i) => {
     const s    = signals?.[name] ?? {};
     const sign = pos.direction === 'long_spread' ? 1 : -1;
-    const pa   = s.price_a ?? 0, pb = s.price_b ?? 0;
+    const pa   = s.price_a ?? pos.entry_price_a;
+    const pb   = s.price_b ?? pos.entry_price_b;
     const gross = ((pa - pos.entry_price_a) * pos.qty_a - (pb - pos.entry_price_b) * pos.qty_b) * sign;
     const cost  = (pos.entry_price_a*pos.qty_a + pos.entry_price_b*pos.qty_b + pa*pos.qty_a + pb*pos.qty_b) * 0.0003;
     const net   = gross - cost;
     const days  = Math.round((Date.now() - new Date(pos.entry_date)) / 864e5);
     const dir   = pos.direction === 'long_spread' ? '▲ Long' : '▼ Short';
     const dircls= pos.direction === 'long_spread' ? 'pos-long' : 'pos-short';
-    html += `<tr class="border-b border-slate-800/50">
+    const rowId = `pos-detail-${i}`;
+
+    const [symA, symB] = name.split('/');
+    const pnl_a = (pa - pos.entry_price_a) * pos.qty_a * sign;
+    const pnl_b = -(pb - pos.entry_price_b) * pos.qty_b * sign;
+    const liveTag = s.price_a ? '' : '<span class="text-slate-700 ml-1">(stale)</span>';
+
+    html += `
+    <tr class="border-b border-slate-800/50 cursor-pointer hover:bg-slate-800/30"
+        onclick="document.getElementById('${rowId}').classList.toggle('hidden')">
       <td class="py-2 text-slate-300">${name}</td>
       <td class="py-2"><span class="${dircls}">${dir}</span></td>
       <td class="py-2 text-right text-slate-400">${pos.entry_date}</td>
       <td class="py-2 text-right text-slate-400">${days}d</td>
-      <td class="py-2 text-right">${fmtPnl(net)}</td>
+      <td class="py-2 text-right">${fmtPnl(net)}${liveTag}</td>
+    </tr>
+    <tr id="${rowId}" class="hidden bg-slate-900/60 border-b border-slate-800/30">
+      <td colspan="5" class="px-3 py-2">
+        <table class="w-full text-xs text-slate-400">
+          <thead><tr class="text-slate-600 text-[10px]">
+            <th class="text-left pb-1">Leg</th>
+            <th class="text-right pb-1">Entry</th>
+            <th class="text-right pb-1">LTP</th>
+            <th class="text-right pb-1">Qty</th>
+            <th class="text-right pb-1">Leg P&L</th>
+          </tr></thead>
+          <tbody>
+            <tr>
+              <td class="py-0.5 text-slate-300">${symA}</td>
+              <td class="py-0.5 text-right">₹${pos.entry_price_a.toFixed(2)}</td>
+              <td class="py-0.5 text-right">₹${pa.toFixed(2)}</td>
+              <td class="py-0.5 text-right">${pos.qty_a.toLocaleString('en-IN')}</td>
+              <td class="py-0.5 text-right ${pnl_a >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt(pnl_a)}</td>
+            </tr>
+            <tr>
+              <td class="py-0.5 text-slate-300">${symB}</td>
+              <td class="py-0.5 text-right">₹${pos.entry_price_b.toFixed(2)}</td>
+              <td class="py-0.5 text-right">₹${pb.toFixed(2)}</td>
+              <td class="py-0.5 text-right">${pos.qty_b.toLocaleString('en-IN')}</td>
+              <td class="py-0.5 text-right ${pnl_b >= 0 ? 'pnl-pos' : 'pnl-neg'}">${fmt(pnl_b)}</td>
+            </tr>
+            <tr class="border-t border-slate-800 text-slate-500">
+              <td colspan="4" class="pt-1">Net P&L (after costs)</td>
+              <td class="pt-1 text-right ${net >= 0 ? 'pnl-pos' : 'pnl-neg'} font-semibold">${fmtPnl(net)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </td>
     </tr>`;
   });
   el.innerHTML = html + '</tbody></table>';
+  el.insertAdjacentHTML('beforeend', '<p class="text-[10px] text-slate-700 mt-2">Click a row to expand leg details</p>');
 }
 
 // ── StatArb: trades table ─────────────────────────────────────────────────────
