@@ -129,9 +129,16 @@ class JainamAdapter(BrokerAdapter):
                 d = json.loads(item) if isinstance(item, str) else item
                 iid = d.get("ExchangeInstrumentID")
                 t = d.get("Touchline") if isinstance(d.get("Touchline"), dict) else {}
-                ltp = d.get("LastTradedPrice") or (t.get("LastTradedPrice") if t else None)
+                ltp = _f(d.get("LastTradedPrice") if d.get("LastTradedPrice") is not None
+                         else (t.get("LastTradedPrice") if t else None))
+                # Expiry-day artifact: a settled option's LastTradedPrice becomes the
+                # underlying settlement value (e.g. SENSEX 77100). Cap it to the day's
+                # session range; if absurd, fall back to the session Low.
+                hi = _f(d.get("High"))
+                if hi and ltp > max(hi * 3, 1000):
+                    ltp = _f(d.get("Low"))
                 if iid is not None:
-                    out[int(iid)] = _f(ltp)
+                    out[int(iid)] = ltp
             return out
         except Exception as e:
             print(f"  [jainam] quotes failed (LTP will be 0): {e}")
@@ -143,7 +150,9 @@ class JainamAdapter(BrokerAdapter):
         session = requests.Session()
         token, client_id = self._interactive(session)
 
-        r = session.get(f"{BASE_URL}/interactive/portfolio/positions",
+        # dealerpositions returns the NETTED book that matches the XTS desktop
+        # "Net Positions" view (clean per-leg averages); /positions is churn-blended.
+        r = session.get(f"{BASE_URL}/interactive/portfolio/dealerpositions",
                         params={"dayOrNet": DAY_OR_NET, "clientID": client_id},
                         headers={"authorization": token, "Content-Type": "application/json"},
                         timeout=12)
