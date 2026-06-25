@@ -214,6 +214,13 @@ async def api_terminal(force: bool = False):
     return await loop.run_in_executor(None, aggregator.get_terminal, force)
 
 
+@app.get("/api/terminal/eod_history")
+async def api_terminal_eod_history():
+    """Persisted daily XTS EOD P&L history (XTS resets daily)."""
+    from deployment import broker_eod
+    return broker_eod.get_history()
+
+
 # ── Strangle System endpoint ─────────────────────────────────────────────────
 
 @app.get("/api/strangle/status")

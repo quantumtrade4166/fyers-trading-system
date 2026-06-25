@@ -44,7 +44,8 @@ MD_PATH = "/apibinarymarketdata"
 
 # segment string -> market-data numeric id, and -> short display label
 _SEG_NUM = {"NSECM": 1, "NSEFO": 2, "NSECD": 3, "BSECM": 11, "BSEFO": 12, "MCXFO": 51}
-_SEG_LBL = {"NSECM": "NSE", "NSEFO": "NFO", "BSECM": "BSE", "BSEFO": "BFO", "NSECD": "CDS"}
+_SEG_LBL = {"NSECM": "NSE", "NSEFO": "NFO", "BSECM": "BSE", "BSEFO": "BFO",
+            "NSECD": "CDS", "MCXFO": "MCX"}
 
 # day-scoped token cache so we don't re-login every poll (avoids HTTP 429)
 _lock = threading.Lock()

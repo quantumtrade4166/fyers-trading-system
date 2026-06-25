@@ -38,9 +38,10 @@ def _fetch_all() -> dict:
     combined_realised = round(
         sum(p["pnl"] for s in brokers for p in s["positions"] if p["qty"] == 0), 2)
 
-    # table shows only OPEN positions (qty != 0) — closed legs are noise on a live board
+    # table shows only OPEN positions (qty != 0) — closed legs are noise on a live board.
+    # MCX positions always sink to the bottom; within each group, largest |P&L| first.
     all_positions = [p for s in brokers for p in s["positions"] if p["qty"] != 0]
-    all_positions.sort(key=lambda p: abs(p["pnl"]), reverse=True)
+    all_positions.sort(key=lambda p: ("MCX" in str(p.get("exchange", "")).upper(), -abs(p["pnl"])))
 
     return {
         "combined_pnl":      combined_pnl,

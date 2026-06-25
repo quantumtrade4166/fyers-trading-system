@@ -63,40 +63,45 @@
                  animation: pulse 1.4s infinite; display:inline-block; margin-right:6px; }
   .term-mono { font-variant-numeric: tabular-nums; }
 
-  /* ════════════ Zerodha Kite vibe — terminal mode only ════════════ */
-  body.terminal-mode { background:#f5f7fa !important; color:#3c3c3c; }
-  body.terminal-mode #header-title { color:#3c3c3c; font-weight:600; font-size:1.05rem; letter-spacing:0; }
-  body.terminal-mode #clock { color:#9b9b9b; }
-  body.terminal-mode #live-badge { background:#fff; color:#e53935; border:1px solid #f0c8c8;
-        font-weight:600; letter-spacing:.03em; }
-  body.terminal-mode #live-badge .dot-livered { background:#e53935; box-shadow:0 0 6px rgba(229,57,53,.5); }
+  /* ════════════ Pro Terminal (Bloomberg amber) — terminal mode only ════════════ */
+  body.terminal-mode { background:#0a0b0d !important;
+        font-family:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace; color:#d7d2c4; }
+  body.terminal-mode #header-title { color:#f5a623; font-weight:500; font-size:1rem;
+        letter-spacing:.06em; text-transform:uppercase; }
+  body.terminal-mode #clock { color:#6b6457; }
+  body.terminal-mode #live-badge { background:transparent; color:#ff4d4d; border:1px solid #4a2620;
+        font-weight:500; letter-spacing:.05em; }
+  body.terminal-mode #live-badge .dot-livered { background:#ff4d4d; box-shadow:0 0 6px rgba(255,77,77,.5); }
 
-  #page-terminal { color:#3c3c3c; font-size:13px; }
-  #page-terminal .k-panel { background:#fff; border:1px solid #e8eaed; border-radius:4px; }
-  #page-terminal .k-muted  { color:#9b9b9b; }
-  #page-terminal .k-blue   { color:#387ed1; }
-  #page-terminal .k-green  { color:#4caf50; }
-  #page-terminal .k-red    { color:#e53935; }
-  #page-terminal .k-btn { background:#fff; border:1px solid #dfe2e7; color:#5c6670; border-radius:3px;
-        font-size:12px; padding:6px 12px; transition:background .15s,border-color .15s; }
-  #page-terminal .k-btn:hover { background:#f5f7fa; border-color:#cdd2d9; color:#3c3c3c; }
-  #page-terminal .k-chip { background:#fff; border:1px solid #e8eaed; border-radius:4px; }
-  #page-terminal .prod-tag { font-size:10px; color:#9b9b9b; border:1px solid #e6e6e6; border-radius:2px;
-        padding:1px 5px; background:#fafafa; letter-spacing:.02em; }
+  #page-terminal { color:#d7d2c4; font-size:12.5px;
+        font-family:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace; }
+  #page-terminal .k-panel { background:#101216; border:1px solid #1c1f25; border-radius:4px; }
+  #page-terminal .k-muted  { color:#6b6457; text-transform:uppercase; letter-spacing:.05em; }
+  #page-terminal .k-amber  { color:#f5a623; }
+  #page-terminal .k-green  { color:#23d18b; }
+  #page-terminal .k-red    { color:#ff4d4d; }
+  #page-terminal .k-btn { background:#14171c; border:1px solid #2a2620; color:#a8a294; border-radius:3px;
+        font-size:11.5px; padding:6px 12px; letter-spacing:.03em; transition:background .15s,border-color .15s; }
+  #page-terminal .k-btn:hover { background:#1a1d22; border-color:#3a342a; color:#f5a623; }
+  #page-terminal .k-chip { background:transparent; border:1px solid #2a2620; border-radius:3px; }
 
-  /* Kite-style positions table */
+  #page-terminal .prod-tag { font-size:10px; color:#6b6457; border:1px solid #2a2620; border-radius:2px;
+        padding:1px 5px; background:transparent; letter-spacing:.03em; }
+
+  /* Bloomberg-style positions table */
   #page-terminal table.k-tbl { width:100%; border-collapse:collapse; }
-  #page-terminal table.k-tbl thead th { font-size:11px; font-weight:400; color:#9b9b9b;
-        padding:9px 16px; border-bottom:1px solid #eceef1; text-align:right; white-space:nowrap; }
+  #page-terminal table.k-tbl thead th { font-size:10.5px; font-weight:400; color:#6b6457; background:#0e0f12;
+        padding:8px 16px; border-bottom:1px solid #1c1f25; text-align:right; white-space:nowrap;
+        text-transform:uppercase; letter-spacing:.05em; }
   #page-terminal table.k-tbl thead th:nth-child(1),
   #page-terminal table.k-tbl thead th:nth-child(2) { text-align:left; }
-  #page-terminal table.k-tbl tbody td { font-size:13px; padding:11px 16px; border-bottom:1px solid #f4f5f7;
-        text-align:right; white-space:nowrap; color:#444; font-variant-numeric:tabular-nums; }
+  #page-terminal table.k-tbl tbody td { font-size:12.5px; padding:9px 16px; border-top:1px solid #15171b;
+        text-align:right; white-space:nowrap; color:#cfcabd; font-variant-numeric:tabular-nums; }
   #page-terminal table.k-tbl tbody td:nth-child(1),
   #page-terminal table.k-tbl tbody td:nth-child(2) { text-align:left; }
-  #page-terminal table.k-tbl tbody tr:hover { background:#f8fbff; }
-  #page-terminal table.k-tbl tbody tr:last-child td { border-bottom:none; }
-  #page-terminal .k-instr { color:#3c3c3c; font-weight:500; }
+  #page-terminal table.k-tbl tbody tr:nth-child(even) { background:#0c0d10; }
+  #page-terminal table.k-tbl tbody tr:hover { background:#15171b; }
+  #page-terminal .k-instr { color:#cfcabd; }
 </style>
 </head>
 <body class="min-h-screen p-4">
@@ -495,12 +500,12 @@
     <!-- top action row -->
     <div class="flex items-center justify-between mb-4">
       <div class="flex items-baseline gap-2">
-        <h2 style="font-size:1.05rem;font-weight:600;color:#3c3c3c">Positions</h2>
-        <span id="term-poscount" class="k-muted" style="font-size:13px">—</span>
+        <h2 style="font-size:1rem;font-weight:500;color:#f5a623;letter-spacing:.06em;text-transform:uppercase">Positions</h2>
+        <span id="term-poscount" class="term-mono" style="font-size:12px;color:#6b6457">—</span>
       </div>
       <div class="flex items-center gap-2">
         <span id="term-ts" class="k-muted term-mono" style="font-size:12px;margin-right:4px">--:--:--</span>
-        <button onclick="fetchTerminal(true)" class="k-btn">⟳ Refresh</button>
+        <button onclick="fetchTerminal(true)" class="k-btn">↻ Refresh</button>
         <button onclick="switchTab('statarb')" title="Exit live terminal" class="k-btn">‹ Exit</button>
       </div>
     </div>
@@ -519,7 +524,7 @@
           </div>
           <div>
             <p class="k-muted" style="font-size:12px;margin-bottom:3px">Open positions</p>
-            <p id="term-open" style="font-size:16px;font-weight:500;color:#3c3c3c">0</p>
+            <p id="term-open" style="font-size:16px;font-weight:500;color:#d7d2c4">0</p>
           </div>
           <div>
             <p class="k-muted" style="font-size:12px;margin-bottom:3px">Accounts</p>
@@ -1454,15 +1459,15 @@ function renderStrangle(d) {
 // ── Terminal tab (multi-broker live positions) ──────────────────────────────
 let _termTimer = null;
 const BROKER_META = {
-  zerodha: { label: 'Zerodha', color: '#387ed1' },
-  jainam:  { label: 'Jainam',  color: '#e67e22' },
+  zerodha: { label: 'Zerodha', color: '#f5a623' },
+  jainam:  { label: 'XTS',     color: '#f5a623' },
 };
 const inr = v => {
   const n = Number(v) || 0;
   const s = n < 0 ? '-' : (n > 0 ? '+' : '');
   return s + '₹' + Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 };
-const pnlCol = v => (Number(v) > 0 ? '#4caf50' : Number(v) < 0 ? '#e53935' : '#9b9b9b');
+const pnlCol = v => (Number(v) > 0 ? '#23d18b' : Number(v) < 0 ? '#ff4d4d' : '#6b6457');
 
 async function fetchTerminal(force = false) {
   try {
@@ -1493,7 +1498,7 @@ function renderTerminal(d) {
   document.getElementById('term-brokers').innerHTML = (d.brokers || []).map(b => {
     const meta = BROKER_META[b.broker] || { label: b.broker, color: '#9b9b9b' };
     const ok = b.status === 'ok';
-    const dot = ok ? '#4caf50' : (b.status === 'error' ? '#e53935' : '#bdbdbd');
+    const dot = ok ? '#23d18b' : (b.status === 'error' ? '#ff4d4d' : '#6b6457');
     const val = ok
       ? `<span style="color:${pnlCol(b.total_pnl)};font-weight:600">${inr(b.total_pnl)}</span>`
       : `<span class="k-muted">${b.status === 'error' ? 'error' : 'offline'}</span>`;
@@ -1515,7 +1520,7 @@ function renderTerminal(d) {
   const px = v => v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   tbody.innerHTML = rows.map(p => {
     const meta = BROKER_META[p.broker] || { label: p.broker, color: '#9b9b9b' };
-    const qtyCol = p.qty < 0 ? '#e53935' : '#424242';
+    const qtyCol = p.qty < 0 ? '#ff4d4d' : '#cfcabd';
     return `
       <tr>
         <td><span style="color:${meta.color};font-weight:500">${meta.label}</span></td>

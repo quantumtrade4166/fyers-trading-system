@@ -157,6 +157,16 @@ def _zerodha_login():
         print("  [scheduler] Zerodha token NOT generated (check creds / TOTP).")
 
 
+def _xts_eod_snapshot():
+    """15:30 IST — record XTS end-of-day P&L (resets daily, so we persist it)."""
+    print("  [scheduler] Recording XTS EOD P&L...")
+    from deployment import broker_eod
+    try:
+        broker_eod.record_eod()
+    except Exception as e:
+        print(f"  [scheduler] XTS EOD record failed: {e}")
+
+
 def _start_feed():
     print("  [scheduler] Market open — starting live feed...")
     from deployment import live_feed
@@ -188,6 +198,10 @@ def create_scheduler() -> BackgroundScheduler:
 
     # stop feed at 15:30
     sched.add_job(_stop_feed, CronTrigger(
+        day_of_week="mon-fri", hour=15, minute=30, timezone=IST))
+
+    # record XTS EOD P&L at 15:30 (XTS resets daily — persist the day's number)
+    sched.add_job(_xts_eod_snapshot, CronTrigger(
         day_of_week="mon-fri", hour=15, minute=30, timezone=IST))
 
     # EOD price reload at 15:35

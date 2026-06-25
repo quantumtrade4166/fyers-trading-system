@@ -5,6 +5,7 @@
 config/access_token.txt
 deployment/.env
 deployment/zerodha_token.json
+deployment/xts_eod_pnl.json
 
 # Large data files
 Nifty 500 Daily Data/
