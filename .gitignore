@@ -4,6 +4,7 @@
 # Sensitive files
 config/access_token.txt
 deployment/.env
+deployment/zerodha_token.json
 
 # Large data files
 Nifty 500 Daily Data/

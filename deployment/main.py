@@ -40,6 +40,13 @@ async def lifespan(app: FastAPI):
     _scheduler.start()
     print("  [main] Scheduler started.")
 
+    # ensure today's Zerodha token exists (in case server starts after 08:50)
+    try:
+        from deployment.brokers import zerodha_auto_login
+        zerodha_auto_login.ensure_token()
+    except Exception as e:
+        print(f"  [main] Zerodha ensure_token error: {e}")
+
     # if server starts during market hours, kick off the live feed immediately
     import pytz
     from datetime import datetime
@@ -195,6 +202,16 @@ async def api_dualmom_live_quotes():
     import asyncio
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, dualmom_paper.get_live_quotes)
+
+
+# ── Terminal (multi-broker positions) endpoint ───────────────────────────────
+
+@app.get("/api/terminal")
+async def api_terminal(force: bool = False):
+    """Combined positions + P&L across Fyers, Zerodha, Jainam (read-only)."""
+    from deployment.brokers import aggregator
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, aggregator.get_terminal, force)
 
 
 # ── Strangle System endpoint ─────────────────────────────────────────────────

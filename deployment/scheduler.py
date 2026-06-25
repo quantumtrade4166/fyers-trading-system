@@ -147,6 +147,16 @@ def _dualmom_eod():
     print("  [scheduler] DualMom EOD run complete.")
 
 
+def _zerodha_login():
+    """08:50 IST — generate today's Kite Connect access token (headless TOTP)."""
+    print("  [scheduler] Zerodha auto-login...")
+    from deployment.brokers import zerodha_auto_login
+    if zerodha_auto_login.ensure_token():
+        print("  [scheduler] Zerodha token ready.")
+    else:
+        print("  [scheduler] Zerodha token NOT generated (check creds / TOTP).")
+
+
 def _start_feed():
     print("  [scheduler] Market open — starting live feed...")
     from deployment import live_feed
@@ -161,6 +171,10 @@ def _stop_feed():
 
 def create_scheduler() -> BackgroundScheduler:
     sched = BackgroundScheduler(timezone=IST)
+
+    # Zerodha headless auto-login at 08:50 (token ready before market open)
+    sched.add_job(_zerodha_login, CronTrigger(
+        day_of_week="mon-fri", hour=8, minute=50, timezone=IST))
 
     # start feed at 09:15
     sched.add_job(_start_feed, CronTrigger(

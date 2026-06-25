@@ -49,6 +49,22 @@
   /* signal meter */
   .nifty-gap-bar { height: 8px; border-radius: 4px; background: #2d3748; position: relative; overflow: hidden; }
   .nifty-gap-fill { height: 100%; border-radius: 4px; transition: width 0.6s ease; }
+
+  /* ── LIVE terminal immersive mode ── */
+  /* target by id too — some of these elements have their className rewritten by JS,
+     which would otherwise strip .hide-in-terminal */
+  body.terminal-mode .hide-in-terminal,
+  body.terminal-mode #mode-badge,
+  body.terminal-mode #feed-dot,
+  body.terminal-mode #feed-label,
+  body.terminal-mode #header-sub,
+  body.terminal-mode #tab-bar { display: none !important; }
+  .dot-livered { width:8px; height:8px; border-radius:50%; background:#f87171; box-shadow:0 0 8px #f87171;
+                 animation: pulse 1.4s infinite; display:inline-block; margin-right:6px; }
+  .term-mono { font-variant-numeric: tabular-nums; }
+  #page-terminal .dm-table th { font-size: 12px; }
+  #page-terminal .dm-table td { font-size: 13px; padding: 8px; }
+  #page-terminal .dm-table tbody tr { border-bottom: 1px solid #1e2533; }
 </style>
 </head>
 <body class="min-h-screen p-4">
@@ -57,19 +73,22 @@
   <!-- ── Global Header ── -->
   <div class="flex items-center justify-between mb-4">
     <div>
-      <h1 class="text-xl font-semibold text-white tracking-tight">Trading Dashboard</h1>
-      <p class="text-xs text-slate-500 mt-0.5">StatArb · DualMom · Paper Trading · NSE</p>
+      <h1 id="header-title" class="text-xl font-semibold text-white tracking-tight">Trading Dashboard</h1>
+      <p id="header-sub" class="text-xs text-slate-500 mt-0.5 hide-in-terminal">StatArb · DualMom · Paper Trading · NSE</p>
     </div>
     <div class="flex items-center gap-3">
-      <span id="feed-dot" class="dot-dead"></span>
-      <span id="feed-label" class="text-sm text-slate-400">feed offline</span>
-      <span id="mode-badge" class="badge-paper text-xs font-medium px-3 py-1 rounded-full">PAPER</span>
+      <span id="feed-dot" class="dot-dead hide-in-terminal"></span>
+      <span id="feed-label" class="text-sm text-slate-400 hide-in-terminal">feed offline</span>
+      <span id="mode-badge" class="badge-paper text-xs font-medium px-3 py-1 rounded-full hide-in-terminal">PAPER</span>
+      <span id="live-badge" class="badge-live text-xs font-semibold px-3 py-1 rounded-full" style="display:none">
+        <span class="dot-livered"></span>LIVE
+      </span>
       <span id="clock" class="text-sm text-slate-500 font-mono ml-2"></span>
     </div>
   </div>
 
   <!-- ── Tab Bar ── -->
-  <div class="tab-bar flex gap-1 mb-6">
+  <div id="tab-bar" class="tab-bar flex gap-1 mb-6 hide-in-terminal">
     <button class="tab-btn active" id="tab-statarb" onclick="switchTab('statarb')">
       📊 StatArb.MR-First10
     </button>
@@ -78,6 +97,9 @@
     </button>
     <button class="tab-btn" id="tab-strangle" onclick="switchTab('strangle')">
       🎯 Strangle System
+    </button>
+    <button class="tab-btn" id="tab-terminal" onclick="switchTab('terminal')">
+      💼 Terminal
     </button>
   </div>
 
@@ -432,6 +454,80 @@
 
   </div><!-- /page-strangle -->
 
+
+  <!-- ══════════════════════════════════════════════════════════
+       TAB 4 — Terminal (multi-broker live positions)
+  ══════════════════════════════════════════════════════════ -->
+  <div id="page-terminal" style="display:none">
+
+    <div class="flex items-center justify-between mb-5">
+      <div>
+        <h2 class="text-lg font-semibold text-white">Live Positions</h2>
+        <p class="text-xs text-slate-500">Combined order book &amp; P&amp;L · Zerodha · Jainam · NSE / NFO</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="term-ts" class="text-xs text-slate-500 font-mono term-mono">--:--:--</span>
+        <button onclick="fetchTerminal(true)"
+                class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
+          ⟳ Refresh
+        </button>
+        <button onclick="switchTab('statarb')" title="Exit live terminal"
+                class="text-xs px-3 py-1.5 rounded-lg bg-transparent hover:bg-slate-800 text-slate-600 hover:text-slate-400 border border-slate-800 transition">
+          ‹ Exit
+        </button>
+      </div>
+    </div>
+
+    <!-- Combined P&L hero -->
+    <div class="card p-6 mb-5" style="background:linear-gradient(135deg,#161b26 0%,#1a1f2e 100%);">
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+        <div>
+          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Combined P&amp;L</p>
+          <p id="term-combined" class="text-4xl font-bold text-white tracking-tight">₹0</p>
+          <p class="text-xs text-slate-600 mt-1">today · all accounts</p>
+        </div>
+        <div>
+          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Realised (day)</p>
+          <p id="term-realised" class="text-2xl font-semibold text-slate-200 mt-2">₹0</p>
+        </div>
+        <div>
+          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Open Positions</p>
+          <p id="term-open" class="text-2xl font-semibold text-slate-200 mt-2">0</p>
+        </div>
+        <div>
+          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Accounts</p>
+          <p id="term-accounts" class="text-2xl font-semibold text-slate-200 mt-2">0 / 3</p>
+          <p class="text-xs text-slate-600 mt-1">connected</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Per-broker cards -->
+    <div id="term-brokers" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6"></div>
+
+    <!-- Positions table -->
+    <div class="card p-5">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-sm font-medium text-slate-300">All Positions</h2>
+        <span id="term-poscount" class="text-xs text-slate-600">—</span>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="dm-table w-full">
+          <thead>
+            <tr>
+              <th>Broker</th><th>Symbol</th><th>Exch</th><th>Product</th>
+              <th>Side</th><th>Qty</th><th>Avg</th><th>LTP</th><th>P&amp;L</th>
+            </tr>
+          </thead>
+          <tbody id="term-rows">
+            <tr><td colspan="9" class="text-center text-slate-600 py-6">Open the tab to load positions…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /page-terminal -->
+
 </div><!-- /max-w -->
 
 <script>
@@ -447,13 +543,20 @@ let _activeTab = 'statarb';
 // ── tab switching ─────────────────────────────────────────────────────────────
 function switchTab(tab) {
   _activeTab = tab;
-  ['statarb', 'dualmom', 'strangle'].forEach(t => {
+  ['statarb', 'dualmom', 'strangle', 'terminal'].forEach(t => {
     const pg = document.getElementById('page-' + t);
     if (pg) pg.style.display = (t === tab) ? '' : 'none';
     const btn = document.getElementById('tab-' + t);
     if (btn) btn.classList.toggle('active', t === tab);
   });
   if (tab === 'strangle') fetchStrangle();
+
+  // immersive LIVE terminal mode — hide everything else, show LIVE badge
+  const inTerminal = (tab === 'terminal');
+  document.body.classList.toggle('terminal-mode', inTerminal);
+  document.getElementById('header-title').textContent = inTerminal ? 'LIVE TRADING TERMINAL' : 'Trading Dashboard';
+  document.getElementById('live-badge').style.display = inTerminal ? '' : 'none';
+  if (inTerminal) { fetchTerminal(); startTerminalPoll(); } else { stopTerminalPoll(); }
 
   requestAnimationFrame(() => {
     if (tab === 'statarb') {
@@ -1326,6 +1429,93 @@ function renderStrangle(d) {
         <th style="padding:5px 8px">Latest</th><th style="padding:5px 8px">Rows</th>
         <th style="padding:5px 8px">Spot</th><th style="padding:5px 8px">Greeks</th><th style="padding:5px 8px">Drive</th>
       </tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+// ── Terminal tab (multi-broker live positions) ──────────────────────────────
+let _termTimer = null;
+const BROKER_META = {
+  zerodha: { label: 'Zerodha', color: '#f59e0b' },
+  jainam:  { label: 'Jainam',  color: '#a78bfa' },
+};
+const inr = v => {
+  const n = Number(v) || 0;
+  const s = n < 0 ? '-' : (n > 0 ? '+' : '');
+  return s + '₹' + Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+};
+const pnlCol = v => (Number(v) > 0 ? '#4ade80' : Number(v) < 0 ? '#f87171' : '#94a3b8');
+
+async function fetchTerminal(force = false) {
+  try {
+    const r = await fetch('/api/terminal' + (force ? '?force=true' : ''));
+    renderTerminal(await r.json());
+  } catch (e) { console.error('terminal fetch', e); }
+}
+
+function startTerminalPoll() {
+  stopTerminalPoll();
+  _termTimer = setInterval(() => { if (_activeTab === 'terminal') fetchTerminal(); }, 5000);
+}
+function stopTerminalPoll() { if (_termTimer) { clearInterval(_termTimer); _termTimer = null; } }
+
+function renderTerminal(d) {
+  if (!d) return;
+  document.getElementById('term-ts').textContent = d.ts || '--:--:--';
+
+  const cmb = document.getElementById('term-combined');
+  cmb.textContent = inr(d.combined_pnl);
+  cmb.style.color = pnlCol(d.combined_pnl);
+  document.getElementById('term-realised').textContent = inr(d.combined_realised);
+  document.getElementById('term-realised').style.color = pnlCol(d.combined_realised);
+  document.getElementById('term-open').textContent = d.open_positions ?? 0;
+  document.getElementById('term-accounts').textContent = `${d.brokers_connected ?? 0} / ${d.brokers_total ?? 3}`;
+
+  // per-broker cards
+  document.getElementById('term-brokers').innerHTML = (d.brokers || []).map(b => {
+    const meta = BROKER_META[b.broker] || { label: b.broker, color: '#94a3b8' };
+    const dot = b.status === 'ok'
+      ? '<span class="dot-live"></span>'
+      : `<span class="dot-dead"></span>`;
+    const statusTxt = b.status === 'ok' ? `${b.open_count} open`
+      : b.status === 'not_configured' ? 'not connected'
+      : 'error';
+    const detail = (b.status !== 'ok' && b.message)
+      ? `<p class="text-xs text-slate-600 mt-2 leading-snug">${b.message}</p>` : '';
+    return `
+      <div class="card p-4" style="border-left:3px solid ${meta.color}">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-sm font-semibold" style="color:${meta.color}">${meta.label}</span>
+          <span class="text-xs text-slate-500">${dot}${statusTxt}</span>
+        </div>
+        <p class="text-2xl font-semibold" style="color:${pnlCol(b.total_pnl)}">${inr(b.total_pnl)}</p>
+        <p class="text-xs text-slate-600 mt-1">realised ${inr(b.realised_pnl)}</p>
+        ${detail}
+      </div>`;
+  }).join('');
+
+  // positions table
+  const rows = d.positions || [];
+  document.getElementById('term-poscount').textContent = rows.length + ' position' + (rows.length === 1 ? '' : 's');
+  const tbody = document.getElementById('term-rows');
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-slate-600 py-6">No open positions across connected accounts.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = rows.map(p => {
+    const meta = BROKER_META[p.broker] || { label: p.broker, color: '#94a3b8' };
+    const sideCol = p.side === 'LONG' ? '#4ade80' : p.side === 'SHORT' ? '#f87171' : '#64748b';
+    return `
+      <tr>
+        <td style="text-align:left"><span style="color:${meta.color};font-weight:600">${meta.label}</span></td>
+        <td style="text-align:left;color:#e2e8f0;font-weight:500">${p.symbol}</td>
+        <td style="color:#64748b">${p.exchange || '—'}</td>
+        <td style="color:#94a3b8">${p.product || '—'}</td>
+        <td style="color:${sideCol};font-weight:600">${p.side}</td>
+        <td>${p.qty}</td>
+        <td>${p.avg_price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+        <td>${p.ltp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+        <td style="color:${pnlCol(p.pnl)};font-weight:600">${inr(p.pnl)}</td>
+      </tr>`;
+  }).join('');
 }
 
 initCharts();
