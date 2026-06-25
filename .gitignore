@@ -33,3 +33,8 @@ Thumbs.db
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Strangle execution system (live_trading_options) - generated data, not code
+live_trading_options/strangle_strategy/data/chart_history/
+live_trading_options/strangle_strategy/data/symbol_master/
+live_trading_options/strangle_strategy/validation/output/

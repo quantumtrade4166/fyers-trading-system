@@ -1,0 +1,35 @@
+{
+  "_comment": "Persistent strangle-strategy parameters. Loaded each morning. Changes take effect next trading day. Lot sizes confirmed from Fyers symbol master 2026-06-25: NIFTY=65, SENSEX=20.",
+  "lot_sizes": {
+    "NIFTY": 65,
+    "SENSEX": 20
+  },
+  "strike_interval": {
+    "NIFTY": 50,
+    "SENSEX": 100
+  },
+  "index_symbols": {
+    "NIFTY": "NSE:NIFTY50-INDEX",
+    "SENSEX": "BSE:SENSEX-INDEX"
+  },
+  "expiry_weekday": {
+    "_note": "0=Mon .. 6=Sun. NIFTY expires Tuesday, SENSEX Thursday.",
+    "NIFTY": 1,
+    "SENSEX": 3
+  },
+  "0_DTE": {
+    "nifty_premium_threshold": 30,
+    "sensex_premium_threshold": 90,
+    "lots": 1,
+    "mtm_stop_loss": 1000
+  },
+  "1_DTE": {
+    "nifty_premium_threshold": 50,
+    "sensex_premium_threshold": 90,
+    "lots": 1,
+    "mtm_stop_loss": 1000
+  },
+  "max_entries_per_day": 4,
+  "archive_retention_days": 7,
+  "last_saved": "2026-06-25"
+}
