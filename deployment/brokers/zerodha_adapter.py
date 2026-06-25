@@ -60,6 +60,9 @@ class ZerodhaAdapter(BrokerAdapter):
 
         positions = []
         for p in data.get("net", []) or []:
+            # MCX excluded entirely — only NSE / NFO / BFO kept (per user)
+            if "MCX" in str(p.get("exchange", "")).upper():
+                continue
             qty = int(p.get("quantity", 0))
             if qty == 0 and float(p.get("pnl", 0)) == 0:
                 continue

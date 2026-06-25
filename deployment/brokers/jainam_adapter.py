@@ -147,6 +147,11 @@ class JainamAdapter(BrokerAdapter):
 
     # ── main fetch ─────────────────────────────────────────────────────────────
     def _fetch(self) -> BrokerSnapshot:
+        # self-heal: if the cached token was invalidated elsewhere (XTS allows one
+        # session), drop it and re-login once.
+        return self._fetch_once(retry=True)
+
+    def _fetch_once(self, retry: bool) -> BrokerSnapshot:
         import requests
         session = requests.Session()
         token, client_id = self._interactive(session)
@@ -160,12 +165,19 @@ class JainamAdapter(BrokerAdapter):
         body = r.json()
         if body.get("type") != "success":
             desc = str(body.get("description", "")).lower()
+            if retry and any(k in desc for k in
+                             ("token", "authoriz", "unauthor", "not logged", "invalid session")):
+                with _lock:
+                    _cache["itoken"] = None      # force fresh login
+                return self._fetch_once(retry=False)
             if "not available" in desc or "no data" in desc or "no position" in desc:
                 return BrokerSnapshot(self.name, status="ok", positions=[])
             return BrokerSnapshot(self.name, status="error",
                                   message=str(body.get("description", "positions failed"))[:200])
 
         rows = (body.get("result") or {}).get("positionList", []) or []
+        # MCX excluded entirely — only NSE / NFO / BFO kept (per user); never in P&L.
+        rows = [p for p in rows if "MCX" not in str(p.get("ExchangeSegment", "")).upper()]
 
         # live LTP only needed for genuinely open legs
         open_rows = [p for p in rows if int(_f(p.get("Quantity"))) != 0]
