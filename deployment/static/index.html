@@ -59,12 +59,44 @@
   body.terminal-mode #feed-label,
   body.terminal-mode #header-sub,
   body.terminal-mode #tab-bar { display: none !important; }
-  .dot-livered { width:8px; height:8px; border-radius:50%; background:#f87171; box-shadow:0 0 8px #f87171;
+  .dot-livered { width:7px; height:7px; border-radius:50%; background:#f87171; box-shadow:0 0 8px #f87171;
                  animation: pulse 1.4s infinite; display:inline-block; margin-right:6px; }
   .term-mono { font-variant-numeric: tabular-nums; }
-  #page-terminal .dm-table th { font-size: 12px; }
-  #page-terminal .dm-table td { font-size: 13px; padding: 8px; }
-  #page-terminal .dm-table tbody tr { border-bottom: 1px solid #1e2533; }
+
+  /* ════════════ Zerodha Kite vibe — terminal mode only ════════════ */
+  body.terminal-mode { background:#f5f7fa !important; color:#3c3c3c; }
+  body.terminal-mode #header-title { color:#3c3c3c; font-weight:600; font-size:1.05rem; letter-spacing:0; }
+  body.terminal-mode #clock { color:#9b9b9b; }
+  body.terminal-mode #live-badge { background:#fff; color:#e53935; border:1px solid #f0c8c8;
+        font-weight:600; letter-spacing:.03em; }
+  body.terminal-mode #live-badge .dot-livered { background:#e53935; box-shadow:0 0 6px rgba(229,57,53,.5); }
+
+  #page-terminal { color:#3c3c3c; font-size:13px; }
+  #page-terminal .k-panel { background:#fff; border:1px solid #e8eaed; border-radius:4px; }
+  #page-terminal .k-muted  { color:#9b9b9b; }
+  #page-terminal .k-blue   { color:#387ed1; }
+  #page-terminal .k-green  { color:#4caf50; }
+  #page-terminal .k-red    { color:#e53935; }
+  #page-terminal .k-btn { background:#fff; border:1px solid #dfe2e7; color:#5c6670; border-radius:3px;
+        font-size:12px; padding:6px 12px; transition:background .15s,border-color .15s; }
+  #page-terminal .k-btn:hover { background:#f5f7fa; border-color:#cdd2d9; color:#3c3c3c; }
+  #page-terminal .k-chip { background:#fff; border:1px solid #e8eaed; border-radius:4px; }
+  #page-terminal .prod-tag { font-size:10px; color:#9b9b9b; border:1px solid #e6e6e6; border-radius:2px;
+        padding:1px 5px; background:#fafafa; letter-spacing:.02em; }
+
+  /* Kite-style positions table */
+  #page-terminal table.k-tbl { width:100%; border-collapse:collapse; }
+  #page-terminal table.k-tbl thead th { font-size:11px; font-weight:400; color:#9b9b9b;
+        padding:9px 16px; border-bottom:1px solid #eceef1; text-align:right; white-space:nowrap; }
+  #page-terminal table.k-tbl thead th:nth-child(1),
+  #page-terminal table.k-tbl thead th:nth-child(2) { text-align:left; }
+  #page-terminal table.k-tbl tbody td { font-size:13px; padding:11px 16px; border-bottom:1px solid #f4f5f7;
+        text-align:right; white-space:nowrap; color:#444; font-variant-numeric:tabular-nums; }
+  #page-terminal table.k-tbl tbody td:nth-child(1),
+  #page-terminal table.k-tbl tbody td:nth-child(2) { text-align:left; }
+  #page-terminal table.k-tbl tbody tr:hover { background:#f8fbff; }
+  #page-terminal table.k-tbl tbody tr:last-child td { border-bottom:none; }
+  #page-terminal .k-instr { color:#3c3c3c; font-weight:500; }
 </style>
 </head>
 <body class="min-h-screen p-4">
@@ -460,67 +492,55 @@
   ══════════════════════════════════════════════════════════ -->
   <div id="page-terminal" style="display:none">
 
-    <div class="flex items-center justify-between mb-5">
-      <div>
-        <h2 class="text-lg font-semibold text-white">Live Positions</h2>
-        <p class="text-xs text-slate-500">Combined order book &amp; P&amp;L · Zerodha · Jainam · NSE / NFO</p>
+    <!-- top action row -->
+    <div class="flex items-center justify-between mb-4">
+      <div class="flex items-baseline gap-2">
+        <h2 style="font-size:1.05rem;font-weight:600;color:#3c3c3c">Positions</h2>
+        <span id="term-poscount" class="k-muted" style="font-size:13px">—</span>
       </div>
-      <div class="flex items-center gap-3">
-        <span id="term-ts" class="text-xs text-slate-500 font-mono term-mono">--:--:--</span>
-        <button onclick="fetchTerminal(true)"
-                class="text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition">
-          ⟳ Refresh
-        </button>
-        <button onclick="switchTab('statarb')" title="Exit live terminal"
-                class="text-xs px-3 py-1.5 rounded-lg bg-transparent hover:bg-slate-800 text-slate-600 hover:text-slate-400 border border-slate-800 transition">
-          ‹ Exit
-        </button>
+      <div class="flex items-center gap-2">
+        <span id="term-ts" class="k-muted term-mono" style="font-size:12px;margin-right:4px">--:--:--</span>
+        <button onclick="fetchTerminal(true)" class="k-btn">⟳ Refresh</button>
+        <button onclick="switchTab('statarb')" title="Exit live terminal" class="k-btn">‹ Exit</button>
       </div>
     </div>
 
-    <!-- Combined P&L hero -->
-    <div class="card p-6 mb-5" style="background:linear-gradient(135deg,#161b26 0%,#1a1f2e 100%);">
-      <div class="grid grid-cols-2 md:grid-cols-4 gap-6">
+    <!-- summary strip (Kite-style) -->
+    <div class="k-panel mb-4" style="padding:18px 22px">
+      <div class="flex flex-wrap items-end justify-between gap-6">
         <div>
-          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Combined P&amp;L</p>
-          <p id="term-combined" class="text-4xl font-bold text-white tracking-tight">₹0</p>
-          <p class="text-xs text-slate-600 mt-1">today · all accounts</p>
+          <p class="k-muted" style="font-size:12px;margin-bottom:3px">Total P&amp;L</p>
+          <p id="term-combined" style="font-size:28px;font-weight:600;line-height:1.1">₹0</p>
         </div>
-        <div>
-          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Realised (day)</p>
-          <p id="term-realised" class="text-2xl font-semibold text-slate-200 mt-2">₹0</p>
-        </div>
-        <div>
-          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Open Positions</p>
-          <p id="term-open" class="text-2xl font-semibold text-slate-200 mt-2">0</p>
-        </div>
-        <div>
-          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Accounts</p>
-          <p id="term-accounts" class="text-2xl font-semibold text-slate-200 mt-2">0 / 3</p>
-          <p class="text-xs text-slate-600 mt-1">connected</p>
+        <div class="flex items-end gap-8">
+          <div>
+            <p class="k-muted" style="font-size:12px;margin-bottom:3px">Realised</p>
+            <p id="term-realised" style="font-size:16px;font-weight:500">₹0</p>
+          </div>
+          <div>
+            <p class="k-muted" style="font-size:12px;margin-bottom:3px">Open positions</p>
+            <p id="term-open" style="font-size:16px;font-weight:500;color:#3c3c3c">0</p>
+          </div>
+          <div>
+            <p class="k-muted" style="font-size:12px;margin-bottom:3px">Accounts</p>
+            <div id="term-brokers" class="flex items-center gap-2"></div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Per-broker cards -->
-    <div id="term-brokers" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6"></div>
-
-    <!-- Positions table -->
-    <div class="card p-5">
-      <div class="flex items-center justify-between mb-3">
-        <h2 class="text-sm font-medium text-slate-300">All Positions</h2>
-        <span id="term-poscount" class="text-xs text-slate-600">—</span>
-      </div>
-      <div class="overflow-x-auto">
-        <table class="dm-table w-full">
+    <!-- positions table -->
+    <div class="k-panel" style="overflow:hidden">
+      <div style="overflow-x:auto">
+        <table class="k-tbl">
           <thead>
             <tr>
-              <th>Broker</th><th>Symbol</th><th>Exch</th><th>Product</th>
-              <th>Side</th><th>Qty</th><th>Avg</th><th>LTP</th><th>P&amp;L</th>
+              <th>Account</th><th>Instrument</th><th>Product</th>
+              <th>Qty.</th><th>Avg.</th><th>LTP</th><th>P&amp;L</th>
             </tr>
           </thead>
           <tbody id="term-rows">
-            <tr><td colspan="9" class="text-center text-slate-600 py-6">Open the tab to load positions…</td></tr>
+            <tr><td colspan="7" class="k-muted" style="text-align:center;padding:28px">Open the tab to load positions…</td></tr>
           </tbody>
         </table>
       </div>
@@ -1434,15 +1454,15 @@ function renderStrangle(d) {
 // ── Terminal tab (multi-broker live positions) ──────────────────────────────
 let _termTimer = null;
 const BROKER_META = {
-  zerodha: { label: 'Zerodha', color: '#f59e0b' },
-  jainam:  { label: 'Jainam',  color: '#a78bfa' },
+  zerodha: { label: 'Zerodha', color: '#387ed1' },
+  jainam:  { label: 'Jainam',  color: '#e67e22' },
 };
 const inr = v => {
   const n = Number(v) || 0;
   const s = n < 0 ? '-' : (n > 0 ? '+' : '');
   return s + '₹' + Math.abs(n).toLocaleString('en-IN', { maximumFractionDigits: 0 });
 };
-const pnlCol = v => (Number(v) > 0 ? '#4ade80' : Number(v) < 0 ? '#f87171' : '#94a3b8');
+const pnlCol = v => (Number(v) > 0 ? '#4caf50' : Number(v) < 0 ? '#e53935' : '#9b9b9b');
 
 async function fetchTerminal(force = false) {
   try {
@@ -1464,55 +1484,49 @@ function renderTerminal(d) {
   const cmb = document.getElementById('term-combined');
   cmb.textContent = inr(d.combined_pnl);
   cmb.style.color = pnlCol(d.combined_pnl);
-  document.getElementById('term-realised').textContent = inr(d.combined_realised);
-  document.getElementById('term-realised').style.color = pnlCol(d.combined_realised);
+  const rl = document.getElementById('term-realised');
+  rl.textContent = inr(d.combined_realised);
+  rl.style.color = pnlCol(d.combined_realised);
   document.getElementById('term-open').textContent = d.open_positions ?? 0;
-  document.getElementById('term-accounts').textContent = `${d.brokers_connected ?? 0} / ${d.brokers_total ?? 3}`;
 
-  // per-broker cards
+  // account chips (Kite-style)
   document.getElementById('term-brokers').innerHTML = (d.brokers || []).map(b => {
-    const meta = BROKER_META[b.broker] || { label: b.broker, color: '#94a3b8' };
-    const dot = b.status === 'ok'
-      ? '<span class="dot-live"></span>'
-      : `<span class="dot-dead"></span>`;
-    const statusTxt = b.status === 'ok' ? `${b.open_count} open`
-      : b.status === 'not_configured' ? 'not connected'
-      : 'error';
-    const detail = (b.status !== 'ok' && b.message)
-      ? `<p class="text-xs text-slate-600 mt-2 leading-snug">${b.message}</p>` : '';
-    return `
-      <div class="card p-4" style="border-left:3px solid ${meta.color}">
-        <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-semibold" style="color:${meta.color}">${meta.label}</span>
-          <span class="text-xs text-slate-500">${dot}${statusTxt}</span>
-        </div>
-        <p class="text-2xl font-semibold" style="color:${pnlCol(b.total_pnl)}">${inr(b.total_pnl)}</p>
-        <p class="text-xs text-slate-600 mt-1">realised ${inr(b.realised_pnl)}</p>
-        ${detail}
-      </div>`;
+    const meta = BROKER_META[b.broker] || { label: b.broker, color: '#9b9b9b' };
+    const ok = b.status === 'ok';
+    const dot = ok ? '#4caf50' : (b.status === 'error' ? '#e53935' : '#bdbdbd');
+    const val = ok
+      ? `<span style="color:${pnlCol(b.total_pnl)};font-weight:600">${inr(b.total_pnl)}</span>`
+      : `<span class="k-muted">${b.status === 'error' ? 'error' : 'offline'}</span>`;
+    const tip = (!ok && b.message) ? ` title="${b.message.replace(/"/g, '')}"` : '';
+    return `<span class="k-chip" style="display:inline-flex;align-items:center;gap:6px;padding:5px 9px;font-size:12px"${tip}>
+        <span style="width:7px;height:7px;border-radius:50%;background:${dot};display:inline-block"></span>
+        <span style="color:${meta.color};font-weight:500">${meta.label}</span>${val}
+      </span>`;
   }).join('');
 
   // positions table
   const rows = d.positions || [];
-  document.getElementById('term-poscount').textContent = rows.length + ' position' + (rows.length === 1 ? '' : 's');
+  document.getElementById('term-poscount').textContent = `(${rows.length})`;
   const tbody = document.getElementById('term-rows');
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="9" class="text-center text-slate-600 py-6">No open positions across connected accounts.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="k-muted" style="text-align:center;padding:28px">No open positions across connected accounts.</td></tr>';
     return;
   }
+  const px = v => v.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   tbody.innerHTML = rows.map(p => {
-    const meta = BROKER_META[p.broker] || { label: p.broker, color: '#94a3b8' };
-    const sideCol = p.side === 'LONG' ? '#4ade80' : p.side === 'SHORT' ? '#f87171' : '#64748b';
+    const meta = BROKER_META[p.broker] || { label: p.broker, color: '#9b9b9b' };
+    const qtyCol = p.qty < 0 ? '#e53935' : '#424242';
     return `
       <tr>
-        <td style="text-align:left"><span style="color:${meta.color};font-weight:600">${meta.label}</span></td>
-        <td style="text-align:left;color:#e2e8f0;font-weight:500">${p.symbol}</td>
-        <td style="color:#64748b">${p.exchange || '—'}</td>
-        <td style="color:#94a3b8">${p.product || '—'}</td>
-        <td style="color:${sideCol};font-weight:600">${p.side}</td>
-        <td>${p.qty}</td>
-        <td>${p.avg_price.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
-        <td>${p.ltp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
+        <td><span style="color:${meta.color};font-weight:500">${meta.label}</span></td>
+        <td>
+          <div class="k-instr">${p.symbol}</div>
+          <div class="k-muted" style="font-size:10.5px;margin-top:1px">${p.exchange || ''}</div>
+        </td>
+        <td><span class="prod-tag">${p.product || '—'}</span></td>
+        <td style="color:${qtyCol};font-weight:500">${p.qty}</td>
+        <td>${px(p.avg_price)}</td>
+        <td>${px(p.ltp)}</td>
         <td style="color:${pnlCol(p.pnl)};font-weight:600">${inr(p.pnl)}</td>
       </tr>`;
   }).join('');
