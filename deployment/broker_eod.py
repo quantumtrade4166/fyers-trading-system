@@ -16,6 +16,10 @@ from datetime import datetime
 from pathlib import Path
 
 import pytz
+from dotenv import load_dotenv
+
+# ensure broker creds are available when run standalone (server loads this too)
+load_dotenv(Path(__file__).parent / ".env")
 
 EOD_FILE = Path(__file__).parent / "xts_eod_pnl.json"
 IST = pytz.timezone("Asia/Kolkata")
