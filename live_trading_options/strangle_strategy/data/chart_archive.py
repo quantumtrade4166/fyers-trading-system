@@ -27,7 +27,10 @@ import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from core.premium_builder import combined_for_strikes
-from core.signal_engine import simulate_day
+from core.signal_engine import simulate_day, pair_trades
+
+_PARAMS = json.loads((Path(__file__).resolve().parents[1] / "config" / "parameters.json").read_text())
+_LOT_SIZES = _PARAMS["lot_sizes"]
 
 ARCHIVE_DIR = Path(__file__).resolve().parent / "chart_history"
 ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
@@ -55,8 +58,10 @@ def build_day_record(client, index: str, ce_sym: str, pe_sym: str,
         "vwap":   round(float(r["vwap"]), 2),
     } for _, r in day.iterrows()]
 
-    # actual simulated trade sequence (max 4 entries, exit on VWAP cross)
+    # actual simulated trade sequence (alternating entry->exit, max 4 cycles)
     events = simulate_day(day)
+    lot_size = _LOT_SIZES.get(index.upper(), 1)
+    pnl = pair_trades(events, lot_size=lot_size, lots=1)
 
     rec = {
         "date":        date_str,
@@ -68,6 +73,7 @@ def build_day_record(client, index: str, ce_sym: str, pe_sym: str,
         "n_candles":   len(candles),
         "candles":     candles,
         "events":      events,
+        "pnl":         pnl,
     }
     if meta:                       # spot/atm/threshold/combined_premium for transparency
         rec["selection"] = meta

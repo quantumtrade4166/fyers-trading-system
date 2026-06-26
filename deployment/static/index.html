@@ -528,12 +528,21 @@
       </div>
       <p id="sca-meta" class="text-xs text-slate-500 mb-1">—</p>
       <p id="sca-note" class="text-xs text-amber-500/70 mb-2" style="display:none"></p>
-      <div id="sca-chart" style="height:440px;width:100%"></div>
+      <div id="sca-chart-wrap" style="position:relative">
+        <div id="sca-chart" style="height:440px;width:100%"></div>
+        <div id="sca-tip" style="position:absolute;top:6px;left:8px;pointer-events:none;
+             background:rgba(13,17,26,.9);border:1px solid #2d3748;border-radius:6px;
+             padding:5px 10px;font-size:11px;color:#cbd5e1;display:none;z-index:5;
+             font-family:ui-monospace,Menlo,monospace;white-space:nowrap"></div>
+      </div>
       <div class="flex items-center gap-4 mt-2 text-xs text-slate-500">
         <span><span style="color:#fb8c00">—</span> VWAP</span>
         <span><span style="color:#ef5350">▼</span> Sell entry (fill)</span>
         <span><span style="color:#26a69a">▲</span> Exit (buy back)</span>
       </div>
+
+      <!-- Simulated trades & P&L -->
+      <div id="sca-pnl" class="mt-4"></div>
       <p id="sca-empty" class="text-xs text-slate-600 text-center py-10" style="display:none">
         No archived charts yet. Data captures automatically each trading day at 15:31 IST.</p>
     </div>
@@ -1429,7 +1438,7 @@ function scaEnsureChart() {
     width: el.clientWidth, height: 440,
     layout:    { background: { color: 'transparent' }, textColor: '#64748b' },
     grid:      { vertLines: { color: '#1e2533' }, horzLines: { color: '#1e2533' } },
-    crosshair: { mode: LightweightCharts.CrosshairMode.Magnet },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
     rightPriceScale: { borderColor: '#2d3748' },
     timeScale: { borderColor: '#2d3748', timeVisible: true, secondsVisible: false },
   });
@@ -1441,9 +1450,34 @@ function scaEnsureChart() {
     color: '#fb8c00', lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
     title: 'VWAP',
   });
+
+  // TradingView-style OHLC + VWAP readout on hover
+  const tip = document.getElementById('sca-tip');
+  scaChart.subscribeCrosshairMove(param => {
+    if (!param.time || !param.point || param.point.x < 0) { tip.style.display = 'none'; return; }
+    const c = param.seriesData.get(scaCandle);
+    const v = param.seriesData.get(scaVwap);
+    if (!c) { tip.style.display = 'none'; return; }
+    const col = (c.close >= c.open) ? '#26a69a' : '#ef5350';
+    tip.innerHTML =
+      `<b style="color:#94a3b8">${scaFmtTime(param.time)}</b>  ` +
+      `O <span style="color:${col}">${c.open.toFixed(2)}</span>  ` +
+      `H <span style="color:${col}">${c.high.toFixed(2)}</span>  ` +
+      `L <span style="color:${col}">${c.low.toFixed(2)}</span>  ` +
+      `C <span style="color:${col}">${c.close.toFixed(2)}</span>  ` +
+      `VWAP <span style="color:#fb8c00">${v ? v.value.toFixed(2) : '—'}</span>`;
+    tip.style.display = '';
+  });
+
   window.addEventListener('resize', () => {
     if (scaChart) scaChart.resize(el.clientWidth, 440);
   });
+}
+
+// epoch (encoded as IST-wall-clock-in-UTC) -> "HH:MM"
+function scaFmtTime(t) {
+  const d = new Date(t * 1000);
+  return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
 }
 
 // "YYYY-MM-DD" + "HH:MM" -> epoch seconds rendered as IST wall-clock (UTC-as-IST trick)
@@ -1496,6 +1530,40 @@ async function scaRender() {
     const noteEl = document.getElementById('sca-note');
     if (d.note) { noteEl.textContent = '⚠ ' + d.note; noteEl.style.display = ''; }
     else { noteEl.style.display = 'none'; }
+
+    // P&L table (per-cycle + net), for manual cross-check vs iCharts
+    const pnl = d.pnl || {};
+    const trades = pnl.trades || [];
+    const sgn = n => (n >= 0 ? '+' : '');
+    const col = n => (n >= 0 ? '#26a69a' : '#ef5350');
+    let rows = trades.map(t =>
+      `<tr><td class="py-1">${t.fill_no}</td>` +
+      `<td>${t.entry_time} @ ${t.entry_price}</td>` +
+      `<td>${t.exit_time} @ ${t.exit_price}</td>` +
+      `<td style="text-align:right;color:${col(t.points)}">${sgn(t.points)}${t.points}</td>` +
+      `<td style="text-align:right;color:${col(t.pnl)}">${fmtRs(t.pnl)}</td></tr>`).join('');
+    if (pnl.open_trade) {
+      const o = pnl.open_trade;
+      rows += `<tr style="color:#64748b"><td class="py-1">${o.fill_no}</td>` +
+              `<td>${o.entry_time} @ ${o.entry_price}</td>` +
+              `<td colspan="3">open at end of day (no exit)</td></tr>`;
+    }
+    const pnlEl = document.getElementById('sca-pnl');
+    if (trades.length || pnl.open_trade) {
+      pnlEl.innerHTML =
+        `<p class="text-sm font-medium text-slate-300 mb-1">Simulated Trades &amp; P&amp;L</p>` +
+        `<table class="w-full text-xs"><thead><tr style="color:#64748b;text-align:left;border-bottom:1px solid #2d3748">` +
+        `<th class="py-1">#</th><th>Entry (sell)</th><th>Exit (buy)</th>` +
+        `<th style="text-align:right">Points</th><th style="text-align:right">P&amp;L (₹)</th></tr></thead>` +
+        `<tbody>${rows}</tbody>` +
+        `<tfoot><tr style="border-top:1px solid #2d3748;font-weight:600">` +
+        `<td class="py-1" colspan="3">Net realized (lot ${pnl.lot_size})</td>` +
+        `<td style="text-align:right;color:${col(pnl.net_points)}">${sgn(pnl.net_points)}${pnl.net_points}</td>` +
+        `<td style="text-align:right;color:${col(pnl.net_pnl)}">${fmtRs(pnl.net_pnl)}</td></tr></tfoot></table>` +
+        `<p class="text-xs text-slate-600 mt-1">Cross-check vs iCharts: combined-premium points per cycle; ₹ = points × lot size (${pnl.lot_size}) × 1 lot.</p>`;
+    } else {
+      pnlEl.innerHTML = '<p class="text-xs text-slate-600">No completed trades on this day.</p>';
+    }
   } catch (e) {
     console.error('strangle chart render', e);
     document.getElementById('sca-meta').textContent = 'Failed to load chart.';
