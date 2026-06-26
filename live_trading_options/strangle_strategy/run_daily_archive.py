@@ -37,6 +37,15 @@ from data.chart_archive import archive_day
 INDICES = ["NIFTY", "SENSEX"]
 
 
+class MarketHoliday(Exception):
+    """No market data for the date (holiday / non-trading day)."""
+
+
+def _is_no_data(err: Exception) -> bool:
+    s = str(err)
+    return ("no_data" in s) or ("No candles" in s) or ("No 09:15" in s)
+
+
 def run_index(client, index: str, date_str: str, retention: int = 7):
     exp, d = nearest_expiry_and_dte(index, dt.date.fromisoformat(date_str))
     # threshold uses the DTE bucket (clamped to {0,1}); for DTE>=2 the strategy
@@ -46,7 +55,12 @@ def run_index(client, index: str, date_str: str, retention: int = 7):
     tag = "TRADE DAY" if d in (0, 1) else "no-trade (chart only)"
     print(f"[{index}] expiry {exp} | DTE {d} ({tag}) | threshold <= {thr}")
 
-    pick = select_strangle_historical(client, index, exp, thr, date_str)
+    try:
+        pick = select_strangle_historical(client, index, exp, thr, date_str)
+    except RuntimeError as e:
+        if _is_no_data(e):
+            raise MarketHoliday(f"no market data for {date_str}")
+        raise
     print(f"  selected OTM{pick['otm_level']}: {pick['ce_symbol']} + {pick['pe_symbol']}"
           f"  (combined {pick['combined_premium']}, ATM {pick['atm']})")
     archive_day(client, index, pick["ce_symbol"], pick["pe_symbol"],
@@ -68,14 +82,20 @@ def main():
 
     client = get_client()
     targets = [args.index] if args.index else INDICES
-    failures = 0
+    archived = holidays = failures = 0
     for idx in targets:
         try:
             run_index(client, idx, args.date, args.retention)
+            archived += 1
+        except MarketHoliday as e:
+            holidays += 1
+            print(f"[{idx}] skipped ({e}) — market holiday / non-trading day")
         except Exception as e:
             failures += 1
             print(f"[{idx}] FAILED: {e}")
-    print(f"\nDone. {len(targets) - failures}/{len(targets)} archived for {args.date}.")
+    print(f"\nDone for {args.date}: {archived} archived, {holidays} holiday-skipped, "
+          f"{failures} failed.")
+    # Holiday is not an error; only real failures return non-zero.
     sys.exit(1 if failures else 0)
 
 
