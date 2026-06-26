@@ -1,3 +1,8 @@
+# ⚠️ DEPRECATED / NOT WIRED UP. Claude near-live sync is now handled by the repeating
+#    scheduled task 'ClaudeUniverseLiveSync' (runs claude_sync_once.ps1 every 1 min),
+#    which proved more reliable than this long-running watcher (which spawned duplicate
+#    instances and logged inconsistently). Kept for reference only; nothing launches it.
+#
 # sync_claude_live.ps1  --  CONTINUOUS near-live mirror of the Claude universe.
 #
 # Runs forever in the background (launched at logon by scheduled task

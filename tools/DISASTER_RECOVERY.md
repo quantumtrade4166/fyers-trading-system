@@ -92,19 +92,18 @@ python rebuild_desktop_index.py --write --account <ACCT-GUID> --org <ORG-GUID> `
 The live watcher + daily job lived on the old machine — set them up again:
 ```powershell
 $tools = "$BK\recovery-kit"   # or your cloned repo's tools\ folder
-# Live watcher at logon (per-user Startup launcher, no admin needed):
-$startup = [Environment]::GetFolderPath('Startup')
-$vbs = Join-Path $startup "ClaudeLiveSync.vbs"
-@'
-Set s = CreateObject("WScript.Shell")
-s.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""<TOOLS>\sync_claude_live.ps1""", 0, False
-'@.Replace("<TOOLS>", $tools) | Set-Content $vbs -Encoding ascii
-Start-Process wscript.exe -ArgumentList "`"$vbs`"" -WindowStyle Hidden   # start now
+# Near-live sync every 1 min (hidden launcher, restart-proof, no admin needed):
+$a = New-ScheduledTaskAction -Execute "wscript.exe" -Argument "`"$tools\claude_sync_hidden.vbs`""
+$t = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 1)
+$s = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName "ClaudeUniverseLiveSync" -Action $a -Trigger $t -Settings $s -Force
 # Daily full reconcile at 21:30:
 $act = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$tools\backup_claude.ps1`""
 $trg = New-ScheduledTaskTrigger -Daily -At 9:30PM
 Register-ScheduledTask -TaskName "ClaudeUniverseBackup" -Action $act -Trigger $trg -Force
 ```
+> Note: `claude_sync_hidden.vbs` and `backup_claude.ps1` have the tools path hard-coded
+> to `G:\fyers_data_pipeline\tools` — edit them if the new machine differs.
 > Best practice: clone the GitHub repo and point the Startup/daily task at its real
 > `tools\` folder (kept up to date) rather than the recovery-kit snapshot.
 
