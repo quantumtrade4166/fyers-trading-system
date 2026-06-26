@@ -138,6 +138,9 @@
     <button class="tab-btn" id="tab-strangle" onclick="switchTab('strangle')">
       🎯 Strangle System
     </button>
+    <button class="tab-btn" id="tab-vwapstrangle" onclick="switchTab('vwapstrangle')">
+      📉 Vwap Strangle
+    </button>
     <button class="tab-btn" id="tab-terminal" onclick="switchTab('terminal')">
       💼 Terminal
     </button>
@@ -492,8 +495,23 @@
       <div id="str-dc-table" class="text-sm"></div>
     </div>
 
+  </div><!-- /page-strangle -->
+
+
+  <!-- ══════════════════════════════════════════════════════════
+       TAB — Vwap Strangle (combined-premium VWAP chart archive)
+  ══════════════════════════════════════════════════════════ -->
+  <div id="page-vwapstrangle" style="display:none">
+
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h2 class="text-lg font-semibold text-white">Vwap Strangle</h2>
+        <p class="text-xs text-slate-500">Nifty &amp; Sensex · combined-premium VWAP · 7-day chart archive</p>
+      </div>
+    </div>
+
     <!-- Combined-premium chart archive (7-day rolling) -->
-    <div class="card p-5 mt-6">
+    <div class="card p-5">
       <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div>
           <h2 class="text-sm font-medium text-slate-300">Combined-Premium Chart Archive</h2>
@@ -514,7 +532,7 @@
         No archived charts yet. Data captures automatically each trading day at 15:31 IST.</p>
     </div>
 
-  </div><!-- /page-strangle -->
+  </div><!-- /page-vwapstrangle -->
 
 
   <!-- ══════════════════════════════════════════════════════════
@@ -591,13 +609,14 @@ let _activeTab = 'statarb';
 // ── tab switching ─────────────────────────────────────────────────────────────
 function switchTab(tab) {
   _activeTab = tab;
-  ['statarb', 'dualmom', 'strangle', 'terminal'].forEach(t => {
+  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'terminal'].forEach(t => {
     const pg = document.getElementById('page-' + t);
     if (pg) pg.style.display = (t === tab) ? '' : 'none';
     const btn = document.getElementById('tab-' + t);
     if (btn) btn.classList.toggle('active', t === tab);
   });
-  if (tab === 'strangle') { fetchStrangle(); fetchStrangleCharts(); }
+  if (tab === 'strangle') fetchStrangle();
+  if (tab === 'vwapstrangle') fetchStrangleCharts();
 
   // immersive LIVE terminal mode — hide everything else, show LIVE badge
   const inTerminal = (tab === 'terminal');
