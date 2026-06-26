@@ -117,6 +117,26 @@ Then **fully quit + relaunch Claude Desktop** → sessions appear in the sidebar
 
 ---
 
+## Restoring the Obsidian vault ("Trading Brain")
+
+The vault is backed up separately (Google Drive only) at
+`<Google Drive>\My Drive\Obsidian Vault backup\`, synced every 2 minutes by the
+scheduled task `ObsidianVaultLiveSync` (which runs `vault_backup.ps1`).
+
+To restore it on a new machine:
+```powershell
+# 1. copy the vault back to its location (adjust drive letter)
+robocopy "H:\My Drive\Obsidian Vault backup" "G:\Trading Brain" /E /R:1 /W:1
+# 2. re-arm the every-2-min backup task (from the recovery kit or cloned repo)
+$tools = "H:\My Drive\ClaudeBackup\recovery-kit"   # or your cloned repo's tools\
+$a = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$tools\vault_backup.ps1`""
+$t = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) -RepetitionInterval (New-TimeSpan -Minutes 2)
+$s = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -MultipleInstances IgnoreNew
+Register-ScheduledTask -TaskName "ObsidianVaultLiveSync" -Action $a -Trigger $t -Settings $s -Force
+```
+> Note: `vault_backup.ps1` expects the vault at `G:\Trading Brain` — edit the path in
+> `vault_common.ps1` if the new machine uses a different location (or a Mac path).
+
 ## Notes & caveats
 - **OAuth token is never restored** (machine-bound). Re-sign-in covers it.
 - **Drive-letter / path changes:** sessions store their original working dir (e.g.
