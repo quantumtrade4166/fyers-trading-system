@@ -62,9 +62,12 @@ def run_index(client, index: str, date_str: str, retention: int = 7):
             raise MarketHoliday(f"no market data for {date_str}")
         raise
     print(f"  selected OTM{pick['otm_level']}: {pick['ce_symbol']} + {pick['pe_symbol']}"
-          f"  (combined {pick['combined_premium']}, ATM {pick['atm']})")
+          f"  (combined {pick['combined_premium']}, spot {pick.get('spot')}, ATM {pick['atm']})")
+    meta = {k: pick.get(k) for k in
+            ("spot", "atm", "otm_level", "combined_premium", "threshold", "dte")}
+    meta["dte"] = d
     archive_day(client, index, pick["ce_symbol"], pick["pe_symbol"],
-                date_str, otm_level=pick["otm_level"], retention_days=retention)
+                date_str, otm_level=pick["otm_level"], retention_days=retention, meta=meta)
 
 
 def main():

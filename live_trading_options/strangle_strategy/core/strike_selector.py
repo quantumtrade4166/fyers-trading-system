@@ -43,13 +43,22 @@ def atm_strike(spot: float, index: str) -> int:
     return int(round(spot / iv) * iv)
 
 
+def _price_at_920(df: pd.DataFrame) -> float | None:
+    """Close of the 9:15 FIVE-minute candle = the price at 9:20 that triggers the
+    strike selection. From 1-min data this is the last bar before 09:20 (the 09:19
+    bar). Using the 09:15 one-minute bar instead reads the ~09:16 open and shifts
+    the ATM by a strike on a volatile open — that was the original bug."""
+    pre920 = df[df["datetime"].dt.time < pd.Timestamp("09:20").time()]
+    return None if pre920.empty else float(pre920.iloc[-1]["close"])
+
+
 def spot_at_open(client, index: str, date_str: str) -> float:
-    """Spot at 9:15 candle close (the value the 9:20 selection sees), from history."""
+    """Spot at the 9:15 candle close (the value the 9:20 selection sees)."""
     idx = fetch_legs(client, INDEX_SYMBOL[index], date_str, date_str)
-    first = idx[idx["datetime"].dt.strftime("%H:%M") == "09:15"]
-    if first.empty:
-        raise RuntimeError(f"No 09:15 index bar for {index} {date_str}")
-    return float(first.iloc[0]["close"])
+    px = _price_at_920(idx)
+    if px is None:
+        raise RuntimeError(f"No pre-09:20 index bar for {index} {date_str}")
+    return px
 
 
 def _leg_915_close(client, symbol: str, date_str: str) -> float | None:
@@ -57,8 +66,7 @@ def _leg_915_close(client, symbol: str, date_str: str) -> float | None:
         df = fetch_legs(client, symbol, date_str, date_str)
     except RuntimeError:
         return None
-    first = df[df["datetime"].dt.strftime("%H:%M") == "09:15"]
-    return None if first.empty else float(first.iloc[0]["close"])
+    return _price_at_920(df)
 
 
 def select_strangle_historical(client, index: str, expiry: dt.date,

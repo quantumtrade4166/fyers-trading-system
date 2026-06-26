@@ -27,6 +27,7 @@ import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from core.premium_builder import combined_for_strikes
+from core.signal_engine import simulate_day
 
 ARCHIVE_DIR = Path(__file__).resolve().parent / "chart_history"
 ARCHIVE_DIR.mkdir(parents=True, exist_ok=True)
@@ -37,7 +38,7 @@ def _archive_path(date_str: str, index: str) -> Path:
 
 
 def build_day_record(client, index: str, ce_sym: str, pe_sym: str,
-                     date_str: str, otm_level=None) -> dict:
+                     date_str: str, otm_level=None, meta: dict = None) -> dict:
     """Fetch + build the combined-premium chart record for one index/day."""
     combined = combined_for_strikes(client, ce_sym, pe_sym, date_str, date_str)
     day = combined[combined["date"] == pd.to_datetime(date_str).date()]
@@ -54,15 +55,10 @@ def build_day_record(client, index: str, ce_sym: str, pe_sym: str,
         "vwap":   round(float(r["vwap"]), 2),
     } for _, r in day.iterrows()]
 
-    events = []
-    for _, r in day[day["entry_signal"]].iterrows():
-        events.append({"time": r["datetime"].strftime("%H:%M"), "type": "entry",
-                       "price": round(float(r["low"]) - 1, 2)})
-    for _, r in day[day["exit_signal"]].iterrows():
-        events.append({"time": r["datetime"].strftime("%H:%M"), "type": "exit",
-                       "price": round(float(r["close"]), 2)})
+    # actual simulated trade sequence (max 4 entries, exit on VWAP cross)
+    events = simulate_day(day)
 
-    return {
+    rec = {
         "date":        date_str,
         "index":       index.upper(),
         "ce_symbol":   ce_sym,
@@ -73,13 +69,17 @@ def build_day_record(client, index: str, ce_sym: str, pe_sym: str,
         "candles":     candles,
         "events":      events,
     }
+    if meta:                       # spot/atm/threshold/combined_premium for transparency
+        rec["selection"] = meta
+    return rec
 
 
 def archive_day(client, index: str, ce_sym: str, pe_sym: str,
-                date_str: str = None, otm_level=None, retention_days: int = 7) -> Path:
+                date_str: str = None, otm_level=None, retention_days: int = 7,
+                meta: dict = None) -> Path:
     """Build and persist one index/day record, then prune old files."""
     date_str = date_str or dt.date.today().isoformat()
-    record = build_day_record(client, index, ce_sym, pe_sym, date_str, otm_level)
+    record = build_day_record(client, index, ce_sym, pe_sym, date_str, otm_level, meta)
     path = _archive_path(date_str, index)
     path.write_text(json.dumps(record, indent=2))
     prune(retention_days)
