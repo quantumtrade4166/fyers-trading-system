@@ -526,8 +526,14 @@
                   class="bg-[#151a26] text-slate-300 text-xs rounded px-2 py-1 border border-[#2d3748]"></select>
         </div>
       </div>
-      <p id="sca-meta" class="text-xs text-slate-500 mb-2">—</p>
-      <div id="sca-chart" style="height:360px;width:100%"></div>
+      <p id="sca-meta" class="text-xs text-slate-500 mb-1">—</p>
+      <p id="sca-note" class="text-xs text-amber-500/70 mb-2" style="display:none"></p>
+      <div id="sca-chart" style="height:440px;width:100%"></div>
+      <div class="flex items-center gap-4 mt-2 text-xs text-slate-500">
+        <span><span style="color:#fb8c00">—</span> VWAP</span>
+        <span><span style="color:#ef5350">▼</span> Sell entry (fill)</span>
+        <span><span style="color:#26a69a">▲</span> Exit (buy back)</span>
+      </div>
       <p id="sca-empty" class="text-xs text-slate-600 text-center py-10" style="display:none">
         No archived charts yet. Data captures automatically each trading day at 15:31 IST.</p>
     </div>
@@ -1420,7 +1426,7 @@ function scaEnsureChart() {
   if (scaChart) return;
   const el = document.getElementById('sca-chart');
   scaChart = LightweightCharts.createChart(el, {
-    width: el.clientWidth, height: 360,
+    width: el.clientWidth, height: 440,
     layout:    { background: { color: 'transparent' }, textColor: '#64748b' },
     grid:      { vertLines: { color: '#1e2533' }, horzLines: { color: '#1e2533' } },
     crosshair: { mode: LightweightCharts.CrosshairMode.Magnet },
@@ -1436,7 +1442,7 @@ function scaEnsureChart() {
     title: 'VWAP',
   });
   window.addEventListener('resize', () => {
-    if (scaChart) scaChart.resize(el.clientWidth, 360);
+    if (scaChart) scaChart.resize(el.clientWidth, 440);
   });
 }
 
@@ -1472,19 +1478,24 @@ async function scaRender() {
     scaVwap.setData(vwap);
 
     const markers = (d.events || []).map(e => e.type === 'entry'
-      ? { time: scaTime(d.date, e.time), position: 'belowBar', color: '#d50000',
-          shape: 'arrowUp', text: 'SELL ' + e.price }
-      : { time: scaTime(d.date, e.time), position: 'aboveBar', color: '#00c853',
-          shape: 'arrowDown', text: 'EXIT' });
+      ? { time: scaTime(d.date, e.time), position: 'aboveBar', color: '#ef5350',
+          shape: 'arrowDown', text: 'S' + (e.fill_no || '') }
+      : { time: scaTime(d.date, e.time), position: 'belowBar', color: '#26a69a',
+          shape: 'arrowUp', text: 'EXIT' });
     markers.sort((a, b) => a.time - b.time);
     scaCandle.setMarkers(markers);
     scaChart.timeScale().fitContent();
-    scaChart.resize(chartEl.clientWidth, 360);
+    scaChart.resize(chartEl.clientWidth, 440);
 
     const otm = (d.otm_level != null) ? `OTM${d.otm_level}` : '—';
-    document.getElementById('sca-meta').innerHTML =
-      `<span class="text-slate-400">${otm}</span> · CE <span class="text-slate-400">${d.ce_symbol}</span>` +
-      ` · PE <span class="text-slate-400">${d.pe_symbol}</span> · ${d.n_candles} candles`;
+    const sel = d.selection || {};
+    let m = `<span class="text-slate-300">${otm}</span> · CE <span class="text-slate-400">${d.ce_symbol}</span>` +
+            ` · PE <span class="text-slate-400">${d.pe_symbol}</span> · ${d.n_candles} candles`;
+    if (sel.spot) m += ` · spot ${sel.spot} · ATM ${sel.atm} · combined ₹${sel.combined_premium} (≤${sel.threshold})`;
+    document.getElementById('sca-meta').innerHTML = m;
+    const noteEl = document.getElementById('sca-note');
+    if (d.note) { noteEl.textContent = '⚠ ' + d.note; noteEl.style.display = ''; }
+    else { noteEl.style.display = 'none'; }
   } catch (e) {
     console.error('strangle chart render', e);
     document.getElementById('sca-meta').textContent = 'Failed to load chart.';
