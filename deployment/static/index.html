@@ -36,6 +36,9 @@
   .tab-btn.active { color: #e2e8f0; background: #1a1f2e; border-color: #2d3748;
                     border-bottom-color: #1a1f2e; position: relative; top: 1px; }
   .tab-bar { border-bottom: 1px solid #2d3748; margin-bottom: 0; }
+  .sca-idx-btn { padding: 4px 12px; font-size: 12px; border-radius: 6px; cursor: pointer;
+                 color: #64748b; background: #151a26; border: 1px solid #2d3748; }
+  .sca-idx-btn.active { color: #e2e8f0; background: #6366f1; border-color: #6366f1; }
 
   /* dualmom stock table */
   .dm-table th { color: #475569; font-size: 11px; text-transform: uppercase; letter-spacing: .04em;
@@ -489,6 +492,28 @@
       <div id="str-dc-table" class="text-sm"></div>
     </div>
 
+    <!-- Combined-premium chart archive (7-day rolling) -->
+    <div class="card p-5 mt-6">
+      <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+        <div>
+          <h2 class="text-sm font-medium text-slate-300">Combined-Premium Chart Archive</h2>
+          <p class="text-xs text-slate-500">7-day rolling · strategy-selected strangle · VWAP + entry/exit signals</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <div class="flex gap-1">
+            <button class="sca-idx-btn active" id="sca-btn-NIFTY" onclick="scaSetIndex('NIFTY')">NIFTY</button>
+            <button class="sca-idx-btn" id="sca-btn-SENSEX" onclick="scaSetIndex('SENSEX')">SENSEX</button>
+          </div>
+          <select id="sca-date" onchange="scaRender()"
+                  class="bg-[#151a26] text-slate-300 text-xs rounded px-2 py-1 border border-[#2d3748]"></select>
+        </div>
+      </div>
+      <p id="sca-meta" class="text-xs text-slate-500 mb-2">—</p>
+      <div id="sca-chart" style="height:360px;width:100%"></div>
+      <p id="sca-empty" class="text-xs text-slate-600 text-center py-10" style="display:none">
+        No archived charts yet. Data captures automatically each trading day at 15:31 IST.</p>
+    </div>
+
   </div><!-- /page-strangle -->
 
 
@@ -572,7 +597,7 @@ function switchTab(tab) {
     const btn = document.getElementById('tab-' + t);
     if (btn) btn.classList.toggle('active', t === tab);
   });
-  if (tab === 'strangle') fetchStrangle();
+  if (tab === 'strangle') { fetchStrangle(); fetchStrangleCharts(); }
 
   // immersive LIVE terminal mode — hide everything else, show LIVE badge
   const inTerminal = (tab === 'terminal');
@@ -1342,6 +1367,109 @@ async function fetchStrangle() {
     const r = await fetch('/api/strangle/status');
     renderStrangle(await r.json());
   } catch (e) { console.error('strangle fetch', e); }
+}
+
+// ── Combined-premium chart archive ──────────────────────────────────────────
+let scaIndex = 'NIFTY';
+let scaList = [];
+let scaChart = null, scaCandle = null, scaVwap = null;
+
+function scaSetIndex(idx) {
+  scaIndex = idx;
+  ['NIFTY', 'SENSEX'].forEach(i =>
+    document.getElementById('sca-btn-' + i).classList.toggle('active', i === idx));
+  scaPopulateDates();
+  scaRender();
+}
+
+function scaPopulateDates() {
+  const sel = document.getElementById('sca-date');
+  const dates = scaList.filter(c => c.index === scaIndex).map(c => c.date);
+  sel.innerHTML = dates.map(d => `<option value="${d}">${d}</option>`).join('');
+}
+
+async function fetchStrangleCharts() {
+  try {
+    const r = await fetch('/api/strangle/charts');
+    scaList = (await r.json()).charts || [];
+    scaPopulateDates();
+    scaRender();
+  } catch (e) { console.error('strangle charts list', e); }
+}
+
+function scaEnsureChart() {
+  if (scaChart) return;
+  const el = document.getElementById('sca-chart');
+  scaChart = LightweightCharts.createChart(el, {
+    width: el.clientWidth, height: 360,
+    layout:    { background: { color: 'transparent' }, textColor: '#64748b' },
+    grid:      { vertLines: { color: '#1e2533' }, horzLines: { color: '#1e2533' } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Magnet },
+    rightPriceScale: { borderColor: '#2d3748' },
+    timeScale: { borderColor: '#2d3748', timeVisible: true, secondsVisible: false },
+  });
+  scaCandle = scaChart.addCandlestickSeries({
+    upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
+    wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+  });
+  scaVwap = scaChart.addLineSeries({
+    color: '#fb8c00', lineWidth: 2, priceLineVisible: false, lastValueVisible: false,
+    title: 'VWAP',
+  });
+  window.addEventListener('resize', () => {
+    if (scaChart) scaChart.resize(el.clientWidth, 360);
+  });
+}
+
+// "YYYY-MM-DD" + "HH:MM" -> epoch seconds rendered as IST wall-clock (UTC-as-IST trick)
+function scaTime(date, hm) {
+  const [Y, M, D] = date.split('-').map(Number);
+  const [h, m] = hm.split(':').map(Number);
+  return Math.floor(Date.UTC(Y, M - 1, D, h, m) / 1000);
+}
+
+async function scaRender() {
+  const date = document.getElementById('sca-date').value;
+  const chartEl = document.getElementById('sca-chart');
+  const emptyEl = document.getElementById('sca-empty');
+  if (!date) {
+    chartEl.style.display = 'none'; emptyEl.style.display = '';
+    document.getElementById('sca-meta').textContent = '—';
+    return;
+  }
+  chartEl.style.display = ''; emptyEl.style.display = 'none';
+  try {
+    const r = await fetch(`/api/strangle/chart?date=${date}&index=${scaIndex}`);
+    const d = await r.json();
+    if (d.error) { document.getElementById('sca-meta').textContent = 'No data for this day.'; return; }
+    scaEnsureChart();
+
+    const candles = d.candles.map(c => ({
+      time: scaTime(d.date, c.time),
+      open: c.open, high: c.high, low: c.low, close: c.close,
+    }));
+    const vwap = d.candles.map(c => ({ time: scaTime(d.date, c.time), value: c.vwap }));
+    scaCandle.setData(candles);
+    scaVwap.setData(vwap);
+
+    const markers = (d.events || []).map(e => e.type === 'entry'
+      ? { time: scaTime(d.date, e.time), position: 'belowBar', color: '#d50000',
+          shape: 'arrowUp', text: 'SELL ' + e.price }
+      : { time: scaTime(d.date, e.time), position: 'aboveBar', color: '#00c853',
+          shape: 'arrowDown', text: 'EXIT' });
+    markers.sort((a, b) => a.time - b.time);
+    scaCandle.setMarkers(markers);
+    scaChart.timeScale().fitContent();
+    scaChart.resize(chartEl.clientWidth, 360);
+
+    const otm = (d.otm_level != null) ? `OTM${d.otm_level}` : '—';
+    document.getElementById('sca-meta').innerHTML =
+      `<span class="text-slate-400">${otm}</span> · CE <span class="text-slate-400">${d.ce_symbol}</span>` +
+      ` · PE <span class="text-slate-400">${d.pe_symbol}</span> · ${d.n_candles} candles`;
+  } catch (e) {
+    console.error('strangle chart render', e);
+    document.getElementById('sca-meta').textContent = 'Failed to load chart.';
+  }
 }
 
 function renderStrangle(d) {

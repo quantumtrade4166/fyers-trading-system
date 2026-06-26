@@ -232,6 +232,35 @@ async def api_strangle_status():
     return await loop.run_in_executor(None, strangle_api.get_status)
 
 
+# ── Strangle combined-premium chart archive (7-day rolling) ──────────────────
+import json as _json
+
+_CHART_DIR = (Path(__file__).parent.parent /
+              "live_trading_options" / "strangle_strategy" / "data" / "chart_history")
+
+
+@app.get("/api/strangle/charts")
+async def api_strangle_charts():
+    """List available archived combined-premium charts, newest first."""
+    if not _CHART_DIR.exists():
+        return {"charts": []}
+    out = []
+    for f in sorted(_CHART_DIR.glob("*.json"), reverse=True):
+        parts = f.stem.split("_")
+        if len(parts) == 2:
+            out.append({"date": parts[0], "index": parts[1]})
+    return {"charts": out}
+
+
+@app.get("/api/strangle/chart")
+async def api_strangle_chart(date: str, index: str):
+    """Return one archived combined-premium chart (candles + VWAP + signal events)."""
+    f = _CHART_DIR / f"{date}_{index.upper()}.json"
+    if not f.exists():
+        return {"error": "not found", "date": date, "index": index}
+    return _json.loads(f.read_text())
+
+
 # ── WebSocket — push updates every 60s during market hours, 5 min otherwise ──
 
 @app.websocket("/ws")
