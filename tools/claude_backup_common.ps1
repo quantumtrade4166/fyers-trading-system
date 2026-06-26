@@ -66,6 +66,12 @@ function Invoke-ClaudeSync {
             $hsrc = Join-Path $env:USERPROFILE $hf
             if (Test-Path $hsrc) { Copy-Item $hsrc (Join-Path $homeDest $hf) -Force }
         }
+        # 6. Self-contained recovery kit: the scripts + runbook, so the backup can be
+        #    restored using ONLY this folder (no GitHub access needed).
+        $kitSrc = $PSScriptRoot
+        if ($kitSrc -and (Test-Path $kitSrc)) {
+            $null = robocopy $kitSrc (Join-Path $dest "recovery-kit") "*.ps1" "*.py" "*.md" /R:1 /W:1 /NFL /NDL /NP /NJH /NJS
+        }
         $tag = if ($base -like "*My Drive*") { "GoogleDrive" } else { "local" }
         if ($c1 -ge 8 -or $c2 -ge 8) { & $Logger "ERROR sync->$tag ($dest) rc=$c1/$c2" }
         else { & $Logger "OK sync->$tag ($dest) rc=$c1/$c2" }
