@@ -12,7 +12,7 @@ $desktop = "C:\Users\Administrator\Desktop"
 
 # 1. Put the launcher scripts back on the Desktop (tasks reference these paths)
 foreach ($b in 'start_dashboard.bat','start_cloudflared.bat','fyers_auto_login.bat',
-               'vps_backup_to_drive.ps1','vps_backup_hidden.vbs') {
+               'vps_backup_to_drive.ps1','vps_backup_hidden.vbs','vps_heartbeat.ps1') {
     $src = Join-Path $here $b
     if (Test-Path $src) { Copy-Item $src (Join-Path $desktop $b) -Force; "placed $b" }
 }
