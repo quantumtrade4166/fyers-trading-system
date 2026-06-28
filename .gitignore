@@ -40,3 +40,6 @@ Thumbs.db
 live_trading_options/strangle_strategy/data/chart_history/
 live_trading_options/strangle_strategy/data/symbol_master/
 live_trading_options/strangle_strategy/validation/output/
+
+# Strangle intraday strike cache (generated)
+live_trading_options/strangle_strategy/data/intraday_state/

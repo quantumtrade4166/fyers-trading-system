@@ -167,6 +167,21 @@ def _xts_eod_snapshot():
         print(f"  [scheduler] XTS EOD record failed: {e}")
 
 
+def _strangle_intraday():
+    """Every 2 min during market hours — refresh today's Vwap Strangle charts
+    (near-live; strikes selected once at 9:20 and cached)."""
+    import sys
+    from pathlib import Path
+    sp = str(Path(__file__).parent.parent / "live_trading_options" / "strangle_strategy")
+    if sp not in sys.path:
+        sys.path.append(sp)
+    try:
+        import live_capture
+        live_capture.capture_all()
+    except Exception as e:
+        print(f"  [scheduler] strangle intraday failed: {e}")
+
+
 def _start_feed():
     print("  [scheduler] Market open — starting live feed...")
     from deployment import live_feed
@@ -195,6 +210,10 @@ def create_scheduler() -> BackgroundScheduler:
         day_of_week="mon-fri", hour="9-15", minute="*", timezone=IST,
         start_date="2000-01-01 09:16:00", end_date="2099-01-01 15:29:00"
     ))
+
+    # Vwap Strangle intraday chart capture every 2 min during market hours
+    sched.add_job(_strangle_intraday, CronTrigger(
+        day_of_week="mon-fri", hour="9-15", minute="*/2", timezone=IST))
 
     # stop feed at 15:30
     sched.add_job(_stop_feed, CronTrigger(

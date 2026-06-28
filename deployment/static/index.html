@@ -524,6 +524,7 @@
           </div>
           <select id="sca-date" onchange="scaRender()"
                   class="bg-[#151a26] text-slate-300 text-xs rounded px-2 py-1 border border-[#2d3748]"></select>
+          <span id="sca-updated" class="text-xs text-slate-600 ml-1">—</span>
         </div>
       </div>
       <p id="sca-meta" class="text-xs text-slate-500 mb-1">—</p>
@@ -635,7 +636,7 @@ function switchTab(tab) {
     if (btn) btn.classList.toggle('active', t === tab);
   });
   if (tab === 'strangle') fetchStrangle();
-  if (tab === 'vwapstrangle') fetchStrangleCharts();
+  if (tab === 'vwapstrangle') { fetchStrangleCharts(); scaStartPoll(); } else { scaStopPoll(); }
 
   // immersive LIVE terminal mode — hide everything else, show LIVE badge
   const inTerminal = (tab === 'terminal');
@@ -1423,8 +1424,10 @@ function scaSetIndex(idx) {
 
 function scaPopulateDates() {
   const sel = document.getElementById('sca-date');
+  const cur = sel.value;
   const dates = scaList.filter(c => c.index === scaIndex).map(c => c.date);
   sel.innerHTML = dates.map(d => `<option value="${d}">${d}</option>`).join('');
+  if (cur && dates.includes(cur)) sel.value = cur;   // preserve selection across refreshes
 }
 
 async function fetchStrangleCharts() {
@@ -1434,6 +1437,20 @@ async function fetchStrangleCharts() {
     scaPopulateDates();
     scaRender();
   } catch (e) { console.error('strangle charts list', e); }
+}
+
+// auto-refresh: poll every 30s while the Vwap Strangle tab is open, so live
+// (and intraday) updates appear without a manual page refresh.
+let scaPoll = null;
+function scaStartPoll() { scaStopPoll(); scaPoll = setInterval(scaPollTick, 30000); }
+function scaStopPoll() { if (scaPoll) { clearInterval(scaPoll); scaPoll = null; } }
+async function scaPollTick() {
+  try {
+    const r = await fetch('/api/strangle/charts');
+    scaList = (await r.json()).charts || [];
+    scaPopulateDates();
+    await scaRender(true);     // keepView — don't disturb the user's zoom/scroll
+  } catch (e) { /* silent */ }
 }
 
 function scaEnsureChart() {
@@ -1510,7 +1527,7 @@ function scaTime(date, hm) {
   return Math.floor(Date.UTC(Y, M - 1, D, h, m) / 1000);
 }
 
-async function scaRender() {
+async function scaRender(keepView = false) {
   const date = document.getElementById('sca-date').value;
   const chartEl = document.getElementById('sca-chart');
   const emptyEl = document.getElementById('sca-empty');
@@ -1541,14 +1558,17 @@ async function scaRender() {
           shape: 'arrowUp', text: 'EXIT' });
     markers.sort((a, b) => a.time - b.time);
     scaCandle.setMarkers(markers);
-    scaChart.timeScale().fitContent();
     scaChart.resize(chartEl.clientWidth, 440);
+    if (!keepView) scaChart.timeScale().fitContent();   // preserve zoom on auto-refresh
 
     // intraday MTM line
     const mtm = (d.pnl && d.pnl.mtm) || [];
     scaMtm.setData(mtm.map(p => ({ time: scaTime(d.date, p.time), value: p.rupees })));
-    scaMtmChart.timeScale().fitContent();
     scaMtmChart.resize(document.getElementById('sca-mtm').clientWidth, 170);
+    if (!keepView) scaMtmChart.timeScale().fitContent();
+
+    document.getElementById('sca-updated').textContent =
+      '⟳ ' + new Date().toLocaleTimeString('en-IN', { hour12: false });
 
     const otm = (d.otm_level != null) ? `OTM${d.otm_level}` : '—';
     const sel = d.selection || {};
