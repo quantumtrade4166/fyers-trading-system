@@ -506,7 +506,7 @@
     <div class="flex items-center justify-between mb-4">
       <div>
         <h2 class="text-lg font-semibold text-white">Vwap Strangle</h2>
-        <p class="text-xs text-slate-500">Nifty &amp; Sensex · combined-premium VWAP · 7-day chart archive</p>
+        <p class="text-xs text-slate-500">Nifty &amp; Sensex · combined-premium VWAP · full trade &amp; chart history</p>
       </div>
     </div>
 
@@ -515,7 +515,7 @@
       <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
         <div>
           <h2 class="text-sm font-medium text-slate-300">Combined-Premium Chart Archive</h2>
-          <p class="text-xs text-slate-500">7-day rolling · strategy-selected strangle · VWAP + entry/exit signals</p>
+          <p class="text-xs text-slate-500">full history · strategy-selected strangle · VWAP + entry/exit signals</p>
         </div>
         <div class="flex items-center gap-2">
           <div class="flex gap-1">
@@ -540,6 +540,10 @@
         <span><span style="color:#ef5350">▼</span> Sell entry (fill)</span>
         <span><span style="color:#26a69a">▲</span> Exit (buy back)</span>
       </div>
+
+      <!-- Intraday MTM -->
+      <p class="text-sm font-medium text-slate-300 mt-4 mb-1">Intraday MTM (₹)</p>
+      <div id="sca-mtm" style="height:170px;width:100%"></div>
 
       <!-- Simulated trades & P&L -->
       <div id="sca-pnl" class="mt-4"></div>
@@ -1407,6 +1411,7 @@ async function fetchStrangle() {
 let scaIndex = 'NIFTY';
 let scaList = [];
 let scaChart = null, scaCandle = null, scaVwap = null;
+let scaMtmChart = null, scaMtm = null;
 
 function scaSetIndex(idx) {
   scaIndex = idx;
@@ -1469,8 +1474,26 @@ function scaEnsureChart() {
     tip.style.display = '';
   });
 
+  // Intraday MTM chart (baseline: green above 0, red below)
+  const mtmEl = document.getElementById('sca-mtm');
+  scaMtmChart = LightweightCharts.createChart(mtmEl, {
+    width: mtmEl.clientWidth, height: 170,
+    layout:    { background: { color: 'transparent' }, textColor: '#64748b' },
+    grid:      { vertLines: { color: '#1e2533' }, horzLines: { color: '#1e2533' } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: '#2d3748' },
+    timeScale: { borderColor: '#2d3748', timeVisible: true, secondsVisible: false },
+  });
+  scaMtm = scaMtmChart.addBaselineSeries({
+    baseValue: { type: 'price', price: 0 },
+    topLineColor: '#26a69a', topFillColor1: 'rgba(38,166,154,.28)', topFillColor2: 'rgba(38,166,154,.04)',
+    bottomLineColor: '#ef5350', bottomFillColor1: 'rgba(239,83,80,.04)', bottomFillColor2: 'rgba(239,83,80,.28)',
+    lineWidth: 2, priceLineVisible: false,
+  });
+
   window.addEventListener('resize', () => {
     if (scaChart) scaChart.resize(el.clientWidth, 440);
+    if (scaMtmChart) scaMtmChart.resize(mtmEl.clientWidth, 170);
   });
 }
 
@@ -1520,6 +1543,12 @@ async function scaRender() {
     scaCandle.setMarkers(markers);
     scaChart.timeScale().fitContent();
     scaChart.resize(chartEl.clientWidth, 440);
+
+    // intraday MTM line
+    const mtm = (d.pnl && d.pnl.mtm) || [];
+    scaMtm.setData(mtm.map(p => ({ time: scaTime(d.date, p.time), value: p.rupees })));
+    scaMtmChart.timeScale().fitContent();
+    scaMtmChart.resize(document.getElementById('sca-mtm').clientWidth, 170);
 
     const otm = (d.otm_level != null) ? `OTM${d.otm_level}` : '—';
     const sel = d.selection || {};

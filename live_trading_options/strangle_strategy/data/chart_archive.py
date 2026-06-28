@@ -27,7 +27,7 @@ import pandas as pd
 
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 from core.premium_builder import combined_for_strikes
-from core.signal_engine import simulate_day, pair_trades
+from core.signal_engine import simulate_day, pair_trades, mtm_series
 
 _PARAMS = json.loads((Path(__file__).resolve().parents[1] / "config" / "parameters.json").read_text())
 _LOT_SIZES = _PARAMS["lot_sizes"]
@@ -58,10 +58,13 @@ def build_day_record(client, index: str, ce_sym: str, pe_sym: str,
         "vwap":   round(float(r["vwap"]), 2),
     } for _, r in day.iterrows()]
 
-    # actual simulated trade sequence (alternating entry->exit, max 4 cycles)
-    events = simulate_day(day)
+    # actual simulated trade sequence (alternating entry->exit, max 4 cycles,
+    # no entry after 2:30, force square-off at 3:15)
+    events = simulate_day(day, entry_cutoff=_PARAMS.get("entry_cutoff", "14:30"),
+                          square_off=_PARAMS.get("square_off", "15:15"))
     lot_size = _LOT_SIZES.get(index.upper(), 1)
     pnl = pair_trades(events, lot_size=lot_size, lots=1)
+    pnl["mtm"] = mtm_series(day, events, lot_size=lot_size, lots=1)
 
     rec = {
         "date":        date_str,
@@ -81,21 +84,24 @@ def build_day_record(client, index: str, ce_sym: str, pe_sym: str,
 
 
 def archive_day(client, index: str, ce_sym: str, pe_sym: str,
-                date_str: str = None, otm_level=None, retention_days: int = 7,
+                date_str: str = None, otm_level=None, retention_days: int = 0,
                 meta: dict = None) -> Path:
-    """Build and persist one index/day record, then prune old files."""
+    """Build and persist one index/day record. retention_days<=0 keeps all days
+    forever (no pruning) — the user wants the full trade/chart history retained."""
     date_str = date_str or dt.date.today().isoformat()
     record = build_day_record(client, index, ce_sym, pe_sym, date_str, otm_level, meta)
     path = _archive_path(date_str, index)
     path.write_text(json.dumps(record, indent=2))
-    prune(retention_days)
+    if retention_days and retention_days > 0:
+        prune(retention_days)
     print(f"  archived {index} {date_str}: {record['n_candles']} candles, "
           f"{len(record['events'])} signal events -> {path.name}")
     return path
 
 
-def prune(retention_days: int = 7):
-    """Delete archive files older than retention_days (by date in filename)."""
+def prune(retention_days: int):
+    """Delete archive files older than retention_days (by date in filename).
+    Only called when retention_days > 0; default is keep-forever."""
     cutoff = dt.date.today() - dt.timedelta(days=retention_days - 1)
     for f in ARCHIVE_DIR.glob("*.json"):
         try:

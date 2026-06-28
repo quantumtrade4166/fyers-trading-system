@@ -30,6 +30,9 @@
     "mtm_stop_loss": 1000
   },
   "max_entries_per_day": 4,
-  "archive_retention_days": 7,
-  "last_saved": "2026-06-25"
+  "entry_cutoff": "14:30",
+  "square_off": "15:15",
+  "archive_retention_days": 0,
+  "_retention_note": "0 = keep all trading days forever (no pruning).",
+  "last_saved": "2026-06-26"
 }

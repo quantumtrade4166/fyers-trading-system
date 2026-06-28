@@ -46,7 +46,7 @@ def _is_no_data(err: Exception) -> bool:
     return ("no_data" in s) or ("No candles" in s) or ("No 09:15" in s)
 
 
-def run_index(client, index: str, date_str: str, retention: int = 7):
+def run_index(client, index: str, date_str: str, retention: int = 0):
     exp, d = nearest_expiry_and_dte(index, dt.date.fromisoformat(date_str))
     # threshold uses the DTE bucket (clamped to {0,1}); for DTE>=2 the strategy
     # is idle but we still archive a representative strangle for the chart.
@@ -74,7 +74,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", default=dt.date.today().isoformat())
     ap.add_argument("--index", choices=INDICES, default=None)
-    ap.add_argument("--retention", type=int, default=7)
+    ap.add_argument("--retention", type=int, default=0)   # 0 = keep all days forever
     args = ap.parse_args()
 
     st = token_status()
