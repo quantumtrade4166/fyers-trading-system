@@ -202,6 +202,20 @@ def build_books(date_str: str):
                 "combined_premium", "threshold", "dte")}
         meta["lot_size"] = _LOT_SIZES.get(idx, 1)
         book = IndexBook(idx, pick["ce_symbol"], pick["pe_symbol"], pick["otm_level"], meta)
+        # Seed already-closed candles from V1 history so VWAP accumulates from
+        # 9:15 (V2 can't get past ticks). Live ticks take over from the current
+        # bucket onward (tick-exact). On a 9:21 start this seeds just the 9:15 bar.
+        try:
+            v1_path = ARCHIVE_DIR / f"{date_str}_{idx}.json"
+            if v1_path.exists():
+                now_bkt = _floor_5min(dt.datetime.now(IST).replace(tzinfo=None)).strftime("%H:%M")
+                book.candles = [{"time": c["time"], "open": c["open"], "high": c["high"],
+                                 "low": c["low"], "close": c["close"], "volume": c["volume"]}
+                                for c in json.loads(v1_path.read_text())["candles"]
+                                if c["time"] < now_bkt]
+                print(f"  [V2] {idx}: seeded {len(book.candles)} V1 candles (VWAP from 9:15)")
+        except Exception as e:
+            print(f"  [V2] {idx} seed failed: {e}")
         _books[idx] = book
         _sym_to_book[pick["ce_symbol"]] = book
         _sym_to_book[pick["pe_symbol"]] = book
