@@ -253,11 +253,13 @@ async def api_strangle_charts():
 
 
 @app.get("/api/strangle/chart")
-async def api_strangle_chart(date: str, index: str):
-    """Return one archived combined-premium chart (candles + VWAP + signal events)."""
-    f = _CHART_DIR / f"{date}_{index.upper()}.json"
+async def api_strangle_chart(date: str, index: str, version: str = "V1"):
+    """Return one archived combined-premium chart (candles + VWAP + signal events).
+    version V1 = 1-minute reconstruction; V2 = live tick-built ({date}_{index}_V2.json)."""
+    suffix = "_V2" if version.upper() == "V2" else ""
+    f = _CHART_DIR / f"{date}_{index.upper()}{suffix}.json"
     if not f.exists():
-        return {"error": "not found", "date": date, "index": index}
+        return {"error": "not found", "date": date, "index": index, "version": version.upper()}
     return _json.loads(f.read_text())
 
 

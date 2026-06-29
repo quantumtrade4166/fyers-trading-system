@@ -522,6 +522,10 @@
             <button class="sca-idx-btn active" id="sca-btn-NIFTY" onclick="scaSetIndex('NIFTY')">NIFTY</button>
             <button class="sca-idx-btn" id="sca-btn-SENSEX" onclick="scaSetIndex('SENSEX')">SENSEX</button>
           </div>
+          <div class="flex gap-1" title="V1 = 1-minute reconstruction · V2 = live tick-built">
+            <button class="sca-idx-btn active" id="sca-ver-V1" onclick="scaSetVersion('V1')">V1·1min</button>
+            <button class="sca-idx-btn" id="sca-ver-V2" onclick="scaSetVersion('V2')">V2·tick</button>
+          </div>
           <select id="sca-date" onchange="scaRender()"
                   class="bg-[#151a26] text-slate-300 text-xs rounded px-2 py-1 border border-[#2d3748]"></select>
           <span id="sca-updated" class="text-xs text-slate-600 ml-1">—</span>
@@ -1410,6 +1414,7 @@ async function fetchStrangle() {
 
 // ── Combined-premium chart archive ──────────────────────────────────────────
 let scaIndex = 'NIFTY';
+let scaVersion = 'V1';
 let scaList = [];
 let scaChart = null, scaCandle = null, scaVwap = null;
 let scaMtmChart = null, scaMtm = null;
@@ -1419,6 +1424,13 @@ function scaSetIndex(idx) {
   ['NIFTY', 'SENSEX'].forEach(i =>
     document.getElementById('sca-btn-' + i).classList.toggle('active', i === idx));
   scaPopulateDates();
+  scaRender();
+}
+
+function scaSetVersion(v) {
+  scaVersion = v;
+  ['V1', 'V2'].forEach(x =>
+    document.getElementById('sca-ver-' + x).classList.toggle('active', x === v));
   scaRender();
 }
 
@@ -1538,9 +1550,9 @@ async function scaRender(keepView = false) {
   }
   chartEl.style.display = ''; emptyEl.style.display = 'none';
   try {
-    const r = await fetch(`/api/strangle/chart?date=${date}&index=${scaIndex}`);
+    const r = await fetch(`/api/strangle/chart?date=${date}&index=${scaIndex}&version=${scaVersion}`);
     const d = await r.json();
-    if (d.error) { document.getElementById('sca-meta').textContent = 'No data for this day.'; return; }
+    if (d.error) { document.getElementById('sca-meta').textContent = `No ${scaVersion} data for this day yet.`; return; }
     scaEnsureChart();
 
     const candles = d.candles.map(c => ({
