@@ -44,10 +44,19 @@ def simulate_day(combined: pd.DataFrame, max_entries: int = MAX_ENTRIES_PER_DAY,
                  entry_cutoff: str = ENTRY_CUTOFF, square_off: str = SQUARE_OFF) -> list[dict]:
     """Ordered entry/exit events, strictly alternating (one position at a time).
 
+    Entry is a LIMIT order, not an instant fill:
+      - A red candle closing below its VWAP places a sell limit at `low - 1`.
+      - The limit FILLS only if a later candle actually trades down to that price
+        (candle low <= limit). It counts as an entry only when filled.
+      - If not filled by the next candle's close: cancel if that candle closed
+        ABOVE VWAP; or, if that candle is itself a fresh red-below-VWAP signal,
+        replace the limit at the new low - 1; otherwise cancel.
+      - The 9:15 candle (closes at 9:20, the strike-selection moment) is a valid
+        signal bar.
+
     Intraday guards:
-      - no NEW entry after `entry_cutoff` (2:30 PM)
-      - any open position is force-closed at `square_off` (3:15 PM) at that
-        candle's open (the price at 3:15)
+      - no entry FILL after `entry_cutoff` (2:30 PM)
+      - any open position force-closed at `square_off` (3:15 PM) at that candle's open
 
     Each event: {time, type:'entry'|'exit', price, fill_no (entries), reason}
     """
@@ -55,32 +64,50 @@ def simulate_day(combined: pd.DataFrame, max_entries: int = MAX_ENTRIES_PER_DAY,
     events: list[dict] = []
     entries = 0
     in_pos = False
+    pending = None        # resting sell-limit price while flat (else None)
+    sig_time = None       # signal candle of the resting limit (for the reason text)
 
-    # The 9:15 candle closes at 9:20 (exactly when strikes are selected), so it
-    # IS a valid entry bar: if it's red and closes below its VWAP, enter below it.
     for _, r in combined.iterrows():
         tt = r["datetime"].time()
         hm = r["datetime"].strftime("%H:%M")
+        low, close = float(r["low"]), float(r["close"])
+        is_red, below, above = bool(r["is_red"]), bool(r["below_vwap"]), bool(r["above_vwap"])
 
-        if in_pos and tt >= sq:                       # intraday square-off at 3:15
-            events.append({"time": hm, "type": "exit",
-                           "price": round(float(r["open"]), 2),
-                           "reason": f"intraday square-off {square_off}"})
-            in_pos = False
-            break
+        # ── manage an open position ───────────────────────────────────────────
+        if in_pos:
+            if tt >= sq:                              # intraday square-off at 3:15
+                events.append({"time": hm, "type": "exit", "price": round(float(r["open"]), 2),
+                               "reason": f"intraday square-off {square_off}"})
+                in_pos = False
+                break
+            if above:                                # exit on close above VWAP
+                events.append({"time": hm, "type": "exit", "price": round(close, 2),
+                               "reason": "close above VWAP"})
+                in_pos = False
+            continue
 
-        if (not in_pos and entries < max_entries and tt <= cutoff
-                and bool(r["below_vwap"]) and bool(r["is_red"])):
-            entries += 1
-            events.append({"time": hm, "type": "entry",
-                           "price": round(float(r["low"]) - 1, 2),
-                           "fill_no": entries, "reason": "red close below VWAP"})
-            in_pos = True
-        elif in_pos and bool(r["above_vwap"]):
-            events.append({"time": hm, "type": "exit",
-                           "price": round(float(r["close"]), 2),
-                           "reason": "close above VWAP"})
-            in_pos = False
+        # ── flat: first see if a resting limit fills on THIS candle ───────────
+        if pending is not None:
+            if tt <= cutoff and low <= pending:      # price traded down to the limit -> FILL
+                entries += 1
+                events.append({"time": hm, "type": "entry", "price": round(pending, 2),
+                               "fill_no": entries,
+                               "reason": f"limit {pending:.2f} (signal {sig_time}) filled"})
+                in_pos = True
+                pending = sig_time = None
+                continue
+            # not filled — cancel or replace the resting limit
+            if above:
+                pending = sig_time = None                         # cancel: closed above VWAP
+            elif is_red and below and entries < max_entries and tt <= cutoff:
+                pending, sig_time = round(low - 1, 2), hm          # replace with new signal
+            else:
+                pending = sig_time = None                         # no fresh signal -> cancel
+            continue
+
+        # ── flat, no resting limit: a fresh signal arms one ───────────────────
+        if entries < max_entries and tt <= cutoff and is_red and below:
+            pending, sig_time = round(low - 1, 2), hm
 
     return events
 
