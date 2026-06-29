@@ -56,8 +56,9 @@ def simulate_day(combined: pd.DataFrame, max_entries: int = MAX_ENTRIES_PER_DAY,
     entries = 0
     in_pos = False
 
-    # skip the 9:15 candle — that is the strike-selection trigger, not a trade bar
-    for _, r in combined.iloc[1:].iterrows():
+    # The 9:15 candle closes at 9:20 (exactly when strikes are selected), so it
+    # IS a valid entry bar: if it's red and closes below its VWAP, enter below it.
+    for _, r in combined.iterrows():
         tt = r["datetime"].time()
         hm = r["datetime"].strftime("%H:%M")
 
