@@ -105,10 +105,36 @@
   #page-terminal table.k-tbl tbody tr:nth-child(even) { background:#0c0d10; }
   #page-terminal table.k-tbl tbody tr:hover { background:#15171b; }
   #page-terminal .k-instr { color:#cfcabd; }
+
+  /* ── Live ticker tape (terminal mode only) ── */
+  #ticker-tape { display:none; }
+  body.terminal-mode #ticker-tape { display:block; background:#0e0f12; border:1px solid #1c1f25;
+        border-radius:4px; height:30px; overflow:hidden; margin-bottom:14px; position:relative;
+        font-family:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace; }
+  #ticker-tape .tkr-inner { display:flex; width:max-content; align-items:center; height:30px;
+        animation:tkrscroll 90s linear infinite; }
+  #ticker-tape:hover .tkr-inner { animation-play-state:paused; }
+  @keyframes tkrscroll { from { transform:translateX(0); } to { transform:translateX(-50%); } }
+  #ticker-tape .tk { display:inline-flex; align-items:center; gap:7px; padding:0 18px;
+        border-right:1px solid #1c1f25; white-space:nowrap; }
+  #ticker-tape .tk-n { color:#f5a623; font-size:11px; font-weight:600; letter-spacing:.04em; }
+  #ticker-tape .tk-v { color:#cfcabd; font-size:11px; font-variant-numeric:tabular-nums; }
+  #ticker-tape .tk-c { font-size:10px; font-variant-numeric:tabular-nums; }
+  #ticker-tape .tk-c.up { color:#23d18b; }
+  #ticker-tape .tk-c.dn { color:#ff4d4d; }
+
+  /* ── Tick flash (value-change pulse) ── */
+  @keyframes flashup { 0% { background:rgba(35,209,139,.30); } 100% { background:transparent; } }
+  @keyframes flashdn { 0% { background:rgba(255,77,77,.30); }  100% { background:transparent; } }
+  .flash-up { animation:flashup .6s ease-out; border-radius:3px; }
+  .flash-dn { animation:flashdn .6s ease-out; border-radius:3px; }
 </style>
 </head>
 <body class="min-h-screen p-4">
 <div class="max-w-screen-2xl mx-auto">
+
+  <!-- ── Live ticker tape (terminal mode only) ── -->
+  <div id="ticker-tape"><div class="tkr-inner" id="ticker-inner"></div></div>
 
   <!-- ── Global Header ── -->
   <div class="flex items-center justify-between mb-4">
@@ -597,6 +623,32 @@
           <div id="term-brokers" class="flex items-center gap-2" style="align-self:center"></div>
         </div>
       </div>
+
+      <!-- margin strip (combined across both accounts) -->
+      <div class="flex flex-wrap items-end gap-x-10 gap-y-3 mt-4 pt-4" style="border-top:1px solid #1c1f25">
+        <div>
+          <p class="k-muted" style="font-size:12px;margin-bottom:3px">Margin Used</p>
+          <p id="term-mused" style="font-size:18px;font-weight:600;color:#e8e0d0">₹0</p>
+          <p id="term-mused-sub" class="k-muted" style="font-size:10.5px;margin-top:2px">—</p>
+        </div>
+        <div>
+          <p class="k-muted" style="font-size:12px;margin-bottom:3px">Available Margin</p>
+          <p id="term-mavail" style="font-size:18px;font-weight:600;color:#23d18b">₹0</p>
+          <p id="term-mavail-sub" class="k-muted" style="font-size:10.5px;margin-top:2px">—</p>
+        </div>
+        <div>
+          <p class="k-muted" style="font-size:12px;margin-bottom:3px">Total Margin</p>
+          <p id="term-mtotal" style="font-size:18px;font-weight:600;color:#e8e0d0">₹0</p>
+          <p class="k-muted" style="font-size:10.5px;margin-top:2px">Used + Available</p>
+        </div>
+        <div style="min-width:150px">
+          <p class="k-muted" style="font-size:12px;margin-bottom:3px">Utilisation</p>
+          <p id="term-mutil" style="font-size:18px;font-weight:600;color:#f5a623">0%</p>
+          <div style="background:#1c1f25;height:5px;border-radius:3px;margin-top:6px;overflow:hidden">
+            <div id="term-mutil-bar" style="height:100%;width:0%;border-radius:3px;background:linear-gradient(90deg,#23d18b,#f5a623 65%,#ff4d4d)"></div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- positions table -->
@@ -647,7 +699,7 @@ function switchTab(tab) {
   document.body.classList.toggle('terminal-mode', inTerminal);
   document.getElementById('header-title').textContent = inTerminal ? 'LIVE TRADING TERMINAL' : 'Trading Dashboard';
   document.getElementById('live-badge').style.display = inTerminal ? '' : 'none';
-  if (inTerminal) { fetchTerminal(); startTerminalPoll(); } else { stopTerminalPoll(); }
+  if (inTerminal) { fetchTerminal(); fetchTicker(); startTerminalPoll(); } else { stopTerminalPoll(); }
 
   requestAnimationFrame(() => {
     if (tab === 'statarb') {
@@ -1761,23 +1813,116 @@ async function fetchTerminal(force = false) {
   } catch (e) { console.error('terminal fetch', e); }
 }
 
+let _tickTimer = null;
 function startTerminalPoll() {
   stopTerminalPoll();
-  _termTimer = setInterval(() => { if (_activeTab === 'terminal') fetchTerminal(); }, 5000);
+  // near-tick refresh: P&L + ticker both ~1s (server-side cached at 1s)
+  _termTimer = setInterval(() => { if (_activeTab === 'terminal') fetchTerminal(); }, 1000);
+  _tickTimer = setInterval(() => { if (_activeTab === 'terminal') fetchTicker(); }, 1000);
 }
-function stopTerminalPoll() { if (_termTimer) { clearInterval(_termTimer); _termTimer = null; } }
+function stopTerminalPoll() {
+  if (_termTimer) { clearInterval(_termTimer); _termTimer = null; }
+  if (_tickTimer) { clearInterval(_tickTimer); _tickTimer = null; }
+}
 
+// flash a value on change — green pulse if up, red if down
+function flash(el, up) {
+  if (!el) return;
+  el.classList.remove('flash-up', 'flash-dn');
+  void el.offsetWidth;                       // restart the CSS animation
+  el.classList.add(up ? 'flash-up' : 'flash-dn');
+}
+
+// ── Live ticker tape ───────────────────────────────────────────────────────────
+let _tickerKeys = null;
+let _tickerPrev = {};
+async function fetchTicker() {
+  try {
+    const r = await fetch('/api/ticker');
+    renderTicker(await r.json());
+  } catch (e) { console.error('ticker fetch', e); }
+}
+
+function renderTicker(data) {
+  if (!Array.isArray(data) || !data.length) return;
+  const inner = document.getElementById('ticker-inner');
+  if (!inner) return;
+  const keys = data.map(t => t.name).join(',');
+
+  const fmt = (t) => {
+    const up  = (t.chp ?? 0) >= 0;
+    const ltp = (t.ltp ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const chp = Math.abs(t.chp ?? 0).toFixed(2);
+    return { up, ltp, chps: (up ? '+' : '-') + chp + '%', arrow: up ? '▲' : '▼' };
+  };
+
+  // first build (or symbol set changed): create doubled DOM for a seamless loop
+  if (_tickerKeys !== keys) {
+    const build = (t) => {
+      const f = fmt(t);
+      return `<div class="tk"><span class="tk-n">${t.name}</span>`
+           + `<span class="tk-v">${f.ltp}</span>`
+           + `<span class="tk-c ${f.up ? 'up' : 'dn'}">${f.arrow} ${f.chps}</span></div>`;
+    };
+    inner.innerHTML = data.map(build).join('') + data.map(build).join('');
+    _tickerKeys = keys;
+    return;
+  }
+
+  // in-place update — keeps the scroll animation smooth (no DOM rebuild / jump)
+  const tks = inner.querySelectorAll('.tk');
+  const n = data.length;
+  tks.forEach((el, idx) => {
+    const t = data[idx % n];
+    const f = fmt(t);
+    const vEl = el.querySelector('.tk-v');
+    const prev = _tickerPrev[t.name];
+    if (prev !== undefined && t.ltp !== prev) flash(vEl, t.ltp > prev);
+    vEl.textContent = f.ltp;
+    const c = el.querySelector('.tk-c');
+    c.textContent = `${f.arrow} ${f.chps}`;
+    c.className = 'tk-c ' + (f.up ? 'up' : 'dn');
+  });
+  data.forEach(t => { _tickerPrev[t.name] = t.ltp; });
+}
+
+let _termPrev = {};
+let _termPosPrev = {};
 function renderTerminal(d) {
   if (!d) return;
   document.getElementById('term-ts').textContent = d.ts || '--:--:--';
 
   const cmb = document.getElementById('term-combined');
+  if (_termPrev.cmb !== undefined && d.combined_pnl !== _termPrev.cmb) flash(cmb, d.combined_pnl > _termPrev.cmb);
   cmb.textContent = inr(d.combined_pnl);
   cmb.style.color = pnlCol(d.combined_pnl);
+  _termPrev.cmb = d.combined_pnl;
   const rl = document.getElementById('term-realised');
+  if (_termPrev.rl !== undefined && d.combined_realised !== _termPrev.rl) flash(rl, d.combined_realised > _termPrev.rl);
   rl.textContent = inr(d.combined_realised);
   rl.style.color = pnlCol(d.combined_realised);
+  _termPrev.rl = d.combined_realised;
   document.getElementById('term-open').textContent = d.open_positions ?? 0;
+
+  // combined margin (both accounts)
+  const m = d.margin || {};
+  const rup = v => '₹' + (Number(v) || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+  const bb = m.by_broker || {};
+  const sub = key => {
+    const z = (bb.zerodha || {})[key], x = (bb.jainam || {})[key];
+    const parts = [];
+    if (z !== undefined) parts.push('ZRD ' + rup(z));
+    if (x !== undefined) parts.push('XTS ' + rup(x));
+    return parts.length ? parts.join(' · ') : '—';
+  };
+  document.getElementById('term-mused').textContent  = rup(m.used);
+  document.getElementById('term-mavail').textContent = rup(m.available);
+  document.getElementById('term-mtotal').textContent = rup(m.total);
+  document.getElementById('term-mused-sub').textContent  = sub('used');
+  document.getElementById('term-mavail-sub').textContent = sub('available');
+  const util = Number(m.utilisation) || 0;
+  document.getElementById('term-mutil').textContent = util.toFixed(1) + '%';
+  document.getElementById('term-mutil-bar').style.width = Math.min(util, 100) + '%';
 
   // account chips (sample style: amber code + colored P&L)
   document.getElementById('term-brokers').innerHTML = (d.brokers || []).map(b => {
@@ -1804,8 +1949,9 @@ function renderTerminal(d) {
   tbody.innerHTML = rows.map(p => {
     const meta = BROKER_META[p.broker] || { code: p.broker, color: '#9b9b9b' };
     const qtyCol = p.qty < 0 ? '#ff4d4d' : '#cfcabd';
+    const key = `${p.broker}|${p.symbol}`;
     return `
-      <tr>
+      <tr data-key="${key}" data-pnl="${p.pnl}">
         <td><span style="color:${meta.color}">${meta.code}</span></td>
         <td>
           <div class="k-instr">${p.symbol}</div>
@@ -1814,10 +1960,17 @@ function renderTerminal(d) {
         <td><span class="prod-tag">${p.product || '—'}</span></td>
         <td style="color:${qtyCol};font-weight:500">${p.qty}</td>
         <td>${px(p.avg_price)}</td>
-        <td>${px(p.ltp)}</td>
-        <td style="color:${pnlCol(p.pnl)};font-weight:600">${inr(p.pnl)}</td>
+        <td class="ltp-cell">${px(p.ltp)}</td>
+        <td class="pnl-cell" style="color:${pnlCol(p.pnl)};font-weight:600">${inr(p.pnl)}</td>
       </tr>`;
   }).join('');
+
+  // flash per-position P&L cells that changed since last tick
+  tbody.querySelectorAll('tr[data-key]').forEach(tr => {
+    const k = tr.dataset.key, pnl = Number(tr.dataset.pnl), prev = _termPosPrev[k];
+    if (prev !== undefined && pnl !== prev) flash(tr.querySelector('.pnl-cell'), pnl > prev);
+    _termPosPrev[k] = pnl;
+  });
 }
 
 initCharts();

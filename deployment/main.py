@@ -221,6 +221,14 @@ async def api_terminal_eod_history():
     return broker_eod.get_history()
 
 
+@app.get("/api/ticker")
+async def api_ticker(force: bool = False):
+    """Live ticker-tape quotes (Indian indices + large caps) for the Terminal tab."""
+    from deployment import ticker
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(None, ticker.get_ticker, force)
+
+
 # ── Strangle System endpoint ─────────────────────────────────────────────────
 
 @app.get("/api/strangle/status")

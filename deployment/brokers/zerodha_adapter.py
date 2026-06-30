@@ -79,4 +79,17 @@ class ZerodhaAdapter(BrokerAdapter):
                 pnl=float(p.get("pnl", 0) or 0),
                 realised=float(p.get("realised", 0) or 0),
             ))
-        return BrokerSnapshot(self.name, status="ok", positions=positions)
+
+        # equity margins (NSE/NFO/BFO — MCX excluded per user)
+        m_used = m_avail = 0.0
+        try:
+            m  = kite.margins() or {}
+            eq = m.get("equity", {}) or {}
+            m_avail = float(eq.get("net", 0) or 0)
+            m_used  = float((eq.get("utilised", {}) or {}).get("debits", 0) or 0)
+        except Exception as e:
+            print(f"  [zerodha] margins failed (margin will be 0): {e}")
+
+        return BrokerSnapshot(self.name, status="ok", positions=positions,
+                              margin_used=round(m_used, 2),
+                              margin_available=round(m_avail, 2))

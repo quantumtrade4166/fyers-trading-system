@@ -43,6 +43,12 @@ class BrokerSnapshot:
     status:    str = "ok"          # ok | not_configured | error
     message:   str = ""            # error / status detail for the UI
     positions: list = field(default_factory=list)   # list[Position]
+    margin_used:      float = 0.0  # margin/funds utilised on this account
+    margin_available: float = 0.0  # free margin still available
+
+    @property
+    def margin_total(self) -> float:
+        return round(self.margin_used + self.margin_available, 2)
 
     @property
     def total_pnl(self) -> float:
@@ -58,13 +64,16 @@ class BrokerSnapshot:
 
     def as_dict(self) -> dict:
         return {
-            "broker":       self.broker,
-            "status":       self.status,
-            "message":      self.message,
-            "total_pnl":    self.total_pnl,
-            "realised_pnl": self.realised_pnl,
-            "open_count":   self.open_count,
-            "positions":    [p.as_dict() for p in self.positions],
+            "broker":           self.broker,
+            "status":           self.status,
+            "message":          self.message,
+            "total_pnl":        self.total_pnl,
+            "realised_pnl":     self.realised_pnl,
+            "open_count":       self.open_count,
+            "margin_used":      round(float(self.margin_used), 2),
+            "margin_available": round(float(self.margin_available), 2),
+            "margin_total":     self.margin_total,
+            "positions":        [p.as_dict() for p in self.positions],
         }
 
 
