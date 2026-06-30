@@ -182,6 +182,37 @@ def _strangle_intraday():
         print(f"  [scheduler] strangle intraday failed: {e}")
 
 
+def _strangle_v2_watchdog():
+    """Every few min during market hours — ensure the V2 tick engine is alive.
+    V2 has its own daily 9:25 auto-start, but can die mid-day (e.g. a dashboard
+    restart kills python). This restarts it within minutes so it self-heals
+    instead of waiting for the next day. Detects liveness by V2 archive freshness."""
+    import datetime, subprocess, json as _json
+    from pathlib import Path
+    import pytz
+    now = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
+    if not (now.weekday() < 5 and (9, 26) <= (now.hour, now.minute) <= (15, 28)):
+        return
+    arch = (Path(__file__).parent.parent / "live_trading_options" / "strangle_strategy"
+            / "data" / "chart_history")
+    today = now.strftime("%Y-%m-%d")
+    fresh = False
+    for idx in ("NIFTY", "SENSEX"):
+        f = arch / f"{today}_{idx}_V2.json"
+        if not f.exists():
+            continue
+        try:
+            cap = _json.loads(f.read_text())["captured_at"]
+            ct = datetime.datetime.strptime(cap, "%Y-%m-%d %H:%M:%S")
+            if (now.replace(tzinfo=None) - ct).total_seconds() < 150:
+                fresh = True
+        except Exception:
+            pass
+    if not fresh:
+        subprocess.run(["schtasks", "/Run", "/TN", "StrangleV2Engine"], capture_output=True)
+        print("  [scheduler] V2 engine stale/down — restarted via task")
+
+
 def _start_feed():
     print("  [scheduler] Market open — starting live feed...")
     from deployment import live_feed
@@ -214,6 +245,10 @@ def create_scheduler() -> BackgroundScheduler:
     # Vwap Strangle intraday chart capture every 2 min during market hours
     sched.add_job(_strangle_intraday, CronTrigger(
         day_of_week="mon-fri", hour="9-15", minute="*/2", timezone=IST))
+
+    # Vwap Strangle V2 tick-engine watchdog — restart it if it dies mid-day
+    sched.add_job(_strangle_v2_watchdog, CronTrigger(
+        day_of_week="mon-fri", hour="9-15", minute="*/3", timezone=IST))
 
     # stop feed at 15:30
     sched.add_job(_stop_feed, CronTrigger(
