@@ -45,11 +45,20 @@ def atm_strike(spot: float, index: str) -> int:
 
 def _price_at_920(df: pd.DataFrame) -> float | None:
     """Close of the 9:15 FIVE-minute candle = the price at 9:20 that triggers the
-    strike selection. From 1-min data this is the last bar before 09:20 (the 09:19
-    bar). Using the 09:15 one-minute bar instead reads the ~09:16 open and shifts
-    the ATM by a strike on a volatile open — that was the original bug."""
+    strike selection — i.e. the 09:19 one-minute close.
+
+    Returns None if the history hasn't reached 09:19 yet. This matters LIVE: at
+    9:20 Fyers' 1-min history can still be lagging (only the 09:15 bar published),
+    and grabbing that bar's ~9:15 price shifts the ATM by a strike. Returning None
+    makes the live selector skip and retry next cycle until the 09:19 bar arrives.
+    For EOD/backfill the history is complete so 09:19 is always present."""
     pre920 = df[df["datetime"].dt.time < pd.Timestamp("09:20").time()]
-    return None if pre920.empty else float(pre920.iloc[-1]["close"])
+    if pre920.empty:
+        return None
+    last = pre920.iloc[-1]
+    if last["datetime"].strftime("%H:%M") < "09:19":
+        return None      # history lagging — not yet current to the 9:20 price
+    return float(last["close"])
 
 
 def spot_at_open(client, index: str, date_str: str) -> float:
