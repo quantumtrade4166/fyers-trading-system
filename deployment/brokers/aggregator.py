@@ -13,10 +13,12 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from deployment.brokers.zerodha_adapter import ZerodhaAdapter
-from deployment.brokers.jainam_adapter import JainamAdapter
+# XTS / Jainam intentionally DISABLED — no XTS API calls until re-enabled.
+# from deployment.brokers.jainam_adapter import JainamAdapter
 
 # Fyers intentionally excluded — not used for placing orders.
-ADAPTERS = [ZerodhaAdapter(), JainamAdapter()]
+# XTS (JainamAdapter) removed from the active list to stop all XTS API activity.
+ADAPTERS = [ZerodhaAdapter()]
 
 _CACHE_TTL = 3.0          # seconds
 _lock = threading.Lock()
