@@ -1816,9 +1816,10 @@ async function fetchTerminal(force = false) {
 let _tickTimer = null;
 function startTerminalPoll() {
   stopTerminalPoll();
-  // near-tick refresh: P&L + ticker both ~1s (server-side cached at 1s)
-  _termTimer = setInterval(() => { if (_activeTab === 'terminal') fetchTerminal(); }, 1000);
-  _tickTimer = setInterval(() => { if (_activeTab === 'terminal') fetchTicker(); }, 1000);
+  // near-tick refresh: P&L every 2s, ticker every 2s (server-side cached;
+  // overlapping polls serve cached data so the broker thread-pool isn't starved)
+  _termTimer = setInterval(() => { if (_activeTab === 'terminal') fetchTerminal(); }, 2000);
+  _tickTimer = setInterval(() => { if (_activeTab === 'terminal') fetchTicker(); }, 2000);
 }
 function stopTerminalPoll() {
   if (_termTimer) { clearInterval(_termTimer); _termTimer = null; }

@@ -46,9 +46,10 @@ SYMBOLS = [
     ("NSE:TITAN-EQ",         "TITAN"),
 ]
 
-_CACHE_TTL = 1.0          # seconds — near-tick refresh
+_CACHE_TTL = 3.0          # seconds — near-tick refresh
 _lock  = threading.Lock()
 _cache = {"ts": 0.0, "data": []}
+_inflight = False
 
 
 def _get_fyers():
@@ -93,14 +94,29 @@ def _fetch():
 
 
 def get_ticker(force: bool = False):
-    """Return list of {name, ltp, ch, chp}. Cached ~5s; serves stale cache on error."""
+    """Return list of {name, ltp, ch, chp}. Cached; serves stale cache on error.
+
+    The lock is NOT held during the network fetch, and a single in-flight guard
+    ensures overlapping polls serve cached data instead of each launching a fetch
+    (which would block thread-pool workers and starve other endpoints).
+    """
+    global _inflight
+    now = time.time()
     with _lock:
-        now = time.time()
         if not force and _cache["data"] and (now - _cache["ts"] < _CACHE_TTL):
             return _cache["data"]
-        try:
-            _cache["data"] = _fetch()
-            _cache["ts"]   = now
-        except Exception as e:
-            print(f"  [ticker] fetch error: {e}")
+        if _inflight and _cache["data"]:
+            return _cache["data"]
+        _inflight = True
+    try:
+        data = _fetch()
+        with _lock:
+            _cache["data"] = data
+            _cache["ts"]   = time.time()
+    except Exception as e:
+        print(f"  [ticker] fetch error: {e}")
+    finally:
+        with _lock:
+            _inflight = False
+    with _lock:
         return _cache["data"]

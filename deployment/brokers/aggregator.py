@@ -117,13 +117,28 @@ def _fetch_all() -> dict:
     }
 
 
+_inflight = False
+
+
 def get_terminal(force: bool = False) -> dict:
+    global _inflight
     now = time.time()
     with _lock:
         if not force and _cache["data"] and (now - _cache["ts"] < _CACHE_TTL):
             return _cache["data"]
-    data = _fetch_all()
+        # another request is already fetching from the brokers — serve the last
+        # known snapshot instead of launching a 2nd parallel fetch. Prevents the
+        # shared thread-pool from being starved by fast frontend polling.
+        if _inflight and _cache["data"]:
+            return _cache["data"]
+        _inflight = True
+    try:
+        data = _fetch_all()
+        with _lock:
+            _cache["data"] = data
+            _cache["ts"]   = time.time()
+    finally:
+        with _lock:
+            _inflight = False
     with _lock:
-        _cache["data"] = data
-        _cache["ts"]   = now
-    return data
+        return _cache["data"]
