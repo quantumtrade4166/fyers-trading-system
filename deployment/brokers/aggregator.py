@@ -64,6 +64,15 @@ def _fetch_all() -> dict:
     with ThreadPoolExecutor(max_workers=len(adapters)) as ex:
         snaps = list(ex.map(lambda a: a.fetch_snapshot(), adapters))
 
+    # XTS only exposes a ₹12cr dealer RMS limit, not the client's real SPAN margin.
+    # The XTS book mirrors Zerodha exactly (AlgoMate copies the same strangle), so use
+    # Zerodha's real SPAN/exposure margin as the XTS client margin.
+    z = next((s for s in snaps if s.broker == "zerodha" and s.status == "ok"), None)
+    j = next((s for s in snaps if s.broker == "jainam"  and s.status == "ok"), None)
+    if z and j:
+        j.margin_used      = z.margin_used
+        j.margin_available = z.margin_available
+
     brokers = [s.as_dict() for s in snaps]
 
     # day P&L = everything (open unrealised + intraday booked).

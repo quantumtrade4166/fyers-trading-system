@@ -209,29 +209,8 @@ class JainamAdapter(BrokerAdapter):
                 realised=net if qty == 0 else 0.0,
             ))
 
-        m_used, m_avail = self._balance(session, token, client_id)
-        return BrokerSnapshot(self.name, status="ok", positions=positions,
-                              margin_used=round(m_used, 2),
-                              margin_available=round(m_avail, 2))
-
-    def _balance(self, session, token, client_id) -> tuple:
-        """(margin_used, margin_available) from XTS RMS balance. Never raises."""
-        try:
-            r = session.get(f"{BASE_URL}/interactive/user/balance",
-                            params={"clientID": client_id},
-                            headers={"authorization": token, "Content-Type": "application/json"},
-                            timeout=12)
-            body = r.json()
-            blist = ((body.get("result") or {}).get("BalanceList") or [])
-            if not blist:
-                return 0.0, 0.0
-            rms = ((blist[0].get("limitObject") or {}).get("RMSSubLimits") or {})
-            # field names vary by XTS build — log them once so we can confirm/correct
-            print(f"  [jainam] RMSSubLimits keys: {list(rms.keys())}")
-            avail = _f(rms.get("netMarginAvailable") or rms.get("cashAvailable")
-                       or rms.get("marginAvailable"))
-            used  = _f(rms.get("marginUtilized") or rms.get("marginUtilised"))
-            return used, avail
-        except Exception as e:
-            print(f"  [jainam] balance failed (margin will be 0): {e}")
-            return 0.0, 0.0
+        # NOTE: XTS /interactive/user/balance only returns the DEALER RMS (a ₹12cr
+        # notional limit), not this client's real SPAN margin. The aggregator instead
+        # mirrors Zerodha's real margin onto XTS (the XTS book mirrors Zerodha exactly),
+        # so we don't fetch balance here (it's wrong AND rate-limited).
+        return BrokerSnapshot(self.name, status="ok", positions=positions)
