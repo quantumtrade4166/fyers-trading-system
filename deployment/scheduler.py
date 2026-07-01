@@ -183,34 +183,43 @@ def _strangle_intraday():
 
 
 def _strangle_v2_watchdog():
-    """Every few min during market hours — ensure the V2 tick engine is alive.
-    V2 has its own daily 9:25 auto-start, but can die mid-day (e.g. a dashboard
-    restart kills python). This restarts it within minutes so it self-heals
-    instead of waiting for the next day. Detects liveness by V2 archive freshness."""
+    """Every few min during market hours — ensure the V2 tick engine is actually
+    BUILDING candles (not just alive). It can silently stall: the WebSocket stops
+    delivering ticks while the process keeps writing the same frozen candles (the
+    file's write-time stays fresh — so we must check the last CANDLE time, not the
+    write-time). On stall: kill the zombie process, then restart the task."""
     import datetime, subprocess, json as _json
     from pathlib import Path
     import pytz
     now = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
-    if not (now.weekday() < 5 and (9, 26) <= (now.hour, now.minute) <= (15, 28)):
+    if not (now.weekday() < 5 and (9, 30) <= (now.hour, now.minute) <= (15, 28)):
         return
     arch = (Path(__file__).parent.parent / "live_trading_options" / "strangle_strategy"
             / "data" / "chart_history")
     today = now.strftime("%Y-%m-%d")
-    fresh = False
+    now_naive = now.replace(tzinfo=None)
+    freshest_gap = None    # seconds between now and the most-recent candle we can find
     for idx in ("NIFTY", "SENSEX"):
         f = arch / f"{today}_{idx}_V2.json"
         if not f.exists():
             continue
         try:
-            cap = _json.loads(f.read_text())["captured_at"]
-            ct = datetime.datetime.strptime(cap, "%Y-%m-%d %H:%M:%S")
-            if (now.replace(tzinfo=None) - ct).total_seconds() < 150:
-                fresh = True
+            candles = _json.loads(f.read_text())["candles"]
+            if not candles:
+                continue
+            lc = datetime.datetime.strptime(today + " " + candles[-1]["time"], "%Y-%m-%d %H:%M")
+            gap = (now_naive - lc).total_seconds()
+            freshest_gap = gap if freshest_gap is None else min(freshest_gap, gap)
         except Exception:
             pass
-    if not fresh:
+    # last candle should be the current 5-min bucket (gap < ~5 min). >8 min = stalled.
+    if freshest_gap is None or freshest_gap > 480:
+        subprocess.run(["powershell", "-NoProfile", "-Command",
+            "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' "
+            "-and $_.CommandLine -like '*tick_engine*' } | ForEach-Object "
+            "{ Stop-Process -Id $_.ProcessId -Force }"], capture_output=True)
         subprocess.run(["schtasks", "/Run", "/TN", "StrangleV2Engine"], capture_output=True)
-        print("  [scheduler] V2 engine stale/down — restarted via task")
+        print(f"  [scheduler] V2 stalled (gap={freshest_gap}s) — killed zombie + restarted")
 
 
 def _start_feed():
