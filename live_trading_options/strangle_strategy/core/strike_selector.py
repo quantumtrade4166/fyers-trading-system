@@ -108,6 +108,60 @@ def select_strangle_historical(client, index: str, expiry: dt.date,
                        f"for {index} {date_str}")
 
 
+def _batch_quotes(client, symbols: list[str]) -> dict:
+    """{symbol: ltp} from the Fyers quotes API (LIVE, real-time — no history lag).
+    Chunked to stay under the per-call symbol limit."""
+    out: dict[str, float] = {}
+    for i in range(0, len(symbols), 45):
+        chunk = [s for s in symbols[i:i + 45] if s]
+        if not chunk:
+            continue
+        resp = client.quotes({"symbols": ",".join(chunk)})
+        if resp.get("s") == "ok":
+            for row in resp.get("d", []) or []:
+                n = row.get("n")
+                v = row.get("v") or {}
+                lp = v.get("lp")
+                if n and lp is not None:
+                    out[n] = float(lp)
+    return out
+
+
+def select_strangle_live_quotes(client, index: str, expiry: dt.date, threshold: float) -> dict:
+    """LIVE strike selection at 9:20 using real-time quotes (spot + option LTPs).
+    This is the correct live path — the price is available instantly, so selection
+    happens AT 9:20 (unlike the historical path which must wait for the 1-min bar).
+    """
+    idx_sym = INDEX_SYMBOL[index]
+    spot = _batch_quotes(client, [idx_sym]).get(idx_sym)
+    if not spot:
+        raise RuntimeError(f"no live spot quote for {index}")
+    atm = atm_strike(spot, index)
+    iv = STRIKE_INTERVAL[index]
+
+    # resolve candidate leg symbols (same OTM level both sides), then batch-quote them
+    cands = []
+    for n in range(1, MAX_OTM_SCAN + 1):
+        ce = symbol_master.find_symbol(index, expiry, atm + n * iv, "CE")
+        pe = symbol_master.find_symbol(index, expiry, atm - n * iv, "PE")
+        if ce and pe:
+            cands.append((n, atm + n * iv, atm - n * iv, ce, pe))
+    ltps = _batch_quotes(client, [s for c in cands for s in (c[3], c[4])])
+
+    for n, cs, ps, ce, pe in cands:
+        cl, pl = ltps.get(ce), ltps.get(pe)
+        if cl is None or pl is None:
+            continue
+        if cl + pl <= threshold:
+            return {
+                "index": index, "expiry": expiry.isoformat(), "otm_level": n,
+                "ce_symbol": ce, "pe_symbol": pe, "ce_strike": cs, "pe_strike": ps,
+                "spot": round(spot, 2), "atm": atm,
+                "combined_premium": round(cl + pl, 2), "threshold": threshold,
+            }
+    raise RuntimeError(f"No live strangle <= {threshold} for {index}")
+
+
 def select_strangle_live(client, index: str, expiry: dt.date, threshold: float) -> dict:
     """Real-time selection via Fyers optionchain (Phase 1 live use)."""
     resp = client.optionchain(data={"symbol": INDEX_SYMBOL[index], "strikecount": MAX_OTM_SCAN})
