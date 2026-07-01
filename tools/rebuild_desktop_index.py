@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""
+r"""
 rebuild_desktop_index.py  --  Disaster-recovery tool for the Claude Desktop sidebar.
 
 The Claude Desktop app lists Code sessions by scanning the filesystem for
