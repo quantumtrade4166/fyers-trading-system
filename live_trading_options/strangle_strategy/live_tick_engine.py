@@ -156,26 +156,37 @@ class IndexBook:
 _books: dict[str, IndexBook] = {}
 _sym_to_book: dict[str, IndexBook] = {}
 _ws = None
+_last_tick = None          # time.monotonic() of the last processed tick
 
 
 def _on_message(msg):
-    ticks = []
-    if isinstance(msg, dict):
-        d = msg.get("d")
-        ticks = d if isinstance(d, list) else ([d] if isinstance(d, dict) else [msg])
-    elif isinstance(msg, list):
-        ticks = msg
-    for t in ticks:
-        if not isinstance(t, dict):
-            continue
-        sym = t.get("symbol")
-        ltp = t.get("ltp")
-        if not sym or ltp is None:
-            continue
-        vol = t.get("vol_traded_today", t.get("volume"))
-        book = _sym_to_book.get(sym)
-        if book:
-            book.on_tick(sym, float(ltp), float(vol) if vol is not None else None)
+    # Bulletproof: a single bad message/tick must NEVER escape and kill the WS
+    # read loop (that's one way the feed can silently stall). Skip and continue.
+    global _last_tick
+    try:
+        ticks = []
+        if isinstance(msg, dict):
+            d = msg.get("d")
+            ticks = d if isinstance(d, list) else ([d] if isinstance(d, dict) else [msg])
+        elif isinstance(msg, list):
+            ticks = msg
+        for t in ticks:
+            try:
+                if not isinstance(t, dict):
+                    continue
+                sym = t.get("symbol")
+                ltp = t.get("ltp")
+                if not sym or ltp is None:
+                    continue
+                vol = t.get("vol_traded_today", t.get("volume"))
+                book = _sym_to_book.get(sym)
+                if book:
+                    book.on_tick(sym, float(ltp), float(vol) if vol is not None else None)
+                    _last_tick = time.monotonic()
+            except Exception as e:
+                print(f"  [V2] tick skipped: {e}")
+    except Exception as e:
+        print(f"  [V2] on_message error: {e}")
 
 
 def _on_open():
@@ -223,14 +234,28 @@ def build_books(date_str: str):
 
 
 def _writer_loop(date_str: str, every: int = 15):
+    import os, subprocess
+    STALL_SECS = 90
     while True:
         time.sleep(every)
-        now = dt.datetime.now(IST).time()
-        if now > dt.time(15, 35):
+        now = dt.datetime.now(IST)
+        if now.time() > dt.time(15, 35):
             for b in _books.values():
                 b.write_archive(date_str)
             print("  [V2] market closed — final archive written, exiting.")
             return
+        # Self-heal a SILENT WS stall: if ticks were flowing but stopped for
+        # STALL_SECS during market hours, don't sit as a zombie — launch a fresh
+        # engine (re-seeds + reconnects) and exit. (Root defence; the dashboard
+        # watchdog is the backup.)
+        if (_last_tick is not None
+                and (time.monotonic() - _last_tick) > STALL_SECS
+                and dt.time(9, 20) < now.time() < dt.time(15, 30)):
+            print(f"  [V2] tick stall >{STALL_SECS}s — restarting engine")
+            try:
+                subprocess.run(["schtasks", "/Run", "/TN", "StrangleV2Engine"], capture_output=True)
+            finally:
+                os._exit(1)
         for b in _books.values():
             try:
                 b.write_archive(date_str)
