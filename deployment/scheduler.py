@@ -180,46 +180,64 @@ def _strangle_intraday():
         live_capture.capture_all()
     except Exception as e:
         print(f"  [scheduler] strangle intraday failed: {e}")
+    # start V2 as soon as strikes are cached (and keep it alive / restart stalls)
+    _ensure_v2_running()
 
 
-def _strangle_v2_watchdog():
-    """Every few min during market hours — ensure the V2 tick engine is actually
-    BUILDING candles (not just alive). It can silently stall: the WebSocket stops
-    delivering ticks while the process keeps writing the same frozen candles (the
-    file's write-time stays fresh — so we must check the last CANDLE time, not the
-    write-time). On stall: kill the zombie process, then restart the task."""
+_V2_PS_FILTER = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' "
+                 "-and $_.CommandLine -like '*tick_engine*' }")
+
+
+def _ensure_v2_running():
+    """Start the V2 tick engine the MOMENT the day's strikes are cached (right
+    after the 9:20 selection) — not on a fixed clock — and keep it alive.
+    Called from the 2-min intraday job. Actions only when strikes exist:
+      - not running        -> start it
+      - running but STALLED -> (silent WS stall: candles frozen while process
+                               keeps writing) kill the zombie + restart
+      - running and fresh   -> do nothing"""
     import datetime, subprocess, json as _json
     from pathlib import Path
     import pytz
     now = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
-    if not (now.weekday() < 5 and (9, 30) <= (now.hour, now.minute) <= (15, 28)):
+    if not (now.weekday() < 5 and (9, 20) <= (now.hour, now.minute) <= (15, 28)):
         return
-    arch = (Path(__file__).parent.parent / "live_trading_options" / "strangle_strategy"
-            / "data" / "chart_history")
+    root = Path(__file__).parent.parent / "live_trading_options" / "strangle_strategy"
     today = now.strftime("%Y-%m-%d")
+    # V2 can't run before the strikes are chosen — wait for the selection cache
+    state = root / "data" / "intraday_state"
+    if not any((state / f"{today}_{i}.json").exists() for i in ("NIFTY", "SENSEX")):
+        return
+    # is the engine process actually running?
+    r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                        f"({_V2_PS_FILTER} | Measure-Object).Count"],
+                        capture_output=True, text=True)
+    running = (r.stdout.strip() or "0") != "0"
+    # freshest V2 candle across indices (to catch a silent stall)
+    arch = root / "data" / "chart_history"
     now_naive = now.replace(tzinfo=None)
-    freshest_gap = None    # seconds between now and the most-recent candle we can find
-    for idx in ("NIFTY", "SENSEX"):
-        f = arch / f"{today}_{idx}_V2.json"
+    freshest = None
+    for i in ("NIFTY", "SENSEX"):
+        f = arch / f"{today}_{i}_V2.json"
         if not f.exists():
             continue
         try:
-            candles = _json.loads(f.read_text())["candles"]
-            if not candles:
-                continue
-            lc = datetime.datetime.strptime(today + " " + candles[-1]["time"], "%Y-%m-%d %H:%M")
-            gap = (now_naive - lc).total_seconds()
-            freshest_gap = gap if freshest_gap is None else min(freshest_gap, gap)
+            c = _json.loads(f.read_text())["candles"]
+            if c:
+                lc = datetime.datetime.strptime(today + " " + c[-1]["time"], "%Y-%m-%d %H:%M")
+                g = (now_naive - lc).total_seconds()
+                freshest = g if freshest is None else min(freshest, g)
         except Exception:
             pass
-    # last candle should be the current 5-min bucket (gap < ~5 min). >8 min = stalled.
-    if freshest_gap is None or freshest_gap > 480:
-        subprocess.run(["powershell", "-NoProfile", "-Command",
-            "Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' "
-            "-and $_.CommandLine -like '*tick_engine*' } | ForEach-Object "
-            "{ Stop-Process -Id $_.ProcessId -Force }"], capture_output=True)
+    stalled = running and (freshest is not None) and freshest > 480
+    if (not running) or stalled:
+        if stalled:      # kill the zombie before starting fresh
+            subprocess.run(["powershell", "-NoProfile", "-Command",
+                            f"{_V2_PS_FILTER} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"],
+                           capture_output=True)
         subprocess.run(["schtasks", "/Run", "/TN", "StrangleV2Engine"], capture_output=True)
-        print(f"  [scheduler] V2 stalled (gap={freshest_gap}s) — killed zombie + restarted")
+        print(f"  [scheduler] V2 {'stalled-restart' if stalled else 'started'} "
+              f"(running={running}, gap={freshest})")
 
 
 def _start_feed():
@@ -251,13 +269,11 @@ def create_scheduler() -> BackgroundScheduler:
         start_date="2000-01-01 09:16:00", end_date="2099-01-01 15:29:00"
     ))
 
-    # Vwap Strangle intraday chart capture every 2 min during market hours
+    # Vwap Strangle intraday chart capture every 2 min during market hours.
+    # This job also starts V2 the moment strikes are cached and restarts it if it
+    # stalls/dies (see _ensure_v2_running, called inside _strangle_intraday).
     sched.add_job(_strangle_intraday, CronTrigger(
         day_of_week="mon-fri", hour="9-15", minute="*/2", timezone=IST))
-
-    # Vwap Strangle V2 tick-engine watchdog — restart it if it dies mid-day
-    sched.add_job(_strangle_v2_watchdog, CronTrigger(
-        day_of_week="mon-fri", hour="9-15", minute="*/3", timezone=IST))
 
     # stop feed at 15:30
     sched.add_job(_stop_feed, CronTrigger(
