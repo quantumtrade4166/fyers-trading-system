@@ -86,7 +86,9 @@ class ZerodhaAdapter(BrokerAdapter):
             m  = kite.margins() or {}
             eq = m.get("equity", {}) or {}
             m_avail = float(eq.get("net", 0) or 0)
-            m_used  = float((eq.get("utilised", {}) or {}).get("debits", 0) or 0)
+            # post-close, Kite's utilised.debits can go negative (booked profit offsets
+            # debits) — clamp so "used" / utilisation never render as a negative number.
+            m_used  = max(0.0, float((eq.get("utilised", {}) or {}).get("debits", 0) or 0))
         except Exception as e:
             print(f"  [zerodha] margins failed (margin will be 0): {e}")
 
