@@ -67,6 +67,26 @@ class IndexBook:
         self.bucket_start_cumvol = 0.0
         self.candles: list[dict] = []  # finalized candles
         self.lock = threading.Lock()
+        # resume support: if the engine restarts mid-day, the bucket that was still
+        # forming before the restart is restored here and CONTINUED from live ticks
+        # (its true bucket-open / high / low are preserved, never reset to V1).
+        self._resume_bucket = None    # dt of the forming bucket to resume, or None
+        self._resume_ohlc = None      # (o, h, l, c) of that bucket at restart
+        self._resume_vol = 0.0        # volume already accumulated in that bucket
+
+    def seed_closed(self, candles: list[dict]):
+        """Restore already-finalized candles from a prior archive so VWAP
+        accumulates from 9:15 and past candles survive a restart forever."""
+        self.candles = [{"time": c["time"], "open": c["open"], "high": c["high"],
+                         "low": c["low"], "close": c["close"], "volume": c["volume"]}
+                        for c in candles]
+
+    def seed_forming(self, candle: dict, bucket: dt.datetime):
+        """Restore the bucket that was still forming at restart, to be CONTINUED by
+        live ticks (its open/high/low from before the restart are kept)."""
+        self._resume_bucket = bucket
+        self._resume_ohlc = (candle["open"], candle["high"], candle["low"], candle["close"])
+        self._resume_vol = float(candle.get("volume", 0) or 0)
 
     def _combined(self):
         a, b = self.ltp[self.ce_sym], self.ltp[self.pe_sym]
@@ -87,7 +107,12 @@ class IndexBook:
                 return
             bucket = _floor_5min(now)
             if self.cur_bucket is None:
-                self._open_bucket(bucket, comb)
+                if self._resume_bucket is not None and bucket == self._resume_bucket:
+                    self._resume_bucket_open(bucket, comb)   # continue the pre-restart candle
+                else:
+                    if self._resume_bucket is not None:      # it fully elapsed during downtime
+                        self._finalize_resume()
+                    self._open_bucket(bucket, comb)
             elif bucket != self.cur_bucket:
                 self._finalize_bucket()
                 self._open_bucket(bucket, comb)
@@ -100,6 +125,29 @@ class IndexBook:
         self.cur_bucket = bucket
         self.o = self.h = self.l = self.c = comb
         self.bucket_start_cumvol = self.cumvol[self.ce_sym] + self.cumvol[self.pe_sym]
+
+    def _resume_bucket_open(self, bucket, comb):
+        """Re-open a bucket that was forming before a restart: keep its prior open/
+        high/low, extend high/low/close with the tick, and set the volume baseline
+        so this bucket's volume = prior partial + volume since restart."""
+        o, h, l, _ = self._resume_ohlc
+        self.cur_bucket = bucket
+        self.o, self.h, self.l, self.c = o, max(h, comb), min(l, comb), comb
+        total_now = self.cumvol[self.ce_sym] + self.cumvol[self.pe_sym]
+        self.bucket_start_cumvol = total_now - self._resume_vol
+        self._resume_bucket = self._resume_ohlc = None
+        self._resume_vol = 0.0
+
+    def _finalize_resume(self):
+        """The pre-restart forming bucket fully elapsed before the first tick —
+        persist it as-is (partial) rather than dropping it and leaving a gap."""
+        o, h, l, c = self._resume_ohlc
+        self.candles.append({"time": self._resume_bucket.strftime("%H:%M"),
+                             "open": round(o, 2), "high": round(h, 2),
+                             "low": round(l, 2), "close": round(c, 2),
+                             "volume": int(self._resume_vol)})
+        self._resume_bucket = self._resume_ohlc = None
+        self._resume_vol = 0.0
 
     def _finalize_bucket(self):
         vol = max(0.0, (self.cumvol[self.ce_sym] + self.cumvol[self.pe_sym]) - self.bucket_start_cumvol)
@@ -120,6 +168,12 @@ class IndexBook:
                             "open": round(self.o, 2), "high": round(self.h, 2),
                             "low": round(self.l, 2), "close": round(self.c, 2),
                             "volume": int(vol)})
+            elif self._resume_bucket is not None:      # restarted, awaiting first tick
+                o, h, l, c = self._resume_ohlc
+                out.append({"time": self._resume_bucket.strftime("%H:%M"),
+                            "open": round(o, 2), "high": round(h, 2),
+                            "low": round(l, 2), "close": round(c, 2),
+                            "volume": int(self._resume_vol)})
             return out
 
     def write_archive(self, date_str: str):
@@ -199,6 +253,55 @@ def _on_error(m): print(f"  [V2] WS error: {m}")
 def _on_close(m): print(f"  [V2] WS closed: {m}")
 
 
+def _seed_book(book: "IndexBook", idx: str, date_str: str):
+    """Seed a freshly-(re)started engine so a mid-day restart NEVER loses data.
+
+    Prefers this engine's OWN previously-written V2 candles (tick-exact) and only
+    falls back to V1 (1-min) for buckets V2 never captured. The bucket that was
+    still forming at the last V2 write is RESUMED from live ticks (its open/high/
+    low are kept). Net effect: once V2 has written a candle, it survives forever —
+    a crash / WS stall / dashboard restart no longer reverts it to V1 wicks."""
+    def _load(path):
+        try:
+            return json.loads(path.read_text())["candles"] if path.exists() else []
+        except Exception:
+            return []
+
+    now_dt = dt.datetime.now(IST).replace(tzinfo=None)
+    cur_bucket_dt = _floor_5min(now_dt)
+    now_bkt = cur_bucket_dt.strftime("%H:%M")
+
+    v1 = _load(ARCHIVE_DIR / f"{date_str}_{idx}.json")
+    v2 = _load(ARCHIVE_DIR / f"{date_str}_{idx}_V2.json")
+
+    # V2's LAST stored candle is the one that was still forming at the last write;
+    # everything before it is properly finalized (tick-exact).
+    v2_forming = v2[-1] if v2 else None
+    v2_final = v2[:-1] if v2 else []
+
+    closed: dict[str, dict] = {}
+    for c in v1:                                    # base layer: V1 (1-min history)
+        if c["time"] < now_bkt:
+            closed[c["time"]] = c
+    for c in v2_final:                              # override with tick-exact V2
+        if c["time"] < now_bkt:
+            closed[c["time"]] = c
+
+    forming = None
+    if v2_forming is not None:
+        if v2_forming["time"] == now_bkt:
+            forming = v2_forming                    # still forming now → resume live
+        elif v2_forming["time"] < now_bkt and v2_forming["time"] not in closed:
+            closed[v2_forming["time"]] = v2_forming  # elapsed & V1 lacks it → keep partial
+
+    book.seed_closed([closed[t] for t in sorted(closed)])
+    if forming is not None:
+        book.seed_forming(forming, cur_bucket_dt)
+    print(f"  [V2] {idx}: seeded {len(book.candles)} closed candles"
+          + (f" + resuming {forming['time']}" if forming else "")
+          + f" (from V2={len(v2)}, V1={len(v1)})")
+
+
 def build_books(date_str: str):
     """Resolve the day's strikes (cached) and create a book per index."""
     from core.fyers_client import get_client
@@ -209,28 +312,28 @@ def build_books(date_str: str):
         except Exception as e:
             print(f"  [V2] {idx} strike resolve failed: {e}")
             continue
-        meta = {k: pick.get(k) for k in ("spot", "atm", "otm_level",
-                "combined_premium", "threshold", "dte")}
+        meta = {k: pick.get(k) for k in ("spot", "atm", "otm_level", "ce_strike",
+                "pe_strike", "combined_premium", "threshold", "dte")}
         meta["lot_size"] = _LOT_SIZES.get(idx, 1)
         book = IndexBook(idx, pick["ce_symbol"], pick["pe_symbol"], pick["otm_level"], meta)
-        # Seed already-closed candles from V1 history so VWAP accumulates from
-        # 9:15 (V2 can't get past ticks). Live ticks take over from the current
-        # bucket onward (tick-exact). On a 9:21 start this seeds just the 9:15 bar.
-        try:
-            v1_path = ARCHIVE_DIR / f"{date_str}_{idx}.json"
-            if v1_path.exists():
-                now_bkt = _floor_5min(dt.datetime.now(IST).replace(tzinfo=None)).strftime("%H:%M")
-                book.candles = [{"time": c["time"], "open": c["open"], "high": c["high"],
-                                 "low": c["low"], "close": c["close"], "volume": c["volume"]}
-                                for c in json.loads(v1_path.read_text())["candles"]
-                                if c["time"] < now_bkt]
-                print(f"  [V2] {idx}: seeded {len(book.candles)} V1 candles (VWAP from 9:15)")
-        except Exception as e:
-            print(f"  [V2] {idx} seed failed: {e}")
+        _seed_book(book, idx, date_str)
         _books[idx] = book
         _sym_to_book[pick["ce_symbol"]] = book
         _sym_to_book[pick["pe_symbol"]] = book
         print(f"  [V2] {idx}: {pick['ce_symbol']} + {pick['pe_symbol']}")
+
+
+def _push_sheets_eod(date_str: str):
+    """Best-effort EOD push of the day's V2 P&L to Google Sheets (if enabled in
+    parameters.json). Never raises — a Sheets/network failure must not affect the
+    engine or its archive write."""
+    if not _PARAMS.get("google_sheets", {}).get("enabled"):
+        return
+    try:
+        from reporting.sheets_logger import log_paper_day
+        log_paper_day(date_str, list(_books.keys()))
+    except Exception as e:
+        print(f"  [V2] sheets push failed: {e}")
 
 
 def _writer_loop(date_str: str, every: int = 15):
@@ -242,6 +345,7 @@ def _writer_loop(date_str: str, every: int = 15):
         if now.time() > dt.time(15, 35):
             for b in _books.values():
                 b.write_archive(date_str)
+            _push_sheets_eod(date_str)
             print("  [V2] market closed — final archive written, exiting.")
             return
         # Self-heal a SILENT WS stall: if ticks were flowing but stopped for

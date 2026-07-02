@@ -34,5 +34,16 @@
   "square_off": "15:15",
   "archive_retention_days": 0,
   "_retention_note": "0 = keep all trading days forever (no pruning).",
-  "last_saved": "2026-06-26"
+  "google_sheets": {
+    "_comment": "V2 P&L logging into the existing 'Trading Journal' sheet. Auth = OAuth (user consent), NOT a service account (org policy blocks SA keys). Put the OAuth Desktop-app client at oauth_client_file, run '--auth' once to cache oauth_token_file, then set spreadsheet_id to the Trading Journal id. One tab PER INDEX (auto-created); PAPER and LIVE rows share a tab, told apart by the Mode column. enabled=false until configured.",
+    "enabled": true,
+    "spreadsheet_id": "144tNSWt3hlgSEACwzDWex4DjyS22xFqMBeaNET2Xq5c",
+    "worksheet_names": {
+      "NIFTY": "Strangle NIFTY",
+      "SENSEX": "Strangle SENSEX"
+    },
+    "oauth_client_file": "config/credentials.json",
+    "oauth_token_file": "config/authorized_user.json"
+  },
+  "last_saved": "2026-07-02"
 }

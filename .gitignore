@@ -3,6 +3,8 @@
 
 # Sensitive files
 config/access_token.txt
+config/credentials.json
+config/authorized_user.json
 deployment/.env
 deployment/zerodha_token.json
 deployment/xts_eod_pnl.json
