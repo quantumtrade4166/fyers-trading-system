@@ -628,18 +628,15 @@
       <div class="flex flex-wrap items-end gap-x-10 gap-y-3 mt-4 pt-4" style="border-top:1px solid #1c1f25">
         <div>
           <p class="k-muted" style="font-size:12px;margin-bottom:3px">Margin Used</p>
-          <p id="term-mused" style="font-size:18px;font-weight:600;color:#e8e0d0">₹0</p>
-          <p id="term-mused-sub" class="k-muted" style="font-size:10.5px;margin-top:2px">—</p>
+          <p id="term-mused" style="font-size:20px;font-weight:600;color:#e8e0d0">₹0</p>
         </div>
         <div>
           <p class="k-muted" style="font-size:12px;margin-bottom:3px">Available Margin</p>
-          <p id="term-mavail" style="font-size:18px;font-weight:600;color:#23d18b">₹0</p>
-          <p id="term-mavail-sub" class="k-muted" style="font-size:10.5px;margin-top:2px">—</p>
+          <p id="term-mavail" style="font-size:20px;font-weight:600;color:#23d18b">₹0</p>
         </div>
         <div>
           <p class="k-muted" style="font-size:12px;margin-bottom:3px">Total Margin</p>
-          <p id="term-mtotal" style="font-size:18px;font-weight:600;color:#e8e0d0">₹0</p>
-          <p class="k-muted" style="font-size:10.5px;margin-top:2px">Used + Available</p>
+          <p id="term-mtotal" style="font-size:20px;font-weight:600;color:#e8e0d0">₹0</p>
         </div>
         <div style="min-width:150px">
           <p class="k-muted" style="font-size:12px;margin-bottom:3px">Utilisation</p>
@@ -1905,22 +1902,12 @@ function renderTerminal(d) {
   _termPrev.rl = d.combined_realised;
   document.getElementById('term-open').textContent = d.open_positions ?? 0;
 
-  // combined margin (both accounts)
+  // combined margin (both accounts) — headline used / available / total only
   const m = d.margin || {};
   const rup = v => '₹' + (Number(v) || 0).toLocaleString('en-IN', { maximumFractionDigits: 0 });
-  const bb = m.by_broker || {};
-  const sub = key => {
-    const z = (bb.zerodha || {})[key], x = (bb.jainam || {})[key];
-    const parts = [];
-    if (z !== undefined) parts.push('ZRD ' + rup(z));
-    if (x !== undefined) parts.push('XTS ' + rup(x));
-    return parts.length ? parts.join(' · ') : '—';
-  };
   document.getElementById('term-mused').textContent  = rup(m.used);
   document.getElementById('term-mavail').textContent = rup(m.available);
   document.getElementById('term-mtotal').textContent = rup(m.total);
-  document.getElementById('term-mused-sub').textContent  = sub('used');
-  document.getElementById('term-mavail-sub').textContent = sub('available');
   const util = Number(m.utilisation) || 0;
   document.getElementById('term-mutil').textContent = util.toFixed(1) + '%';
   document.getElementById('term-mutil-bar').style.width = Math.min(util, 100) + '%';
