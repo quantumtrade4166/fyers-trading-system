@@ -69,6 +69,11 @@
   /* ════════════ Pro Terminal (Bloomberg amber) — terminal mode only ════════════ */
   body.terminal-mode { background:#0a0b0d !important;
         font-family:'JetBrains Mono',ui-monospace,'SF Mono',Menlo,Consolas,monospace; color:#d7d2c4; }
+  /* hide the scrollbar in terminal mode (scroll still works) — cleaner for recording */
+  body.terminal-mode { scrollbar-width:none; -ms-overflow-style:none; }
+  body.terminal-mode::-webkit-scrollbar { width:0; height:0; display:none; }
+  html:has(body.terminal-mode) { scrollbar-width:none; -ms-overflow-style:none; }
+  html:has(body.terminal-mode)::-webkit-scrollbar { width:0; height:0; display:none; }
   body.terminal-mode #header-title { color:#f5a623; font-weight:500; font-size:1rem;
         letter-spacing:.06em; text-transform:uppercase; }
   body.terminal-mode #clock { color:#6b6457; }
