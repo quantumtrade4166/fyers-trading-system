@@ -41,7 +41,8 @@ def reprocess(path: Path):
     df["above_vwap"] = df["close"] > df["vwap"]
 
     events = simulate_day(df, entry_cutoff=_PARAMS.get("entry_cutoff", "14:30"),
-                          square_off=_PARAMS.get("square_off", "15:15"))
+                          square_off=_PARAMS.get("square_off", "15:15"),
+                          dte=(d.get("selection") or {}).get("dte"))
     lot = _LOT.get(d["index"].upper(), 1)
     pnl = pair_trades(events, lot_size=lot, lots=1)
     pnl["mtm"] = mtm_series(df, events, lot_size=lot, lots=1)

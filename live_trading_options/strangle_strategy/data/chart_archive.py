@@ -61,7 +61,8 @@ def build_day_record(client, index: str, ce_sym: str, pe_sym: str,
     # actual simulated trade sequence (alternating entry->exit, max 4 cycles,
     # no entry after 2:30, force square-off at 3:15)
     events = simulate_day(day, entry_cutoff=_PARAMS.get("entry_cutoff", "14:30"),
-                          square_off=_PARAMS.get("square_off", "15:15"))
+                          square_off=_PARAMS.get("square_off", "15:15"),
+                          dte=(meta or {}).get("dte"))
     lot_size = _LOT_SIZES.get(index.upper(), 1)
     pnl = pair_trades(events, lot_size=lot_size, lots=1)
     pnl["mtm"] = mtm_series(day, events, lot_size=lot_size, lots=1)

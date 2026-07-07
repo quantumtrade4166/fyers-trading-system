@@ -176,7 +176,7 @@ def _open_worksheet(index: str):
     except gspread.WorksheetNotFound:
         ws = sh.add_worksheet(title=ws_name, rows=1000, cols=len(HEADER))
     if ws.row_values(1) != HEADER:              # ensure header row
-        ws.update("A1", [HEADER])
+        ws.update(range_name="A1", values=[HEADER])
     return ws
 
 
@@ -192,7 +192,7 @@ def upsert_row(row: list, index: str, mode: str = "PAPER"):
             target = i
             break
     if target:
-        ws.update(f"A{target}", [row])
+        ws.update(range_name=f"A{target}", values=[row])
         print(f"  [sheets] {index} updated row {target}: {date_v} {mode_v}")
     else:
         ws.append_row(row, value_input_option="USER_ENTERED")
@@ -208,6 +208,10 @@ def log_paper_day(date_str: str = None, indices: list[str] = None):
         rec = _load_v2(date_str, idx)
         if not rec:
             print(f"  [sheets] no V2 archive for {idx} {date_str} — skip")
+            continue
+        dte = (rec.get("selection") or {}).get("dte")
+        if dte not in (0, 1):                       # DTE >= 2 = chart-only, not a trade day
+            print(f"  [sheets] {idx} {date_str} DTE={dte} — chart-only, not logged")
             continue
         upsert_row(build_row(rec, mode="PAPER"), idx, mode="PAPER")
         logged += 1

@@ -41,8 +41,13 @@ def _t(s: str) -> _dt.time:
 
 
 def simulate_day(combined: pd.DataFrame, max_entries: int = MAX_ENTRIES_PER_DAY,
-                 entry_cutoff: str = ENTRY_CUTOFF, square_off: str = SQUARE_OFF) -> list[dict]:
+                 entry_cutoff: str = ENTRY_CUTOFF, square_off: str = SQUARE_OFF,
+                 dte: int | None = None) -> list[dict]:
     """Ordered entry/exit events, strictly alternating (one position at a time).
+
+    DTE gate: the strategy trades ONLY DTE 0 or 1 (0 = expiry day, 1 = day before).
+    If `dte` is given and is not 0 or 1, the day is CHART-ONLY — no trades at all
+    (returns []). Callers that don't know the DTE (dte=None) are left ungated.
 
     Entry is a LIMIT order, not an instant fill:
       - A red candle closing below its VWAP places a sell limit at `low - 1`.
@@ -60,6 +65,8 @@ def simulate_day(combined: pd.DataFrame, max_entries: int = MAX_ENTRIES_PER_DAY,
 
     Each event: {time, type:'entry'|'exit', price, fill_no (entries), reason}
     """
+    if dte is not None and dte not in (0, 1):
+        return []                                  # DTE >= 2 -> chart-only, no trades
     cutoff, sq = _t(entry_cutoff), _t(square_off)
     events: list[dict] = []
     entries = 0

@@ -190,7 +190,7 @@ class IndexBook:
         df["below_vwap"] = df.close < df.vwap
         df["above_vwap"] = df.close > df.vwap
 
-        events = simulate_day(df)
+        events = simulate_day(df, dte=self.meta.get("dte"))
         lot = symbol_master.lot_size(self.index) if False else self.meta.get("lot_size", 1)
         pnl = pair_trades(events, lot_size=lot, lots=1)
         pnl["mtm"] = mtm_series(df, events, lot_size=lot, lots=1)
