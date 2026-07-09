@@ -167,9 +167,35 @@ def _xts_eod_snapshot():
         print(f"  [scheduler] XTS EOD record failed: {e}")
 
 
+def _run_with_timeout(fn, seconds, name):
+    """Run fn() in a daemon thread; if it exceeds `seconds`, abandon it and return
+    False (the leaked daemon thread cannot block the next scheduler cycle). This is
+    the guard against a single hung Fyers/network call permanently freezing the
+    2-min capture — the failure mode that killed capture today."""
+    import threading
+    done = threading.Event()
+    err = {}
+    def _target():
+        try:
+            fn()
+        except Exception as e:
+            err["e"] = e
+        finally:
+            done.set()
+    threading.Thread(target=_target, daemon=True, name=name).start()
+    if not done.wait(seconds):
+        print(f"  [scheduler] {name} exceeded {seconds}s — abandoned (retry next cycle)")
+        return False
+    if "e" in err:
+        print(f"  [scheduler] {name} error: {err['e']}")
+        return False
+    return True
+
+
 def _strangle_intraday():
-    """Every 2 min during market hours — refresh today's Vwap Strangle charts
-    (near-live; strikes selected once at 9:20 and cached)."""
+    """Every 2 min during market hours — refresh today's Vwap Strangle charts and
+    keep the V2 engine alive. Hardened: capture runs under a HARD TIMEOUT so a hung
+    Fyers call can't freeze all future cycles, and V2 supervision can't raise out."""
     import sys
     from pathlib import Path
     sp = str(Path(__file__).parent.parent / "live_trading_options" / "strangle_strategy")
@@ -177,11 +203,14 @@ def _strangle_intraday():
         sys.path.append(sp)
     try:
         import live_capture
-        live_capture.capture_all()
+        _run_with_timeout(live_capture.capture_all, 60, "strangle-capture")
     except Exception as e:
         print(f"  [scheduler] strangle intraday failed: {e}")
-    # start V2 as soon as strikes are cached (and keep it alive / restart stalls)
-    _ensure_v2_running()
+    # start V2 the moment strikes are cached / restart it if it stalls — never raise
+    try:
+        _ensure_v2_running()
+    except Exception as e:
+        print(f"  [scheduler] ensure_v2 failed: {e}")
 
 
 _V2_PS_FILTER = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' "
@@ -211,7 +240,7 @@ def _ensure_v2_running():
     # is the engine process actually running?
     r = subprocess.run(["powershell", "-NoProfile", "-Command",
                         f"({_V2_PS_FILTER} | Measure-Object).Count"],
-                        capture_output=True, text=True)
+                        capture_output=True, text=True, timeout=20)
     running = (r.stdout.strip() or "0") != "0"
     # freshest V2 candle across indices (to catch a silent stall)
     arch = root / "data" / "chart_history"
@@ -234,8 +263,8 @@ def _ensure_v2_running():
         if stalled:      # kill the zombie before starting fresh
             subprocess.run(["powershell", "-NoProfile", "-Command",
                             f"{_V2_PS_FILTER} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"],
-                           capture_output=True)
-        subprocess.run(["schtasks", "/Run", "/TN", "StrangleV2Engine"], capture_output=True)
+                           capture_output=True, timeout=20)
+        subprocess.run(["schtasks", "/Run", "/TN", "StrangleV2Engine"], capture_output=True, timeout=20)
         print(f"  [scheduler] V2 {'stalled-restart' if stalled else 'started'} "
               f"(running={running}, gap={freshest})")
 
@@ -273,7 +302,8 @@ def create_scheduler() -> BackgroundScheduler:
     # This job also starts V2 the moment strikes are cached and restarts it if it
     # stalls/dies (see _ensure_v2_running, called inside _strangle_intraday).
     sched.add_job(_strangle_intraday, CronTrigger(
-        day_of_week="mon-fri", hour="9-15", minute="*/2", timezone=IST))
+        day_of_week="mon-fri", hour="9-15", minute="*/2", timezone=IST),
+        max_instances=3, misfire_grace_time=90, coalesce=True)
 
     # stop feed at 15:30
     sched.add_job(_stop_feed, CronTrigger(

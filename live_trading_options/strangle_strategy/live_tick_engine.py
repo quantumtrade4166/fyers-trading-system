@@ -369,6 +369,13 @@ def _writer_loop(date_str: str, every: int = 15):
 
 def main():
     global _ws
+    # Single-instance guard: the broken venv double-launches this script under the
+    # system python. Only ONE engine may run (two would race on the same archive
+    # and double-subscribe the Fyers socket). The duplicate stands down here.
+    from core.singleton import acquire, PORT_V2_ENGINE
+    if not acquire(PORT_V2_ENGINE):
+        print("  [V2] another engine already holds the lock — this duplicate exits.")
+        return
     st = token_status()
     print(f"  [V2] token date={st['date']} valid={st['valid']}")
     if not st["valid"]:

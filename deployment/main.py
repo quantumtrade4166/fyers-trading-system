@@ -32,37 +32,59 @@ _ws_clients: list[WebSocket] = []
 async def lifespan(app: FastAPI):
     global _scheduler
     print(f"\n  ── Pairs Dashboard starting ({MODE} mode) ──")
+
+    # ── Single-instance guard ────────────────────────────────────────────────
+    # The VPS venv double-launches this app under the system python. Two app
+    # instances = two schedulers = duplicate captures AND duplicate ORDERS. Only
+    # the instance that wins the lock runs the scheduler / live feed / order
+    # routing; the duplicate serves the web UI read-only. (See core/singleton.py.)
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sp = str(_Path(__file__).parent.parent / "live_trading_options" / "strangle_strategy")
+    if _sp not in _sys.path:
+        _sys.path.append(_sp)
+    try:
+        from core.singleton import acquire, PORT_SCHEDULER
+        _is_primary = acquire(PORT_SCHEDULER)
+    except Exception as e:
+        print(f"  [main] singleton check failed ({e}); assuming primary")
+        _is_primary = True
+
     signal_engine.init_engine()
     dualmom_engine.refresh()
     dualmom_paper.init()
 
-    _scheduler = create_scheduler()
-    _scheduler.start()
-    print("  [main] Scheduler started.")
+    if _is_primary:
+        _scheduler = create_scheduler()
+        _scheduler.start()
+        print("  [main] PRIMARY instance — scheduler started.")
 
-    # ensure today's Zerodha token exists (in case server starts after 08:50)
-    try:
-        from deployment.brokers import zerodha_auto_login
-        zerodha_auto_login.ensure_token()
-    except Exception as e:
-        print(f"  [main] Zerodha ensure_token error: {e}")
+        # ensure today's Zerodha token exists (in case server starts after 08:50)
+        try:
+            from deployment.brokers import zerodha_auto_login
+            zerodha_auto_login.ensure_token()
+        except Exception as e:
+            print(f"  [main] Zerodha ensure_token error: {e}")
 
-    # if server starts during market hours, kick off the live feed immediately
-    import pytz
-    from datetime import datetime
-    _ist = pytz.timezone("Asia/Kolkata")
-    _now = datetime.now(_ist)
-    _market_open = _now.weekday() < 5 and (9, 15) <= (_now.hour, _now.minute) <= (15, 30)
-    if _market_open:
-        print("  [main] Market is open — starting live feed immediately.")
-        live_feed.start_feed()
+        # if server starts during market hours, kick off the live feed immediately
+        import pytz
+        from datetime import datetime
+        _ist = pytz.timezone("Asia/Kolkata")
+        _now = datetime.now(_ist)
+        _market_open = _now.weekday() < 5 and (9, 15) <= (_now.hour, _now.minute) <= (15, 30)
+        if _market_open:
+            print("  [main] Market is open — starting live feed immediately.")
+            live_feed.start_feed()
+    else:
+        print("  [main] DUPLICATE instance detected — scheduler/feed/orders DISABLED "
+              "(passive web only). Fix the venv to remove the duplicate entirely.")
 
     asyncio.create_task(_push_loop())
     yield
 
     if _scheduler:
         _scheduler.shutdown(wait=False)
-    live_feed.stop_feed()
+        live_feed.stop_feed()
     print("  [main] Shutdown complete.")
 
 
