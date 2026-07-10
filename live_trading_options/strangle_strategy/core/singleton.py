@@ -35,7 +35,16 @@ def acquire(port: int) -> bool:
     if port in _held:
         return True
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)   # do NOT allow reuse
+    # Windows: SO_REUSEADDR=0 is NOT enough to guarantee an exclusive bind (two
+    # processes can still both bind). SO_EXCLUSIVEADDRUSE enforces true exclusivity,
+    # so the second (duplicate) process's bind fails and it stands down.
+    if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        except OSError:
+            pass
+    else:
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
     try:
         s.bind(("127.0.0.1", port))
         s.listen(1)
