@@ -37,12 +37,26 @@ DEFAULT_PROJECTS = r"C:\Users\PC\.claude\projects"
 DEFAULT_ACCOUNT = "54037dfb-2850-4ab5-a96a-4bb6854d9966"
 DEFAULT_ORG = "8d5e313b-51a3-4d77-8984-f01123ff97ed"
 
-# Hand-written titles for sessions whose opening message is uninformative.
+# The user's REAL current sidebar titles (snapshot 2026-07-10). Kept in sync with the
+# vault note "Claude Code Sessions - Real Current Names" so a rebuild restores the
+# exact names the user set (not derived guesses). Update both when renaming sessions.
 OVERRIDES = {
+    "f62a388a-7ad0-47ec-ba33-f5ce66d313f3": "Restore Claude Code sessions to Desktop sidebar",
+    "a01c9bde-b8f5-4e40-94ac-d7b21b4e88e3": "Live Trading Terminal",
+    "b6a4a911-8222-48b1-b5e0-f3c6910604d7": "Vwap strangle live 2.",
+    "472963eb-e66d-4bcf-993b-64e7f37d4b27": "Installing Engineer",
     "0b07a19d-8ca2-47c0-b9bd-b43dd05542ac": "VWAP Strangle Live",
-    "54a0f0aa-6ec3-4c76-8e67-0965f042838a": "Nifty 500 daily data setup",
-    "5684f41c-fced-4d4c-b7e7-2dcf14782cf2": "Add DualMom dashboard",
-    "954d3510-41e6-48d9-b8c6-a6bebb821692": "fyers_data_pipeline session (Jun 20)",
+    "b4fd0672-759a-4140-b1e4-6614c476e96c": "55 day breakout strategy",
+    "54a0f0aa-6ec3-4c76-8e67-0965f042838a": "DualMom.Liq.Nifty50 making",
+    "72de6e94-9472-4c07-9c7e-cca45b8a2df0": "StatArb.MR-First10 making",
+    "29b2b779-685f-4e58-a6b6-54e548e8fa33": "VRP GEX scanner making",
+    "954d3510-41e6-48d9-b8c6-a6bebb821692": "Paper trade StratArb.MR-First10",
+    "5684f41c-fced-4d4c-b7e7-2dcf14782cf2": "Paper trade DualMom.Liq.Nifty50",
+    "b4f1420b-c57c-484f-abbe-da679045ce63": "Backtest book strategies",
+    "6559e166-fb1b-4903-897a-6af1c46d64ff": "Trading Backtesting session (May 31)",
+    "5d51a763-5fce-47da-988b-e281541d264c": "BB Reversion + 5 EMA strategy making",
+    "b9a42254-5b3f-4eb5-8f01-c0cf09899e14": "Options data pipeline build",
+    "9ac5849b-cce0-4fb7-a7d1-5a3da7ce2064": "Options data backtesting",
     "e7830272-0b80-41fb-94b5-61c8a5a0dc4f": "Fix settings.py FYERS credentials",
 }
 
