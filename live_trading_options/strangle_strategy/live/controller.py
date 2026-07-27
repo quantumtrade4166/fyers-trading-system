@@ -59,6 +59,8 @@ class LiveController:
         self._hm = "09:15"
         self._oid = 0
         self.events: list[dict] = []           # flat entry/exit log
+        self._cum_pv = 0.0                     # running VWAP: Σ(typical × volume)
+        self._cum_vol = 0.0                    #               Σ(volume), from 9:15
 
     # ── inputs from the tick engine ───────────────────────────────────────
     def on_tick(self, combined: float, ce_ltp: float, pe_ltp: float, hm: str):
@@ -74,9 +76,32 @@ class LiveController:
                 self._flatten("MTM stop")
         self.trigger.on_tick(combined, hm)
 
-    def on_candle_close(self, candle: dict):
-        self.trigger.on_candle_close(candle)
+    def on_candle(self, ohlcv: dict):
+        """Feed a finished 5-min OHLCV candle (no VWAP needed). The controller keeps
+        its OWN running VWAP (typical-price, cumulative from 9:15) so it's independent
+        of the V2 archive — then drives the strategy. This is what the tick-engine tap
+        will call on each candle close."""
+        o, h, l, c = (float(ohlcv["open"]), float(ohlcv["high"]),
+                      float(ohlcv["low"]), float(ohlcv["close"]))
+        vol = float(ohlcv.get("volume", 0) or 0)
+        typ = (h + l + c) / 3
+        self._cum_pv += typ * vol
+        self._cum_vol += vol
+        vwap = round(self._cum_pv / self._cum_vol, 2) if self._cum_vol > 0 else round(c, 2)
+        self.trigger.on_candle_close({"time": ohlcv["time"], "open": o, "high": h,
+                                      "low": l, "close": c, "vwap": vwap})
         self.persist()
+
+    def seed(self, ohlcv_candles: list, split_fn):
+        """Reconstruct VWAP + strategy state from the morning's candles when the
+        controller starts mid-day (or after a restart). Replays each candle with a
+        low-tick so any entries/exits that already happened are re-booked. Fills are
+        approximate here (no historical per-leg ticks) — only the *current* state
+        needs to be right so the live ticks from now are handled correctly."""
+        for cd in ohlcv_candles:
+            ce, pe = split_fn(float(cd["low"]))
+            self.on_tick(float(cd["low"]), ce, pe, cd["time"])
+            self.on_candle(cd)
 
     # ── trigger callbacks ────────────────────────────────────────────────
     def _now(self) -> dt.datetime:
@@ -125,6 +150,10 @@ class LiveController:
             self._open.update(exit_time=self._hm, exit_combined=combined,
                               points=pts, pnl=round(pts * self.qty, 2))
             self._open = None
+        # a kill/flatten ends trading for the day — stop the trigger so it can't fire
+        # phantom entries/exits after the position is already closed (desync fix).
+        self.trigger.done = True
+        self.trigger.in_pos = False
         self.events.append({"t": self._hm, "type": "flatten", "reason": reason})
         self.persist()
 
