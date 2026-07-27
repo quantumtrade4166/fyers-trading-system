@@ -45,3 +45,6 @@ live_trading_options/strangle_strategy/validation/output/
 
 # Strangle intraday strike cache (generated)
 live_trading_options/strangle_strategy/data/intraday_state/
+
+# Strangle live/paper-live state (generated)
+live_trading_options/strangle_strategy/data/live_state/

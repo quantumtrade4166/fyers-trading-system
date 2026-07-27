@@ -290,6 +290,33 @@ async def api_strangle_charts(all: bool = False):
     return {"charts": out}
 
 
+_LIVE_DIR = (Path(__file__).parent.parent /
+             "live_trading_options" / "strangle_strategy" / "data" / "live_state")
+
+
+@app.get("/api/strangle/live_dates")
+async def api_strangle_live_dates():
+    """(date, index) pairs that have a live/paper-live state file, newest first."""
+    if not _LIVE_DIR.exists():
+        return {"days": []}
+    out = []
+    for f in sorted(_LIVE_DIR.glob("*_LIVE.json"), reverse=True):
+        parts = f.stem.split("_")          # {date}_{index}_LIVE
+        if len(parts) == 3:
+            out.append({"date": parts[0], "index": parts[1]})
+    return {"days": out}
+
+
+@app.get("/api/strangle/live")
+async def api_strangle_live(date: str, index: str):
+    """The live/paper-live snapshot for one index/day (cycles, order ids, P&L,
+    status). Written by the LiveController; read-only here."""
+    f = _LIVE_DIR / f"{date}_{index.upper()}_LIVE.json"
+    if not f.exists():
+        return {"error": "not found", "date": date, "index": index}
+    return _json.loads(f.read_text())
+
+
 @app.get("/api/strangle/chart")
 async def api_strangle_chart(date: str, index: str, version: str = "V1"):
     """Return one archived combined-premium chart (candles + VWAP + signal events).

@@ -553,9 +553,10 @@
             <button class="sca-idx-btn active" id="sca-btn-NIFTY" onclick="scaSetIndex('NIFTY')">NIFTY</button>
             <button class="sca-idx-btn" id="sca-btn-SENSEX" onclick="scaSetIndex('SENSEX')">SENSEX</button>
           </div>
-          <div class="flex gap-1" title="V1 = 1-minute reconstruction · V2 = live tick-built">
+          <div class="flex gap-1" title="V1 = 1-minute reconstruction · V2 = live tick-built · Live = real/paper-live orders">
             <button class="sca-idx-btn active" id="sca-ver-V1" onclick="scaSetVersion('V1')">V1·1min</button>
             <button class="sca-idx-btn" id="sca-ver-V2" onclick="scaSetVersion('V2')">V2·tick</button>
+            <button class="sca-idx-btn" id="sca-ver-LIVE" onclick="scaSetVersion('LIVE')">📡 Live</button>
           </div>
           <select id="sca-date" onchange="scaRender()"
                   class="bg-[#151a26] text-slate-300 text-xs rounded px-2 py-1 border border-[#2d3748]"></select>
@@ -564,27 +565,29 @@
       </div>
       <p id="sca-meta" class="text-xs text-slate-500 mb-1">—</p>
       <p id="sca-note" class="text-xs text-amber-500/70 mb-2" style="display:none"></p>
-      <div id="sca-chart-wrap" style="position:relative">
-        <div id="sca-chart" style="height:440px;width:100%"></div>
-        <div id="sca-tip" style="position:absolute;top:6px;left:8px;pointer-events:none;
-             background:rgba(13,17,26,.9);border:1px solid #2d3748;border-radius:6px;
-             padding:5px 10px;font-size:11px;color:#cbd5e1;display:none;z-index:5;
-             font-family:ui-monospace,Menlo,monospace;white-space:nowrap"></div>
-      </div>
-      <div class="flex items-center gap-4 mt-2 text-xs text-slate-500">
-        <span><span style="color:#fb8c00">—</span> VWAP</span>
-        <span><span style="color:#ef5350">▼</span> Sell entry (fill)</span>
-        <span><span style="color:#26a69a">▲</span> Exit (buy back)</span>
+      <!-- ── chart view (V1 / V2) ─────────────────────────────────────── -->
+      <div id="sca-chartview">
+        <div id="sca-chart-wrap" style="position:relative">
+          <div id="sca-chart" style="height:440px;width:100%"></div>
+          <div id="sca-tip" style="position:absolute;top:6px;left:8px;pointer-events:none;
+               background:rgba(13,17,26,.9);border:1px solid #2d3748;border-radius:6px;
+               padding:5px 10px;font-size:11px;color:#cbd5e1;display:none;z-index:5;
+               font-family:ui-monospace,Menlo,monospace;white-space:nowrap"></div>
+        </div>
+        <div class="flex items-center gap-4 mt-2 text-xs text-slate-500">
+          <span><span style="color:#fb8c00">—</span> VWAP</span>
+          <span><span style="color:#ef5350">▼</span> Sell entry (fill)</span>
+          <span><span style="color:#26a69a">▲</span> Exit (buy back)</span>
+        </div>
+        <p class="text-sm font-medium text-slate-300 mt-4 mb-1">Intraday MTM (₹)</p>
+        <div id="sca-mtm" style="height:170px;width:100%"></div>
+        <div id="sca-pnl" class="mt-4"></div>
+        <p id="sca-empty" class="text-xs text-slate-600 text-center py-10" style="display:none">
+          No archived charts yet. Data captures automatically each trading day at 15:31 IST.</p>
       </div>
 
-      <!-- Intraday MTM -->
-      <p class="text-sm font-medium text-slate-300 mt-4 mb-1">Intraday MTM (₹)</p>
-      <div id="sca-mtm" style="height:170px;width:100%"></div>
-
-      <!-- Simulated trades & P&L -->
-      <div id="sca-pnl" class="mt-4"></div>
-      <p id="sca-empty" class="text-xs text-slate-600 text-center py-10" style="display:none">
-        No archived charts yet. Data captures automatically each trading day at 15:31 IST.</p>
+      <!-- ── LIVE view (real / paper-live orders) ─────────────────────── -->
+      <div id="sca-live" style="display:none"></div>
     </div>
 
   </div><!-- /page-vwapstrangle -->
@@ -1483,8 +1486,11 @@ function scaSetIndex(idx) {
 
 function scaSetVersion(v) {
   scaVersion = v;
-  ['V1', 'V2'].forEach(x =>
+  ['V1', 'V2', 'LIVE'].forEach(x =>
     document.getElementById('sca-ver-' + x).classList.toggle('active', x === v));
+  const isLive = v === 'LIVE';
+  document.getElementById('sca-chartview').style.display = isLive ? 'none' : '';
+  document.getElementById('sca-live').style.display = isLive ? '' : 'none';
   scaRender();
 }
 
@@ -1593,7 +1599,65 @@ function scaTime(date, hm) {
   return Math.floor(Date.UTC(Y, M - 1, D, h, m) / 1000);
 }
 
+async function scaRenderLive() {
+  const date = document.getElementById('sca-date').value;
+  const el = document.getElementById('sca-live');
+  const upd = document.getElementById('sca-updated');
+  if (!date) { el.innerHTML = '<p class="text-xs text-slate-600 text-center py-10">Select a date.</p>'; return; }
+  let d;
+  try { d = await (await fetch(`/api/strangle/live?date=${date}&index=${scaIndex}`)).json(); }
+  catch (e) { el.innerHTML = '<p class="text-xs text-rose-400 text-center py-10">Live state unavailable.</p>'; return; }
+  if (!d || d.error) {
+    el.innerHTML = `<div class="text-center py-10 text-xs text-slate-600">No live/paper-live orders for ${scaIndex} on ${date}.<br>
+      The real-time engine writes here once it runs (paper or live mode).</div>`;
+    return;
+  }
+  const mode = (d.mode || 'paper').toUpperCase();
+  const badge = mode === 'LIVE'
+    ? '<span style="background:#7f1d1d;color:#fecaca;padding:2px 8px;border-radius:4px;font-weight:600">● LIVE</span>'
+    : '<span style="background:#134e4a;color:#99f6e4;padding:2px 8px;border-radius:4px;font-weight:600">PAPER-LIVE</span>';
+  const rp = d.realized_pnl || 0, mp = d.mtm_pnl || 0;
+  const pnlc = v => v >= 0 ? '#26a69a' : '#ef5350';
+  // order ids grouped by cycle
+  const ordByCycle = {};
+  (d.orders || []).forEach(o => { (ordByCycle[o.cycle] = ordByCycle[o.cycle] || []).push(o); });
+  const idsFor = c => (ordByCycle[c] || []).map(o =>
+    `<span title="${o.symbol} ${o.side} ${o.status}">${o.side[0]}:${o.order_id}</span>`).join(' &nbsp; ') || '—';
+  const rows = (d.cycles || []).map(c => `
+    <tr class="border-t border-[#1e2636]">
+      <td class="py-1 px-2">${c.cycle}</td>
+      <td class="py-1 px-2">${c.entry_time || '—'} @ <b>${c.entry_combined ?? '—'}</b></td>
+      <td class="py-1 px-2">${c.exit_time || (d.open && d.open.cycle === c.cycle ? '<i>open</i>' : '—')} @ ${c.exit_combined ?? '—'}</td>
+      <td class="py-1 px-2" style="color:${pnlc(c.points || 0)}">${c.points ?? '—'}</td>
+      <td class="py-1 px-2" style="color:${pnlc(c.pnl || 0)}">${c.pnl != null ? '₹' + c.pnl : '—'}</td>
+      <td class="py-1 px-2 text-[10px] text-slate-500" style="font-family:ui-monospace,monospace">${idsFor(c.cycle)}</td>
+    </tr>`).join('');
+  const rec = d.reconcile || {};
+  el.innerHTML = `
+    <div class="flex flex-wrap items-center gap-3 mb-3 text-xs">
+      ${badge}
+      <span class="text-slate-400">DTE ${d.dte}</span>
+      <span class="text-slate-500">${d.ce_symbol} / ${d.pe_symbol}</span>
+      <span class="text-slate-500">qty ${d.qty}</span>
+      ${d.killed ? `<span style="color:#ef5350;font-weight:600">■ KILLED — ${d.kill_reason || ''}</span>` : '<span style="color:#26a69a">running</span>'}
+      ${rec.ok === false ? `<span style="color:#f59e0b">⚠ reconcile: rejected ${JSON.stringify(rec.rejected)} pending ${JSON.stringify(rec.pending)}</span>` : ''}
+    </div>
+    <div class="flex gap-6 mb-3">
+      <div><div class="text-[10px] text-slate-500 uppercase">Realized</div><div class="text-lg font-semibold" style="color:${pnlc(rp)}">₹${rp}</div></div>
+      <div><div class="text-[10px] text-slate-500 uppercase">Live MTM</div><div class="text-lg font-semibold" style="color:${pnlc(mp)}">₹${mp}</div></div>
+      <div><div class="text-[10px] text-slate-500 uppercase">Cycles</div><div class="text-lg font-semibold text-slate-300">${(d.cycles || []).length}</div></div>
+    </div>
+    ${rows ? `<table class="w-full text-xs"><thead><tr class="text-slate-500 text-left">
+        <th class="py-1 px-2">#</th><th class="py-1 px-2">Entry</th><th class="py-1 px-2">Exit</th>
+        <th class="py-1 px-2">Pts</th><th class="py-1 px-2">P&amp;L</th><th class="py-1 px-2">Order IDs</th></tr></thead>
+      <tbody>${rows}</tbody></table>`
+      : '<p class="text-xs text-slate-600 py-6 text-center">No entries yet today.</p>'}
+    <p class="text-[10px] text-slate-600 mt-3">Order IDs shown are real Kite ids in LIVE mode; paper-* ids in paper-live.</p>`;
+  if (upd) upd.textContent = 'live ' + (d.updated || '');
+}
+
 async function scaRender(keepView = false) {
+  if (scaVersion === 'LIVE') return scaRenderLive();
   const date = document.getElementById('sca-date').value;
   const chartEl = document.getElementById('sca-chart');
   const emptyEl = document.getElementById('sca-empty');

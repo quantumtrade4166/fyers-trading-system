@@ -210,6 +210,7 @@ class LiveController:
                 "ce_symbol": self.ce, "pe_symbol": self.pe, "qty": self.qty,
                 "killed": self.guard.killed, "kill_reason": self.guard.kill_reason,
                 "open": self._open, "cycles": self.cycles, "events": self.events,
+                "orders": [o.to_dict() for o in self.ledger.orders.values()],
                 "marks": self.marks, "realized_pnl": round(realized, 2), "mtm_pnl": mtm,
                 "reconcile": self.guard.check_reconcile(),
                 "updated": dt.datetime.now().strftime("%H:%M:%S")}
