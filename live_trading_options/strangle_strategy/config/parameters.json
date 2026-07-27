@@ -34,6 +34,18 @@
   "square_off": "15:15",
   "archive_retention_days": 0,
   "_retention_note": "0 = keep all trading days forever (no pruning).",
+  "live_orders": {
+    "_comment": "Phase 3 live Zerodha orders. enabled+mode gate real orders: nothing fires unless enabled=true AND mode=live. Default paper. NIFTY only for now, 1 lot=65, MARKET both sides, MTM stop Rs1000.",
+    "enabled": false,
+    "mode": "paper",
+    "index": "NIFTY",
+    "lots": 1,
+    "order_type": "MARKET",
+    "mtm_stop": 1000,
+    "max_cycles": 4,
+    "entry_cutoff": "14:30",
+    "square_off": "15:15"
+  },
   "google_sheets": {
     "_comment": "V2 P&L logging into the existing 'Trading Journal' sheet. Auth = OAuth (user consent), NOT a service account (org policy blocks SA keys). Put the OAuth Desktop-app client at oauth_client_file, run '--auth' once to cache oauth_token_file, then set spreadsheet_id to the Trading Journal id. One tab PER INDEX (auto-created); PAPER and LIVE rows share a tab, told apart by the Mode column. enabled=false until configured.",
     "enabled": true,
