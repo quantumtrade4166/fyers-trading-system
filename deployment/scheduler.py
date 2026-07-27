@@ -258,15 +258,21 @@ def _ensure_v2_running():
                 freshest = g if freshest is None else min(freshest, g)
         except Exception:
             pass
-    stalled = running and (freshest is not None) and freshest > 480
+    # Zombie from a PREVIOUS day: the process is alive but hasn't written today's
+    # archive. `freshest` is None in that case (no today-file), so the plain stall
+    # check below can't see it — this catches it. Grace until 9:30 so a genuinely
+    # fresh engine (started ~9:20) has time to write its first archive.
+    no_today = not any((arch / f"{today}_{i}_V2.json").exists() for i in ("NIFTY", "SENSEX"))
+    zombie = running and no_today and now.time() >= datetime.time(9, 30)
+    stalled = zombie or (running and (freshest is not None) and freshest > 480)
     if (not running) or stalled:
-        if stalled:      # kill the zombie before starting fresh
+        if stalled:      # kill the stale/zombie engine before starting fresh
             subprocess.run(["powershell", "-NoProfile", "-Command",
                             f"{_V2_PS_FILTER} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"],
                            capture_output=True, timeout=20)
         subprocess.run(["schtasks", "/Run", "/TN", "StrangleV2Engine"], capture_output=True, timeout=20)
-        print(f"  [scheduler] V2 {'stalled-restart' if stalled else 'started'} "
-              f"(running={running}, gap={freshest})")
+        print(f"  [scheduler] V2 {'restart' if stalled else 'start'} "
+              f"(running={running}, zombie={zombie}, gap={freshest})")
 
 
 def _start_feed():

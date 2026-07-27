@@ -346,8 +346,13 @@ def _writer_loop(date_str: str, every: int = 15):
             for b in _books.values():
                 b.write_archive(date_str)
             _push_sheets_eod(date_str)
-            print("  [V2] market closed — final archive written, exiting.")
-            return
+            # HARD EXIT: the Fyers WS keeps the main thread's _ws.connect() blocked
+            # forever, so a plain `return` here leaves the process alive overnight as
+            # a zombie — and the next day's _ensure_v2_running sees it "running" and
+            # never starts a fresh engine (that skipped days 07-13/15/16/21/22/24).
+            # os._exit terminates the whole process so tomorrow starts clean.
+            print("  [V2] market closed — final archive written, process exiting.")
+            os._exit(0)
         # Self-heal a SILENT WS stall: if ticks were flowing but stopped for
         # STALL_SECS during market hours, don't sit as a zombie — launch a fresh
         # engine (re-seeds + reconnects) and exit. (Root defence; the dashboard

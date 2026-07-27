@@ -270,15 +270,23 @@ _CHART_DIR = (Path(__file__).parent.parent /
 
 
 @app.get("/api/strangle/charts")
-async def api_strangle_charts():
-    """List available archived combined-premium charts, newest first."""
+async def api_strangle_charts(all: bool = False):
+    """List archived combined-premium charts, newest first. By default only the
+    DTE 0/1 trade days are returned (the days the strategy actually trades); the
+    DTE>=2 chart-only days are hidden. Pass ?all=true to list every day."""
     if not _CHART_DIR.exists():
         return {"charts": []}
     out = []
     for f in sorted(_CHART_DIR.glob("*.json"), reverse=True):
         parts = f.stem.split("_")
-        if len(parts) == 2:
-            out.append({"date": parts[0], "index": parts[1]})
+        if len(parts) != 2:                      # skip _V2 files (3 parts) etc.
+            continue
+        try:
+            dte = (_json.loads(f.read_text()).get("selection") or {}).get("dte")
+        except Exception:
+            dte = None
+        if all or dte in (0, 1):
+            out.append({"date": parts[0], "index": parts[1], "dte": dte})
     return {"charts": out}
 
 
