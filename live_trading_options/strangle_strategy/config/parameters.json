@@ -35,9 +35,10 @@
   "archive_retention_days": 0,
   "_retention_note": "0 = keep all trading days forever (no pruning).",
   "live_orders": {
-    "_comment": "Phase 3 live Zerodha orders. enabled+mode gate real orders: nothing fires unless enabled=true AND mode=live. Default paper. NIFTY only for now, 1 lot=65, MARKET both sides, MTM stop Rs1000.",
-    "enabled": false,
+    "_comment": "Phase 3 live Zerodha orders. GATES: enabled=run the controller (paper-live watch). mode toggle (paper/live) via the dashboard. allow_live=HARD gate for REAL orders. Real orders fire ONLY when enabled=true AND mode=live AND allow_live=true. For the paper-live watch: enabled=true, mode=paper, allow_live=false (no real orders possible).",
+    "enabled": true,
     "mode": "paper",
+    "allow_live": false,
     "index": "NIFTY",
     "lots": 1,
     "order_type": "MARKET",

@@ -67,6 +67,7 @@ class IndexBook:
         self.bucket_start_cumvol = 0.0
         self.candles: list[dict] = []  # finalized candles
         self.lock = threading.Lock()
+        self.controller = None         # live/paper-live controller (attached only if enabled)
         # resume support: if the engine restarts mid-day, the bucket that was still
         # forming before the restart is restored here and CONTINUED from live ticks
         # (its true bucket-open / high / low are preserved, never reset to V1).
@@ -120,6 +121,13 @@ class IndexBook:
                 self.h = max(self.h, comb)
                 self.l = min(self.l, comb)
                 self.c = comb
+            # live/paper-live tap — feed each tick; guarded so it can't break capture
+            if self.controller is not None:
+                try:
+                    self.controller.on_tick(comb, self.ltp[self.ce_sym], self.ltp[self.pe_sym],
+                                            now.strftime("%H:%M"))
+                except Exception as e:
+                    print(f"  [live] {self.index} on_tick error: {e}")
 
     def _open_bucket(self, bucket, comb):
         self.cur_bucket = bucket
@@ -151,12 +159,16 @@ class IndexBook:
 
     def _finalize_bucket(self):
         vol = max(0.0, (self.cumvol[self.ce_sym] + self.cumvol[self.pe_sym]) - self.bucket_start_cumvol)
-        self.candles.append({
-            "time": self.cur_bucket.strftime("%H:%M"),
-            "open": round(self.o, 2), "high": round(self.h, 2),
-            "low": round(self.l, 2), "close": round(self.c, 2),
-            "volume": int(vol),
-        })
+        candle = {"time": self.cur_bucket.strftime("%H:%M"),
+                  "open": round(self.o, 2), "high": round(self.h, 2),
+                  "low": round(self.l, 2), "close": round(self.c, 2), "volume": int(vol)}
+        self.candles.append(candle)
+        # live/paper-live tap — never let it break the V2 capture loop
+        if self.controller is not None:
+            try:
+                self.controller.on_candle(candle)
+            except Exception as e:
+                print(f"  [live] {self.index} on_candle error: {e}")
 
     def snapshot_candles(self) -> list[dict]:
         """Finalized candles + the still-forming bucket (so the chart is near-live)."""
@@ -302,6 +314,42 @@ def _seed_book(book: "IndexBook", idx: str, date_str: str):
           + f" (from V2={len(v2)}, V1={len(v1)})")
 
 
+def _maybe_attach_controller(book, idx, date_str, pick, meta):
+    """Attach the live/paper-live controller to a book — ONLY when live_orders.enabled
+    and this is the configured index. Fully gated: if disabled, the tick tap in the
+    book stays a no-op and the V2 capture is byte-for-byte unchanged. Best-effort
+    resolves the Kite contracts so it CAN arm live later; runs paper-only otherwise."""
+    lo = _PARAMS.get("live_orders", {})
+    if not lo.get("enabled") or idx != lo.get("index"):
+        return
+    try:
+        from live.controller import LiveController
+        kite, kite_syms = None, {}
+        try:                                      # resolve Kite symbols (for potential live arming)
+            from live import kite_executor as kx
+            kite = kx.get_kite()
+            for fy, strike, typ in [(pick["ce_symbol"], pick["ce_strike"], "CE"),
+                                    (pick["pe_symbol"], pick["pe_strike"], "PE")]:
+                kite_syms[fy] = kx.resolve(kite, idx, pick["expiry"], strike, typ)
+            print(f"  [live] {idx} Kite: {[v['tradingsymbol'] for v in kite_syms.values()]}")
+        except Exception as e:
+            kite, kite_syms = None, {}
+            print(f"  [live] {idx} Kite resolve skipped (paper-only): {e}")
+        ctrl = LiveController(
+            idx, date_str, pick["ce_symbol"], pick["pe_symbol"], meta.get("dte"),
+            lot_size=_LOT_SIZES.get(idx, 1), lots=lo.get("lots", 1),
+            max_cycles=lo.get("max_cycles", 4), mtm_stop=lo.get("mtm_stop", 1000),
+            entry_cutoff=_PARAMS.get("entry_cutoff", "14:30"),
+            square_off=_PARAMS.get("square_off", "15:15"),
+            mode="paper", allow_live=lo.get("allow_live", False), kite=kite, kite_syms=kite_syms)
+        if book.candles:                          # seed VWAP + state from the morning
+            ctrl.seed(list(book.candles), lambda comb: (round(comb / 2, 2), round(comb / 2, 2)))
+        book.controller = ctrl
+        print(f"  [live] {idx}: controller attached (mode=paper, allow_live={lo.get('allow_live')})")
+    except Exception as e:
+        print(f"  [live] {idx} controller attach failed: {e}")
+
+
 def build_books(date_str: str):
     """Resolve the day's strikes (cached) and create a book per index."""
     from core.fyers_client import get_client
@@ -317,6 +365,7 @@ def build_books(date_str: str):
         meta["lot_size"] = _LOT_SIZES.get(idx, 1)
         book = IndexBook(idx, pick["ce_symbol"], pick["pe_symbol"], pick["otm_level"], meta)
         _seed_book(book, idx, date_str)
+        _maybe_attach_controller(book, idx, date_str, pick, meta)
         _books[idx] = book
         _sym_to_book[pick["ce_symbol"]] = book
         _sym_to_book[pick["pe_symbol"]] = book

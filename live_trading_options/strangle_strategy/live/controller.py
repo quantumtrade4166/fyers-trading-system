@@ -40,12 +40,14 @@ class LiveController:
     def __init__(self, index: str, date_str: str, ce_sym: str, pe_sym: str, dte,
                  *, lot_size: int, lots: int, max_cycles: int, mtm_stop: float,
                  entry_cutoff: str, square_off: str, mode: str = "paper", kite=None,
-                 kite_syms: dict | None = None):
+                 kite_syms: dict | None = None, allow_live: bool = False):
         self.index, self.date = index, date_str
         self.ce, self.pe, self.dte = ce_sym, pe_sym, dte
         self.lot_size, self.lots = lot_size, lots
         self.qty = lot_size * lots
-        self.mode = mode                       # 'paper' | 'live'
+        self.mode = mode                       # 'paper' | 'live' (from toggle/control)
+        self.allow_live = allow_live           # HARD config gate: real orders need this
+        self._last_ctrl = 0.0                  # throttle for reading the control file
         self.kite = kite
         self.kite_syms = kite_syms or {}       # {fyers_sym: {tradingsymbol, exchange}} for live
         self.ledger = Ledger()
@@ -63,7 +65,35 @@ class LiveController:
         self._cum_vol = 0.0                    #               Σ(volume), from 9:15
 
     # ── inputs from the tick engine ───────────────────────────────────────
+    def _check_control(self):
+        """Read the dashboard's control flags (throttled to ~1s): obey the KILL
+        switch (flatten + stop) and the Paper/Live toggle."""
+        import time
+        now = time.monotonic()
+        if now - self._last_ctrl < 1.0:
+            return
+        self._last_ctrl = now
+        try:
+            from live.control_flags import read_control
+            c = read_control()
+        except Exception:
+            return
+        if c.get("mode") in ("paper", "live"):
+            self.mode = c["mode"]
+        if c.get("kill") and not self.guard.killed:
+            self.guard.kill("kill switch")
+            if self.ledger.open_shorts():
+                self._flatten("kill switch")
+            else:
+                self.trigger.done = True
+
+    def is_live_armed(self) -> bool:
+        """Real orders fire ONLY when both are true: the toggle says live AND the
+        hard config gate allow_live is set. Either alone stays paper (simulated)."""
+        return self.mode == "live" and self.allow_live
+
     def on_tick(self, combined: float, ce_ltp: float, pe_ltp: float, hm: str):
+        self._check_control()
         self._hm = hm
         if ce_ltp is not None:
             self.marks[self.ce] = ce_ltp
@@ -172,7 +202,7 @@ class LiveController:
 
     def _place(self, sym: str, side: str, cycle: int, kind: str, qty: int = None) -> float:
         qty = qty or self.qty
-        if self.mode == "live":
+        if self.is_live_armed():                # real order ONLY if toggle live AND allow_live
             return self._place_live(sym, side, cycle, kind, qty)
         # paper: simulated fill at the current LTP of this leg
         self._oid += 1
@@ -207,6 +237,7 @@ class LiveController:
         realized = sum(c["pnl"] for c in self.cycles if c["pnl"] is not None)
         mtm = self.ledger.mtm({k: v for k, v in self.marks.items() if v is not None})
         return {"index": self.index, "date": self.date, "mode": self.mode, "dte": self.dte,
+                "allow_live": self.allow_live, "armed": self.is_live_armed(),
                 "ce_symbol": self.ce, "pe_symbol": self.pe, "qty": self.qty,
                 "killed": self.guard.killed, "kill_reason": self.guard.kill_reason,
                 "open": self._open, "cycles": self.cycles, "events": self.events,

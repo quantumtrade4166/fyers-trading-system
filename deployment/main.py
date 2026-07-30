@@ -307,6 +307,29 @@ async def api_strangle_live_dates():
     return {"days": out}
 
 
+def _live_control_mod():
+    import sys as _s
+    p = str(_LIVE_DIR.parent.parent)          # .../strangle_strategy
+    if p not in _s.path:
+        _s.path.append(p)
+    from live import control_flags
+    return control_flags
+
+
+@app.get("/api/strangle/live_control")
+async def api_strangle_get_control():
+    """Current control flags (mode + kill) the dashboard has set."""
+    return _live_control_mod().read_control()
+
+
+@app.post("/api/strangle/live_control")
+async def api_strangle_set_control(mode: str = None, kill: bool = None):
+    """KILL switch / Paper-Live toggle. Writes the flag file the live controller
+    reads. Note: flipping mode='live' still does NOT place real orders unless the
+    hard config gate live_orders.allow_live is also set (double gate)."""
+    return _live_control_mod().write_control(mode=mode, kill=kill)
+
+
 @app.get("/api/strangle/live")
 async def api_strangle_live(date: str, index: str):
     """The live/paper-live snapshot for one index/day (cycles, order ids, P&L,

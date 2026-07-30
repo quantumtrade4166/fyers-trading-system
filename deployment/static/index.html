@@ -1599,6 +1599,25 @@ function scaTime(date, hm) {
   return Math.floor(Date.UTC(Y, M - 1, D, h, m) / 1000);
 }
 
+async function scaSetMode(m) {
+  if (m === 'live' && !confirm(
+    'Switch to LIVE?\n\nReal Kite orders will fire ONLY if the hard config gate ' +
+    'live_orders.allow_live is also set. If it is not, this stays paper-live.\n\nContinue?')) return;
+  await fetch('/api/strangle/live_control?mode=' + m, { method: 'POST' });
+  setTimeout(scaRenderLive, 400);
+}
+async function scaKill() {
+  if (!confirm('KILL SWITCH\n\nImmediately stop all new entries and flatten any open ' +
+    'position. This ends trading for the day. Confirm?')) return;
+  await fetch('/api/strangle/live_control?kill=true', { method: 'POST' });
+  setTimeout(scaRenderLive, 400);
+}
+async function scaResume() {
+  if (!confirm('Clear the kill flag and allow trading again?')) return;
+  await fetch('/api/strangle/live_control?kill=false', { method: 'POST' });
+  setTimeout(scaRenderLive, 400);
+}
+
 async function scaRenderLive() {
   const date = document.getElementById('sca-date').value;
   const el = document.getElementById('sca-live');
@@ -1641,6 +1660,16 @@ async function scaRenderLive() {
       <span class="text-slate-500">qty ${d.qty}</span>
       ${d.killed ? `<span style="color:#ef5350;font-weight:600">■ KILLED — ${d.kill_reason || ''}</span>` : '<span style="color:#26a69a">running</span>'}
       ${rec.ok === false ? `<span style="color:#f59e0b">⚠ reconcile: rejected ${JSON.stringify(rec.rejected)} pending ${JSON.stringify(rec.pending)}</span>` : ''}
+    </div>
+    <div class="flex items-center gap-3 mb-3">
+      <span class="text-[10px] text-slate-500 uppercase">controls</span>
+      <button onclick="scaSetMode('${d.mode === 'live' ? 'paper' : 'live'}')" class="sca-idx-btn ${d.mode === 'live' ? 'active' : ''}"
+        style="${d.mode === 'live' ? 'background:#7f1d1d;color:#fecaca;border-color:#7f1d1d' : ''}">
+        ${d.mode === 'live' ? (d.armed ? '● LIVE (armed)' : '● LIVE · allow_live OFF → still paper') : 'PAPER · click to go Live'}
+      </button>
+      ${d.killed
+        ? `<button onclick="scaResume()" class="sca-idx-btn">clear kill</button>`
+        : `<button onclick="scaKill()" style="background:#b91c1c;color:#fff;padding:3px 14px;border-radius:4px;font-weight:700;font-size:11px">■ KILL</button>`}
     </div>
     <div class="flex gap-6 mb-3">
       <div><div class="text-[10px] text-slate-500 uppercase">Realized</div><div class="text-lg font-semibold" style="color:${pnlc(rp)}">₹${rp}</div></div>
