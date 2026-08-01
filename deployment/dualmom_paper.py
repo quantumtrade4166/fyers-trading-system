@@ -20,7 +20,23 @@ from datetime import datetime, date, timedelta
 from dotenv import load_dotenv
 load_dotenv(Path(__file__).resolve().parent / ".env")
 
+import logging
+from logging.handlers import RotatingFileHandler as _RFH
+
 ROOT = Path(__file__).resolve().parent
+
+def _make_logger():
+    log_dir = ROOT.parent / "logs"
+    log_dir.mkdir(exist_ok=True)
+    h = _RFH(log_dir / "dualmom_paper.log", maxBytes=2*1024*1024, backupCount=3, encoding="utf-8")
+    h.setFormatter(logging.Formatter("%(asctime)s  %(levelname)-5s  %(message)s"))
+    log = logging.getLogger("dualmom_paper")
+    if not log.handlers:
+        log.setLevel(logging.INFO)
+        log.addHandler(h)
+    return log
+
+_log = _make_logger()
 
 ACCESS_TOKEN_PATH = Path(os.getenv("ACCESS_TOKEN_PATH", r"G:\fyers_data_pipeline\config\access_token.txt"))
 APP_ID            = os.getenv("FYERS_APP_ID", "W09OMXQB8J-100")
@@ -237,7 +253,7 @@ def _backfill_liquid_days(state: dict, eq: dict):
 def record_daily_nav():
     """Called at 16:00 daily. Fetches EOD prices, records NAV and daily returns."""
     today_str = date.today().isoformat()
-    print(f"  [paper] Recording daily NAV for {today_str}...")
+    _log.info(f"record_daily_nav called for {today_str}")
 
     with _lock:
         state = _load_paper()
@@ -249,7 +265,7 @@ def record_daily_nav():
             _save_equity(eq)
 
     if eq["history"] and eq["history"][-1]["date"] == today_str:
-        print(f"  [paper] NAV already recorded for {today_str}. Skipping.")
+        _log.info(f"NAV already recorded for {today_str} — skipping.")
         return
 
     prev_nav   = state["current_nav"]
@@ -262,7 +278,7 @@ def record_daily_nav():
         days_in     = max(0, (date.today() - entry_date).days)
         today_nav   = entry_nav * ((1 + LIQUID_PA / 365) ** days_in)
         liquid_abs  = today_nav - prev_nav
-        print(f"  [paper] Liquid fund: ₹{today_nav:,.0f} (+₹{liquid_abs:,.0f})")
+        _log.info(f"Liquid fund: NAV=₹{today_nav:,.0f} (+₹{liquid_abs:,.0f})")
 
     elif state["status"] == "in" and state["holdings"]:
         try:
@@ -282,12 +298,11 @@ def record_daily_nav():
                     failed += 1
             today_nav  = total_val
             stock_abs  = today_nav - prev_nav
-            print(f"  [paper] Stocks NAV: ₹{today_nav:,.0f} ({stock_abs:+,.0f}) [quotes API, {failed} failed]")
+            _log.info(f"Stocks NAV: ₹{today_nav:,.0f} ({stock_abs:+,.0f}) [quotes API, {failed} failed]")
         except Exception as e:
-            print(f"  [paper] EOD stock price error: {e}")
+            _log.error(f"EOD stock price error: {e}")
     else:
-        # unknown/uninitialised state — nothing to record
-        print(f"  [paper] Status={state['status']} — no NAV to record.")
+        _log.warning(f"Status={state['status']} — no NAV to record.")
         return
 
     liquid_pct = (liquid_abs / prev_nav * 100) if prev_nav > 0 else 0.0
@@ -311,7 +326,7 @@ def record_daily_nav():
         })
         _save_equity(eq)
 
-    print(f"  [paper] NAV recorded: ₹{today_nav:,.0f} | day {total_pct:+.3f}%")
+    _log.info(f"NAV recorded: ₹{today_nav:,.0f} | day {total_pct:+.3f}%")
 
 
 # ── Month-end rebalance ───────────────────────────────────────────────────────
@@ -320,16 +335,16 @@ def run_month_end_rebalance():
     """Called on last trading day of month (after record_daily_nav).
     Fetches 500-stock returns via Fyers API, picks top-50, updates holdings."""
     today_str = date.today().isoformat()
-    print(f"  [paper] Month-end rebalance: {today_str}")
+    _log.info(f"=== Month-end rebalance START: {today_str} ===")
 
     try:
         fyers = _get_fyers()
         nifty_signal, nifty_px, ma100 = _get_nifty_signal(fyers)
     except Exception as e:
-        print(f"  [paper] Rebalance aborted — Nifty error: {e}")
+        _log.error(f"Rebalance ABORTED — Nifty fetch failed: {e}")
         return
 
-    print(f"  [paper] Nifty={nifty_px:.0f}  100MA={ma100:.0f}  Signal={nifty_signal}")
+    _log.info(f"Nifty={nifty_px:.0f}  100MA={ma100:.0f}  Signal={nifty_signal}")
 
     with _lock:
         sl = _load_signal_log()
@@ -353,12 +368,12 @@ def run_month_end_rebalance():
             state["liquid_fund_entry_nav"]  = current_nav
             state["liquid_fund_entry_date"] = today_str
             _save_paper(state)
-        print(f"  [paper] Signal OUT — ₹{current_nav:,.0f} → liquid fund.")
+        _log.info(f"Signal OUT — NAV=₹{current_nav:,.0f} → liquid fund. Rebalance done.")
         return
 
     # Signal IN — fetch 12m returns for all 500 stocks
     from deployment.nifty500_symbols import NIFTY500
-    print(f"  [paper] Signal IN — fetching returns for {len(NIFTY500)} stocks...")
+    _log.info(f"Signal IN — fetching 12m returns for {len(NIFTY500)} stocks (~2 min)...")
 
     returns = {}
     prices  = {}
@@ -369,10 +384,10 @@ def run_month_end_rebalance():
             returns[sym] = cur / past - 1
             prices[sym]  = cur
         if (i + 1) % 100 == 0:
-            print(f"  [paper] Progress: {i+1}/{len(NIFTY500)} ({len(returns)} valid)")
+            _log.info(f"Progress: {i+1}/{len(NIFTY500)} ({len(returns)} valid)")
 
     if len(returns) < 10:
-        print(f"  [paper] Rebalance aborted — too few valid symbols ({len(returns)})")
+        _log.error(f"Rebalance ABORTED — too few valid symbols ({len(returns)})")
         return
 
     sorted_ret = sorted(returns.items(), key=lambda x: x[1], reverse=True)
@@ -405,7 +420,7 @@ def run_month_end_rebalance():
         state["rebal_date"]= today_str
         _save_paper(state)
 
-    print(f"  [paper] Rebalance done — IN: {len(holdings)} stocks, NAV=₹{current_nav:,.0f}")
+    _log.info(f"=== Rebalance DONE — IN: {len(holdings)} stocks, NAV=₹{current_nav:,.0f} ===")
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -419,7 +434,7 @@ def init():
         _save_paper(state)
         _save_equity(eq)
         _save_signal_log(sl)
-    print(f"  [paper] Initialized — status={state['status']}  NAV=₹{state['current_nav']:,.0f}")
+    _log.info(f"Initialized — status={state['status']}  NAV=₹{state['current_nav']:,.0f}")
 
 
 def get_paper_state() -> dict:

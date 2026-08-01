@@ -226,6 +226,14 @@ async def api_dualmom_live_quotes():
     return await loop.run_in_executor(None, dualmom_paper.get_live_quotes)
 
 
+@app.post("/api/admin/dualmom_rebalance")
+async def admin_dualmom_rebalance():
+    """Manually trigger a month-end rebalance. Use when scheduler missed it."""
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(None, dualmom_paper.run_month_end_rebalance)
+    return {"status": "ok", "message": "Rebalance triggered — check /api/dualmom/paper and signal_log for result."}
+
+
 # ── Terminal (multi-broker positions) endpoint ───────────────────────────────
 
 @app.get("/api/terminal")
