@@ -99,49 +99,44 @@ def _fetch_quotes_batch(fyers, symbols: list[str]) -> dict[str, float]:
         return {}
 
 
-def _fetch_return_12m(fyers, sym: str) -> tuple:
-    """Fetch (current_price, price_252_days_ago). Returns (None, None) on failure."""
+def _fetch_returns_12m_batch(symbols: list[str]) -> dict[str, tuple]:
+    """Fetch 12m returns for all symbols via yfinance batch download.
+    Returns {sym: (current_price, price_252_ago)} for valid symbols."""
+    import yfinance as yf
+    import pandas as pd
+    ns_syms = [f"{s}.NS" for s in symbols]
     try:
-        today    = date.today()
-        start_ep = int(time.mktime((today - timedelta(days=380)).timetuple()))
-        end_ep   = int(time.mktime(today.timetuple()))
-        resp = fyers.history({
-            "symbol":      f"NSE:{sym}-EQ",
-            "resolution":  "D",
-            "date_format": "1",
-            "range_from":  str(start_ep),
-            "range_to":    str(end_ep),
-            "cont_flag":   "1",
-        })
-        if resp.get("s") == "ok" and resp.get("candles"):
-            candles = resp["candles"]
-            if len(candles) >= LOOKBACK:
-                return float(candles[-1][4]), float(candles[-LOOKBACK][4])
+        raw = yf.download(ns_syms, period="15mo", auto_adjust=True, progress=False)
+        closes = raw["Close"] if "Close" in raw.columns else raw
+        if isinstance(closes, pd.Series):
+            closes = closes.to_frame()
+        results = {}
+        for sym, ns in zip(symbols, ns_syms):
+            col = ns if ns in closes.columns else sym
+            if col not in closes.columns:
+                continue
+            series = closes[col].dropna()
+            if len(series) >= LOOKBACK:
+                results[sym] = (float(series.iloc[-1]), float(series.iloc[-LOOKBACK]))
+        return results
     except Exception as e:
-        print(f"  [paper] fetch_12m error {sym}: {e}")
-    return None, None
+        _log.error(f"yfinance batch fetch error: {e}")
+        return {}
 
 
-def _get_nifty_signal(fyers) -> tuple:
-    """Returns (signal_str, nifty_px, ma100)."""
-    today    = date.today()
-    start_ep = int(time.mktime((today - timedelta(days=180)).timetuple()))
-    end_ep   = int(time.mktime(today.timetuple()))
-    resp = fyers.history({
-        "symbol":      "NSE:NIFTY50-INDEX",
-        "resolution":  "D",
-        "date_format": "1",
-        "range_from":  str(start_ep),
-        "range_to":    str(end_ep),
-        "cont_flag":   "1",
-    })
-    if resp.get("s") != "ok" or not resp.get("candles"):
-        raise ValueError(f"Nifty fetch failed: {resp.get('message')}")
-    closes = [c[4] for c in resp["candles"]]
-    if len(closes) < 100:
-        raise ValueError(f"Not enough Nifty data: {len(closes)} days")
-    ma100    = sum(closes[-100:]) / 100
-    nifty_px = closes[-1]
+def _get_nifty_signal(_fyers=None) -> tuple:
+    """Returns (signal_str, nifty_px, ma100). Uses yfinance — no Fyers History API."""
+    import yfinance as yf
+    import pandas as pd
+    nifty_raw = yf.download("^NSEI", period="200d", auto_adjust=True, progress=False)
+    nifty = nifty_raw["Close"].squeeze()
+    if isinstance(nifty, pd.DataFrame):
+        nifty = nifty.iloc[:, 0]
+    nifty.index = pd.to_datetime(nifty.index).tz_localize(None)
+    if len(nifty) < 100:
+        raise ValueError(f"Not enough Nifty data: {len(nifty)} days")
+    ma100    = float(nifty.rolling(100).mean().iloc[-1])
+    nifty_px = float(nifty.iloc[-1])
     return ("IN" if nifty_px > ma100 else "OUT"), nifty_px, ma100
 
 
@@ -371,20 +366,19 @@ def run_month_end_rebalance():
         _log.info(f"Signal OUT — NAV=₹{current_nav:,.0f} → liquid fund. Rebalance done.")
         return
 
-    # Signal IN — fetch 12m returns for all 500 stocks
+    # Signal IN — fetch 12m returns for all 500 stocks via yfinance batch
     from deployment.nifty500_symbols import NIFTY500
-    _log.info(f"Signal IN — fetching 12m returns for {len(NIFTY500)} stocks (~2 min)...")
+    _log.info(f"Signal IN — fetching 12m returns for {len(NIFTY500)} stocks via yfinance...")
+
+    batch_results = _fetch_returns_12m_batch(NIFTY500)
+    _log.info(f"yfinance batch: {len(batch_results)} valid symbols out of {len(NIFTY500)}")
 
     returns = {}
     prices  = {}
-    for i, sym in enumerate(NIFTY500):
-        cur, past = _fetch_return_12m(fyers, sym)
-        time.sleep(RATE_LIMIT_SLEEP)
+    for sym, (cur, past) in batch_results.items():
         if cur and past and past > 0:
             returns[sym] = cur / past - 1
             prices[sym]  = cur
-        if (i + 1) % 100 == 0:
-            _log.info(f"Progress: {i+1}/{len(NIFTY500)} ({len(returns)} valid)")
 
     if len(returns) < 10:
         _log.error(f"Rebalance ABORTED — too few valid symbols ({len(returns)})")
@@ -397,9 +391,14 @@ def run_month_end_rebalance():
     total = sum(raw.values())
     wts   = {s: v / total for s, v in raw.items()}
 
+    # Fetch real entry prices via Fyers Quotes API (replaces yfinance-adjusted prices)
+    top50_syms = [s for s, _ in top50]
+    quote_prices = _fetch_quotes_batch(fyers, top50_syms)
+    _log.info(f"Quotes API entry prices: {len(quote_prices)} of {len(top50_syms)} fetched")
+
     holdings = []
     for rank, (sym, w) in enumerate(wts.items(), 1):
-        px = prices.get(sym, 0.0)
+        px = quote_prices.get(sym) or prices.get(sym, 0.0)
         if px <= 0:
             continue
         shares = (current_nav * w) / px
@@ -418,6 +417,8 @@ def run_month_end_rebalance():
         state["status"]    = "in"
         state["holdings"]  = holdings
         state["rebal_date"]= today_str
+        state["liquid_fund_entry_nav"]  = None
+        state["liquid_fund_entry_date"] = None
         _save_paper(state)
 
     _log.info(f"=== Rebalance DONE — IN: {len(holdings)} stocks, NAV=₹{current_nav:,.0f} ===")
