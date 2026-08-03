@@ -1601,10 +1601,11 @@ function scaTime(date, hm) {
 
 async function scaSetMode(m) {
   if (m === 'live' && !confirm(
-    'Switch to LIVE?\n\nReal Kite orders will fire ONLY if the hard config gate ' +
-    'live_orders.allow_live is also set. If it is not, this stays paper-live.\n\nContinue?')) return;
+    '⚠ GO LIVE — REAL ORDERS\n\nThe strategy will place REAL Kite orders (1 lot = 65) on ' +
+    'the next signal, up to the configured cycles. Only DTE 0/1 days trade. The MTM stop and the ' +
+    'KILL button still apply.\n\nArm live orders now?')) return;
   await fetch('/api/strangle/live_control?mode=' + m, { method: 'POST' });
-  setTimeout(scaRenderLive, 400);
+  setTimeout(scaRenderLive, 600);
 }
 async function scaKill() {
   if (!confirm('KILL SWITCH\n\nImmediately stop all new entries and flatten any open ' +
@@ -1661,15 +1662,19 @@ async function scaRenderLive() {
       ${d.killed ? `<span style="color:#ef5350;font-weight:600">■ KILLED — ${d.kill_reason || ''}</span>` : '<span style="color:#26a69a">running</span>'}
       ${rec.ok === false ? `<span style="color:#f59e0b">⚠ reconcile: rejected ${JSON.stringify(rec.rejected)} pending ${JSON.stringify(rec.pending)}</span>` : ''}
     </div>
-    <div class="flex items-center gap-3 mb-3">
-      <span class="text-[10px] text-slate-500 uppercase">controls</span>
-      <button onclick="scaSetMode('${d.mode === 'live' ? 'paper' : 'live'}')" class="sca-idx-btn ${d.mode === 'live' ? 'active' : ''}"
-        style="${d.mode === 'live' ? 'background:#7f1d1d;color:#fecaca;border-color:#7f1d1d' : ''}">
-        ${d.mode === 'live' ? (d.armed ? '● LIVE (armed)' : '● LIVE · allow_live OFF → still paper') : 'PAPER · click to go Live'}
+    <div class="flex items-center gap-3 mb-3 flex-wrap" style="padding:8px 10px;background:#0f1420;border:1px solid #1e2636;border-radius:8px">
+      <span class="text-[10px] text-slate-500 uppercase">arming</span>
+      <button onclick="scaSetMode('${d.armed ? 'paper' : 'live'}')"
+        style="padding:6px 18px;border-radius:6px;font-weight:800;font-size:13px;border:1px solid;cursor:pointer;
+        ${d.armed ? 'background:#b91c1c;color:#fff;border-color:#b91c1c' : 'background:#134e4a;color:#a7f3d0;border-color:#0f766e'}">
+        ${d.armed ? '● LIVE — click to STOP (back to paper)' : '▶ GO LIVE — real orders'}
       </button>
+      <span class="text-xs font-semibold" style="color:${d.armed ? '#f87171' : '#64748b'}">
+        ${d.armed ? 'REAL ORDERS ARMED' : 'paper-live · no real orders'}${d.trades_allowed === false ? ` · DTE ${d.dte} → chart-only, will NOT trade` : ''}
+      </span>
       ${d.killed
         ? `<button onclick="scaResume()" class="sca-idx-btn">clear kill</button>`
-        : `<button onclick="scaKill()" style="background:#b91c1c;color:#fff;padding:3px 14px;border-radius:4px;font-weight:700;font-size:11px">■ KILL</button>`}
+        : `<button onclick="scaKill()" style="background:#7f1d1d;color:#fff;padding:6px 16px;border-radius:6px;font-weight:800;font-size:13px;cursor:pointer;border:1px solid #b91c1c">■ KILL</button>`}
     </div>
     <div class="flex gap-6 mb-3">
       <div><div class="text-[10px] text-slate-500 uppercase">Realized</div><div class="text-lg font-semibold" style="color:${pnlc(rp)}">₹${rp}</div></div>

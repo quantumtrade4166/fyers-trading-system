@@ -63,6 +63,7 @@ class LiveController:
         self.events: list[dict] = []           # flat entry/exit log
         self._cum_pv = 0.0                     # running VWAP: Σ(typical × volume)
         self._cum_vol = 0.0                    #               Σ(volume), from 9:15
+        self._trades_allowed = dte in (0, 1)   # strategy trades ONLY DTE 0/1; else chart-only
 
     # ── inputs from the tick engine ───────────────────────────────────────
     def _check_control(self):
@@ -88,9 +89,13 @@ class LiveController:
                 self.trigger.done = True
 
     def is_live_armed(self) -> bool:
-        """Real orders fire ONLY when both are true: the toggle says live AND the
-        hard config gate allow_live is set. Either alone stays paper (simulated)."""
-        return self.mode == "live" and self.allow_live
+        """Real orders fire when the runtime toggle says 'live'. The whole live layer
+        is gated by config live_orders.enabled (the controller isn't even created
+        otherwise), and the UI toggle carries a strong confirm — so this single
+        RUNTIME flag (read from the control file each tick) is the deliberate arm.
+        Runtime by design, so it never depends on config-vs-restart timing (that was
+        the allow_live bug)."""
+        return self.mode == "live"
 
     def on_tick(self, combined: float, ce_ltp: float, pe_ltp: float, hm: str):
         self._check_control()
@@ -104,7 +109,8 @@ class LiveController:
             breached, _ = self.guard.check_mtm(self.marks)
             if breached:
                 self._flatten("MTM stop")
-        self.trigger.on_tick(combined, hm)
+        if self._trades_allowed:
+            self.trigger.on_tick(combined, hm)
 
     def on_candle(self, ohlcv: dict):
         """Feed a finished 5-min OHLCV candle (no VWAP needed). The controller keeps
@@ -118,8 +124,9 @@ class LiveController:
         self._cum_pv += typ * vol
         self._cum_vol += vol
         vwap = round(self._cum_pv / self._cum_vol, 2) if self._cum_vol > 0 else round(c, 2)
-        self.trigger.on_candle_close({"time": ohlcv["time"], "open": o, "high": h,
-                                      "low": l, "close": c, "vwap": vwap})
+        if self._trades_allowed:
+            self.trigger.on_candle_close({"time": ohlcv["time"], "open": o, "high": h,
+                                          "low": l, "close": c, "vwap": vwap})
         self.persist()
 
     def seed(self, ohlcv_candles: list, split_fn):
@@ -237,7 +244,7 @@ class LiveController:
         realized = sum(c["pnl"] for c in self.cycles if c["pnl"] is not None)
         mtm = self.ledger.mtm({k: v for k, v in self.marks.items() if v is not None})
         return {"index": self.index, "date": self.date, "mode": self.mode, "dte": self.dte,
-                "allow_live": self.allow_live, "armed": self.is_live_armed(),
+                "armed": self.is_live_armed(), "trades_allowed": self._trades_allowed,
                 "ce_symbol": self.ce, "pe_symbol": self.pe, "qty": self.qty,
                 "killed": self.guard.killed, "kill_reason": self.guard.kill_reason,
                 "open": self._open, "cycles": self.cycles, "events": self.events,
