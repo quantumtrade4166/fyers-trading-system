@@ -1713,23 +1713,51 @@ async function scaRenderLive(keepView = false) {
   scaLiveChart.resize(cw, 440);
   if (!keepView) scaLiveChart.timeScale().fitContent();
 
-  if (!d || d.error) {
-    el.innerHTML = `<div class="text-center py-10 text-xs text-slate-600">No live/paper-live orders for ${scaIndex} on ${date}.<br>
-      The real-time engine writes here once it runs (paper or live mode).</div>`;
-    if (upd) upd.textContent = '—';
-    return;
-  }
-  // Arm/kill state = the LIVE control flag (the real switch), NOT the snapshot.
-  // The snapshot can be STALE when the engine is offline (e.g. after market close),
-  // which would otherwise show a misleading "ARMED" from an earlier session.
+  // Arm/kill state = the LIVE control flag (per index) — independent of whether the
+  // controller has written a snapshot yet, so you can arm SENSEX (or NIFTY) BEFORE its
+  // engine runs at 9:20. The snapshot can also be stale after market close, so the arm
+  // state must never be read from it.
   let cf = {};
   try { cf = await (await fetch('/api/strangle/live_control?index=' + scaIndex)).json(); } catch (e) {}
   const cfArmed = (cf.mode === 'live');
   const cfKill = !!cf.kill;
   const mode = cfArmed ? 'LIVE' : 'PAPER';
+  const killed = (d && d.killed) || cfKill;
+  const dteNote = (d && d.trades_allowed === false) ? ` · DTE ${d.dte} → chart-only, will NOT trade` : '';
   const badge = cfArmed
     ? '<span style="background:#7f1d1d;color:#fecaca;padding:2px 8px;border-radius:4px;font-weight:600">● LIVE (armed)</span>'
     : '<span style="background:#134e4a;color:#99f6e4;padding:2px 8px;border-radius:4px;font-weight:600">PAPER-LIVE</span>';
+  // the arming box — SAME controls whether or not a snapshot exists yet
+  const armBox = `
+    <div class="flex items-center gap-3 mb-3 flex-wrap" style="padding:8px 10px;background:#0f1420;border:1px solid #1e2636;border-radius:8px">
+      <span class="text-[10px] text-slate-500 uppercase">arming · ${scaIndex}</span>
+      <button onclick="scaSetMode('${cfArmed ? 'paper' : 'live'}')"
+        style="padding:6px 18px;border-radius:6px;font-weight:800;font-size:13px;border:1px solid;cursor:pointer;
+        ${cfArmed ? 'background:#b91c1c;color:#fff;border-color:#b91c1c' : 'background:#134e4a;color:#a7f3d0;border-color:#0f766e'}">
+        ${cfArmed ? '● LIVE — click to STOP (back to paper)' : '▶ GO LIVE — real orders'}
+      </button>
+      <span class="text-xs font-semibold" style="color:${cfArmed ? '#f87171' : '#64748b'}">
+        ${cfArmed ? 'REAL ORDERS ARMED' : 'paper-live · no real orders'}${dteNote}
+      </span>
+      ${killed
+        ? `<button onclick="scaResume()" class="sca-idx-btn">clear kill</button>`
+        : `<button onclick="scaKill()" style="background:#7f1d1d;color:#fff;padding:6px 16px;border-radius:6px;font-weight:800;font-size:13px;cursor:pointer;border:1px solid #b91c1c">■ KILL</button>`}
+    </div>`;
+
+  // No snapshot yet (e.g. SENSEX before its 9:20 engine start) — STILL show the arm
+  // controls so you can arm it now/in the morning; strikes + entries fill in once it runs.
+  if (!d || d.error) {
+    el.innerHTML = `
+      <div class="flex flex-wrap items-center gap-3 mb-3 text-xs">
+        ${badge}<span class="text-slate-300 font-semibold">${scaIndex}</span>
+        <span class="text-slate-500">engine hasn't run for this day yet — strikes are selected at 9:20</span>
+      </div>
+      ${armBox}
+      <p class="text-xs text-slate-600 py-4 text-center">No live entries for ${scaIndex} on ${date} yet.<br>
+        The controller fills in strikes + entries once it runs. Your arm switch above is saved per index.</p>`;
+    if (upd) upd.textContent = cf.updated ? ('arm ' + cf.updated) : '—';
+    return;
+  }
   const rp = d.realized_pnl || 0, mp = d.mtm_pnl || 0;
   const pnlc = v => v >= 0 ? '#26a69a' : '#ef5350';
   // order ids grouped by cycle
@@ -1753,23 +1781,10 @@ async function scaRenderLive(keepView = false) {
       <span class="text-slate-400">DTE ${d.dte}</span>
       <span class="text-slate-500">${d.ce_symbol} / ${d.pe_symbol}</span>
       <span class="text-slate-500">qty ${d.qty}</span>
-      ${(d.killed || cfKill) ? `<span style="color:#ef5350;font-weight:600">■ KILLED — ${d.kill_reason || (cfKill ? 'kill switch' : '')}</span>` : '<span style="color:#26a69a">running</span>'}
+      ${killed ? `<span style="color:#ef5350;font-weight:600">■ KILLED — ${d.kill_reason || (cfKill ? 'kill switch' : '')}</span>` : '<span style="color:#26a69a">running</span>'}
       ${rec.ok === false ? `<span style="color:#f59e0b">⚠ reconcile: rejected ${JSON.stringify(rec.rejected)} pending ${JSON.stringify(rec.pending)}</span>` : ''}
     </div>
-    <div class="flex items-center gap-3 mb-3 flex-wrap" style="padding:8px 10px;background:#0f1420;border:1px solid #1e2636;border-radius:8px">
-      <span class="text-[10px] text-slate-500 uppercase">arming</span>
-      <button onclick="scaSetMode('${cfArmed ? 'paper' : 'live'}')"
-        style="padding:6px 18px;border-radius:6px;font-weight:800;font-size:13px;border:1px solid;cursor:pointer;
-        ${cfArmed ? 'background:#b91c1c;color:#fff;border-color:#b91c1c' : 'background:#134e4a;color:#a7f3d0;border-color:#0f766e'}">
-        ${cfArmed ? '● LIVE — click to STOP (back to paper)' : '▶ GO LIVE — real orders'}
-      </button>
-      <span class="text-xs font-semibold" style="color:${cfArmed ? '#f87171' : '#64748b'}">
-        ${cfArmed ? 'REAL ORDERS ARMED' : 'paper-live · no real orders'}${d.trades_allowed === false ? ` · DTE ${d.dte} → chart-only, will NOT trade` : ''}
-      </span>
-      ${(d.killed || cfKill)
-        ? `<button onclick="scaResume()" class="sca-idx-btn">clear kill</button>`
-        : `<button onclick="scaKill()" style="background:#7f1d1d;color:#fff;padding:6px 16px;border-radius:6px;font-weight:800;font-size:13px;cursor:pointer;border:1px solid #b91c1c">■ KILL</button>`}
-    </div>
+    ${armBox}
     <div class="flex gap-6 mb-3">
       <div><div class="text-[10px] text-slate-500 uppercase">Realized</div><div class="text-lg font-semibold" style="color:${pnlc(rp)}">₹${rp}</div></div>
       <div><div class="text-[10px] text-slate-500 uppercase">Live MTM</div><div class="text-lg font-semibold" style="color:${pnlc(mp)}">₹${mp}</div></div>
