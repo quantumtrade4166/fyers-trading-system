@@ -1623,21 +1623,22 @@ function scaTime(date, hm) {
 
 async function scaSetMode(m) {
   if (m === 'live' && !confirm(
-    '⚠ GO LIVE — REAL ORDERS\n\nThe strategy will place REAL Kite orders (1 lot = 65) on ' +
-    'the next signal, up to the configured cycles. Only DTE 0/1 days trade. The MTM stop and the ' +
-    'KILL button still apply.\n\nArm live orders now?')) return;
-  await fetch('/api/strangle/live_control?mode=' + m, { method: 'POST' });
+    '⚠ GO LIVE — REAL ORDERS · ' + scaIndex + '\n\nThe strategy will place REAL Kite orders on ' +
+    'the next ' + scaIndex + ' signal, up to the configured cycles. Only DTE 0/1 days trade. The MTM ' +
+    'stop and the KILL button still apply. This arms ' + scaIndex + ' ONLY.\n\nArm live ' +
+    scaIndex + ' orders now?')) return;
+  await fetch('/api/strangle/live_control?index=' + scaIndex + '&mode=' + m, { method: 'POST' });
   setTimeout(scaRenderLive, 600);
 }
 async function scaKill() {
-  if (!confirm('KILL SWITCH\n\nImmediately stop all new entries and flatten any open ' +
-    'position. This ends trading for the day. Confirm?')) return;
-  await fetch('/api/strangle/live_control?kill=true', { method: 'POST' });
+  if (!confirm('KILL SWITCH · ' + scaIndex + '\n\nImmediately stop all new ' + scaIndex + ' entries ' +
+    'and flatten any open ' + scaIndex + ' position. This ends ' + scaIndex + ' trading for the day. Confirm?')) return;
+  await fetch('/api/strangle/live_control?index=' + scaIndex + '&kill=true', { method: 'POST' });
   setTimeout(scaRenderLive, 400);
 }
 async function scaResume() {
-  if (!confirm('Clear the kill flag and allow trading again?')) return;
-  await fetch('/api/strangle/live_control?kill=false', { method: 'POST' });
+  if (!confirm('Clear the ' + scaIndex + ' kill flag and allow trading again?')) return;
+  await fetch('/api/strangle/live_control?index=' + scaIndex + '&kill=false', { method: 'POST' });
   setTimeout(scaRenderLive, 400);
 }
 
@@ -1722,7 +1723,7 @@ async function scaRenderLive(keepView = false) {
   // The snapshot can be STALE when the engine is offline (e.g. after market close),
   // which would otherwise show a misleading "ARMED" from an earlier session.
   let cf = {};
-  try { cf = await (await fetch('/api/strangle/live_control')).json(); } catch (e) {}
+  try { cf = await (await fetch('/api/strangle/live_control?index=' + scaIndex)).json(); } catch (e) {}
   const cfArmed = (cf.mode === 'live');
   const cfKill = !!cf.kill;
   const mode = cfArmed ? 'LIVE' : 'PAPER';

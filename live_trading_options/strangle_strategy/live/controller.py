@@ -80,7 +80,7 @@ class LiveController:
         self._last_ctrl = now
         try:
             from live.control_flags import read_control
-            c = read_control()
+            c = read_control(self.index)      # PER-INDEX arm switch (NIFTY vs SENSEX)
         except Exception:
             return
         if c.get("mode") in ("paper", "live"):

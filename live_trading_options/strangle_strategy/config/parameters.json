@@ -40,6 +40,7 @@
     "mode": "paper",
     "allow_live": true,
     "index": "NIFTY",
+    "indices": ["NIFTY", "SENSEX"],
     "lots": 1,
     "order_type": "MARKET",
     "mtm_stop": 1000,

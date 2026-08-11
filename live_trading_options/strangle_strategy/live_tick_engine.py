@@ -320,7 +320,10 @@ def _maybe_attach_controller(book, idx, date_str, pick, meta):
     book stays a no-op and the V2 capture is byte-for-byte unchanged. Best-effort
     resolves the Kite contracts so it CAN arm live later; runs paper-only otherwise."""
     lo = _PARAMS.get("live_orders", {})
-    if not lo.get("enabled") or idx != lo.get("index"):
+    # attach for EVERY configured live index (NIFTY and/or SENSEX). Each index runs its
+    # own controller + its own per-index arm switch, so they trade independently.
+    indices = lo.get("indices") or ([lo.get("index")] if lo.get("index") else [])
+    if not lo.get("enabled") or idx not in indices:
         return
     try:
         from live.controller import LiveController
@@ -335,9 +338,12 @@ def _maybe_attach_controller(book, idx, date_str, pick, meta):
         except Exception as e:
             kite, kite_syms = None, {}
             print(f"  [live] {idx} Kite resolve skipped (paper-only): {e}")
+        # prefer the broker's own lot size (correct per contract: NIFTY 65, SENSEX 20…)
+        kite_lot = next((v.get("lot_size") for v in kite_syms.values() if v.get("lot_size")), None)
+        lot_size = kite_lot or _LOT_SIZES.get(idx, 1)
         ctrl = LiveController(
             idx, date_str, pick["ce_symbol"], pick["pe_symbol"], meta.get("dte"),
-            lot_size=_LOT_SIZES.get(idx, 1), lots=lo.get("lots", 1),
+            lot_size=lot_size, lots=lo.get("lots", 1),
             max_cycles=lo.get("max_cycles", 4), mtm_stop=lo.get("mtm_stop", 1000),
             entry_cutoff=_PARAMS.get("entry_cutoff", "14:30"),
             square_off=_PARAMS.get("square_off", "15:15"),
@@ -345,7 +351,8 @@ def _maybe_attach_controller(book, idx, date_str, pick, meta):
         if book.candles:                          # seed VWAP + state from the morning
             ctrl.seed(list(book.candles), lambda comb: (round(comb / 2, 2), round(comb / 2, 2)))
         book.controller = ctrl
-        print(f"  [live] {idx}: controller attached (mode=paper, allow_live={lo.get('allow_live')})")
+        print(f"  [live] {idx}: controller attached (mode=paper, lot_size={lot_size}, "
+              f"allow_live={lo.get('allow_live')})")
     except Exception as e:
         print(f"  [live] {idx} controller attach failed: {e}")
 

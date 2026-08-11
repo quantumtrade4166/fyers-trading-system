@@ -325,17 +325,18 @@ def _live_control_mod():
 
 
 @app.get("/api/strangle/live_control")
-async def api_strangle_get_control():
-    """Current control flags (mode + kill) the dashboard has set."""
-    return _live_control_mod().read_control()
+async def api_strangle_get_control(index: str = "NIFTY"):
+    """Current control flags (mode + kill) for one index — NIFTY and SENSEX arm
+    independently."""
+    return _live_control_mod().read_control(index)
 
 
 @app.post("/api/strangle/live_control")
-async def api_strangle_set_control(mode: str = None, kill: bool = None):
-    """KILL switch / Paper-Live toggle. Writes the flag file the live controller
-    reads. Note: flipping mode='live' still does NOT place real orders unless the
-    hard config gate live_orders.allow_live is also set (double gate)."""
-    return _live_control_mod().write_control(mode=mode, kill=kill)
+async def api_strangle_set_control(index: str = "NIFTY", mode: str = None, kill: bool = None):
+    """KILL switch / Paper-Live toggle for ONE index. Writes the per-index flag file
+    the matching live controller reads. Note: flipping mode='live' still does NOT place
+    real orders unless the hard config gate live_orders.allow_live is also set."""
+    return _live_control_mod().write_control(index=index, mode=mode, kill=kill)
 
 
 @app.get("/api/strangle/live")
