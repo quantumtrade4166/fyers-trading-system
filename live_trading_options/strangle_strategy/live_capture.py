@@ -95,7 +95,22 @@ def select_and_cache(client, index: str, date_str: str) -> dict:
         pick = select_strangle_historical(client, index, exp, thr, date_str)
         pick["source"] = "history_920" if is_today else "history"
     pick["dte"] = d
-    sp.write_text(json.dumps(pick))
+    # ATOMIC first-write-wins. The V1 capture scheduler and the V2 tick engine both
+    # call this within the same ~second at 9:20; both can pass the sp.exists() check
+    # above before either writes, then BOTH select and the file gets written twice
+    # (e.g. history_920 then live_quotes overwrites) — so V1/V2 re-read the final cache
+    # while the live controller stayed pinned to the earlier pick. Exclusive create
+    # makes ONE pick the single source of truth: the loser discards its own selection
+    # and returns the winner's, so V1, V2 and Live can never diverge on strikes.
+    try:
+        with open(sp, "x") as f:
+            json.dump(pick, f)
+    except FileExistsError:
+        winner = json.loads(sp.read_text())
+        log.info(f"{index} {date_str} strikes: another process cached "
+                 f"{winner['ce_symbol']}/{winner['pe_symbol']} first — using that "
+                 f"(discarded own {pick['source']} pick {pick['ce_symbol']}/{pick['pe_symbol']})")
+        return winner
     log.info(f"{index} {date_str} strikes selected via {pick['source']}: "
              f"OTM{pick['otm_level']} {pick['ce_symbol']}/{pick['pe_symbol']} "
              f"combined={pick['combined_premium']} thr={thr} dte={d}")

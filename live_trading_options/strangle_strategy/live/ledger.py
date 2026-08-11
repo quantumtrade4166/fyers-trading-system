@@ -84,6 +84,15 @@ class Ledger:
         syms = {o.symbol for o in self._filled()}
         return {s: q for s in syms if (q := self.open_short(s)) > 0}
 
+    def open_short_real(self, symbol: str) -> int:
+        """Units short in `symbol` counting ONLY real broker orders (paper ids are
+        excluded). This is what a LIVE buy-back may cover — a paper/seed-reconstructed
+        short is not a real position and must never trigger a real order."""
+        real = [o for o in self._filled()
+                if o.symbol == symbol and not str(o.order_id).startswith("paper")]
+        return (sum(o.filled_qty for o in real if o.side == SELL)
+                - sum(o.filled_qty for o in real if o.side == BUY))
+
     # ── reconciliation helpers for the guard ─────────────────────────────
     # The real "reconcile against the broker" is done by the executor polling each
     # order_id's status and calling update_fill() — so open_short() below always

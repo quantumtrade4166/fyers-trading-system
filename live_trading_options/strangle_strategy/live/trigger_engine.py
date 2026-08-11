@@ -59,10 +59,14 @@ class LiveTrigger:
             self.entries += 1
             self._entered_candle = _floor5(hm)
             price = round(self.pending.trigger, 2)
-            self.on_entry(price, self.entries,
-                          f"limit {price} (signal {self.pending.sig_time}) hit")
+            sig = self.pending.sig_time
+            # Commit state BEFORE placing the order. If on_entry (the live order) raises,
+            # we must NOT leave the trigger flat with a resting pending — that re-fires on
+            # the very next tick and spins the counter (0 orders, cycles=0, cyc5 block).
+            # One attempt per fill, always.
             self.in_pos = True
             self.pending = None
+            self.on_entry(price, self.entries, f"limit {price} (signal {sig}) hit")
 
     # ── CANDLE CLOSE: exits, square-off, signal arming / cancel / replace ──
     def on_candle_close(self, candle: dict):

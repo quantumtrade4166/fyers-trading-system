@@ -587,7 +587,22 @@
       </div>
 
       <!-- ── LIVE view (real / paper-live orders) ─────────────────────── -->
-      <div id="sca-live" style="display:none"></div>
+      <div id="sca-live" style="display:none">
+        <div id="sca-live-chart-wrap" style="position:relative">
+          <div id="sca-live-chart" style="height:440px;width:100%"></div>
+          <div id="sca-live-tip" style="position:absolute;top:6px;left:8px;pointer-events:none;
+               background:rgba(13,17,26,.9);border:1px solid #2d3748;border-radius:6px;
+               padding:5px 10px;font-size:11px;color:#cbd5e1;display:none;z-index:5;
+               font-family:ui-monospace,Menlo,monospace;white-space:nowrap"></div>
+        </div>
+        <div class="flex items-center gap-4 mt-2 text-xs text-slate-500">
+          <span><span style="color:#fb8c00">—</span> VWAP</span>
+          <span><span style="color:#ef5350">▼</span> Real sell entry (fill)</span>
+          <span><span style="color:#26a69a">▲</span> Exit (buy back)</span>
+          <span class="text-slate-600">candles = V2 tick-built · arrows = actual live/paper-live fills</span>
+        </div>
+        <div id="sca-live-panel" class="mt-4"></div>
+      </div>
     </div>
 
   </div><!-- /page-vwapstrangle -->
@@ -1491,6 +1506,13 @@ function scaSetVersion(v) {
   const isLive = v === 'LIVE';
   document.getElementById('sca-chartview').style.display = isLive ? 'none' : '';
   document.getElementById('sca-live').style.display = isLive ? '' : 'none';
+  if (isLive) {
+    // "Live" means today: jump to the most recent available date (max YYYY-MM-DD),
+    // not whatever archive date was previously selected.
+    const sel = document.getElementById('sca-date');
+    const opts = [...sel.options].map(o => o.value).filter(Boolean);
+    if (opts.length) sel.value = opts.reduce((a, b) => (b > a ? b : a));
+  }
   scaRender();
 }
 
@@ -1619,22 +1641,93 @@ async function scaResume() {
   setTimeout(scaRenderLive, 400);
 }
 
-async function scaRenderLive() {
+let scaLiveChart = null, scaLiveCandle = null, scaLiveVwap = null;
+function scaLiveEnsureChart() {
+  if (scaLiveChart) return;
+  const el = document.getElementById('sca-live-chart');
+  scaLiveChart = LightweightCharts.createChart(el, {
+    width: el.clientWidth, height: 440,
+    layout:    { background: { color: 'transparent' }, textColor: '#64748b' },
+    grid:      { vertLines: { color: '#1e2533' }, horzLines: { color: '#1e2533' } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    rightPriceScale: { borderColor: '#2d3748' },
+    timeScale: { borderColor: '#2d3748', timeVisible: true, secondsVisible: false },
+  });
+  scaLiveCandle = scaLiveChart.addCandlestickSeries({
+    upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
+    wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+  });
+  scaLiveVwap = scaLiveChart.addLineSeries({
+    color: '#fb8c00', lineWidth: 2, priceLineVisible: false, lastValueVisible: false, title: 'VWAP',
+  });
+  const tip = document.getElementById('sca-live-tip');
+  scaLiveChart.subscribeCrosshairMove(param => {
+    if (!param.time || !param.point || param.point.x < 0) { tip.style.display = 'none'; return; }
+    const c = param.seriesData.get(scaLiveCandle);
+    const v = param.seriesData.get(scaLiveVwap);
+    if (!c) { tip.style.display = 'none'; return; }
+    const col = (c.close >= c.open) ? '#26a69a' : '#ef5350';
+    tip.innerHTML =
+      `<b style="color:#94a3b8">${scaFmtTime(param.time)}</b>  ` +
+      `O <span style="color:${col}">${c.open.toFixed(2)}</span>  ` +
+      `H <span style="color:${col}">${c.high.toFixed(2)}</span>  ` +
+      `L <span style="color:${col}">${c.low.toFixed(2)}</span>  ` +
+      `C <span style="color:${col}">${c.close.toFixed(2)}</span>  ` +
+      `VWAP <span style="color:#fb8c00">${v ? v.value.toFixed(2) : '—'}</span>`;
+    tip.style.display = '';
+  });
+  window.addEventListener('resize', () => { if (scaLiveChart) scaLiveChart.resize(el.clientWidth, 440); });
+}
+
+async function scaRenderLive(keepView = false) {
   const date = document.getElementById('sca-date').value;
-  const el = document.getElementById('sca-live');
+  const el = document.getElementById('sca-live-panel');
   const upd = document.getElementById('sca-updated');
   if (!date) { el.innerHTML = '<p class="text-xs text-slate-600 text-center py-10">Select a date.</p>'; return; }
   let d;
   try { d = await (await fetch(`/api/strangle/live?date=${date}&index=${scaIndex}`)).json(); }
   catch (e) { el.innerHTML = '<p class="text-xs text-rose-400 text-center py-10">Live state unavailable.</p>'; return; }
+
+  // ── chart: V2 tick-built candles + VWAP, with ACTUAL live entry/exit arrows ──
+  scaLiveEnsureChart();
+  try {
+    let cr = await (await fetch(`/api/strangle/chart?date=${date}&index=${scaIndex}&version=V2`)).json();
+    if (cr.error) cr = await (await fetch(`/api/strangle/chart?date=${date}&index=${scaIndex}&version=V1`)).json();
+    if (!cr.error && cr.candles) {
+      scaLiveCandle.setData(cr.candles.map(c => ({
+        time: scaTime(cr.date, c.time), open: c.open, high: c.high, low: c.low, close: c.close })));
+      scaLiveVwap.setData(cr.candles.map(c => ({ time: scaTime(cr.date, c.time), value: c.vwap })));
+    } else { scaLiveCandle.setData([]); scaLiveVwap.setData([]); }
+  } catch (e) { /* keep whatever's drawn */ }
+  const markers = [];
+  if (d && !d.error) (d.cycles || []).forEach(c => {
+    if (c.entry_time) markers.push({ time: scaTime(date, c.entry_time), position: 'aboveBar',
+      color: '#ef5350', shape: 'arrowDown', text: 'S' + c.cycle });
+    if (c.exit_time)  markers.push({ time: scaTime(date, c.exit_time),  position: 'belowBar',
+      color: '#26a69a', shape: 'arrowUp', text: 'EXIT' });
+  });
+  markers.sort((a, b) => a.time - b.time);
+  scaLiveCandle.setMarkers(markers);
+  const cw = document.getElementById('sca-live-chart').clientWidth;
+  scaLiveChart.resize(cw, 440);
+  if (!keepView) scaLiveChart.timeScale().fitContent();
+
   if (!d || d.error) {
     el.innerHTML = `<div class="text-center py-10 text-xs text-slate-600">No live/paper-live orders for ${scaIndex} on ${date}.<br>
       The real-time engine writes here once it runs (paper or live mode).</div>`;
+    if (upd) upd.textContent = '—';
     return;
   }
-  const mode = (d.mode || 'paper').toUpperCase();
-  const badge = mode === 'LIVE'
-    ? '<span style="background:#7f1d1d;color:#fecaca;padding:2px 8px;border-radius:4px;font-weight:600">● LIVE</span>'
+  // Arm/kill state = the LIVE control flag (the real switch), NOT the snapshot.
+  // The snapshot can be STALE when the engine is offline (e.g. after market close),
+  // which would otherwise show a misleading "ARMED" from an earlier session.
+  let cf = {};
+  try { cf = await (await fetch('/api/strangle/live_control')).json(); } catch (e) {}
+  const cfArmed = (cf.mode === 'live');
+  const cfKill = !!cf.kill;
+  const mode = cfArmed ? 'LIVE' : 'PAPER';
+  const badge = cfArmed
+    ? '<span style="background:#7f1d1d;color:#fecaca;padding:2px 8px;border-radius:4px;font-weight:600">● LIVE (armed)</span>'
     : '<span style="background:#134e4a;color:#99f6e4;padding:2px 8px;border-radius:4px;font-weight:600">PAPER-LIVE</span>';
   const rp = d.realized_pnl || 0, mp = d.mtm_pnl || 0;
   const pnlc = v => v >= 0 ? '#26a69a' : '#ef5350';
@@ -1659,20 +1752,20 @@ async function scaRenderLive() {
       <span class="text-slate-400">DTE ${d.dte}</span>
       <span class="text-slate-500">${d.ce_symbol} / ${d.pe_symbol}</span>
       <span class="text-slate-500">qty ${d.qty}</span>
-      ${d.killed ? `<span style="color:#ef5350;font-weight:600">■ KILLED — ${d.kill_reason || ''}</span>` : '<span style="color:#26a69a">running</span>'}
+      ${(d.killed || cfKill) ? `<span style="color:#ef5350;font-weight:600">■ KILLED — ${d.kill_reason || (cfKill ? 'kill switch' : '')}</span>` : '<span style="color:#26a69a">running</span>'}
       ${rec.ok === false ? `<span style="color:#f59e0b">⚠ reconcile: rejected ${JSON.stringify(rec.rejected)} pending ${JSON.stringify(rec.pending)}</span>` : ''}
     </div>
     <div class="flex items-center gap-3 mb-3 flex-wrap" style="padding:8px 10px;background:#0f1420;border:1px solid #1e2636;border-radius:8px">
       <span class="text-[10px] text-slate-500 uppercase">arming</span>
-      <button onclick="scaSetMode('${d.armed ? 'paper' : 'live'}')"
+      <button onclick="scaSetMode('${cfArmed ? 'paper' : 'live'}')"
         style="padding:6px 18px;border-radius:6px;font-weight:800;font-size:13px;border:1px solid;cursor:pointer;
-        ${d.armed ? 'background:#b91c1c;color:#fff;border-color:#b91c1c' : 'background:#134e4a;color:#a7f3d0;border-color:#0f766e'}">
-        ${d.armed ? '● LIVE — click to STOP (back to paper)' : '▶ GO LIVE — real orders'}
+        ${cfArmed ? 'background:#b91c1c;color:#fff;border-color:#b91c1c' : 'background:#134e4a;color:#a7f3d0;border-color:#0f766e'}">
+        ${cfArmed ? '● LIVE — click to STOP (back to paper)' : '▶ GO LIVE — real orders'}
       </button>
-      <span class="text-xs font-semibold" style="color:${d.armed ? '#f87171' : '#64748b'}">
-        ${d.armed ? 'REAL ORDERS ARMED' : 'paper-live · no real orders'}${d.trades_allowed === false ? ` · DTE ${d.dte} → chart-only, will NOT trade` : ''}
+      <span class="text-xs font-semibold" style="color:${cfArmed ? '#f87171' : '#64748b'}">
+        ${cfArmed ? 'REAL ORDERS ARMED' : 'paper-live · no real orders'}${d.trades_allowed === false ? ` · DTE ${d.dte} → chart-only, will NOT trade` : ''}
       </span>
-      ${d.killed
+      ${(d.killed || cfKill)
         ? `<button onclick="scaResume()" class="sca-idx-btn">clear kill</button>`
         : `<button onclick="scaKill()" style="background:#7f1d1d;color:#fff;padding:6px 16px;border-radius:6px;font-weight:800;font-size:13px;cursor:pointer;border:1px solid #b91c1c">■ KILL</button>`}
     </div>
@@ -1691,7 +1784,7 @@ async function scaRenderLive() {
 }
 
 async function scaRender(keepView = false) {
-  if (scaVersion === 'LIVE') return scaRenderLive();
+  if (scaVersion === 'LIVE') return scaRenderLive(keepView);
   const date = document.getElementById('sca-date').value;
   const chartEl = document.getElementById('sca-chart');
   const emptyEl = document.getElementById('sca-empty');

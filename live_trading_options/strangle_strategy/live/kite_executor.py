@@ -82,12 +82,29 @@ def resolve(kite, index: str, expiry, strike: int, opt_type: str) -> dict:
 
 def place_market(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
                  product: str = "MIS", tag: str = "vwstrangle") -> str:
-    """Place a MARKET order and return its order_id. ⚠️ REAL ORDER — only the live
-    executor calls this, and only when enabled=true & mode=live."""
+    """Place a MARKET order and return its order_id. ⚠️ REAL ORDER.
+    NOTE: Zerodha REJECTS market orders for options (NFO/BFO) — use place_limit for
+    the strangle legs. Kept only for non-option instruments."""
     return kite.place_order(
         variety=kite.VARIETY_REGULAR, exchange=exchange, tradingsymbol=tradingsymbol,
         transaction_type=side, quantity=qty, product=product,
         order_type=kite.ORDER_TYPE_MARKET, tag=tag)
+
+
+def _round_tick(price: float, tick: float = 0.05) -> float:
+    """Options trade on a 0.05 tick — Kite rejects off-tick limit prices."""
+    return round(round(price / tick) * tick, 2)
+
+
+def place_limit(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
+                price: float, product: str = "MIS", tag: str = "vwstrangle") -> str:
+    """Place a LIMIT order (the ONLY order type Zerodha allows for options). ⚠️ REAL
+    ORDER. Pass a MARKETABLE price (through the touch) so it fills at the best bid/ask
+    like a market order — `price` is only the worst-case cap, not the fill price."""
+    return kite.place_order(
+        variety=kite.VARIETY_REGULAR, exchange=exchange, tradingsymbol=tradingsymbol,
+        transaction_type=side, quantity=qty, product=product,
+        order_type=kite.ORDER_TYPE_LIMIT, price=_round_tick(price), tag=tag)
 
 
 def order_status(kite, order_id: str) -> dict:
