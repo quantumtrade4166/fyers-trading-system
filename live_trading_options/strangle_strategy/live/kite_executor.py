@@ -108,13 +108,19 @@ def place_limit(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
 
 
 def order_status(kite, order_id: str) -> dict:
-    """Latest status + fill for an order_id: {status, filled_qty, avg_price}.
-    This is how the ledger reconciles against the broker — by order id, not by
-    the netted position."""
+    """Latest status + fill for an order_id: {status, filled_qty, avg_price, fill_time}.
+    fill_time = the broker's exchange timestamp (HH:MM:SS) of the fill — used to show
+    the EXACT per-leg fill time + any delay between the two legs. This is how the ledger
+    reconciles against the broker — by order id, not the netted position."""
     hist = kite.order_history(order_id) or []
     last = hist[-1] if hist else {}
+    ts = last.get("exchange_timestamp") or last.get("order_timestamp")
+    try:
+        ft = ts.strftime("%H:%M:%S") if hasattr(ts, "strftime") else (str(ts)[-8:] if ts else None)
+    except Exception:
+        ft = str(ts) if ts else None
     return {"status": last.get("status"), "filled_qty": last.get("filled_quantity", 0),
-            "avg_price": last.get("average_price")}
+            "avg_price": last.get("average_price"), "fill_time": ft}
 
 
 def cancel(kite, order_id: str):

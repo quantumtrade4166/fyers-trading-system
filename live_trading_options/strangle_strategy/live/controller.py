@@ -68,6 +68,7 @@ class LiveController:
         self._cum_pv = 0.0                     # running VWAP: Σ(typical × volume)
         self._cum_vol = 0.0                    #               Σ(volume), from 9:15
         self._mtm_series = []                  # [{t, rupees}] intraday equity curve
+        self._last_fill_time = {}              # sym -> broker fill time (HH:MM:SS) of the last fill
         self._trades_allowed = dte in (0, 1)   # strategy trades ONLY DTE 0/1; else chart-only
 
     # ── inputs from the tick engine ───────────────────────────────────────
@@ -158,6 +159,7 @@ class LiveController:
         self.cycles, self.events, self._open = [], [], None
         self._cum_pv = self._cum_vol = 0.0
         self._mtm_series = []
+        self._last_fill_time = {}
         self._oid = 0
         self._seeding = True
         try:
@@ -221,6 +223,8 @@ class LiveController:
         combined = round((ce_fill or 0) + (pe_fill or 0), 2)
         self._open = {"cycle": cycle, "entry_time": self._hm, "entry_combined": combined,
                       "entry_ce": ce_fill, "entry_pe": pe_fill, "trigger": combined_trigger,
+                      "entry_ce_time": self._last_fill_time.get(self.ce),
+                      "entry_pe_time": self._last_fill_time.get(self.pe),
                       "exit_time": None, "exit_combined": None, "points": None, "pnl": None}
         self.cycles.append(self._open)
         self.events.append({"t": self._hm, "type": "entry", "cycle": cycle,
@@ -235,6 +239,8 @@ class LiveController:
             pts = round((self._open["entry_combined"] or 0) - combined, 2)
             self._open.update(exit_time=self._hm, exit_combined=combined,
                               exit_trigger=combined_price, exit_ce=ce_out, exit_pe=pe_out,
+                              exit_ce_time=self._last_fill_time.get(self.ce),
+                              exit_pe_time=self._last_fill_time.get(self.pe),
                               points=pts, pnl=round(pts * self.qty, 2))
             self._open = None
         self.events.append({"t": self._hm, "type": "exit", "cycle": cycle,
@@ -252,6 +258,8 @@ class LiveController:
             pts = round((self._open["entry_combined"] or 0) - combined, 2)
             self._open.update(exit_time=self._hm, exit_combined=combined,
                               exit_trigger=None, exit_ce=ce_out, exit_pe=pe_out,
+                              exit_ce_time=self._last_fill_time.get(self.ce),
+                              exit_pe_time=self._last_fill_time.get(self.pe),
                               points=pts, pnl=round(pts * self.qty, 2))
             self._open = None
         # a kill/flatten ends trading for the day — stop the trigger so it can't fire
@@ -295,9 +303,11 @@ class LiveController:
         self._oid += 1
         oid = f"paper-{kind}-{self._oid}"
         fill = self.marks.get(sym)
+        ft = dt.datetime.now().strftime("%H:%M:%S")     # paper "fill time" (legs ~instant)
         o = Order(oid, sym, side, qty, cycle, kind)
         self.ledger.record(o)
-        self.ledger.update_fill(oid, COMPLETE, filled_qty=qty, avg_price=fill)
+        self.ledger.update_fill(oid, COMPLETE, filled_qty=qty, avg_price=fill, fill_time=ft)
+        self._last_fill_time[sym] = ft
         return fill
 
     # marketable-limit buffer: price THROUGH the touch so it fills at the best bid/ask
@@ -335,9 +345,10 @@ class LiveController:
                     continue
                 st = kx.order_status(self.kite, legs[s]["oid"])
                 self.ledger.update_fill(legs[s]["oid"], st["status"],
-                                        st.get("filled_qty"), st.get("avg_price"))
+                                        st.get("filled_qty"), st.get("avg_price"), st.get("fill_time"))
                 if st["status"] == "COMPLETE":
                     legs[s]["fill"] = st.get("avg_price")
+                    self._last_fill_time[s] = st.get("fill_time")
             time.sleep(0.4)
 
     def _recancel_leg(self, kx, legs: dict, sym: str) -> bool:
@@ -349,9 +360,10 @@ class LiveController:
         except Exception:
             pass
         st = kx.order_status(self.kite, oid)
-        self.ledger.update_fill(oid, st["status"], st.get("filled_qty"), st.get("avg_price"))
+        self.ledger.update_fill(oid, st["status"], st.get("filled_qty"), st.get("avg_price"), st.get("fill_time"))
         if st["status"] == "COMPLETE":
             legs[sym]["fill"] = st.get("avg_price")
+            self._last_fill_time[sym] = st.get("fill_time")
             return True
         return False
 
@@ -401,9 +413,11 @@ class LiveController:
         fill = None
         for _ in range(10):                    # poll up to ~5s for the fill
             st = kx.order_status(self.kite, oid)
-            self.ledger.update_fill(oid, st["status"], st.get("filled_qty"), st.get("avg_price"))
+            self.ledger.update_fill(oid, st["status"], st.get("filled_qty"), st.get("avg_price"), st.get("fill_time"))
             if st["status"] in ("COMPLETE", "REJECTED", "CANCELLED"):
                 fill = st.get("avg_price")
+                if st["status"] == "COMPLETE":
+                    self._last_fill_time[sym] = st.get("fill_time")
                 break
             time.sleep(0.5)
         else:

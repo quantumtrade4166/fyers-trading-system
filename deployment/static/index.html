@@ -1733,7 +1733,7 @@ async function scaRenderLive(keepView = false) {
     if (c.entry_time) markers.push({ time: scaTime(date, scaFloor5(c.entry_time)), position: 'aboveBar',
       color: '#ef5350', shape: 'arrowDown', text: 'S' + c.cycle });
     if (c.exit_time)  markers.push({ time: scaTime(date, scaFloor5(c.exit_time)),  position: 'belowBar',
-      color: '#26a69a', shape: 'arrowUp', text: 'X' + c.cycle });
+      color: '#26a69a', shape: 'arrowUp', text: 'EXIT' });
   });
   markers.sort((a, b) => a.time - b.time);
   scaLiveCandle.setMarkers(markers);
@@ -1801,18 +1801,22 @@ async function scaRenderLive(keepView = false) {
   const idsFor = c => (ordByCycle[c] || []).map(o =>
     `<span title="${o.symbol} ${o.side} ${o.status}">${o.side[0]}:${o.order_id}</span>`).join(' &nbsp; ') || '—';
   // each cell shows the TRIGGER price, the actual combined FILL, and the CE+PE breakdown
-  const legLine = (ce, pe) => (ce != null || pe != null)
-    ? `<div class="text-[10px] text-slate-500">CE ${ce ?? '—'} + PE ${pe ?? '—'}</div>` : '';
+  // with each leg's EXACT broker fill time (HH:MM:SS) so a delay between legs is visible.
+  const tstamp = t => t ? ` <span style="color:#64748b">@ ${t}</span>` : '';
+  const legLine = (ce, pe, cet, pet) => (ce != null || pe != null)
+    ? `<div class="text-[10px] text-slate-500">CE ${ce ?? '—'}${tstamp(cet)} &nbsp;+&nbsp; PE ${pe ?? '—'}${tstamp(pet)}</div>` : '';
   const entryCell = c => `${c.entry_time || '—'}` +
     `<div class="text-[11px] text-slate-400">trig ${c.trigger ?? '—'} → fill <b class="text-slate-200">${c.entry_combined ?? '—'}</b></div>` +
-    legLine(c.entry_ce, c.entry_pe);
+    legLine(c.entry_ce, c.entry_pe, c.entry_ce_time, c.entry_pe_time);
   const exitCell = c => {
     if (!c.exit_time) return (d.open && d.open.cycle === c.cycle) ? '<i class="text-slate-500">open</i>' : '—';
     const trig = (c.exit_trigger != null) ? `trig ${c.exit_trigger} → ` : '';
     return `${c.exit_time}` +
       `<div class="text-[11px] text-slate-400">${trig}fill <b class="text-slate-200">${c.exit_combined ?? '—'}</b></div>` +
-      legLine(c.exit_ce, c.exit_pe);
+      legLine(c.exit_ce, c.exit_pe, c.exit_ce_time, c.exit_pe_time);
   };
+  const netPoints = Math.round((d.cycles || []).reduce((s, c) => s + (c.points || 0), 0) * 100) / 100;
+  const netPnl = d.realized_pnl || 0;
   const rows = (d.cycles || []).map(c => `
     <tr class="border-t border-[#1e2636]" style="vertical-align:top">
       <td class="py-1 px-2">${c.cycle}</td>
@@ -1841,7 +1845,12 @@ async function scaRenderLive(keepView = false) {
     ${rows ? `<table class="w-full text-xs"><thead><tr class="text-slate-500 text-left">
         <th class="py-1 px-2">#</th><th class="py-1 px-2">Entry</th><th class="py-1 px-2">Exit</th>
         <th class="py-1 px-2">Pts</th><th class="py-1 px-2">P&amp;L</th><th class="py-1 px-2">Order IDs</th></tr></thead>
-      <tbody>${rows}</tbody></table>`
+      <tbody>${rows}</tbody>
+      <tfoot><tr style="border-top:1px solid #2d3748;font-weight:600">
+        <td class="py-1 px-2" colspan="3">Net realized (lot ${d.qty})</td>
+        <td class="py-1 px-2" style="color:${pnlc(netPoints)}">${netPoints >= 0 ? '+' : ''}${netPoints}</td>
+        <td class="py-1 px-2" style="color:${pnlc(netPnl)}">₹${netPnl}</td>
+        <td></td></tr></tfoot></table>`
       : '<p class="text-xs text-slate-600 py-6 text-center">No entries yet today.</p>'}
     <p class="text-[10px] text-slate-600 mt-3">Order IDs shown are real Kite ids in LIVE mode; paper-* ids in paper-live.</p>`;
   if (upd) upd.textContent = 'live ' + (d.updated || '');

@@ -38,13 +38,14 @@ class Order:
         self.status = PENDING
         self.filled_qty = 0
         self.avg_price = None
+        self.fill_time = None          # broker exchange timestamp of the fill (HH:MM:SS)
         self.ts = dt.datetime.now().isoformat(timespec="seconds")
 
     def to_dict(self) -> dict:
         return {"order_id": self.order_id, "symbol": self.symbol, "side": self.side,
                 "qty": self.qty, "cycle": self.cycle, "kind": self.kind,
                 "status": self.status, "filled_qty": self.filled_qty,
-                "avg_price": self.avg_price, "ts": self.ts}
+                "avg_price": self.avg_price, "fill_time": self.fill_time, "ts": self.ts}
 
 
 class Ledger:
@@ -56,14 +57,16 @@ class Ledger:
         self.orders[order.order_id] = order
         return order
 
-    def update_fill(self, order_id: str, status: str,
-                    filled_qty: int = None, avg_price: float = None) -> Order:
+    def update_fill(self, order_id: str, status: str, filled_qty: int = None,
+                    avg_price: float = None, fill_time: str = None) -> Order:
         o = self.orders[order_id]
         o.status = status
         if filled_qty is not None:
             o.filled_qty = filled_qty
         if avg_price is not None:
             o.avg_price = avg_price
+        if fill_time is not None:
+            o.fill_time = fill_time
         if status == COMPLETE and filled_qty is None:
             o.filled_qty = o.qty                 # a COMPLETE order filled its full qty
         return o
