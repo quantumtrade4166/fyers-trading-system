@@ -67,6 +67,7 @@ class LiveController:
         self.events: list[dict] = []           # flat entry/exit log
         self._cum_pv = 0.0                     # running VWAP: Σ(typical × volume)
         self._cum_vol = 0.0                    #               Σ(volume), from 9:15
+        self._mtm_series = []                  # [{t, rupees}] intraday equity curve
         self._trades_allowed = dte in (0, 1)   # strategy trades ONLY DTE 0/1; else chart-only
 
     # ── inputs from the tick engine ───────────────────────────────────────
@@ -131,6 +132,9 @@ class LiveController:
         if self._trades_allowed:
             self.trigger.on_candle_close({"time": ohlcv["time"], "open": o, "high": h,
                                           "low": l, "close": c, "vwap": vwap})
+        # intraday equity point (realized + unrealized, own book) for the Live MTM chart
+        mtm = self.ledger.mtm({k: v for k, v in self.marks.items() if v is not None})
+        self._mtm_series.append({"t": ohlcv["time"], "rupees": mtm})
         self.persist()
 
     def seed(self, ohlcv_candles: list, split_fn):
@@ -153,6 +157,7 @@ class LiveController:
                                    square_off=self._gcfg["square_off"])
         self.cycles, self.events, self._open = [], [], None
         self._cum_pv = self._cum_vol = 0.0
+        self._mtm_series = []
         self._oid = 0
         self._seeding = True
         try:
@@ -229,6 +234,7 @@ class LiveController:
         if self._open:
             pts = round((self._open["entry_combined"] or 0) - combined, 2)
             self._open.update(exit_time=self._hm, exit_combined=combined,
+                              exit_trigger=combined_price, exit_ce=ce_out, exit_pe=pe_out,
                               points=pts, pnl=round(pts * self.qty, 2))
             self._open = None
         self.events.append({"t": self._hm, "type": "exit", "cycle": cycle,
@@ -237,12 +243,15 @@ class LiveController:
 
     # ── flatten (kill / square-off): buy back exactly the OWN open shorts ──
     def _flatten(self, reason: str):
-        for sym in list(self.ledger.open_shorts()):
-            self._buy(sym, self.guard.max_cycles, kind="square_off")
+        open_now = dict(self.ledger.open_shorts())
+        ce_out = self._buy(self.ce, self.guard.max_cycles, kind="square_off") if self.ce in open_now else None
+        pe_out = self._buy(self.pe, self.guard.max_cycles, kind="square_off") if self.pe in open_now else None
         if self._open:
-            combined = round(sum(self.marks.get(s) or 0 for s in (self.ce, self.pe)), 2)
+            combined = round((ce_out or 0) + (pe_out or 0), 2) if (ce_out is not None or pe_out is not None) \
+                else round(sum(self.marks.get(s) or 0 for s in (self.ce, self.pe)), 2)
             pts = round((self._open["entry_combined"] or 0) - combined, 2)
             self._open.update(exit_time=self._hm, exit_combined=combined,
+                              exit_trigger=None, exit_ce=ce_out, exit_pe=pe_out,
                               points=pts, pnl=round(pts * self.qty, 2))
             self._open = None
         # a kill/flatten ends trading for the day — stop the trigger so it can't fire
@@ -419,6 +428,7 @@ class LiveController:
                 "open": self._open, "cycles": self.cycles, "events": self.events,
                 "orders": [o.to_dict() for o in self.ledger.orders.values()],
                 "marks": self.marks, "realized_pnl": round(realized, 2), "mtm_pnl": mtm,
+                "mtm_series": self._mtm_series,
                 "reconcile": self.guard.check_reconcile(),
                 "updated": dt.datetime.now().strftime("%H:%M:%S")}
 
