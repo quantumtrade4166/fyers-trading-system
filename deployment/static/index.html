@@ -557,6 +557,7 @@
             <button class="sca-idx-btn active" id="sca-ver-V1" onclick="scaSetVersion('V1')">V1·1min</button>
             <button class="sca-idx-btn" id="sca-ver-V2" onclick="scaSetVersion('V2')">V2·tick</button>
             <button class="sca-idx-btn" id="sca-ver-LIVE" onclick="scaSetVersion('LIVE')">📡 Live</button>
+            <button class="sca-idx-btn" id="sca-ver-LOG" onclick="scaSetVersion('LOG')">📜 Log</button>
           </div>
           <select id="sca-date" onchange="scaRender()"
                   class="bg-[#151a26] text-slate-300 text-xs rounded px-2 py-1 border border-[#2d3748]"></select>
@@ -604,6 +605,19 @@
         <p class="text-sm font-medium text-slate-300 mt-4 mb-1">Live equity — MTM (₹)</p>
         <div id="sca-live-mtm" style="height:170px;width:100%"></div>
         <div id="sca-live-panel" class="mt-4"></div>
+      </div>
+
+      <!-- ── AUDIT LOG view (permanent, real-only, date-selected) ──────────── -->
+      <div id="sca-logview" style="display:none">
+        <div class="flex items-center justify-between mb-2">
+          <p class="text-xs text-slate-500">Permanent audit trail for the selected date · real activity + system events · append-only</p>
+          <label class="text-xs text-slate-500 flex items-center gap-1">
+            <input type="checkbox" id="sca-log-tail" checked onchange="scaRenderLog()"> auto-scroll to newest
+          </label>
+        </div>
+        <pre id="sca-log-pre" style="height:520px;overflow:auto;background:#0b0f18;border:1px solid #1e2636;
+             border-radius:8px;padding:12px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;
+             line-height:1.55;color:#cbd5e1;white-space:pre-wrap;word-break:break-word;margin:0"></pre>
       </div>
     </div>
 
@@ -1503,14 +1517,14 @@ function scaSetIndex(idx) {
 
 function scaSetVersion(v) {
   scaVersion = v;
-  ['V1', 'V2', 'LIVE'].forEach(x =>
+  ['V1', 'V2', 'LIVE', 'LOG'].forEach(x =>
     document.getElementById('sca-ver-' + x).classList.toggle('active', x === v));
-  const isLive = v === 'LIVE';
-  document.getElementById('sca-chartview').style.display = isLive ? 'none' : '';
+  const isLive = v === 'LIVE', isLog = v === 'LOG';
+  document.getElementById('sca-chartview').style.display = (isLive || isLog) ? 'none' : '';
   document.getElementById('sca-live').style.display = isLive ? '' : 'none';
-  if (isLive) {
-    // "Live" means today: jump to the most recent available date (max YYYY-MM-DD),
-    // not whatever archive date was previously selected.
+  document.getElementById('sca-logview').style.display = isLog ? '' : 'none';
+  if (isLive || isLog) {
+    // Live/Log mean "now": jump to the most recent available date (max YYYY-MM-DD).
     const sel = document.getElementById('sca-date');
     const opts = [...sel.options].map(o => o.value).filter(Boolean);
     if (opts.length) sel.value = opts.reduce((a, b) => (b > a ? b : a));
@@ -1884,8 +1898,26 @@ async function scaRenderLive(keepView = false) {
   if (upd) upd.textContent = 'live ' + (d.updated || '');
 }
 
+async function scaRenderLog() {
+  const date = document.getElementById('sca-date').value;
+  const pre = document.getElementById('sca-log-pre');
+  const upd = document.getElementById('sca-updated');
+  if (!date) { pre.textContent = 'Select a date.'; return; }
+  let d;
+  try { d = await (await fetch('/api/strangle/audit?date=' + date)).json(); }
+  catch (e) { pre.textContent = 'Audit log unavailable.'; return; }
+  const text = (d && d.text) || '';
+  pre.textContent = text
+    ? text
+    : `No audit log for ${date}.\n\nThe log is written live as the engine runs — it records real orders, fills, arm/kill, square-off and system events, appended and saved permanently.`;
+  const tail = document.getElementById('sca-log-tail');
+  if (tail && tail.checked) pre.scrollTop = pre.scrollHeight;   // newest at bottom
+  if (upd) upd.textContent = '⟳ ' + new Date().toLocaleTimeString('en-IN', { hour12: false });
+}
+
 async function scaRender(keepView = false) {
   if (scaVersion === 'LIVE') return scaRenderLive(keepView);
+  if (scaVersion === 'LOG') return scaRenderLog();
   const date = document.getElementById('sca-date').value;
   const chartEl = document.getElementById('sca-chart');
   const emptyEl = document.getElementById('sca-empty');

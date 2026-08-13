@@ -353,6 +353,13 @@ def _maybe_attach_controller(book, idx, date_str, pick, meta):
         book.controller = ctrl
         print(f"  [live] {idx}: controller attached (mode=paper, lot_size={lot_size}, "
               f"allow_live={lo.get('allow_live')})")
+        try:
+            from live import audit
+            audit.log(idx, "CONTROLLER_ATTACH", ce=pick["ce_symbol"], pe=pick["pe_symbol"],
+                      dte=meta.get("dte"), lot=lot_size, broker_ready=bool(kite and kite_syms),
+                      seeded_candles=len(book.candles))
+        except Exception:
+            pass
     except Exception as e:
         print(f"  [live] {idx} controller attach failed: {e}")
 
@@ -439,6 +446,13 @@ def main():
         return
     st = token_status()
     print(f"  [V2] token date={st['date']} valid={st['valid']}")
+    try:
+        import os as _os
+        from live import audit
+        audit.log("SYSTEM", "ENGINE_START", pid=_os.getpid(),
+                  fyers_token=st.get("date"), fyers_valid=st.get("valid"))
+    except Exception:
+        pass
     if not st["valid"]:
         print("  [V2] token invalid — aborting."); return
     date_str = dt.date.today().isoformat()

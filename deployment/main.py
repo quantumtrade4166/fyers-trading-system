@@ -311,6 +311,21 @@ async def api_strangle_charts(all: bool = False):
 
 _LIVE_DIR = (Path(__file__).parent.parent /
              "live_trading_options" / "strangle_strategy" / "data" / "live_state")
+_AUDIT_DIR = (Path(__file__).parent.parent /
+              "live_trading_options" / "strangle_strategy" / "data" / "audit")
+
+
+@app.get("/api/strangle/audit")
+async def api_strangle_audit(date: str):
+    """The permanent, append-only audit log for one trading day (both indices, real
+    activity + system lifecycle). Read-only."""
+    f = _AUDIT_DIR / f"{date}_audit.log"
+    if not f.exists():
+        return {"date": date, "text": ""}
+    try:
+        return {"date": date, "text": f.read_text(encoding="utf-8", errors="replace")}
+    except Exception as e:
+        return {"date": date, "text": "", "error": str(e)}
 
 
 @app.get("/api/strangle/live_dates")

@@ -27,6 +27,7 @@ sys.path.insert(0, str(ROOT))
 from live.ledger import Ledger, Order, SELL, BUY, COMPLETE
 from live.risk_guard import RiskGuard
 from live.trigger_engine import LiveTrigger
+from live import audit
 
 STATE_DIR = ROOT / "data" / "live_state"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -85,9 +86,16 @@ class LiveController:
             c = read_control(self.index)      # PER-INDEX arm switch (NIFTY vs SENSEX)
         except Exception:
             return
-        if c.get("mode") in ("paper", "live"):
-            self.mode = c["mode"]
+        new_mode = c.get("mode")
+        if new_mode in ("paper", "live"):
+            if new_mode != self.mode:            # arm/disarm flip — audit it
+                audit.log(self.index, "ARM" if new_mode == "live" else "DISARM",
+                          mode=new_mode, dte=self.dte)
+            self.mode = new_mode
         if c.get("kill") and not self.guard.killed:
+            audit.log(self.index, "KILL_PRESSED", open_shorts=len(self.ledger.open_shorts()),
+                      real_short_ce=self.ledger.open_short_real(self.ce),
+                      real_short_pe=self.ledger.open_short_real(self.pe))
             self.guard.kill("kill switch")
             if self.ledger.open_shorts():
                 self._flatten("kill switch")
@@ -195,6 +203,7 @@ class LiveController:
             print(f"  [live] {self.index} ENTRY ORDER FAILED cyc{cycle}: {msg}", flush=True)
             self.events.append({"t": self._hm, "type": "entry_order_failed",
                                 "cycle": cycle, "error": msg})
+            audit.log(self.index, "ORDER_FAILED", cyc=cycle, error=msg)
             naked = self.guard.check_naked(self.ce, self.pe)
             if naked:
                 self._cover_naked(naked, cycle, "entry failed mid-leg")
@@ -209,6 +218,7 @@ class LiveController:
                   f"— covering filled leg + stopping", flush=True)
             self.events.append({"t": self._hm, "type": "entry_incomplete",
                                 "cycle": cycle, "ce": ce_fill, "pe": pe_fill})
+            audit.log(self.index, "ENTRY_INCOMPLETE", cyc=cycle, ce=ce_fill, pe=pe_fill)
             naked = self.guard.check_naked(self.ce, self.pe)
             if naked:
                 self._cover_naked(naked, cycle, "entry leg would not fill")
@@ -229,12 +239,17 @@ class LiveController:
         self.cycles.append(self._open)
         self.events.append({"t": self._hm, "type": "entry", "cycle": cycle,
                             "combined": combined, "ce": ce_fill, "pe": pe_fill, "reason": reason})
+        if live:
+            audit.log(self.index, "ENTRY", cyc=cycle, combined=combined, ce=ce_fill, pe=pe_fill,
+                      ce_time=self._last_fill_time.get(self.ce),
+                      pe_time=self._last_fill_time.get(self.pe), trigger=combined_trigger)
         self.persist()
 
     def _exit(self, combined_price: float, cycle: int, reason: str):
         ce_out = self._buy(self.ce, cycle)
         pe_out = self._buy(self.pe, cycle)
         combined = round((ce_out or 0) + (pe_out or 0), 2)
+        pts = None
         if self._open:
             pts = round((self._open["entry_combined"] or 0) - combined, 2)
             self._open.update(exit_time=self._hm, exit_combined=combined,
@@ -245,6 +260,11 @@ class LiveController:
             self._open = None
         self.events.append({"t": self._hm, "type": "exit", "cycle": cycle,
                             "combined": combined, "ce": ce_out, "pe": pe_out, "reason": reason})
+        if self.is_live_armed() and not self._seeding:
+            audit.log(self.index, "EXIT", cyc=cycle, combined=combined, ce=ce_out, pe=pe_out,
+                      pts=pts, pnl=(round(pts * self.qty, 2) if pts is not None else None),
+                      ce_time=self._last_fill_time.get(self.ce),
+                      pe_time=self._last_fill_time.get(self.pe), reason=reason)
         self.persist()
 
     # ── flatten (kill / square-off): buy back exactly the OWN open shorts ──
@@ -267,6 +287,9 @@ class LiveController:
         self.trigger.done = True
         self.trigger.in_pos = False
         self.events.append({"t": self._hm, "type": "flatten", "reason": reason})
+        if self.is_live_armed() and not self._seeding:
+            audit.log(self.index, "SQUAREOFF", reason=reason, ce=ce_out, pe=pe_out,
+                      real_covered=(ce_out is not None or pe_out is not None))
         self.persist()
 
     def _cover_naked(self, naked, cycle, reason):
@@ -408,6 +431,8 @@ class LiveController:
         ks = self.kite_syms[sym]
         price = self._limit_price(sym, side)
         oid = kx.place_limit(self.kite, ks["tradingsymbol"], ks["exchange"], side, qty, price)
+        audit.log(self.index, "ORDER_PLACED", cyc=cycle, side=side, sym=ks["tradingsymbol"],
+                  qty=qty, limit=round(price, 2), kind=kind, oid=oid)
         o = Order(oid, sym, side, qty, cycle, kind)
         self.ledger.record(o)
         fill = None
@@ -418,6 +443,8 @@ class LiveController:
                 fill = st.get("avg_price")
                 if st["status"] == "COMPLETE":
                     self._last_fill_time[sym] = st.get("fill_time")
+                audit.log(self.index, "ORDER_" + st["status"], cyc=cycle, side=side,
+                          sym=ks["tradingsymbol"], avg=fill, fill_time=st.get("fill_time"), oid=oid)
                 break
             time.sleep(0.5)
         else:
@@ -426,6 +453,8 @@ class LiveController:
             try:
                 kx.cancel(self.kite, oid)
                 self.ledger.update_fill(oid, "CANCELLED")
+                audit.log(self.index, "ORDER_NOFILL", cyc=cycle, side=side,
+                          sym=ks["tradingsymbol"], oid=oid, note="cancelled after 5s")
                 print(f"  [live] {self.index} {side} {sym} not filled in 5s — cancelled", flush=True)
             except Exception as e:
                 print(f"  [live] {self.index} cancel after no-fill failed: {e}", flush=True)
