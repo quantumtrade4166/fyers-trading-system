@@ -284,17 +284,28 @@ async def api_strangle_charts(all: bool = False):
     DTE>=2 chart-only days are hidden. Pass ?all=true to list every day."""
     if not _CHART_DIR.exists():
         return {"charts": []}
-    out = []
+    out, seen = [], set()
     for f in sorted(_CHART_DIR.glob("*.json"), reverse=True):
         parts = f.stem.split("_")
-        if len(parts) != 2:                      # skip _V2 files (3 parts) etc.
+        # V1 = {date}_{index} (2 parts); V2 = {date}_{index}_V2 (3 parts). List a day if
+        # EITHER exists — so a day the tick engine captured (V2) shows even when the V1
+        # capture scheduler didn't run.
+        if len(parts) == 2:
+            date, index = parts[0], parts[1]
+        elif len(parts) == 3 and parts[2] == "V2":
+            date, index = parts[0], parts[1]
+        else:
             continue
+        key = (date, index)
+        if key in seen:
+            continue
+        seen.add(key)
         try:
             dte = (_json.loads(f.read_text()).get("selection") or {}).get("dte")
         except Exception:
             dte = None
         if all or dte in (0, 1):
-            out.append({"date": parts[0], "index": parts[1], "dte": dte})
+            out.append({"date": date, "index": index, "dte": dte})
     return {"charts": out}
 
 
