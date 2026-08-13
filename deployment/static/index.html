@@ -1779,12 +1779,39 @@ async function scaRenderLive(keepView = false) {
         : `<button onclick="scaKill()" style="background:#7f1d1d;color:#fff;padding:6px 16px;border-radius:6px;font-weight:800;font-size:13px;cursor:pointer;border:1px solid #b91c1c">■ KILL</button>`}
     </div>`;
 
+  // ONE-LINE EFFECTIVE STATUS — so "armed" is never ambiguous (armed ≠ will trade).
+  const kr = (d && d.kill_reason) ? ' — ' + d.kill_reason : '';
+  let stTxt, stCol, stBg;
+  if (!cfArmed) {
+    stTxt = '◉ PAPER-LIVE — watching only, NO real orders'; stCol = '#99f6e4'; stBg = '#0f3d38';
+  } else if (killed) {
+    stTxt = '⏹ ARMED but STOPPED for the day — no more orders' + kr; stCol = '#fca5a5'; stBg = '#5b1a1a';
+  } else if (!d || d.error) {
+    stTxt = '● ARMED — goes live once the engine starts (≈9:20)'; stCol = '#fcd34d'; stBg = '#4a3410';
+  } else if (d.trades_allowed === false) {
+    stTxt = '● ARMED but DTE ' + d.dte + ' — chart-only, will NOT trade today'; stCol = '#fcd34d'; stBg = '#4a3410';
+  } else if (d.broker_ready === false) {
+    stTxt = '⚠ ARMED but BROKER NOT CONNECTED — orders will NOT reach Zerodha'; stCol = '#fca5a5'; stBg = '#5b1a1a';
+  } else {
+    stTxt = '● LIVE — real orders WILL fire on the next signal'; stCol = '#fecaca'; stBg = '#7f1d1d';
+  }
+  const gate = (ok, y, n) => `<span style="color:${ok ? '#26a69a' : '#ef5350'}">${ok ? '✓' : '✗'} ${ok ? y : n}</span>`;
+  const gates = (d && !d.error)
+    ? `${gate(cfArmed, 'armed', 'not armed')} &nbsp;·&nbsp; ${gate(d.trades_allowed !== false, 'DTE ' + d.dte + ' trades', 'DTE ' + d.dte + ' no-trade')} &nbsp;·&nbsp; ${gate(d.broker_ready === true, 'broker linked', 'broker OFF')} &nbsp;·&nbsp; ${gate(!killed, 'active', 'KILLED')}`
+    : `${gate(cfArmed, 'armed', 'not armed')} &nbsp;·&nbsp; <span style="color:#64748b">engine not started — strikes/broker pending</span>`;
+  const statusBanner = `
+    <div style="padding:10px 12px;border-radius:8px;margin-bottom:12px;background:${stBg};border:1px solid rgba(255,255,255,.08)">
+      <div style="font-weight:700;font-size:14px;color:${stCol}">${stTxt}</div>
+      <div class="mt-1" style="font-size:11px;color:#94a3b8">${gates}</div>
+    </div>`;
+
   // No snapshot yet (e.g. SENSEX before its 9:20 engine start) — STILL show the arm
   // controls so you can arm it now/in the morning; strikes + entries fill in once it runs.
   if (!d || d.error) {
     el.innerHTML = `
+      ${statusBanner}
       <div class="flex flex-wrap items-center gap-3 mb-3 text-xs">
-        ${badge}<span class="text-slate-300 font-semibold">${scaIndex}</span>
+        <span class="text-slate-300 font-semibold">${scaIndex}</span>
         <span class="text-slate-500">engine hasn't run for this day yet — strikes are selected at 9:20</span>
       </div>
       ${armBox}
@@ -1828,6 +1855,7 @@ async function scaRenderLive(keepView = false) {
     </tr>`).join('');
   const rec = d.reconcile || {};
   el.innerHTML = `
+    ${statusBanner}
     <div class="flex flex-wrap items-center gap-3 mb-3 text-xs">
       ${badge}
       <span class="text-slate-400">DTE ${d.dte}</span>

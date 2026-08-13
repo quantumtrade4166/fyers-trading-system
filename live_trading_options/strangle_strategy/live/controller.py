@@ -437,6 +437,7 @@ class LiveController:
         mtm = self.ledger.mtm({k: v for k, v in self.marks.items() if v is not None})
         return {"index": self.index, "date": self.date, "mode": self.mode, "dte": self.dte,
                 "armed": self.is_live_armed(), "trades_allowed": self._trades_allowed,
+                "broker_ready": bool(self.kite and self.kite_syms),
                 "ce_symbol": self.ce, "pe_symbol": self.pe, "qty": self.qty,
                 "killed": self.guard.killed, "kill_reason": self.guard.kill_reason,
                 "open": self._open, "cycles": self.cycles, "events": self.events,
