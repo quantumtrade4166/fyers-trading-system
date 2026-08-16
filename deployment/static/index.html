@@ -593,6 +593,15 @@
 
       <!-- ── LIVE view (real / paper-live orders) ─────────────────────── -->
       <div id="sca-live" style="display:none">
+        <div id="sca-live-ticker" class="flex flex-wrap items-center gap-5 mb-2 px-3 py-2"
+             style="display:none;background:#0b0f18;border:1px solid #1e2636;border-radius:8px">
+          <span class="text-xs text-slate-500 uppercase">live</span>
+          <span class="text-sm">Price <b id="sca-tk-price" style="font-family:ui-monospace,monospace;color:#e2e8f0">—</b></span>
+          <span class="text-sm">CE <b id="sca-tk-ce" style="font-family:ui-monospace,monospace;color:#94a3b8">—</b>
+                <span class="text-slate-600">/</span> PE <b id="sca-tk-pe" style="font-family:ui-monospace,monospace;color:#94a3b8">—</b></span>
+          <span class="text-sm">MTM <b id="sca-tk-mtm" style="font-family:ui-monospace,monospace">—</b></span>
+          <span id="sca-tk-dot" class="text-[10px] text-slate-500">●</span>
+        </div>
         <div id="sca-live-chart-wrap" style="position:relative">
           <div id="sca-live-chart" style="height:440px;width:100%"></div>
           <div id="sca-live-tip" style="position:absolute;top:6px;left:8px;pointer-events:none;
@@ -1694,6 +1703,45 @@ function scaUpdateCountdown() {
   });
 }
 setInterval(scaUpdateCountdown, 1000);
+
+// Real-time tick poll (~1s) — updates live P&L + price + the moving current candle,
+// broker-terminal style, only while the Live tab is on today during market hours.
+let scaLiveLastCandle = null;
+async function scaTickPoll() {
+  if (scaVersion !== 'LIVE') return;
+  const sel = document.getElementById('sca-date'); if (!sel) return;
+  const date = sel.value;
+  const now = new Date(), today = now.toLocaleDateString('en-CA');
+  const mins = now.getHours() * 60 + now.getMinutes();
+  const ticker = document.getElementById('sca-live-ticker');
+  if (!(date === today && mins >= (9 * 60 + 15) && mins < (15 * 60 + 30))) {
+    if (ticker) ticker.style.display = 'none'; return;
+  }
+  let t;
+  try { t = await (await fetch(`/api/strangle/live_tick?date=${date}&index=${scaIndex}`)).json(); }
+  catch (e) { return; }
+  if (!t || t.error) { if (ticker) ticker.style.display = 'none'; return; }
+  if (ticker) ticker.style.display = '';
+  const set = (id, txt, col) => { const el = document.getElementById(id); if (el) { el.textContent = txt; if (col) el.style.color = col; } };
+  set('sca-tk-price', t.combined != null ? t.combined.toFixed(2) : '—');
+  set('sca-tk-ce', t.ce != null ? Number(t.ce).toFixed(2) : '—');
+  set('sca-tk-pe', t.pe != null ? Number(t.pe).toFixed(2) : '—');
+  set('sca-tk-mtm', t.mtm != null ? ('₹' + t.mtm) : '—', (t.mtm || 0) >= 0 ? '#26a69a' : '#ef5350');
+  set('sca-tk-dot', '●', t.armed ? '#ef5350' : '#64748b');
+  // move the current (forming) candle live
+  if (scaLiveCandle && t.combined != null && t.t) {
+    const bucket = scaTime(date, scaFloor5(t.t));
+    if (scaLiveLastCandle && scaLiveLastCandle.time === bucket) {
+      scaLiveLastCandle.high = Math.max(scaLiveLastCandle.high, t.combined);
+      scaLiveLastCandle.low = Math.min(scaLiveLastCandle.low, t.combined);
+      scaLiveLastCandle.close = t.combined;
+    } else if (!scaLiveLastCandle || bucket > scaLiveLastCandle.time) {
+      scaLiveLastCandle = { time: bucket, open: t.combined, high: t.combined, low: t.combined, close: t.combined };
+    }
+    try { scaLiveCandle.update(scaLiveLastCandle); } catch (e) { /* ignore */ }
+  }
+}
+setInterval(scaTickPoll, 1000);
 function scaLiveEnsureChart() {
   if (scaLiveChart) return;
   const el = document.getElementById('sca-live-chart');
@@ -1765,13 +1813,19 @@ async function scaRenderLive(keepView = false) {
     let cr = await (await fetch(`/api/strangle/chart?date=${date}&index=${scaIndex}&version=V2`)).json();
     if (cr.error) cr = await (await fetch(`/api/strangle/chart?date=${date}&index=${scaIndex}&version=V1`)).json();
     if (!cr.error && cr.candles) {
-      scaLiveCandle.setData(cr.candles.map(c => ({
-        time: scaTime(cr.date, c.time), open: c.open, high: c.high, low: c.low, close: c.close })));
+      const cds = cr.candles.map(c => ({
+        time: scaTime(cr.date, c.time), open: c.open, high: c.high, low: c.low, close: c.close }));
+      scaLiveCandle.setData(cds);
       scaLiveVwap.setData(cr.candles.map(c => ({ time: scaTime(cr.date, c.time), value: c.vwap })));
-    } else { scaLiveCandle.setData([]); scaLiveVwap.setData([]); }
+      scaLiveLastCandle = cds.length ? { ...cds[cds.length - 1] } : null;   // baseline for live tick updates
+    } else { scaLiveCandle.setData([]); scaLiveVwap.setData([]); scaLiveLastCandle = null; }
   } catch (e) { /* keep whatever's drawn */ }
+  // LIVE = real broker trades ONLY. Hide any paper/phantom cycles so the Live tab is
+  // never confused with paper (paper validation lives in V1/V2). A cycle is real if it
+  // was placed live or recovered from the broker via reconciliation.
+  const realCycles = (d && !d.error) ? (d.cycles || []).filter(c => c.live || c.reconciled) : [];
   const markers = [];
-  if (d && !d.error) (d.cycles || []).forEach(c => {
+  realCycles.forEach(c => {
     // floor the fill/exit minute to its 5-min candle so the arrow lands on the RIGHT bar
     if (c.entry_time) markers.push({ time: scaTime(date, scaFloor5(c.entry_time)), position: 'aboveBar',
       color: '#ef5350', shape: 'arrowDown', text: 'S' + c.cycle });
@@ -1885,9 +1939,9 @@ async function scaRenderLive(keepView = false) {
       `<div class="text-[11px] text-slate-400">${trig}fill <b class="text-slate-200">${c.exit_combined ?? '—'}</b></div>` +
       legLine(c.exit_ce, c.exit_pe, c.exit_ce_time, c.exit_pe_time);
   };
-  const netPoints = Math.round((d.cycles || []).reduce((s, c) => s + (c.points || 0), 0) * 100) / 100;
-  const netPnl = d.realized_pnl || 0;
-  const rows = (d.cycles || []).map(c => `
+  const netPoints = Math.round(realCycles.reduce((s, c) => s + (c.points || 0), 0) * 100) / 100;
+  const netPnl = Math.round(realCycles.reduce((s, c) => s + (c.pnl || 0), 0) * 100) / 100;
+  const rows = realCycles.map(c => `
     <tr class="border-t border-[#1e2636]" style="vertical-align:top">
       <td class="py-1 px-2">${c.cycle}</td>
       <td class="py-1 px-2">${entryCell(c)}</td>
@@ -1909,9 +1963,9 @@ async function scaRenderLive(keepView = false) {
     </div>
     ${armBox}
     <div class="flex gap-6 mb-3">
-      <div><div class="text-[10px] text-slate-500 uppercase">Realized</div><div class="text-lg font-semibold" style="color:${pnlc(rp)}">₹${rp}</div></div>
+      <div><div class="text-[10px] text-slate-500 uppercase">Realized</div><div class="text-lg font-semibold" style="color:${pnlc(netPnl)}">₹${netPnl}</div></div>
       <div><div class="text-[10px] text-slate-500 uppercase">Live MTM</div><div class="text-lg font-semibold" style="color:${pnlc(mp)}">₹${mp}</div></div>
-      <div><div class="text-[10px] text-slate-500 uppercase">Cycles</div><div class="text-lg font-semibold text-slate-300">${(d.cycles || []).length}</div></div>
+      <div><div class="text-[10px] text-slate-500 uppercase">Cycles</div><div class="text-lg font-semibold text-slate-300">${realCycles.length}</div></div>
     </div>
     ${rows ? `<table class="w-full text-xs"><thead><tr class="text-slate-500 text-left">
         <th class="py-1 px-2">#</th><th class="py-1 px-2">Entry</th><th class="py-1 px-2">Exit</th>

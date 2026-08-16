@@ -365,6 +365,20 @@ async def api_strangle_set_control(index: str = "NIFTY", mode: str = None, kill:
     return _live_control_mod().write_control(index=index, mode=mode, kill=kill)
 
 
+@app.get("/api/strangle/live_tick")
+async def api_strangle_live_tick(date: str, index: str):
+    """Tiny real-time tick snapshot (combined premium, live MTM, per-leg LTP) the engine
+    publishes every ~0.4s while running — polled fast by the Live tab for a broker-terminal
+    feel. Read-only."""
+    f = _LIVE_DIR / f"{date}_{index.upper()}_TICK.json"
+    if not f.exists():
+        return {"error": "no tick"}
+    try:
+        return _json.loads(f.read_text())
+    except Exception:
+        return {"error": "read"}
+
+
 @app.get("/api/strangle/live")
 async def api_strangle_live(date: str, index: str):
     """The live/paper-live snapshot for one index/day (cycles, order ids, P&L,

@@ -125,6 +125,26 @@ class LiveController:
                 self._flatten("MTM stop")
         if self._trades_allowed:
             self.trigger.on_tick(combined, hm)
+        self._write_tick(combined)             # real-time P&L / price for the Live tab
+
+    def _write_tick(self, combined: float):
+        """Publish a tiny live-tick snapshot (throttled ~0.4s) so the dashboard can show
+        real-time P&L + price + a moving current candle — like a broker terminal. Kept
+        separate + small so it's cheap to write every few ticks. Never raises."""
+        import time as _t
+        now = _t.monotonic()
+        if now - getattr(self, "_last_tick_write", 0.0) < 0.4:
+            return
+        self._last_tick_write = now
+        try:
+            mtm = self.ledger.mtm({k: v for k, v in self.marks.items() if v is not None})
+            (STATE_DIR / f"{self.date}_{self.index}_TICK.json").write_text(json.dumps({
+                "t": self._hm, "combined": round(combined, 2), "mtm": mtm,
+                "ce": self.marks.get(self.ce), "pe": self.marks.get(self.pe),
+                "armed": self.is_live_armed(),
+                "updated": dt.datetime.now().strftime("%H:%M:%S")}))
+        except Exception:
+            pass
 
     def on_candle(self, ohlcv: dict):
         """Feed a finished 5-min OHLCV candle (no VWAP needed). The controller keeps
@@ -272,7 +292,7 @@ class LiveController:
         self._open = {"cycle": cycle, "entry_time": self._hm, "entry_combined": combined,
                       "entry_ce": ce_fill, "entry_pe": pe_fill, "trigger": combined_trigger,
                       "entry_ce_time": self._last_fill_time.get(self.ce),
-                      "entry_pe_time": self._last_fill_time.get(self.pe),
+                      "entry_pe_time": self._last_fill_time.get(self.pe), "live": live,
                       "exit_time": None, "exit_combined": None, "points": None, "pnl": None}
         self.cycles.append(self._open)
         self.events.append({"t": self._hm, "type": "entry", "cycle": cycle,
