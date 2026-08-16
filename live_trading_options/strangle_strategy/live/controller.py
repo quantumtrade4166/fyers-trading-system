@@ -178,6 +178,44 @@ class LiveController:
         finally:
             self._seeding = False
 
+    def reconcile_broker(self):
+        """Rebuild the REAL own-book from the broker's own tagged fills, so a restart
+        never loses a real position (the bug that stopped KILL/square-off from covering).
+        TAG-SCOPED: only THIS strategy's `vwstrangle` orders — immune to the user's manual
+        trades and to broker netting. If a real short is found, sync trigger.in_pos + the
+        open cycle so the strategy won't re-enter and WILL square it off on exit/kill."""
+        if not (self.kite and self.kite_syms):
+            return
+        from live import kite_executor as kx
+        ts_to_fy = {v["tradingsymbol"]: fy for fy, v in self.kite_syms.items()}
+        try:
+            fills = kx.strategy_fills(self.kite)
+        except Exception as e:
+            audit.log(self.index, "RECONCILE_FAIL", error=str(e))
+            return
+        added, entry_px = 0, {}
+        for f in fills:
+            fy = ts_to_fy.get(f["tradingsymbol"])
+            if not fy or f["order_id"] in self.ledger.orders:
+                continue
+            self.ledger.record(Order(f["order_id"], fy, f["side"], f["qty"], 0, "reconciled"))
+            self.ledger.update_fill(f["order_id"], COMPLETE, f["qty"], f["avg_price"], f["fill_time"])
+            added += 1
+            if f["side"] == SELL:
+                entry_px[fy] = f["avg_price"]
+        ce_s, pe_s = self.ledger.open_short_real(self.ce), self.ledger.open_short_real(self.pe)
+        if (ce_s > 0 or pe_s > 0) and not self._open:
+            combined = round((entry_px.get(self.ce) or 0) + (entry_px.get(self.pe) or 0), 2)
+            self.trigger.in_pos = True         # we really hold it — don't re-enter
+            self._open = {"cycle": len(self.cycles) + 1, "entry_time": self._hm,
+                          "entry_combined": combined, "entry_ce": entry_px.get(self.ce),
+                          "entry_pe": entry_px.get(self.pe), "trigger": None, "reconciled": True,
+                          "exit_time": None, "exit_combined": None, "points": None, "pnl": None}
+            self.cycles.append(self._open)
+        audit.log(self.index, "RECONCILE", added=added, ce_short=ce_s, pe_short=pe_s,
+                  in_pos=self.trigger.in_pos)
+        self.persist()
+
     # ── trigger callbacks ────────────────────────────────────────────────
     def _now(self) -> dt.datetime:
         return dt.datetime.combine(dt.date.fromisoformat(self.date), _t(self._hm))

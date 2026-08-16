@@ -350,6 +350,7 @@ def _maybe_attach_controller(book, idx, date_str, pick, meta):
             mode="paper", allow_live=lo.get("allow_live", False), kite=kite, kite_syms=kite_syms)
         if book.candles:                          # seed VWAP + state from the morning
             ctrl.seed(list(book.candles), lambda comb: (round(comb / 2, 2), round(comb / 2, 2)))
+        ctrl.reconcile_broker()                   # recover any REAL position (restart-safe)
         book.controller = ctrl
         print(f"  [live] {idx}: controller attached (mode=paper, lot_size={lot_size}, "
               f"allow_live={lo.get('allow_live')})")

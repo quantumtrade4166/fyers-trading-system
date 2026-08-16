@@ -125,3 +125,25 @@ def order_status(kite, order_id: str) -> dict:
 
 def cancel(kite, order_id: str):
     return kite.cancel_order(variety=kite.VARIETY_REGULAR, order_id=order_id)
+
+
+def strategy_fills(kite, tag: str = "vwstrangle") -> list:
+    """Today's COMPLETE orders placed by THIS strategy, identified ONLY by our `tag`.
+    The own-book source of truth for reconciliation — NEVER kite.positions() (which is
+    netted and mixes the user's MANUAL trades on the same strike). Returns a list of
+    {tradingsymbol, exchange, side, qty, avg_price, order_id, fill_time}."""
+    out = []
+    for o in (kite.orders() or []):
+        if o.get("tag") != tag or o.get("status") != "COMPLETE":
+            continue
+        ts = o.get("exchange_timestamp") or o.get("order_timestamp")
+        out.append({
+            "tradingsymbol": o.get("tradingsymbol"),
+            "exchange": o.get("exchange"),
+            "side": o.get("transaction_type"),
+            "qty": int(o.get("filled_quantity") or o.get("quantity") or 0),
+            "avg_price": o.get("average_price"),
+            "order_id": o.get("order_id"),
+            "fill_time": ts.strftime("%H:%M:%S") if hasattr(ts, "strftime") else str(ts),
+        })
+    return out
