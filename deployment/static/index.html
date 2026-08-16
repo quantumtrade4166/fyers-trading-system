@@ -574,6 +574,10 @@
                background:rgba(13,17,26,.9);border:1px solid #2d3748;border-radius:6px;
                padding:5px 10px;font-size:11px;color:#cbd5e1;display:none;z-index:5;
                font-family:ui-monospace,Menlo,monospace;white-space:nowrap"></div>
+          <div id="sca-cd" title="time until this 5-min candle closes" style="position:absolute;top:6px;right:14px;
+               pointer-events:none;background:rgba(13,17,26,.85);border:1px solid #2d3748;border-radius:5px;
+               padding:3px 9px;font-size:12px;font-weight:700;color:#fb8c00;z-index:6;display:none;
+               font-family:ui-monospace,Menlo,monospace"></div>
         </div>
         <div class="flex items-center gap-4 mt-2 text-xs text-slate-500">
           <span><span style="color:#fb8c00">—</span> VWAP</span>
@@ -595,6 +599,10 @@
                background:rgba(13,17,26,.9);border:1px solid #2d3748;border-radius:6px;
                padding:5px 10px;font-size:11px;color:#cbd5e1;display:none;z-index:5;
                font-family:ui-monospace,Menlo,monospace;white-space:nowrap"></div>
+          <div id="sca-live-cd" title="time until this 5-min candle closes" style="position:absolute;top:6px;right:14px;
+               pointer-events:none;background:rgba(13,17,26,.85);border:1px solid #2d3748;border-radius:5px;
+               padding:3px 9px;font-size:12px;font-weight:700;color:#fb8c00;z-index:6;display:none;
+               font-family:ui-monospace,Menlo,monospace"></div>
         </div>
         <div class="flex items-center gap-4 mt-2 text-xs text-slate-500">
           <span><span style="color:#fb8c00">—</span> VWAP</span>
@@ -1665,6 +1673,27 @@ function scaFloor5(hm) {
   const [h, m] = hm.split(':').map(Number);
   return String(h).padStart(2, '0') + ':' + String(Math.floor(m / 5) * 5).padStart(2, '0');
 }
+
+// TradingView-style countdown to the current 5-min candle close. Only meaningful for
+// TODAY during market hours (9:15–15:30 IST); hidden otherwise. Ticks every second.
+function scaUpdateCountdown() {
+  const now = new Date();
+  const sel = document.getElementById('sca-date');
+  const date = sel ? sel.value : '';
+  const today = now.toLocaleDateString('en-CA');          // YYYY-MM-DD (viewer tz = IST)
+  const mins = now.getHours() * 60 + now.getMinutes();
+  const show = mins >= (9 * 60 + 15) && mins < (15 * 60 + 30) && date === today;
+  let txt = '';
+  if (show) {
+    const rem = 300 - ((now.getMinutes() % 5) * 60 + now.getSeconds());
+    txt = '⏱ ' + String(Math.floor(rem / 60)).padStart(2, '0') + ':' + String(rem % 60).padStart(2, '0');
+  }
+  ['sca-cd', 'sca-live-cd'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) { el.textContent = txt; el.style.display = show ? '' : 'none'; }
+  });
+}
+setInterval(scaUpdateCountdown, 1000);
 function scaLiveEnsureChart() {
   if (scaLiveChart) return;
   const el = document.getElementById('sca-live-chart');
