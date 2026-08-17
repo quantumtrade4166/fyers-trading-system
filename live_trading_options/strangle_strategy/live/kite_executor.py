@@ -47,9 +47,15 @@ def access_token() -> str:
     return d.get("access_token", "")
 
 
+# Kite's client default read-timeout is 7s — too tight for order placement during
+# open-auction / high-load minutes, where a POST can be slow but still SUCCEEDS. A too-
+# short timeout abandons a request whose order may already be in the OMS. 15s is safe.
+_HTTP_TIMEOUT = 15
+
+
 def get_kite():
     from kiteconnect import KiteConnect
-    k = KiteConnect(api_key=_API_KEY)
+    k = KiteConnect(api_key=_API_KEY, timeout=_HTTP_TIMEOUT)
     k.set_access_token(access_token())
     return k
 
@@ -107,12 +113,70 @@ def place_limit(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
         order_type=kite.ORDER_TYPE_LIMIT, price=_round_tick(price), tag=tag)
 
 
+def _find_recent_order(kite, tradingsymbol: str, side: str, qty: int, since,
+                       tag: str = "vwstrangle", wait: float = 3.0) -> str | None:
+    """Poll the order book briefly for an order we may have placed but whose HTTP
+    response we LOST (timeout/network error). Matched by tag+symbol+side+qty placed
+    at/after `since`. This is what makes a placement timeout safe — before we ever
+    retry, we confirm whether the first request actually landed in the OMS."""
+    import time as _t
+    deadline = _t.monotonic() + wait
+    while True:
+        try:
+            orders = kite.orders() or []
+        except Exception:
+            orders = []
+        for o in orders:
+            if (o.get("tag") == tag and o.get("tradingsymbol") == tradingsymbol
+                    and o.get("transaction_type") == side
+                    and int(o.get("quantity") or 0) == int(qty)
+                    and o.get("status") not in ("REJECTED", "CANCELLED")):
+                ots = o.get("order_timestamp")
+                if since is not None and hasattr(ots, "year") and ots < since:
+                    continue
+                return o.get("order_id")
+        if _t.monotonic() >= deadline:
+            return None
+        _t.sleep(0.7)
+
+
+def place_limit_verified(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
+                         price: float, product: str = "MIS", tag: str = "vwstrangle",
+                         retries: int = 2) -> str:
+    """place_limit that survives a lost/timed-out HTTP response WITHOUT ever double-
+    placing a real order. On a network error the outcome is UNKNOWN — the order may
+    already be in the OMS — so we look it up (tag+symbol+side+qty, just now) before
+    deciding: if found we adopt that order_id; only if nothing landed do we retry.
+    Raises only if placement genuinely fails every attempt with nothing in the book."""
+    import datetime as _dt
+    import time as _t
+    last_err = None
+    for attempt in range(retries + 1):
+        since = _dt.datetime.now() - _dt.timedelta(seconds=6)
+        try:
+            return place_limit(kite, tradingsymbol, exchange, side, qty, price, product, tag)
+        except Exception as e:
+            last_err = e
+            # did the (timed-out) request actually place the order? poll the book.
+            found = _find_recent_order(kite, tradingsymbol, side, qty, since, tag)
+            if found:
+                return found                       # it DID land — adopt it, never re-place
+            if attempt < retries:
+                _t.sleep(1.0)                      # nothing landed → safe to retry
+    raise last_err
+
+
 def order_status(kite, order_id: str) -> dict:
     """Latest status + fill for an order_id: {status, filled_qty, avg_price, fill_time}.
     fill_time = the broker's exchange timestamp (HH:MM:SS) of the fill — used to show
     the EXACT per-leg fill time + any delay between the two legs. This is how the ledger
-    reconciles against the broker — by order id, not the netted position."""
-    hist = kite.order_history(order_id) or []
+    reconciles against the broker — by order id, not the netted position.
+    A transient query timeout returns status=None (still-pending) so the caller's poll
+    loop simply tries again instead of crashing the whole entry."""
+    try:
+        hist = kite.order_history(order_id) or []
+    except Exception:
+        return {"status": None, "filled_qty": 0, "avg_price": None, "fill_time": None}
     last = hist[-1] if hist else {}
     ts = last.get("exchange_timestamp") or last.get("order_timestamp")
     try:

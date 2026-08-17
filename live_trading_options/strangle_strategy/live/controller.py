@@ -199,11 +199,16 @@ class LiveController:
             self._seeding = False
 
     def reconcile_broker(self):
-        """Rebuild the REAL own-book from the broker's own tagged fills, so a restart
-        never loses a real position (the bug that stopped KILL/square-off from covering).
+        """Make the broker's own tagged fills the single source of truth after a (re)start.
         TAG-SCOPED: only THIS strategy's `vwstrangle` orders — immune to the user's manual
-        trades and to broker netting. If a real short is found, sync trigger.in_pos + the
-        open cycle so the strategy won't re-enter and WILL square it off on exit/kill."""
+        trades and to broker netting.
+
+        When LIVE-armed the seed-replay's PAPER orders are only an approximation, and a
+        timed-out entry leaves a phantom paper short that would (a) show a fake rising
+        equity curve, (b) hide the real trade behind the live-only filter, and (c) risk a
+        false MTM-stop. So in live mode we DROP the paper book entirely and rebuild the
+        ledger + displayed cycles + equity curve straight from the real fills. In paper
+        mode we just fold in any real fills we didn't already know about."""
         if not (self.kite and self.kite_syms):
             return
         from live import kite_executor as kx
@@ -213,28 +218,80 @@ class LiveController:
         except Exception as e:
             audit.log(self.index, "RECONCILE_FAIL", error=str(e))
             return
-        added, entry_px = 0, {}
-        for f in fills:
-            fy = ts_to_fy.get(f["tradingsymbol"])
-            if not fy or f["order_id"] in self.ledger.orders:
-                continue
-            self.ledger.record(Order(f["order_id"], fy, f["side"], f["qty"], 0, "reconciled"))
-            self.ledger.update_fill(f["order_id"], COMPLETE, f["qty"], f["avg_price"], f["fill_time"])
-            added += 1
-            if f["side"] == SELL:
-                entry_px[fy] = f["avg_price"]
+        mine = [{**f, "fy": ts_to_fy[f["tradingsymbol"]]}
+                for f in fills if ts_to_fy.get(f["tradingsymbol"]) in (self.ce, self.pe)]
+        mine.sort(key=lambda f: (f.get("fill_time") or ""))
+
+        if self.is_live_armed():
+            self.ledger = Ledger()                 # real fills are the ONLY truth in live
+            for f in mine:
+                self.ledger.record(Order(f["order_id"], f["fy"], f["side"], f["qty"], 0, "reconciled"))
+                self.ledger.update_fill(f["order_id"], COMPLETE, f["qty"], f["avg_price"], f["fill_time"])
+            self._rebuild_cycles_from_fills(mine)
+        else:
+            for f in mine:                         # paper: fold in only unknown real fills
+                if f["order_id"] in self.ledger.orders:
+                    continue
+                self.ledger.record(Order(f["order_id"], f["fy"], f["side"], f["qty"], 0, "reconciled"))
+                self.ledger.update_fill(f["order_id"], COMPLETE, f["qty"], f["avg_price"], f["fill_time"])
+
         ce_s, pe_s = self.ledger.open_short_real(self.ce), self.ledger.open_short_real(self.pe)
-        if (ce_s > 0 or pe_s > 0) and not self._open:
-            combined = round((entry_px.get(self.ce) or 0) + (entry_px.get(self.pe) or 0), 2)
-            self.trigger.in_pos = True         # we really hold it — don't re-enter
-            self._open = {"cycle": len(self.cycles) + 1, "entry_time": self._hm,
-                          "entry_combined": combined, "entry_ce": entry_px.get(self.ce),
-                          "entry_pe": entry_px.get(self.pe), "trigger": None, "reconciled": True,
-                          "exit_time": None, "exit_combined": None, "points": None, "pnl": None}
-            self.cycles.append(self._open)
-        audit.log(self.index, "RECONCILE", added=added, ce_short=ce_s, pe_short=pe_s,
+        audit.log(self.index, "RECONCILE", added=len(mine), ce_short=ce_s, pe_short=pe_s,
                   in_pos=self.trigger.in_pos)
         self.persist()
+
+    def _rebuild_cycles_from_fills(self, fills: list):
+        """Rebuild the displayed cycles + equity curve from REAL broker fills (time-
+        ordered), pairing each SELL-pair (entry) with the BUY-pair that covers it (exit).
+        This is what the Live tab shows, so after a restart it reflects the true broker
+        trades, real per-leg fill prices/times, real P&L, and a clean stepped equity
+        curve — never the paper reconstruction."""
+        cycles, cur, n = [], None, 0
+        short = {self.ce: 0, self.pe: 0}
+        for f in fills:
+            sym, side, px, t, q = f["fy"], f["side"], f["avg_price"], f.get("fill_time"), f["qty"]
+            if side == SELL:
+                if short[self.ce] <= 0 and short[self.pe] <= 0:      # flat -> new cycle entry
+                    n += 1
+                    cur = {"cycle": n, "entry_time": t, "entry_ce": None, "entry_pe": None,
+                           "entry_combined": None, "exit_time": None, "exit_ce": None,
+                           "exit_pe": None, "exit_combined": None, "points": None, "pnl": None,
+                           "trigger": None, "live": True, "reconciled": True}
+                    cycles.append(cur)
+                short[sym] += q
+                if cur is not None:
+                    cur["entry_ce" if sym == self.ce else "entry_pe"] = px
+                    cur["entry_ce_time" if sym == self.ce else "entry_pe_time"] = t
+                    if cur["entry_ce"] is not None and cur["entry_pe"] is not None:
+                        cur["entry_combined"] = round(cur["entry_ce"] + cur["entry_pe"], 2)
+            else:                                                     # BUY -> cover / exit
+                short[sym] -= q
+                if cur is not None:
+                    cur["exit_ce" if sym == self.ce else "exit_pe"] = px
+                    cur["exit_ce_time" if sym == self.ce else "exit_pe_time"] = t
+                    cur["exit_time"] = t
+                    if cur["exit_ce"] is not None and cur["exit_pe"] is not None:
+                        cur["exit_combined"] = round(cur["exit_ce"] + cur["exit_pe"], 2)
+                        cur["points"] = round((cur["entry_combined"] or 0) - cur["exit_combined"], 2)
+                        cur["pnl"] = round(cur["points"] * self.qty, 2)
+                        if short[self.ce] <= 0 and short[self.pe] <= 0:
+                            cur = None                                # cycle fully closed
+        self.cycles = cycles
+        if cycles and cycles[-1]["exit_combined"] is None:            # last cycle still open
+            self._open = cycles[-1]
+            self.trigger.in_pos = True
+        else:
+            self._open = None
+            self.trigger.in_pos = False
+        # clean stepped equity curve from realized cycle exits (live ticks extend it forward)
+        series, cum = [], 0.0
+        for c in cycles:
+            if c["entry_time"]:
+                series.append({"t": c["entry_time"], "rupees": round(cum, 2)})
+            if c["pnl"] is not None:
+                cum += c["pnl"]
+                series.append({"t": c["exit_time"], "rupees": round(cum, 2)})
+        self._mtm_series = series
 
     # ── trigger callbacks ────────────────────────────────────────────────
     def _now(self) -> dt.datetime:
@@ -409,8 +466,8 @@ class LiveController:
     def _fire_leg(self, kx, sym: str, side: str, cycle: int, kind: str, buf: float) -> dict:
         """Place ONE marketable-limit leg immediately (no wait) and record it."""
         ks = self.kite_syms[sym]
-        oid = kx.place_limit(self.kite, ks["tradingsymbol"], ks["exchange"],
-                             side, self.qty, self._limit_price(sym, side, buf))
+        oid = kx.place_limit_verified(self.kite, ks["tradingsymbol"], ks["exchange"],
+                                      side, self.qty, self._limit_price(sym, side, buf))
         self.ledger.record(Order(oid, sym, side, self.qty, cycle, kind))
         return {"oid": oid, "fill": None}
 
@@ -488,7 +545,7 @@ class LiveController:
         import time
         ks = self.kite_syms[sym]
         price = self._limit_price(sym, side)
-        oid = kx.place_limit(self.kite, ks["tradingsymbol"], ks["exchange"], side, qty, price)
+        oid = kx.place_limit_verified(self.kite, ks["tradingsymbol"], ks["exchange"], side, qty, price)
         audit.log(self.index, "ORDER_PLACED", cyc=cycle, side=side, sym=ks["tradingsymbol"],
                   qty=qty, limit=round(price, 2), kind=kind, oid=oid)
         o = Order(oid, sym, side, qty, cycle, kind)

@@ -1878,8 +1878,13 @@ async function scaRenderLive(keepView = false) {
 
   // ONE-LINE EFFECTIVE STATUS — so "armed" is never ambiguous (armed ≠ will trade).
   const kr = (d && d.kill_reason) ? ' — ' + d.kill_reason : '';
+  const todayStr = new Date().toLocaleDateString('en-CA'); // yyyy-mm-dd, local
+  const isTodayView = (date === todayStr);
   let stTxt, stCol, stBg;
-  if (!cfArmed) {
+  if (!isTodayView) {
+    // A PAST day's snapshot must never be read as the current live status.
+    stTxt = '📅 Historical view — ' + date + ' · not the live session (today\'s engine starts ≈9:20)'; stCol = '#93c5fd'; stBg = '#1e293b';
+  } else if (!cfArmed) {
     stTxt = '◉ PAPER-LIVE — watching only, NO real orders'; stCol = '#99f6e4'; stBg = '#0f3d38';
   } else if (killed) {
     stTxt = '⏹ ARMED but STOPPED for the day — no more orders' + kr; stCol = '#fca5a5'; stBg = '#5b1a1a';
@@ -1893,7 +1898,9 @@ async function scaRenderLive(keepView = false) {
     stTxt = '● LIVE — real orders WILL fire on the next signal'; stCol = '#fecaca'; stBg = '#7f1d1d';
   }
   const gate = (ok, y, n) => `<span style="color:${ok ? '#26a69a' : '#ef5350'}">${ok ? '✓' : '✗'} ${ok ? y : n}</span>`;
-  const gates = (d && !d.error)
+  const gates = (!isTodayView)
+    ? `<span style="color:#64748b">past session — arming/broker status applies to today only</span>`
+    : (d && !d.error)
     ? `${gate(cfArmed, 'armed', 'not armed')} &nbsp;·&nbsp; ${gate(d.trades_allowed !== false, 'DTE ' + d.dte + ' trades', 'DTE ' + d.dte + ' no-trade')} &nbsp;·&nbsp; ${gate(d.broker_ready === true, 'broker linked', 'broker OFF')} &nbsp;·&nbsp; ${gate(!killed, 'active', 'KILLED')}`
     : `${gate(cfArmed, 'armed', 'not armed')} &nbsp;·&nbsp; <span style="color:#64748b">engine not started — strikes/broker pending</span>`;
   const statusBanner = `

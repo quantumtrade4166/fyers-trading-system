@@ -387,6 +387,83 @@ def build_books(date_str: str):
         print(f"  [V2] {idx}: {pick['ce_symbol']} + {pick['pe_symbol']}")
 
 
+def _backfill_early_history(date_str: str):
+    """Backfill the 9:15+ combined candles from Fyers 1-min HISTORY into each book.
+
+    WHY: the engine starts ~9:20, but at that moment the 1-min option history for the
+    9:15-9:20 bar isn't queryable yet (Fyers lags a few minutes at the open), so
+    `_seed_book` finds no V1/V2 archive and seeds ZERO candles — the live VWAP then
+    starts from the first live bar (~9:20) instead of 9:15, diverging from V1/V2/backtest
+    (that's why an entry can fire off a slightly different VWAP; observed 2026-08-17).
+
+    This retries every ~25s for ~25 min; once the history is available it splices the
+    missing EARLY candles into the book (so the chart + V2 archive start from 9:15) and
+    RE-SEEDS the controller's VWAP — but ONLY while the controller is still flat with no
+    cycles (the clean pre-trade window), so it can never disturb a live position."""
+    from core.fyers_client import get_client
+    done: set[str] = set()
+    deadline = time.monotonic() + 25 * 60
+    split_fn = lambda comb: (round(comb / 2, 2), round(comb / 2, 2))
+    first = True
+    while time.monotonic() < deadline:
+        if not first:
+            time.sleep(25)
+        first = False
+        now = dt.datetime.now(IST).replace(tzinfo=None)
+        if now.time() > dt.time(15, 30):
+            return
+        try:
+            client = get_client()
+        except Exception:
+            continue
+        cur_bkt = _floor_5min(now).strftime("%H:%M")
+        for idx, book in list(_books.items()):
+            if idx in done:
+                continue
+            try:                                          # one book's failure never kills the loop
+                from core.premium_builder import combined_for_strikes
+                try:
+                    dfc = combined_for_strikes(client, book.ce_sym, book.pe_sym, date_str, date_str)
+                except Exception:
+                    continue                              # history not ready yet — retry next loop
+                hist = [{"time": r["datetime"].strftime("%H:%M"),
+                         "open": round(float(r["open"]), 2), "high": round(float(r["high"]), 2),
+                         "low": round(float(r["low"]), 2), "close": round(float(r["close"]), 2),
+                         "volume": int(r["volume"])}
+                        for _, r in dfc.iterrows() if r["datetime"].strftime("%H:%M") < cur_bkt]
+                if not hist:
+                    continue
+                with book.lock:                           # all controller access is under this lock
+                    have = {c["time"] for c in book.candles}
+                    earliest = min(have) if have else "99:99"
+                    # only the EARLY closed candles the live book never captured (before it started)
+                    missing = [c for c in hist if c["time"] < earliest and c["time"] not in have]
+                    if missing:
+                        book.candles = sorted(missing + book.candles, key=lambda c: c["time"])
+                        ctrl = book.controller
+                        reseeded = False
+                        if ctrl is not None and not ctrl.cycles and not ctrl.trigger.in_pos:
+                            ctrl.seed(list(book.candles), split_fn)   # VWAP now cumulative from 9:15
+                            ctrl.reconcile_broker()
+                            reseeded = True
+                        try:
+                            from live import audit
+                            audit.log(idx, "HISTORY_BACKFILL", added=len(missing),
+                                      first=missing[0]["time"], reseeded=reseeded,
+                                      book_candles=len(book.candles))
+                        except Exception:
+                            pass
+                        print(f"  [V2] {idx}: backfilled {len(missing)} early candle(s) "
+                              f"from history (reseeded={reseeded})")
+                    if "09:15" in {c["time"] for c in book.candles}:
+                        done.add(idx)
+            except Exception as e:
+                print(f"  [V2] {idx} backfill iteration error: {e}")
+        if _books and len(done) >= len(_books):
+            print("  [V2] history backfill complete for all books")
+            return
+
+
 def _push_sheets_eod(date_str: str):
     """Best-effort EOD push of the day's V2 P&L to Google Sheets (if enabled in
     parameters.json). Never raises — a Sheets/network failure must not affect the
@@ -467,6 +544,9 @@ def main():
         on_connect=_on_open, on_close=_on_close, on_error=_on_error, on_message=_on_message,
     )
     threading.Thread(target=_writer_loop, args=(date_str,), daemon=True, name="V2writer").start()
+    # backfill the 9:15+ history (lags at the open) so live VWAP starts from 9:15 like V1/V2
+    threading.Thread(target=_backfill_early_history, args=(date_str,), daemon=True,
+                     name="V2backfill").start()
     _ws.connect()
 
 
