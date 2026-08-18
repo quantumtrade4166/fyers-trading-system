@@ -63,6 +63,19 @@ HEADER = (
     + ["Open?", "Total Points", "EOD P&L (Rs)", "Lots", "Source", "Captured"]
 )
 
+# ── LIVE tab (the day's REAL Zerodha result, from the LIVE.json snapshots) ────────
+LIVE_STATE_DIR = ROOT / "data" / "live_state"
+LIVE_WS_NAME = _GS.get("live_worksheet", "Vwap Live Zerodha")
+# One row per index per day in ONE shared tab, keyed by (Date, Index). Per-cycle blocks
+# carry the actual combined FILLS (not simulated), plus qty + realized/open P&L.
+LIVE_HEADER = (
+    ["Date", "Index", "DTE", "Mode", "CE Symbol", "PE Symbol", "Qty"]
+    + [c for n in range(1, MAX_CYCLES + 1)
+       for c in (f"E{n} Time", f"E{n} Fill", f"X{n} Time", f"X{n} Fill", f"P{n} Pts", f"P{n} Rs")]
+    + ["Cycles", "Net Points", "Realized P&L (Rs)", "Open MTM (Rs)",
+       "Open?", "Killed", "Kill Reason", "Updated", "Captured"]
+)
+
 
 # ── strike resolution ─────────────────────────────────────────────────────
 def _strikes(rec: dict) -> tuple:
@@ -162,41 +175,51 @@ def authorize():
     print(f"  [sheets] authorized — token cached at {_OAUTH_TOKEN_FILE}")
 
 
-def _open_worksheet(index: str):
-    """Open (creating if needed) the per-index worksheet, ensuring the header row."""
+def _open_named_ws(ws_name: str, header: list):
+    """Open (creating if needed) a worksheet by exact name, ensuring the header row."""
     import gspread
 
     sid = _GS.get("spreadsheet_id")
     if not sid:
         raise RuntimeError("config/parameters.json -> google_sheets.spreadsheet_id is not set")
     sh = _client().open_by_key(sid)
-    ws_name = _worksheet_name(index)
     try:
         ws = sh.worksheet(ws_name)
     except gspread.WorksheetNotFound:
-        ws = sh.add_worksheet(title=ws_name, rows=1000, cols=len(HEADER))
-    if ws.row_values(1) != HEADER:              # ensure header row
-        ws.update(range_name="A1", values=[HEADER])
+        ws = sh.add_worksheet(title=ws_name, rows=1000, cols=len(header))
+    if ws.row_values(1) != header:              # ensure header row
+        ws.update(range_name="A1", values=[header])
     return ws
 
 
-def upsert_row(row: list, index: str, mode: str = "PAPER"):
-    """Insert or replace the row keyed by (Date, Mode) inside the index tab —
-    idempotent, so the EOD job can run repeatedly without duplicating."""
-    ws = _open_worksheet(index)
-    date_v, mode_v = str(row[0]), str(row[3])
+def _open_worksheet(index: str):
+    """The per-index PAPER/LIVE tab (schema = HEADER)."""
+    return _open_named_ws(_worksheet_name(index), HEADER)
+
+
+def _upsert(ws, row: list, key_idx: tuple, label: str = ""):
+    """Insert or replace `row`, keyed by the column indices in `key_idx` — idempotent,
+    so the EOD job can re-run without duplicating. (Paper: (Date, Mode) inside an index
+    tab. Live: (Date, Index) inside the shared live tab.)"""
+    keys = [str(row[i]) for i in key_idx]
     records = ws.get_all_values()
     target = None
     for i, r in enumerate(records[1:], start=2):        # skip header
-        if len(r) >= 4 and r[0] == date_v and r[3] == mode_v:
+        if all(len(r) > k and r[k] == keys[j] for j, k in enumerate(key_idx)):
             target = i
             break
+    tag = " ".join(keys)
     if target:
         ws.update(range_name=f"A{target}", values=[row])
-        print(f"  [sheets] {index} updated row {target}: {date_v} {mode_v}")
+        print(f"  [sheets] {label} updated row {target}: {tag}")
     else:
         ws.append_row(row, value_input_option="USER_ENTERED")
-        print(f"  [sheets] {index} appended: {date_v} {mode_v}")
+        print(f"  [sheets] {label} appended: {tag}")
+
+
+def upsert_row(row: list, index: str, mode: str = "PAPER"):
+    """Insert or replace the row keyed by (Date, Mode) inside the index tab."""
+    _upsert(_open_worksheet(index), row, key_idx=(0, 3), label=index)
 
 
 def log_paper_day(date_str: str = None, indices: list[str] = None):
@@ -219,13 +242,88 @@ def log_paper_day(date_str: str = None, indices: list[str] = None):
     return logged
 
 
+# ── LIVE export (real broker result from the LIVE.json snapshot) ─────────────────
+def _load_live(date_str: str, index: str) -> dict | None:
+    p = LIVE_STATE_DIR / f"{date_str}_{index.upper()}_LIVE.json"
+    return json.loads(p.read_text()) if p.exists() else None
+
+
+def build_live_row(snap: dict) -> list:
+    """One LIVE.json snapshot -> a flat row matching LIVE_HEADER. Pure (no network)."""
+    cycles = snap.get("cycles", []) or []
+    is_open = bool(snap.get("open"))
+    row = [
+        snap.get("date", ""),
+        snap.get("index", ""),
+        snap.get("dte", ""),
+        str(snap.get("mode", "")).upper(),
+        snap.get("ce_symbol", ""),
+        snap.get("pe_symbol", ""),
+        snap.get("qty", ""),
+    ]
+    by_no = {c.get("cycle"): c for c in cycles}
+    for n in range(1, MAX_CYCLES + 1):
+        c = by_no.get(n)
+        if c:
+            exit_t = c.get("exit_time") or ("OPEN" if (is_open and not c.get("exit_combined")) else "")
+            row += [c.get("entry_time", ""), c.get("entry_combined", ""),
+                    exit_t, c.get("exit_combined", ""),
+                    c.get("points", ""), c.get("pnl", "")]
+        else:
+            row += ["", "", "", "", "", ""]
+
+    closed = [c for c in cycles if c.get("points") is not None]
+    net_points = round(sum(c.get("points") or 0 for c in closed), 2)
+    row += [
+        len(closed),
+        net_points,
+        snap.get("realized_pnl", ""),
+        snap.get("mtm_pnl", ""),
+        "YES" if is_open else "",
+        "YES" if snap.get("killed") else "",
+        snap.get("kill_reason") or "",
+        snap.get("updated", ""),
+        dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+    ]
+    return row
+
+
+def log_live_day(date_str: str = None, indices: list[str] = None):
+    """Upsert the day's REAL live-tab result into the single 'Vwap Live Zerodha' tab —
+    one row per index, keyed by (Date, Index). Reads the LIVE.json snapshots. Only the
+    DTE 0/1 trade days are logged (other days are chart-only, no trades)."""
+    date_str = date_str or dt.date.today().isoformat()
+    indices = indices or ["NIFTY", "SENSEX"]
+    ws = None
+    logged = 0
+    for idx in indices:
+        snap = _load_live(date_str, idx)
+        if not snap:
+            print(f"  [sheets-live] no LIVE snapshot for {idx} {date_str} — skip")
+            continue
+        if snap.get("dte") not in (0, 1):
+            print(f"  [sheets-live] {idx} {date_str} DTE={snap.get('dte')} — chart-only, not logged")
+            continue
+        if ws is None:
+            ws = _open_named_ws(LIVE_WS_NAME, LIVE_HEADER)
+        _upsert(ws, build_live_row(snap), key_idx=(0, 1), label=f"LIVE/{idx}")
+        logged += 1
+    print(f"  [sheets-live] done — {logged} row(s) into '{LIVE_WS_NAME}' for {date_str}")
+    return logged
+
+
 if __name__ == "__main__":
-    ap = argparse.ArgumentParser(description="Log Vwap-Strangle V2 results to Google Sheets")
+    ap = argparse.ArgumentParser(description="Log Vwap-Strangle results to Google Sheets")
     ap.add_argument("--date", default=None, help="YYYY-MM-DD (default: today)")
     ap.add_argument("--index", default=None, help="NIFTY or SENSEX (default: both)")
     ap.add_argument("--auth", action="store_true", help="one-time browser auth (cache token)")
+    ap.add_argument("--live", action="store_true",
+                    help="log the REAL live-tab result (LIVE.json) into 'Vwap Live Zerodha'")
     a = ap.parse_args()
+    idxs = [a.index.upper()] if a.index else None
     if a.auth:
         authorize()
+    elif a.live:
+        log_live_day(a.date, idxs)
     else:
-        log_paper_day(a.date, [a.index.upper()] if a.index else None)
+        log_paper_day(a.date, idxs)

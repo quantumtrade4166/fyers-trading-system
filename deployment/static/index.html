@@ -601,6 +601,7 @@
                 <span class="text-slate-600">/</span> PE <b id="sca-tk-pe" style="font-family:ui-monospace,monospace;color:#94a3b8">—</b></span>
           <span class="text-sm">MTM <b id="sca-tk-mtm" style="font-family:ui-monospace,monospace">—</b></span>
           <span id="sca-tk-dot" class="text-[10px] text-slate-500">●</span>
+          <span id="sca-tk-age" class="text-[10px] text-slate-500"></span>
         </div>
         <div id="sca-live-chart-wrap" style="position:relative">
           <div id="sca-live-chart" style="height:440px;width:100%"></div>
@@ -1521,6 +1522,13 @@ async function fetchStrangle() {
 let scaIndex = 'NIFTY';
 let scaVersion = 'V1';
 let scaList = [];
+// per-index live-order sizing. Lot sizes must match parameters.json (the backend
+// validates against the same values). Pending inputs persist across the 30s re-render
+// so typing isn't wiped; null = "not yet edited, seed from the control flag / default".
+const SCA_LOT = { NIFTY: 65, SENSEX: 20 };
+const SCA_MAX_LOTS = 15;
+let scaQtyInput = { NIFTY: null, SENSEX: null };
+let scaMtmInput = { NIFTY: null, SENSEX: null };
 let scaChart = null, scaCandle = null, scaVwap = null;
 let scaMtmChart = null, scaMtm = null;
 
@@ -1554,7 +1562,8 @@ function scaPopulateDates() {
   const cur = sel.value;
   const dates = scaList.filter(c => c.index === scaIndex).map(c => c.date);
   sel.innerHTML = dates.map(d => `<option value="${d}">${d}</option>`).join('');
-  if (cur && dates.includes(cur)) sel.value = cur;   // preserve selection across refreshes
+  if (cur && dates.includes(cur)) sel.value = cur;           // preserve selection across refreshes
+  else if (dates.length) sel.value = dates.reduce((a, b) => (b > a ? b : a));  // else NEWEST, never silently the oldest (was the tick-vanish bug)
 }
 
 async function fetchStrangleCharts() {
@@ -1675,6 +1684,74 @@ async function scaResume() {
   setTimeout(scaRenderLive, 400);
 }
 
+// Validate the qty + MTM-stop inputs live (on every keystroke): qty must be a positive
+// multiple of the lot size and ≤ SCA_MAX_LOTS lots; MTM stop > 0. Updates the "= N lots"
+// readout, gates the GO LIVE button, and remembers what was typed so a 30s re-render
+// doesn't wipe it. Returns the parsed/validated values for scaArmConfirm(). Safe to call
+// when the inputs are absent or locked (disabled) — it just no-ops the persist/gate.
+function scaSizeChanged() {
+  const qEl = document.getElementById('sca-qty'), mEl = document.getElementById('sca-mtm');
+  const note = document.getElementById('sca-size-note'), btn = document.getElementById('sca-golive-btn');
+  if (!qEl || !mEl) return null;
+  const lot = SCA_LOT[scaIndex] || 65;
+  const qty = parseInt(qEl.value, 10), mtm = parseFloat(mEl.value);
+  if (!qEl.disabled) {                                  // persist edits (only while editable)
+    scaQtyInput[scaIndex] = qEl.value === '' ? null : qty;
+    scaMtmInput[scaIndex] = mEl.value === '' ? null : mtm;
+  }
+  const lots = qty / lot;
+  const qtyOk = Number.isInteger(qty) && qty > 0 && qty % lot === 0 && lots <= SCA_MAX_LOTS;
+  const mtmOk = Number.isFinite(mtm) && mtm > 0;
+  if (note) {
+    if (!qtyOk) {
+      note.textContent = (!Number.isInteger(qty) || qty <= 0 || qty % lot !== 0)
+        ? `✗ qty must be a positive multiple of ${lot}`
+        : `✗ max ${SCA_MAX_LOTS} lots (${SCA_MAX_LOTS * lot})`;
+      note.style.color = '#ef5350';
+    } else if (!mtmOk) {
+      note.textContent = '✗ MTM stop must be > 0';
+      note.style.color = '#ef5350';
+    } else {
+      note.textContent = `= ${lots} lot${lots > 1 ? 's' : ''}  ·  max loss ₹${mtm}`;
+      note.style.color = '#26a69a';
+    }
+  }
+  if (btn && !qEl.disabled) {                            // gate ONLY the arm button
+    const ok = qtyOk && mtmOk;
+    btn.disabled = !ok;
+    btn.style.opacity = ok ? '1' : '.5';
+    btn.style.cursor = ok ? 'pointer' : 'not-allowed';
+  }
+  return { qty, mtm, lot, lots, qtyOk, mtmOk };
+}
+
+// Pre-arm confirmation: validate, show the exact qty (+lots), MTM stop and strikes, and
+// only on an explicit YES write mode=live WITH the size + stop. The backend re-validates.
+async function scaArmConfirm() {
+  const v = scaSizeChanged();
+  if (!v || !v.qtyOk || !v.mtmOk) {
+    alert('Fix the size / MTM stop first:\n' + (document.getElementById('sca-size-note')?.textContent || ''));
+    return;
+  }
+  let strikes = 'selected at ~9:20 on the trade day';
+  try {
+    const dd = await (await fetch(`/api/strangle/live?date=${document.getElementById('sca-date').value}&index=${scaIndex}`)).json();
+    if (dd && dd.ce_symbol && dd.pe_symbol) strikes = dd.ce_symbol + '  /  ' + dd.pe_symbol;
+  } catch (e) { /* strikes stay as the pending note */ }
+  if (!confirm(
+      '⚠ GO LIVE — REAL ORDERS · ' + scaIndex + '\n\n' +
+      'Qty:        ' + v.qty + '   (' + v.lots + ' lot' + (v.lots > 1 ? 's' : '') + ' × ' + v.lot + ')\n' +
+      'MTM stop:   ₹' + v.mtm + '   (auto square-off + stop for the day at this loss)\n' +
+      'Strikes:    ' + strikes + '\n\n' +
+      'The strategy will place REAL Kite orders on the next ' + scaIndex + ' signal, up to the ' +
+      'configured cycles. Only DTE 0/1 days trade. The KILL button still applies. This arms ' +
+      scaIndex + ' ONLY.\n\nArm live ' + scaIndex + ' orders now?')) return;
+  const r = await (await fetch('/api/strangle/live_control?index=' + scaIndex +
+      '&mode=live&qty=' + v.qty + '&mtm_stop=' + v.mtm, { method: 'POST' })).json();
+  if (r && r.error) { alert('Not armed — ' + r.error); return; }
+  setTimeout(scaRenderLive, 600);
+}
+
 let scaLiveChart = null, scaLiveCandle = null, scaLiveVwap = null;
 let scaLiveMtmChart = null, scaLiveMtm = null;
 // "HH:MM" -> floored to its 5-min candle bucket, so markers land on the right candle
@@ -1707,41 +1784,57 @@ setInterval(scaUpdateCountdown, 1000);
 // Real-time tick poll (~1s) — updates live P&L + price + the moving current candle,
 // broker-terminal style, only while the Live tab is on today during market hours.
 let scaLiveLastCandle = null;
+let scaTkLast = null;        // last GOOD tick — so a transient miss never blanks the row
 async function scaTickPoll() {
   if (scaVersion !== 'LIVE') return;
-  const sel = document.getElementById('sca-date'); if (!sel) return;
-  const date = sel.value;
+  const ticker = document.getElementById('sca-live-ticker');
   const now = new Date(), today = now.toLocaleDateString('en-CA');
   const mins = now.getHours() * 60 + now.getMinutes();
-  const ticker = document.getElementById('sca-live-ticker');
-  if (!(date === today && mins >= (9 * 60 + 15) && mins < (15 * 60 + 30))) {
+  // ticker only means anything during market hours; hide cleanly outside them
+  if (!(mins >= (9 * 60 + 15) && mins < (15 * 60 + 30))) {
     if (ticker) ticker.style.display = 'none'; return;
   }
-  let t;
-  try { t = await (await fetch(`/api/strangle/live_tick?date=${date}&index=${scaIndex}`)).json(); }
-  catch (e) { return; }
-  if (!t || t.error) { if (ticker) ticker.style.display = 'none'; return; }
+  // The LIVE ticker ALWAYS tracks TODAY's real-time tick — independent of which date the
+  // dropdown shows. (A drifted dropdown used to hide it silently for the rest of the day.)
+  let t = null;
+  try { t = await (await fetch(`/api/strangle/live_tick?date=${today}&index=${scaIndex}`)).json(); }
+  catch (e) { t = null; }
+  if (t && !t.error) scaTkLast = t;                 // remember the last good tick
+  const s = (t && !t.error) ? t : scaTkLast;        // fall back to last good on a transient miss
+  if (!s) { if (ticker) ticker.style.display = 'none'; return; }
   if (ticker) ticker.style.display = '';
   const set = (id, txt, col) => { const el = document.getElementById(id); if (el) { el.textContent = txt; if (col) el.style.color = col; } };
-  set('sca-tk-price', t.combined != null ? t.combined.toFixed(2) : '—');
-  set('sca-tk-ce', t.ce != null ? Number(t.ce).toFixed(2) : '—');
-  set('sca-tk-pe', t.pe != null ? Number(t.pe).toFixed(2) : '—');
-  set('sca-tk-mtm', t.mtm != null ? ('₹' + t.mtm) : '—', (t.mtm || 0) >= 0 ? '#26a69a' : '#ef5350');
-  set('sca-tk-dot', '●', t.armed ? '#ef5350' : '#64748b');
-  // move the current (forming) candle live
-  if (scaLiveCandle && t.combined != null && t.t) {
-    const bucket = scaTime(date, scaFloor5(t.t));
+  set('sca-tk-price', s.combined != null ? s.combined.toFixed(2) : '—');
+  set('sca-tk-ce', s.ce != null ? Number(s.ce).toFixed(2) : '—');
+  set('sca-tk-pe', s.pe != null ? Number(s.pe).toFixed(2) : '—');
+  set('sca-tk-mtm', s.mtm != null ? ('₹' + s.mtm) : '—', (s.mtm || 0) >= 0 ? '#26a69a' : '#ef5350');
+  // staleness: seconds since the engine wrote this tick — so it can NEVER silently freeze
+  let age = null;
+  if (s.updated && /^\d\d:\d\d:\d\d$/.test(s.updated)) {
+    const [hh, mm, ss] = s.updated.split(':').map(Number);
+    age = (mins * 60 + now.getSeconds()) - (hh * 3600 + mm * 60 + ss);
+  }
+  const fresh = (age != null && age >= 0 && age <= 8);
+  set('sca-tk-dot', '●', fresh ? (s.armed ? '#ef5350' : '#64748b') : '#eab308');
+  set('sca-tk-age', fresh ? 'live' : (age != null ? `stale ${age}s` : ''), fresh ? '#64748b' : '#eab308');
+  // move the forming candle live — ONLY when the chart is actually showing today
+  const sel = document.getElementById('sca-date');
+  const onToday = sel && sel.value === today;
+  if (onToday && scaLiveCandle && s.combined != null && s.t) {
+    const bucket = scaTime(today, scaFloor5(s.t));
     if (scaLiveLastCandle && scaLiveLastCandle.time === bucket) {
-      scaLiveLastCandle.high = Math.max(scaLiveLastCandle.high, t.combined);
-      scaLiveLastCandle.low = Math.min(scaLiveLastCandle.low, t.combined);
-      scaLiveLastCandle.close = t.combined;
+      scaLiveLastCandle.high = Math.max(scaLiveLastCandle.high, s.combined);
+      scaLiveLastCandle.low = Math.min(scaLiveLastCandle.low, s.combined);
+      scaLiveLastCandle.close = s.combined;
     } else if (!scaLiveLastCandle || bucket > scaLiveLastCandle.time) {
-      scaLiveLastCandle = { time: bucket, open: t.combined, high: t.combined, low: t.combined, close: t.combined };
+      scaLiveLastCandle = { time: bucket, open: s.combined, high: s.combined, low: s.combined, close: s.combined };
     }
     try { scaLiveCandle.update(scaLiveLastCandle); } catch (e) { /* ignore */ }
   }
 }
 setInterval(scaTickPoll, 1000);
+// background tabs get their timers throttled to ~1/min; refresh instantly on refocus
+document.addEventListener('visibilitychange', () => { if (!document.hidden) scaTickPoll(); });
 function scaLiveEnsureChart() {
   if (scaLiveChart) return;
   const el = document.getElementById('sca-live-chart');
@@ -1859,21 +1952,42 @@ async function scaRenderLive(keepView = false) {
   const badge = cfArmed
     ? '<span style="background:#7f1d1d;color:#fecaca;padding:2px 8px;border-radius:4px;font-weight:600">● LIVE (armed)</span>'
     : '<span style="background:#134e4a;color:#99f6e4;padding:2px 8px;border-radius:4px;font-weight:600">PAPER-LIVE</span>';
-  // the arming box — SAME controls whether or not a snapshot exists yet
+  // the arming box — SAME controls whether or not a snapshot exists yet. Now carries the
+  // editable QTY + MTM-stop, which lock the moment the index is armed or holds a position.
+  const lot = SCA_LOT[scaIndex] || 65;
+  const locked = cfArmed || !!(d && d.open);               // no size changes mid-trade
+  const qtyVal = locked ? (cf.qty || (d && d.qty) || lot)
+                        : (scaQtyInput[scaIndex] ?? cf.qty ?? lot);
+  const mtmVal = locked ? (cf.mtm_stop || 1000)
+                        : (scaMtmInput[scaIndex] ?? cf.mtm_stop ?? 1000);
+  const inpCss = `width:92px;background:#0b0f18;border:1px solid #2d3748;border-radius:5px;padding:3px 6px;color:#e2e8f0;font-family:ui-monospace,monospace`;
   const armBox = `
-    <div class="flex items-center gap-3 mb-3 flex-wrap" style="padding:8px 10px;background:#0f1420;border:1px solid #1e2636;border-radius:8px">
-      <span class="text-[10px] text-slate-500 uppercase">arming · ${scaIndex}</span>
-      <button onclick="scaSetMode('${cfArmed ? 'paper' : 'live'}')"
-        style="padding:6px 18px;border-radius:6px;font-weight:800;font-size:13px;border:1px solid;cursor:pointer;
-        ${cfArmed ? 'background:#b91c1c;color:#fff;border-color:#b91c1c' : 'background:#134e4a;color:#a7f3d0;border-color:#0f766e'}">
-        ${cfArmed ? '● LIVE — click to STOP (back to paper)' : '▶ GO LIVE — real orders'}
-      </button>
-      <span class="text-xs font-semibold" style="color:${cfArmed ? '#f87171' : '#64748b'}">
-        ${cfArmed ? 'REAL ORDERS ARMED' : 'paper-live · no real orders'}${dteNote}
-      </span>
-      ${killed
-        ? `<button onclick="scaResume()" class="sca-idx-btn">clear kill</button>`
-        : `<button onclick="scaKill()" style="background:#7f1d1d;color:#fff;padding:6px 16px;border-radius:6px;font-weight:800;font-size:13px;cursor:pointer;border:1px solid #b91c1c">■ KILL</button>`}
+    <div class="mb-3" style="padding:10px 12px;background:#0f1420;border:1px solid #1e2636;border-radius:8px">
+      <div class="flex items-center gap-3 flex-wrap mb-2">
+        <span class="text-[10px] text-slate-500 uppercase">size · ${scaIndex}</span>
+        <label class="text-xs text-slate-400 flex items-center gap-1">Qty
+          <input id="sca-qty" type="number" min="${lot}" step="${lot}" value="${qtyVal}" ${locked ? 'disabled' : ''}
+            oninput="scaSizeChanged()" style="${inpCss}${locked ? ';opacity:.55' : ''}"></label>
+        <label class="text-xs text-slate-400 flex items-center gap-1">MTM stop ₹
+          <input id="sca-mtm" type="number" min="1" step="100" value="${mtmVal}" ${locked ? 'disabled' : ''}
+            oninput="scaSizeChanged()" style="${inpCss}${locked ? ';opacity:.55' : ''}"></label>
+        <span id="sca-size-note" class="text-xs font-medium"></span>
+        ${locked ? `<span class="text-[10px] text-slate-500">🔒 locked while ${cfArmed ? 'armed — STOP to change' : 'in a position'}</span>` : `<span class="text-[10px] text-slate-600">max ${SCA_MAX_LOTS} lots · multiples of ${lot}</span>`}
+      </div>
+      <div class="flex items-center gap-3 flex-wrap">
+        <span class="text-[10px] text-slate-500 uppercase">arming · ${scaIndex}</span>
+        <button id="sca-golive-btn" onclick="${cfArmed ? `scaSetMode('paper')` : `scaArmConfirm()`}"
+          style="padding:6px 18px;border-radius:6px;font-weight:800;font-size:13px;border:1px solid;cursor:pointer;
+          ${cfArmed ? 'background:#b91c1c;color:#fff;border-color:#b91c1c' : 'background:#134e4a;color:#a7f3d0;border-color:#0f766e'}">
+          ${cfArmed ? '● LIVE — click to STOP (back to paper)' : '▶ GO LIVE — real orders'}
+        </button>
+        <span class="text-xs font-semibold" style="color:${cfArmed ? '#f87171' : '#64748b'}">
+          ${cfArmed ? 'REAL ORDERS ARMED' : 'paper-live · no real orders'}${dteNote}
+        </span>
+        ${killed
+          ? `<button onclick="scaResume()" class="sca-idx-btn">clear kill</button>`
+          : `<button onclick="scaKill()" style="background:#7f1d1d;color:#fff;padding:6px 16px;border-radius:6px;font-weight:800;font-size:13px;cursor:pointer;border:1px solid #b91c1c">■ KILL</button>`}
+      </div>
     </div>`;
 
   // ONE-LINE EFFECTIVE STATUS — so "armed" is never ambiguous (armed ≠ will trade).
@@ -1921,6 +2035,7 @@ async function scaRenderLive(keepView = false) {
       ${armBox}
       <p class="text-xs text-slate-600 py-4 text-center">No live entries for ${scaIndex} on ${date} yet.<br>
         The controller fills in strikes + entries once it runs. Your arm switch above is saved per index.</p>`;
+    scaSizeChanged();
     if (upd) upd.textContent = cf.updated ? ('arm ' + cf.updated) : '—';
     return;
   }
@@ -1985,6 +2100,7 @@ async function scaRenderLive(keepView = false) {
         <td></td></tr></tfoot></table>`
       : '<p class="text-xs text-slate-600 py-6 text-center">No entries yet today.</p>'}
     <p class="text-[10px] text-slate-600 mt-3">Order IDs shown are real Kite ids in LIVE mode; paper-* ids in paper-live.</p>`;
+  scaSizeChanged();
   if (upd) upd.textContent = 'live ' + (d.updated || '');
 }
 
@@ -1996,10 +2112,22 @@ async function scaRenderLog() {
   let d;
   try { d = await (await fetch('/api/strangle/audit?date=' + date)).json(); }
   catch (e) { pre.textContent = 'Audit log unavailable.'; return; }
-  const text = (d && d.text) || '';
+  // The audit file holds BOTH indices (one file/day). Show ONLY the selected index's
+  // lines + shared SYSTEM lifecycle lines, so NIFTY and SENSEX read as separate logs.
+  // Line format: "YYYY-MM-DD HH:MM:SS.mmm  <INDEX>  <EVENT>  <detail>" -> token[2] = index.
+  const raw = (d && d.text) || '';
+  const text = raw
+    ? raw.split('\n').filter(ln => {
+        if (!ln.trim()) return false;
+        const idx = ln.trim().split(/\s+/)[2];        // 3rd token = the index column
+        return idx === scaIndex || idx === 'SYSTEM';
+      }).join('\n')
+    : '';
   pre.textContent = text
-    ? text
-    : `No audit log for ${date}.\n\nThe log is written live as the engine runs — it records real orders, fills, arm/kill, square-off and system events, appended and saved permanently.`;
+    ? `── ${scaIndex} audit · ${date} (index-specific + SYSTEM events) ──\n\n` + text
+    : raw
+      ? `No ${scaIndex} activity in the ${date} audit log.\n\n(There are entries for the other index — switch NIFTY/SENSEX above to see them.)`
+      : `No audit log for ${date}.\n\nThe log is written live as the engine runs — it records real orders, fills, arm/kill, square-off and system events, appended and saved permanently.`;
   const tail = document.getElementById('sca-log-tail');
   if (tail && tail.checked) pre.scrollTop = pre.scrollHeight;   // newest at bottom
   if (upd) upd.textContent = '⟳ ' + new Date().toLocaleTimeString('en-IN', { hour12: false });

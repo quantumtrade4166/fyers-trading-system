@@ -470,11 +470,19 @@ def _push_sheets_eod(date_str: str):
     engine or its archive write."""
     if not _PARAMS.get("google_sheets", {}).get("enabled"):
         return
+    idxs = list(_books.keys())
     try:
         from reporting.sheets_logger import log_paper_day
-        log_paper_day(date_str, list(_books.keys()))
+        log_paper_day(date_str, idxs)
     except Exception as e:
         print(f"  [V2] sheets push failed: {e}")
+    # Also log the REAL live-tab result (LIVE.json) into the 'Vwap Live Zerodha' tab.
+    # Separate try so a failure in one push never blocks the other.
+    try:
+        from reporting.sheets_logger import log_live_day
+        log_live_day(date_str, idxs)
+    except Exception as e:
+        print(f"  [V2] live sheets push failed: {e}")
 
 
 def _writer_loop(date_str: str, every: int = 15):

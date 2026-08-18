@@ -86,11 +86,24 @@ class LiveController:
             c = read_control(self.index)      # PER-INDEX arm switch (NIFTY vs SENSEX)
         except Exception:
             return
+        # Size + MTM-stop overrides from the dashboard. Applied ONLY while FLAT so a
+        # live change can never resize an open position mid-trade (the arming UI also
+        # locks the fields once armed/in a position — this is the backend guard for it).
+        if not self.ledger.open_shorts():
+            q = c.get("qty")
+            if isinstance(q, (int, float)) and q > 0 and q % self.lot_size == 0 \
+                    and (q // self.lot_size) <= 15 and int(q) != self.qty:
+                self.qty = int(q)
+                self.lots = int(q) // self.lot_size
+            m = c.get("mtm_stop")
+            if isinstance(m, (int, float)) and m > 0:
+                self.guard.mtm_stop = abs(float(m))
         new_mode = c.get("mode")
         if new_mode in ("paper", "live"):
-            if new_mode != self.mode:            # arm/disarm flip — audit it
+            if new_mode != self.mode:            # arm/disarm flip — audit it (with size + stop)
                 audit.log(self.index, "ARM" if new_mode == "live" else "DISARM",
-                          mode=new_mode, dte=self.dte)
+                          mode=new_mode, dte=self.dte,
+                          qty=self.qty, lots=self.lots, mtm_stop=self.guard.mtm_stop)
             self.mode = new_mode
         if c.get("kill") and not self.guard.killed:
             audit.log(self.index, "KILL_PRESSED", open_shorts=len(self.ledger.open_shorts()),

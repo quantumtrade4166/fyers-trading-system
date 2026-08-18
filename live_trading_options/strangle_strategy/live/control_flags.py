@@ -20,7 +20,11 @@ STATE_DIR = Path(__file__).resolve().parents[1] / "data" / "live_state"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
 CONTROL_FILE = STATE_DIR / "live_control.json"      # legacy global (fallback)
 
-_DEFAULT = {"mode": "paper", "kill": False, "updated": None}
+_DEFAULT = {"mode": "paper", "kill": False, "qty": None, "mtm_stop": None, "updated": None}
+# qty / mtm_stop are OPTIONAL per-index overrides set from the dashboard before arming.
+# None = "use the config default" (the controller keeps its parameters.json-derived
+# qty and MTM stop). A number overrides it. The controller applies them ONLY while flat
+# so an open position is never resized mid-trade.
 
 
 def _control_file(index: str = None) -> Path:
@@ -42,12 +46,17 @@ def read_control(index: str = None) -> dict:
     return dict(_DEFAULT)
 
 
-def write_control(index: str = None, mode: str = None, kill: bool = None) -> dict:
+def write_control(index: str = None, mode: str = None, kill: bool = None,
+                  qty: int = None, mtm_stop: float = None) -> dict:
     c = read_control(index)
     if mode is not None:
         c["mode"] = "live" if str(mode).lower() == "live" else "paper"
     if kill is not None:
         c["kill"] = bool(kill)
+    if qty is not None:                     # set an explicit size override (0/None-safe)
+        c["qty"] = int(qty) if qty else None
+    if mtm_stop is not None:                # set an explicit MTM-stop override
+        c["mtm_stop"] = float(mtm_stop) if mtm_stop else None
     c["updated"] = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     _control_file(index).write_text(json.dumps(c, indent=2))
     return c

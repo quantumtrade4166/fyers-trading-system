@@ -350,6 +350,19 @@ def _live_control_mod():
     return control_flags
 
 
+_MAX_LOTS = 15                                 # fat-finger cap (raise later as size grows)
+
+
+def _strangle_lot_sizes() -> dict:
+    """{INDEX: lot_size} from the strategy's parameters.json (authoritative — the SAME
+    source the live controller sizes from). Falls back to the confirmed values."""
+    try:
+        pf = _LIVE_DIR.parent.parent / "config" / "parameters.json"
+        return _json.loads(pf.read_text()).get("lot_sizes", {"NIFTY": 65, "SENSEX": 20})
+    except Exception:
+        return {"NIFTY": 65, "SENSEX": 20}
+
+
 @app.get("/api/strangle/live_control")
 async def api_strangle_get_control(index: str = "NIFTY"):
     """Current control flags (mode + kill) for one index — NIFTY and SENSEX arm
@@ -358,11 +371,27 @@ async def api_strangle_get_control(index: str = "NIFTY"):
 
 
 @app.post("/api/strangle/live_control")
-async def api_strangle_set_control(index: str = "NIFTY", mode: str = None, kill: bool = None):
-    """KILL switch / Paper-Live toggle for ONE index. Writes the per-index flag file
-    the matching live controller reads. Note: flipping mode='live' still does NOT place
-    real orders unless the hard config gate live_orders.allow_live is also set."""
-    return _live_control_mod().write_control(index=index, mode=mode, kill=kill)
+async def api_strangle_set_control(index: str = "NIFTY", mode: str = None, kill: bool = None,
+                                   qty: int = None, mtm_stop: float = None):
+    """KILL switch / Paper-Live toggle + size/MTM override for ONE index. Writes the
+    per-index flag file the matching live controller reads. Note: flipping mode='live'
+    still does NOT place real orders unless the hard config gate live_orders.allow_live
+    is also set.
+
+    qty (if given) must be a positive multiple of the index lot size, 1..15 lots — this
+    is the server-side guard behind the browser validation, so a bad size can never reach
+    the controller. mtm_stop (if given) must be > 0. Rejected values return {"error": ...}
+    and NOTHING is written."""
+    idx = index.upper()
+    if qty is not None:
+        lot = _strangle_lot_sizes().get(idx)
+        if not lot or qty <= 0 or qty % lot != 0 or (qty // lot) > _MAX_LOTS:
+            return {"error": f"qty must be a positive multiple of {lot} "
+                             f"(1–{_MAX_LOTS} lots) for {idx} — got {qty}"}
+    if mtm_stop is not None and mtm_stop <= 0:
+        return {"error": f"mtm_stop must be > 0 — got {mtm_stop}"}
+    return _live_control_mod().write_control(index=idx, mode=mode, kill=kill,
+                                             qty=qty, mtm_stop=mtm_stop)
 
 
 @app.get("/api/strangle/live_tick")
