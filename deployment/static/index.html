@@ -1949,7 +1949,14 @@ async function scaRenderLive(keepView = false) {
   try { cf = await (await fetch('/api/strangle/live_control?index=' + scaIndex)).json(); } catch (e) {}
   const cfArmed = (cf.mode === 'live');
   const cfKill = !!cf.kill;
-  const killed = (d && d.killed) || cfKill;
+  const todayStr = new Date().toLocaleDateString('en-CA'); // yyyy-mm-dd, local (viewer tz = IST)
+  const isTodayView = (date === todayStr);
+  const snapKilled = !!(d && d.killed);
+  // ACTIVE kill (drives the KILL / clear-kill button + status) comes from the live control
+  // flag, plus a self-kill in TODAY's snapshot. A PAST day's frozen killed is HISTORICAL only
+  // — it must never force a stuck "clear kill" (clearing the flag can't rewrite an old snapshot,
+  // which looked like "nothing happened"). The arm switch is the real state, not the snapshot.
+  const killed = cfKill || (isTodayView && snapKilled);
   const dteNote = (d && d.trades_allowed === false) ? ` · DTE ${d.dte} → chart-only, will NOT trade` : '';
   const badge = cfArmed
     ? '<span style="background:#7f1d1d;color:#fecaca;padding:2px 8px;border-radius:4px;font-weight:600">● LIVE (armed)</span>'
@@ -1996,8 +2003,6 @@ async function scaRenderLive(keepView = false) {
 
   // ONE-LINE EFFECTIVE STATUS — so "armed" is never ambiguous (armed ≠ will trade).
   const kr = (d && d.kill_reason) ? ' — ' + d.kill_reason : '';
-  const todayStr = new Date().toLocaleDateString('en-CA'); // yyyy-mm-dd, local
-  const isTodayView = (date === todayStr);
   let stTxt, stCol, stBg;
   if (!isTodayView) {
     // A PAST day's snapshot must never be read as the current live status.
@@ -2084,7 +2089,7 @@ async function scaRenderLive(keepView = false) {
       <span class="text-slate-400">DTE ${d.dte}</span>
       <span class="text-slate-500">${d.ce_symbol} / ${d.pe_symbol}</span>
       <span class="text-slate-500">qty ${d.qty}</span>
-      ${killed ? `<span style="color:#ef5350;font-weight:600">■ KILLED — ${d.kill_reason || (cfKill ? 'kill switch' : '')}</span>` : '<span style="color:#26a69a">running</span>'}
+      ${snapKilled ? `<span style="color:#ef5350;font-weight:600">■ ${isTodayView ? 'KILLED' : 'stopped'} — ${d.kill_reason || 'kill switch'}</span>` : '<span style="color:#26a69a">running</span>'}
       ${rec.ok === false ? `<span style="color:#f59e0b">⚠ reconcile: rejected ${JSON.stringify(rec.rejected)} pending ${JSON.stringify(rec.pending)}</span>` : ''}
     </div>
     ${armBox}
