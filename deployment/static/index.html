@@ -553,7 +553,7 @@
             <button class="sca-idx-btn active" id="sca-btn-NIFTY" onclick="scaSetIndex('NIFTY')">NIFTY</button>
             <button class="sca-idx-btn" id="sca-btn-SENSEX" onclick="scaSetIndex('SENSEX')">SENSEX</button>
           </div>
-          <div class="flex gap-1" title="V1 = 1-minute reconstruction · V2 = live tick-built · Live = real/paper-live orders">
+          <div class="flex gap-1" title="V1 = 1-minute reconstruction · V2 = live tick-built · Live = real Zerodha orders">
             <button class="sca-idx-btn active" id="sca-ver-V1" onclick="scaSetVersion('V1')">V1·1min</button>
             <button class="sca-idx-btn" id="sca-ver-V2" onclick="scaSetVersion('V2')">V2·tick</button>
             <button class="sca-idx-btn" id="sca-ver-LIVE" onclick="scaSetVersion('LIVE')">📡 Live</button>
@@ -618,7 +618,7 @@
           <span><span style="color:#fb8c00">—</span> VWAP</span>
           <span><span style="color:#ef5350">▼</span> Real sell entry (fill)</span>
           <span><span style="color:#26a69a">▲</span> Exit (buy back)</span>
-          <span class="text-slate-600">candles = V2 tick-built · arrows = actual live/paper-live fills</span>
+          <span class="text-slate-600">candles = V2 tick-built · arrows = actual live fills</span>
         </div>
         <p class="text-sm font-medium text-slate-300 mt-4 mb-1">Live equity — MTM (₹)</p>
         <div id="sca-live-mtm" style="height:170px;width:100%"></div>
@@ -1684,20 +1684,23 @@ async function scaResume() {
   setTimeout(scaRenderLive, 400);
 }
 
-// Validate the qty + MTM-stop inputs live (on every keystroke): qty must be a positive
-// multiple of the lot size and ≤ SCA_MAX_LOTS lots; MTM stop > 0. Updates the "= N lots"
-// readout, gates the GO LIVE button, and remembers what was typed so a 30s re-render
-// doesn't wipe it. Returns the parsed/validated values for scaArmConfirm(). Safe to call
-// when the inputs are absent or locked (disabled) — it just no-ops the persist/gate.
+// Validate the qty + Max-loss inputs live (on every keystroke): qty must be a positive
+// multiple of the lot size and ≤ SCA_MAX_LOTS lots. Max loss is a rupee MAGNITUDE — the
+// strategy stops out when its own-book MTM hits −(this amount), so the field takes the loss
+// SIZE as a positive number; a negative entry is accepted and read as its absolute value.
+// Updates the "= N lots · max loss ₹X" readout, gates the GO LIVE button, and remembers what
+// was typed so a 30s re-render doesn't wipe it. Returns the validated values for
+// scaArmConfirm(). Safe to call when the inputs are absent or locked (disabled).
 function scaSizeChanged() {
   const qEl = document.getElementById('sca-qty'), mEl = document.getElementById('sca-mtm');
   const note = document.getElementById('sca-size-note'), btn = document.getElementById('sca-golive-btn');
   if (!qEl || !mEl) return null;
   const lot = SCA_LOT[scaIndex] || 65;
-  const qty = parseInt(qEl.value, 10), mtm = parseFloat(mEl.value);
+  const qty = parseInt(qEl.value, 10);
+  const mtm = Math.abs(parseFloat(mEl.value));           // stop-loss is a magnitude (−loss)
   if (!qEl.disabled) {                                  // persist edits (only while editable)
-    scaQtyInput[scaIndex] = qEl.value === '' ? null : qty;
-    scaMtmInput[scaIndex] = mEl.value === '' ? null : mtm;
+    scaQtyInput[scaIndex] = Number.isFinite(qty) && qty > 0 ? qty : null;
+    scaMtmInput[scaIndex] = Number.isFinite(mtm) && mtm > 0 ? mtm : null;
   }
   const lots = qty / lot;
   const qtyOk = Number.isInteger(qty) && qty > 0 && qty % lot === 0 && lots <= SCA_MAX_LOTS;
@@ -1709,10 +1712,10 @@ function scaSizeChanged() {
         : `✗ max ${SCA_MAX_LOTS} lots (${SCA_MAX_LOTS * lot})`;
       note.style.color = '#ef5350';
     } else if (!mtmOk) {
-      note.textContent = '✗ MTM stop must be > 0';
+      note.textContent = '✗ enter a max loss amount (₹)';
       note.style.color = '#ef5350';
     } else {
-      note.textContent = `= ${lots} lot${lots > 1 ? 's' : ''}  ·  max loss ₹${mtm}`;
+      note.textContent = `= ${lots} lot${lots > 1 ? 's' : ''}  ·  stops out at −₹${mtm}`;
       note.style.color = '#26a69a';
     }
   }
@@ -1725,12 +1728,12 @@ function scaSizeChanged() {
   return { qty, mtm, lot, lots, qtyOk, mtmOk };
 }
 
-// Pre-arm confirmation: validate, show the exact qty (+lots), MTM stop and strikes, and
+// Pre-arm confirmation: validate, show the exact qty (+lots), max loss and strikes, and
 // only on an explicit YES write mode=live WITH the size + stop. The backend re-validates.
 async function scaArmConfirm() {
   const v = scaSizeChanged();
   if (!v || !v.qtyOk || !v.mtmOk) {
-    alert('Fix the size / MTM stop first:\n' + (document.getElementById('sca-size-note')?.textContent || ''));
+    alert('Fix the size / max loss first:\n' + (document.getElementById('sca-size-note')?.textContent || ''));
     return;
   }
   let strikes = 'selected at ~9:20 on the trade day';
@@ -1741,7 +1744,7 @@ async function scaArmConfirm() {
   if (!confirm(
       '⚠ GO LIVE — REAL ORDERS · ' + scaIndex + '\n\n' +
       'Qty:        ' + v.qty + '   (' + v.lots + ' lot' + (v.lots > 1 ? 's' : '') + ' × ' + v.lot + ')\n' +
-      'MTM stop:   ₹' + v.mtm + '   (auto square-off + stop for the day at this loss)\n' +
+      'Max loss:   −₹' + v.mtm + '   (auto square-off + stop for the day at this loss)\n' +
       'Strikes:    ' + strikes + '\n\n' +
       'The strategy will place REAL Kite orders on the next ' + scaIndex + ' signal, up to the ' +
       'configured cycles. Only DTE 0/1 days trade. The KILL button still applies. This arms ' +
@@ -1946,20 +1949,21 @@ async function scaRenderLive(keepView = false) {
   try { cf = await (await fetch('/api/strangle/live_control?index=' + scaIndex)).json(); } catch (e) {}
   const cfArmed = (cf.mode === 'live');
   const cfKill = !!cf.kill;
-  const mode = cfArmed ? 'LIVE' : 'PAPER';
   const killed = (d && d.killed) || cfKill;
   const dteNote = (d && d.trades_allowed === false) ? ` · DTE ${d.dte} → chart-only, will NOT trade` : '';
   const badge = cfArmed
     ? '<span style="background:#7f1d1d;color:#fecaca;padding:2px 8px;border-radius:4px;font-weight:600">● LIVE (armed)</span>'
-    : '<span style="background:#134e4a;color:#99f6e4;padding:2px 8px;border-radius:4px;font-weight:600">PAPER-LIVE</span>';
-  // the arming box — SAME controls whether or not a snapshot exists yet. Now carries the
-  // editable QTY + MTM-stop, which lock the moment the index is armed or holds a position.
+    : '<span style="background:#334155;color:#cbd5e1;padding:2px 8px;border-radius:4px;font-weight:600">STANDBY</span>';
+  // the arming box — SAME controls whether or not a snapshot exists yet. Carries the editable
+  // QTY + Max-loss, which lock the moment the index is armed or holds a position. A positive
+  // finite fallback is forced so the fields can NEVER render empty/invalid (was blocking arm).
   const lot = SCA_LOT[scaIndex] || 65;
   const locked = cfArmed || !!(d && d.open);               // no size changes mid-trade
-  const qtyVal = locked ? (cf.qty || (d && d.qty) || lot)
-                        : (scaQtyInput[scaIndex] ?? cf.qty ?? lot);
-  const mtmVal = locked ? (cf.mtm_stop || 1000)
-                        : (scaMtmInput[scaIndex] ?? cf.mtm_stop ?? 1000);
+  const posNum = (v, def) => (Number.isFinite(v) && v > 0 ? v : def);
+  const qtyVal = locked ? posNum(cf.qty, posNum(d && d.qty, lot))
+                        : posNum(scaQtyInput[scaIndex], posNum(cf.qty, lot));
+  const mtmVal = locked ? posNum(cf.mtm_stop, 1000)
+                        : posNum(scaMtmInput[scaIndex], posNum(cf.mtm_stop, 1000));
   const inpCss = `width:92px;background:#0b0f18;border:1px solid #2d3748;border-radius:5px;padding:3px 6px;color:#e2e8f0;font-family:ui-monospace,monospace`;
   const armBox = `
     <div class="mb-3" style="padding:10px 12px;background:#0f1420;border:1px solid #1e2636;border-radius:8px">
@@ -1968,7 +1972,7 @@ async function scaRenderLive(keepView = false) {
         <label class="text-xs text-slate-400 flex items-center gap-1">Qty
           <input id="sca-qty" type="number" min="${lot}" step="${lot}" value="${qtyVal}" ${locked ? 'disabled' : ''}
             oninput="scaSizeChanged()" style="${inpCss}${locked ? ';opacity:.55' : ''}"></label>
-        <label class="text-xs text-slate-400 flex items-center gap-1">MTM stop ₹
+        <label class="text-xs text-slate-400 flex items-center gap-1" title="rupee loss at which the strategy auto-squares off and stops for the day (applied as −this on its own book)">Max loss ₹
           <input id="sca-mtm" type="number" min="1" step="100" value="${mtmVal}" ${locked ? 'disabled' : ''}
             oninput="scaSizeChanged()" style="${inpCss}${locked ? ';opacity:.55' : ''}"></label>
         <span id="sca-size-note" class="text-xs font-medium"></span>
@@ -1979,10 +1983,10 @@ async function scaRenderLive(keepView = false) {
         <button id="sca-golive-btn" onclick="${cfArmed ? `scaSetMode('paper')` : `scaArmConfirm()`}"
           style="padding:6px 18px;border-radius:6px;font-weight:800;font-size:13px;border:1px solid;cursor:pointer;
           ${cfArmed ? 'background:#b91c1c;color:#fff;border-color:#b91c1c' : 'background:#134e4a;color:#a7f3d0;border-color:#0f766e'}">
-          ${cfArmed ? '● LIVE — click to STOP (back to paper)' : '▶ GO LIVE — real orders'}
+          ${cfArmed ? '● LIVE — click to STOP' : '▶ GO LIVE — real orders'}
         </button>
         <span class="text-xs font-semibold" style="color:${cfArmed ? '#f87171' : '#64748b'}">
-          ${cfArmed ? 'REAL ORDERS ARMED' : 'paper-live · no real orders'}${dteNote}
+          ${cfArmed ? 'REAL ORDERS ARMED' : 'standby · not armed · no orders'}${dteNote}
         </span>
         ${killed
           ? `<button onclick="scaResume()" class="sca-idx-btn">clear kill</button>`
@@ -1999,7 +2003,7 @@ async function scaRenderLive(keepView = false) {
     // A PAST day's snapshot must never be read as the current live status.
     stTxt = '📅 Historical view — ' + date + ' · not the live session (today\'s engine starts ≈9:20)'; stCol = '#93c5fd'; stBg = '#1e293b';
   } else if (!cfArmed) {
-    stTxt = '◉ PAPER-LIVE — watching only, NO real orders'; stCol = '#99f6e4'; stBg = '#0f3d38';
+    stTxt = '◉ STANDBY — watching only, NO real orders (not armed)'; stCol = '#99f6e4'; stBg = '#0f3d38';
   } else if (killed) {
     stTxt = '⏹ ARMED but STOPPED for the day — no more orders' + kr; stCol = '#fca5a5'; stBg = '#5b1a1a';
   } else if (!d || d.error) {
@@ -2099,7 +2103,7 @@ async function scaRenderLive(keepView = false) {
         <td class="py-1 px-2" style="color:${pnlc(netPnl)}">₹${netPnl}</td>
         <td></td></tr></tfoot></table>`
       : '<p class="text-xs text-slate-600 py-6 text-center">No entries yet today.</p>'}
-    <p class="text-[10px] text-slate-600 mt-3">Order IDs shown are real Kite ids in LIVE mode; paper-* ids in paper-live.</p>`;
+    <p class="text-[10px] text-slate-600 mt-3">Order IDs are the real Kite order ids.</p>`;
   scaSizeChanged();
   if (upd) upd.textContent = 'live ' + (d.updated || '');
 }
