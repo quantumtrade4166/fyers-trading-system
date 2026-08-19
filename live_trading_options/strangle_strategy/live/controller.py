@@ -136,6 +136,12 @@ class LiveController:
             breached, _ = self.guard.check_mtm(self.marks)
             if breached:
                 self._flatten("MTM stop")
+            elif self.guard.must_square_off(self._now()):
+                # TICK-driven time square-off: fire the instant the clock reaches square_off
+                # (e.g. 15:14) instead of waiting for the 5-min candle CLOSE, which lands ~5
+                # min late (the 15:14/15:15 candle closes at ~15:19-15:20). _flatten already
+                # stops the trigger for the day, so the candle-close path can't double-fire.
+                self._flatten("time square-off")
         if self._trades_allowed:
             self.trigger.on_tick(combined, hm)
         self._write_tick(combined)             # real-time P&L / price for the Live tab

@@ -31,7 +31,7 @@
   },
   "max_entries_per_day": 4,
   "entry_cutoff": "14:30",
-  "square_off": "15:15",
+  "square_off": "15:14",
   "archive_retention_days": 0,
   "_retention_note": "0 = keep all trading days forever (no pruning).",
   "live_orders": {
@@ -46,7 +46,7 @@
     "mtm_stop": 1000,
     "max_cycles": 4,
     "entry_cutoff": "14:30",
-    "square_off": "15:15"
+    "square_off": "15:14"
   },
   "google_sheets": {
     "_comment": "V2 P&L logging into the existing 'Trading Journal' sheet. Auth = OAuth (user consent), NOT a service account (org policy blocks SA keys). Put the OAuth Desktop-app client at oauth_client_file, run '--auth' once to cache oauth_token_file, then set spreadsheet_id to the Trading Journal id. One tab PER INDEX (auto-created); PAPER and LIVE rows share a tab, told apart by the Mode column. enabled=false until configured.",

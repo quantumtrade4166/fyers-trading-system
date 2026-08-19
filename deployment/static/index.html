@@ -616,6 +616,7 @@
         </div>
         <div class="flex items-center gap-4 mt-2 text-xs text-slate-500">
           <span><span style="color:#fb8c00">—</span> VWAP</span>
+          <span><span style="color:#eab308">●</span> Trigger candle (signal · low−1)</span>
           <span><span style="color:#ef5350">▼</span> Real sell entry (fill)</span>
           <span><span style="color:#26a69a">▲</span> Exit (buy back)</span>
           <span class="text-slate-600">candles = V2 tick-built · arrows = actual live fills</span>
@@ -1803,7 +1804,17 @@ async function scaTickPoll() {
   try { t = await (await fetch(`/api/strangle/live_tick?date=${today}&index=${scaIndex}`)).json(); }
   catch (e) { t = null; }
   if (t && !t.error) scaTkLast = t;                 // remember the last good tick
-  const s = (t && !t.error) ? t : scaTkLast;        // fall back to last good on a transient miss
+  let s = (t && !t.error) ? t : scaTkLast;          // fall back to last good on a transient miss
+  if (!s) {
+    // No tick file AND no last-good (e.g. a fresh page load during an engine-restart gap,
+    // when the new engine hasn't written a tick yet). Fall back to TODAY's snapshot so MTM +
+    // CE/PE still show (stale) instead of the whole row vanishing — the reported bug.
+    try {
+      const ds = await (await fetch(`/api/strangle/live?date=${today}&index=${scaIndex}`)).json();
+      if (ds && !ds.error) s = { combined: null, ce: (ds.marks || {})[ds.ce_symbol],
+        pe: (ds.marks || {})[ds.pe_symbol], mtm: ds.mtm_pnl, updated: null, armed: ds.mode === 'live' };
+    } catch (e) { /* leave s null */ }
+  }
   if (!s) { if (ticker) ticker.style.display = 'none'; return; }
   if (ticker) ticker.style.display = '';
   const set = (id, txt, col) => { const el = document.getElementById(id); if (el) { el.textContent = txt; if (col) el.style.color = col; } };
@@ -1920,8 +1931,23 @@ async function scaRenderLive(keepView = false) {
   // never confused with paper (paper validation lives in V1/V2). A cycle is real if it
   // was placed live or recovered from the broker via reconciliation.
   const realCycles = (d && !d.error) ? (d.cycles || []).filter(c => c.live || c.reconciled) : [];
+  // Recover the trigger PRICE + signal-candle TIME from each entry event's reason
+  // ("limit 71.1 (signal 09:40) hit"). Reconciled cycles (rebuilt from broker fills after a
+  // restart) lose the cycle-level trigger, but the event still carries it — so this restores
+  // the "trig" number in the table AND lets us mark the exact trigger candle on the chart.
+  const scaSigInfo = {};
+  ((d && d.events) || []).forEach(e => {
+    if (e.type === 'entry' && e.cycle != null) {
+      const m = /limit\s+([\d.]+)\s*\(signal\s+(\d\d:\d\d)\)/.exec(e.reason || '');
+      if (m) scaSigInfo[e.cycle] = { trigger: parseFloat(m[1]), sig: m[2] };
+    }
+  });
   const markers = [];
   realCycles.forEach(c => {
+    // T = the TRIGGER candle (the red-below-VWAP bar whose low−1 armed the sell)
+    const si = scaSigInfo[c.cycle];
+    if (si && si.sig) markers.push({ time: scaTime(date, si.sig), position: 'aboveBar',
+      color: '#eab308', shape: 'circle', text: 'T' + c.cycle });
     // floor the fill/exit minute to its 5-min candle so the arrow lands on the RIGHT bar
     if (c.entry_time) markers.push({ time: scaTime(date, scaFloor5(c.entry_time)), position: 'aboveBar',
       color: '#ef5350', shape: 'arrowDown', text: 'S' + c.cycle });
@@ -2061,7 +2087,7 @@ async function scaRenderLive(keepView = false) {
   const legLine = (ce, pe, cet, pet) => (ce != null || pe != null)
     ? `<div class="text-[10px] text-slate-500">CE ${ce ?? '—'}${tstamp(cet)} &nbsp;+&nbsp; PE ${pe ?? '—'}${tstamp(pet)}</div>` : '';
   const entryCell = c => `${c.entry_time || '—'}` +
-    `<div class="text-[11px] text-slate-400">trig ${c.trigger ?? '—'} → fill <b class="text-slate-200">${c.entry_combined ?? '—'}</b></div>` +
+    `<div class="text-[11px] text-slate-400">trig ${(c.trigger ?? scaSigInfo[c.cycle]?.trigger) ?? '—'} → fill <b class="text-slate-200">${c.entry_combined ?? '—'}</b></div>` +
     legLine(c.entry_ce, c.entry_pe, c.entry_ce_time, c.entry_pe_time);
   const exitCell = c => {
     if (!c.exit_time) return (d.open && d.open.cycle === c.cycle) ? '<i class="text-slate-500">open</i>' : '—';

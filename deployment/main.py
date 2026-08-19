@@ -98,7 +98,11 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 @app.get("/")
 async def root():
-    return FileResponse(str(STATIC_DIR / "index.html"))
+    # no-cache => the browser REVALIDATES index.html on every load (304 if unchanged), so a
+    # deploy is picked up without a manual hard-refresh. Stale cached JS had silently
+    # re-introduced already-fixed bugs (e.g. the live ticker vanishing, GO LIVE disabled).
+    return FileResponse(str(STATIC_DIR / "index.html"),
+                        headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/api/status")
