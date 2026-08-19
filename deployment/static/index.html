@@ -1692,7 +1692,7 @@ async function scaResume() {
 // was typed so a 30s re-render doesn't wipe it. Returns the validated values for
 // scaArmConfirm(). Safe to call when the inputs are absent or locked (disabled).
 function scaSizeChanged() {
-  const qEl = document.getElementById('sca-qty'), mEl = document.getElementById('sca-mtm');
+  const qEl = document.getElementById('sca-qty'), mEl = document.getElementById('sca-maxloss');
   const note = document.getElementById('sca-size-note'), btn = document.getElementById('sca-golive-btn');
   if (!qEl || !mEl) return null;
   const lot = SCA_LOT[scaIndex] || 65;
@@ -1980,7 +1980,7 @@ async function scaRenderLive(keepView = false) {
           <input id="sca-qty" type="number" min="${lot}" step="${lot}" value="${qtyVal}" ${locked ? 'disabled' : ''}
             oninput="scaSizeChanged()" style="${inpCss}${locked ? ';opacity:.55' : ''}"></label>
         <label class="text-xs text-slate-400 flex items-center gap-1" title="rupee loss at which the strategy auto-squares off and stops for the day (applied as −this on its own book)">Max loss ₹
-          <input id="sca-mtm" type="number" min="1" step="100" value="${mtmVal}" ${locked ? 'disabled' : ''}
+          <input id="sca-maxloss" type="number" min="1" step="100" value="${mtmVal}" ${locked ? 'disabled' : ''}
             oninput="scaSizeChanged()" style="${inpCss}${locked ? ';opacity:.55' : ''}"></label>
         <span id="sca-size-note" class="text-xs font-medium"></span>
         ${locked ? `<span class="text-[10px] text-slate-500">🔒 locked while ${cfArmed ? 'armed — STOP to change' : 'in a position'}</span>` : `<span class="text-[10px] text-slate-600">max ${SCA_MAX_LOTS} lots · multiples of ${lot}</span>`}
