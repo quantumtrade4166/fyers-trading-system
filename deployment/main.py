@@ -105,6 +105,17 @@ async def root():
                         headers={"Cache-Control": "no-cache"})
 
 
+@app.get("/api/version")
+async def api_version():
+    """Build id = index.html mtime. The page polls this and RELOADS itself when it changes,
+    so a tab left open across a deploy self-heals to the latest JS instead of silently running
+    stale code (the recurring root cause of 'the live ticker vanished again')."""
+    try:
+        return {"v": int((STATIC_DIR / "index.html").stat().st_mtime)}
+    except Exception:
+        return {"v": 0}
+
+
 @app.get("/api/status")
 async def api_status():
     return {

@@ -1788,49 +1788,49 @@ setInterval(scaUpdateCountdown, 1000);
 // Real-time tick poll (~1s) — updates live P&L + price + the moving current candle,
 // broker-terminal style, only while the Live tab is on today during market hours.
 let scaLiveLastCandle = null;
-let scaTkLast = null;        // last GOOD tick — so a transient miss never blanks the row
+let scaTkLast = null, scaTkLastDate = null;   // last GOOD tick + the day it was for
+let scaTkLastUpd = null, scaTkStale = 0;      // server-timestamp advance tracking (clock-free)
 async function scaTickPoll() {
   if (scaVersion !== 'LIVE') return;
   const ticker = document.getElementById('sca-live-ticker');
-  const now = new Date(), today = now.toLocaleDateString('en-CA');
-  const mins = now.getHours() * 60 + now.getMinutes();
-  // ticker only means anything during market hours; hide cleanly outside them
-  if (!(mins >= (9 * 60 + 15) && mins < (15 * 60 + 30))) {
-    if (ticker) ticker.style.display = 'none'; return;
-  }
-  // The LIVE ticker ALWAYS tracks TODAY's real-time tick — independent of which date the
-  // dropdown shows. (A drifted dropdown used to hide it silently for the rest of the day.)
+  const today = new Date().toLocaleDateString('en-CA');
+  // Drop a last-good tick left over from a PREVIOUS day (tab open overnight) so we never
+  // show yesterday's numbers.
+  if (scaTkLastDate && scaTkLastDate !== today) { scaTkLast = null; scaTkLastDate = null; scaTkLastUpd = null; scaTkStale = 0; }
+  // ALWAYS track TODAY's tick — NO client-clock "market hours" gate. That gate hid the row
+  // whenever the viewer's DEVICE time fell outside 9:15–15:30 (wrong timezone / drifted clock
+  // / throttled tab), which is what kept making the live MTM+CE/PE "disappear" mid-day. Now
+  // visibility depends only on whether the SERVER has tick data for today.
   let t = null;
   try { t = await (await fetch(`/api/strangle/live_tick?date=${today}&index=${scaIndex}`)).json(); }
   catch (e) { t = null; }
-  if (t && !t.error) scaTkLast = t;                 // remember the last good tick
+  if (t && !t.error) { scaTkLast = t; scaTkLastDate = today; }
   let s = (t && !t.error) ? t : scaTkLast;          // fall back to last good on a transient miss
   if (!s) {
-    // No tick file AND no last-good (e.g. a fresh page load during an engine-restart gap,
-    // when the new engine hasn't written a tick yet). Fall back to TODAY's snapshot so MTM +
-    // CE/PE still show (stale) instead of the whole row vanishing — the reported bug.
+    // No tick yet (e.g. before 9:20 engine start, or an engine-restart gap). Fall back to
+    // TODAY's snapshot so MTM + CE/PE still show instead of the row vanishing.
     try {
       const ds = await (await fetch(`/api/strangle/live?date=${today}&index=${scaIndex}`)).json();
       if (ds && !ds.error) s = { combined: null, ce: (ds.marks || {})[ds.ce_symbol],
-        pe: (ds.marks || {})[ds.pe_symbol], mtm: ds.mtm_pnl, updated: null, armed: ds.mode === 'live' };
+        pe: (ds.marks || {})[ds.pe_symbol], mtm: ds.mtm_pnl, updated: ds.updated || null, armed: ds.mode === 'live' };
     } catch (e) { /* leave s null */ }
   }
+  // Hide ONLY when there is genuinely NO data for today (pre-open before the engine starts,
+  // a non-trade day, or an index not trading today). Never hide mid-session.
   if (!s) { if (ticker) ticker.style.display = 'none'; return; }
   if (ticker) ticker.style.display = '';
   const set = (id, txt, col) => { const el = document.getElementById(id); if (el) { el.textContent = txt; if (col) el.style.color = col; } };
-  set('sca-tk-price', s.combined != null ? s.combined.toFixed(2) : '—');
+  set('sca-tk-price', s.combined != null ? Number(s.combined).toFixed(2) : '—');
   set('sca-tk-ce', s.ce != null ? Number(s.ce).toFixed(2) : '—');
   set('sca-tk-pe', s.pe != null ? Number(s.pe).toFixed(2) : '—');
   set('sca-tk-mtm', s.mtm != null ? ('₹' + s.mtm) : '—', (s.mtm || 0) >= 0 ? '#26a69a' : '#ef5350');
-  // staleness: seconds since the engine wrote this tick — so it can NEVER silently freeze
-  let age = null;
-  if (s.updated && /^\d\d:\d\d:\d\d$/.test(s.updated)) {
-    const [hh, mm, ss] = s.updated.split(':').map(Number);
-    age = (mins * 60 + now.getSeconds()) - (hh * 3600 + mm * 60 + ss);
-  }
-  const fresh = (age != null && age >= 0 && age <= 8);
+  // Freshness WITHOUT the client clock: is the server's OWN timestamp still advancing? (The
+  // old age = clientClock − serverStamp broke whenever the two clocks disagreed.)
+  if (s.updated && s.updated !== scaTkLastUpd) { scaTkLastUpd = s.updated; scaTkStale = 0; }
+  else { scaTkStale++; }
+  const fresh = scaTkStale < 12;   // ~12 polls (~12s) with no new server tick = stale (still SHOWN)
   set('sca-tk-dot', '●', fresh ? (s.armed ? '#ef5350' : '#64748b') : '#eab308');
-  set('sca-tk-age', fresh ? 'live' : (age != null ? `stale ${age}s` : ''), fresh ? '#64748b' : '#eab308');
+  set('sca-tk-age', fresh ? 'live' : 'stale', fresh ? '#64748b' : '#eab308');
   // move the forming candle live — ONLY when the chart is actually showing today
   const sel = document.getElementById('sca-date');
   const onToday = sel && sel.value === today;
@@ -1849,6 +1849,22 @@ async function scaTickPoll() {
 setInterval(scaTickPoll, 1000);
 // background tabs get their timers throttled to ~1/min; refresh instantly on refocus
 document.addEventListener('visibilitychange', () => { if (!document.hidden) scaTickPoll(); });
+
+// Self-heal a STALE tab: index.html's build id (its mtime) is polled; if a deploy changed
+// it, the page reloads itself so the user is never stuck on old JS — the recurring reason
+// fixed bugs (like the vanishing ticker) kept "coming back". Only fires right after a deploy,
+// which is rare; the dashboard is stateless over the backend so a reload loses nothing.
+let scaBuildV = null;
+async function scaVersionCheck() {
+  try {
+    const v = (await (await fetch('/api/version', { cache: 'no-store' })).json()).v;
+    if (!v) return;
+    if (scaBuildV == null) { scaBuildV = v; return; }   // first call = baseline for this tab
+    if (v !== scaBuildV) location.reload();
+  } catch (e) { /* ignore — try again next tick */ }
+}
+scaVersionCheck();
+setInterval(scaVersionCheck, 120000);   // every 2 min
 function scaLiveEnsureChart() {
   if (scaLiveChart) return;
   const el = document.getElementById('sca-live-chart');
