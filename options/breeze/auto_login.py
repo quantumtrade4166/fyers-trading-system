@@ -152,9 +152,21 @@ def login(debug: bool = False) -> str:
               "login would stay manual.")
 
     # --- 5. submit the authenticator code -----------------------------------
+    # getotp returns the OTP panel as HTML, which the page injects INTO #form1.
+    # serializeJSON then walks the whole form, so the panel's own fields are
+    # part of the next post — omit them and validateuser 500s.
+    panel = _inputs(r3.text, by="id")
+    if debug:
+        print(f"    panel fields: {list(panel)}")
+        label = re.sub(r"<[^>]+>", " ", r3.text)
+        label = re.sub(r"\s+", " ", label).strip()
+        print(f"    panel text: {label[:220]}")
+
     code = pyotp.TOTP(totp_secret).now()
-    otp_payload = dict(payload)
+    otp_payload = {**payload, **panel}
     otp_payload["hiotp"] = code           # what submitotp() fills in
+    for i in range(1, 7):                 # the six per-digit boxes
+        otp_payload.setdefault(f"txtotp{i}", code[i - 1])
 
     r4 = s.post(f"{BASE}/tradelogin/validateuser", data=otp_payload,
                 timeout=30, allow_redirects=True)
