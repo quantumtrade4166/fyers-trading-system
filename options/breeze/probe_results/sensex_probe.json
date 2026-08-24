@@ -1,0 +1,63 @@
+{
+  "run_at": "2026-08-11T01:27:23",
+  "spot": {
+    "fallback": 82000.0
+  },
+  "attempts": [
+    {
+      "expiry": "2026-08-07",
+      "strike": 82000,
+      "status": 200,
+      "error": null,
+      "rows": 0
+    },
+    {
+      "expiry": "2026-08-07",
+      "strike": 82100,
+      "status": 200,
+      "error": null,
+      "rows": 0
+    },
+    {
+      "expiry": "2026-08-07",
+      "strike": 81900,
+      "status": 200,
+      "error": null,
+      "rows": 0
+    },
+    {
+      "expiry": "2026-08-07",
+      "strike": 82500,
+      "status": 200,
+      "error": null,
+      "rows": 0
+    },
+    {
+      "expiry": "2026-08-07",
+      "strike": 81500,
+      "status": 200,
+      "error": null,
+      "rows": 0
+    },
+    {
+      "expiry": "2026-08-06",
+      "strike": 82000,
+      "status": 200,
+      "error": null,
+      "rows": 21
+    }
+  ],
+  "works": true,
+  "working_example": {
+    "expiry": "2026-08-06",
+    "strike": 82000,
+    "status": 200,
+    "error": null,
+    "rows": 21
+  },
+  "one_second": {
+    "rows": 546,
+    "status": 200,
+    "error": null
+  }
+}

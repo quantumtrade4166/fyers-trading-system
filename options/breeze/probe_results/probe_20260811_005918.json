@@ -1,0 +1,255 @@
+{
+  "run_at": "2026-08-11T00:58:34",
+  "intervals": {
+    "1second": {
+      "ok": true,
+      "status": 200,
+      "error": null,
+      "rows": 877
+    },
+    "1second_sample": {
+      "close": 23.85,
+      "datetime": "2026-02-17 09:15:00",
+      "exchange_code": "NFO",
+      "expiry_date": "17-FEB-2026",
+      "high": 25.2,
+      "low": 22.0,
+      "open": 25.2,
+      "open_interest": 5297370,
+      "product_type": "Options",
+      "right": "Call",
+      "stock_code": "NIFTY",
+      "strike_price": 25750.0,
+      "volume": 0
+    },
+    "1minute": {
+      "ok": true,
+      "status": 200,
+      "error": null,
+      "rows": 16
+    },
+    "5minute": {
+      "ok": true,
+      "status": 200,
+      "error": null,
+      "rows": 4
+    },
+    "30minute": {
+      "ok": true,
+      "status": 200,
+      "error": null,
+      "rows": 1
+    },
+    "1day": {
+      "ok": false,
+      "status": 200,
+      "error": null,
+      "rows": 0
+    }
+  },
+  "second_depth": {
+    "2026": {
+      "probed": true,
+      "target": {
+        "trade_date": "2026-02-17",
+        "strike_price": 25750,
+        "right": "call",
+        "expiry_date": "2026-02-17"
+      },
+      "ok": true,
+      "status": 200,
+      "error": null,
+      "rows": 599
+    },
+    "2025": {
+      "probed": true,
+      "target": {
+        "trade_date": "2025-10-07",
+        "strike_price": 25100,
+        "right": "put",
+        "expiry_date": "2025-10-07"
+      },
+      "ok": true,
+      "status": 200,
+      "error": null,
+      "rows": 598
+    },
+    "2024": {
+      "probed": true,
+      "target": {
+        "trade_date": "2024-09-19",
+        "strike_price": 25400,
+        "right": "put",
+        "expiry_date": "2024-09-26"
+      },
+      "ok": true,
+      "status": 200,
+      "error": null,
+      "rows": 584
+    },
+    "2023": {
+      "probed": true,
+      "target": {
+        "trade_date": "2023-11-16",
+        "strike_price": 19850,
+        "right": "call",
+        "expiry_date": "2023-11-16"
+      },
+      "ok": true,
+      "status": 200,
+      "error": null,
+      "rows": 375
+    },
+    "2022": {
+      "probed": true,
+      "target": {
+        "trade_date": "2022-06-23",
+        "strike_price": 15600,
+        "right": "call",
+        "expiry_date": "2022-06-24"
+      },
+      "ok": false,
+      "status": 200,
+      "error": null,
+      "rows": 0
+    },
+    "2021": {
+      "probed": true,
+      "target": {
+        "trade_date": "2021-07-22",
+        "strike_price": 15800,
+        "right": "call",
+        "expiry_date": "2021-07-23"
+      },
+      "ok": false,
+      "status": 200,
+      "error": null,
+      "rows": 0
+    }
+  },
+  "next_week": {
+    "attempts": [
+      {
+        "year": 2026,
+        "trade_date": "2026-03-11",
+        "front_expiry": "2026-03-17",
+        "next_expiry": "2026-03-24",
+        "strike": 24250,
+        "dte_next": 13,
+        "front": {
+          "ok": true,
+          "status": 200,
+          "error": null,
+          "rows": 21
+        },
+        "next": {
+          "ok": true,
+          "status": 200,
+          "error": null,
+          "rows": 21
+        }
+      },
+      {
+        "year": 2025,
+        "trade_date": "2025-06-18",
+        "front_expiry": "2025-06-19",
+        "next_expiry": "2025-06-24",
+        "strike": 24800,
+        "dte_next": 6,
+        "front": {
+          "ok": true,
+          "status": 200,
+          "error": null,
+          "rows": 21
+        },
+        "next": {
+          "ok": false,
+          "status": 200,
+          "error": null,
+          "rows": 0
+        }
+      },
+      {
+        "year": 2024,
+        "trade_date": "2024-06-18",
+        "front_expiry": "2024-06-20",
+        "next_expiry": "2024-06-27",
+        "strike": 23500,
+        "dte_next": 9,
+        "front": {
+          "ok": true,
+          "status": 200,
+          "error": null,
+          "rows": 21
+        },
+        "next": {
+          "ok": true,
+          "status": 200,
+          "error": null,
+          "rows": 21
+        }
+      },
+      {
+        "year": 2023,
+        "trade_date": "2023-06-19",
+        "front_expiry": "2023-06-22",
+        "next_expiry": "2023-06-28",
+        "strike": 18850,
+        "dte_next": 9,
+        "front": {
+          "ok": true,
+          "status": 200,
+          "error": null,
+          "rows": 21
+        },
+        "next": {
+          "ok": true,
+          "status": 200,
+          "error": null,
+          "rows": 21
+        }
+      },
+      {
+        "year": 2022,
+        "trade_date": "2022-06-20",
+        "front_expiry": "2022-06-24",
+        "next_expiry": "2022-06-30",
+        "strike": 15300,
+        "dte_next": 10,
+        "front": {
+          "ok": false,
+          "status": 200,
+          "error": null,
+          "rows": 0
+        },
+        "next": {
+          "ok": true,
+          "status": 200,
+          "error": null,
+          "rows": 21
+        }
+      },
+      {
+        "year": 2021,
+        "trade_date": "2021-07-05",
+        "front_expiry": "2021-07-08",
+        "next_expiry": "2021-07-15",
+        "strike": 15750,
+        "dte_next": 10,
+        "front": {
+          "ok": true,
+          "status": 200,
+          "error": null,
+          "rows": 21
+        },
+        "next": {
+          "ok": true,
+          "status": 200,
+          "error": null,
+          "rows": 21
+        }
+      }
+    ],
+    "works": true
+  }
+}
