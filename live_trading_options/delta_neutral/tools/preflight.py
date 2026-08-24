@@ -18,6 +18,7 @@ Read-only. Never places an order, never starts a socket.
 
 import sys
 import json
+import argparse
 import datetime as dt
 from pathlib import Path
 
@@ -47,7 +48,7 @@ def main():
     for index in P["live_orders"].get("indices", []):
         print(f"\n  ══ {index} ══")
         try:
-            tradeable, dte, expiry = is_trade_day(k, index)
+            tradeable, dte, expiry = is_trade_day(k, index, day)
         except Exception as e:
             print(f"    expiry lookup FAILED: {e}")
             continue
