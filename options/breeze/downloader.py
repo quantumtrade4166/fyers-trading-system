@@ -219,6 +219,15 @@ def load_spot_by_date(stock_code: str = "NIFTY") -> dict:
             spot[str(row.date)] = float(row.close)
         return spot
 
+    # A pre-extracted date->spot CSV, if one has been shipped. The 1-minute
+    # parquets it comes from are 333MB and gitignored, so the VPS — where the
+    # long download actually runs — has no copy of them. Only the daily spot is
+    # needed to centre the strike window, and that is a few KB.
+    csv_path = DATA_DIR / "nifty_spot_daily.csv"
+    if csv_path.exists():
+        df = pd.read_csv(csv_path)
+        return {str(row.date): float(row.spot) for row in df.itertuples()}
+
     for year_dir in sorted(EXISTING_OPTIONS_DIR.glob("[0-9][0-9][0-9][0-9]")):
         parquet = year_dir / "ohlcv_1min.parquet"
         if not parquet.exists():
@@ -226,6 +235,13 @@ def load_spot_by_date(stock_code: str = "NIFTY") -> dict:
         df = pd.read_parquet(parquet, columns=["date", "spot"])
         for day, value in df.groupby("date")["spot"].first().items():
             spot[str(day)] = float(value)
+
+    if not spot:
+        raise RuntimeError(
+            f"No NIFTY spot series found.\nExpected either {csv_path} or the "
+            f"1-min parquets under {EXISTING_OPTIONS_DIR}.\nOn a machine that "
+            f"has the parquets, run:  python -m options.breeze.export_spot"
+        )
     return spot
 
 
