@@ -17,7 +17,7 @@
   },
 
   "_entry_note": "Per index per DTE: target premium to sell, an optional preferred band (tried first), and the leg stop-loss (absolute premium). Scan starts at OTM1 and moves outward — ATM is NEVER sold.",
-  "_sl_schedule_note": "EXPIRY-DAY ONLY (0 DTE). The leg stop TIGHTENS as the day runs on. A step is DUE at its time but only ARMS once EVERY open leg is trading at least `arm_gap` below the CURRENT stop — a buy-stop must sit above the market, so tightening onto a leg that has already run past the new level is impossible at the broker and would be an instant forced exit if it weren't. Both legs shift together or neither does; the engine keeps re-checking every tick and shifts the moment the condition is met. Legs opened AFTER a step has taken effect are born with the tightened stop. SENSEX 0-DTE has no schedule yet (flat 80) — pending the user's numbers.",
+  "_sl_schedule_note": "EXPIRY-DAY ONLY (0 DTE). The leg stop TIGHTENS as the day runs on: NIFTY 40->30->20, SENSEX 80->60->40. A step is DUE at its time but only ARMS once EVERY open leg is (a) at least `sl_arm_gap` below the stop in force AND (b) strictly below the NEW stop. Condition (b) is what makes the new stop placeable — a buy-stop must sit above the market, so tightening onto a leg that has already run past the new level is rejected by the broker. For NIFTY the two conditions coincide (40-10 = 30); for SENSEX they do not (80-10 = 70, but the new stop is 60), which is why both are checked. Both legs shift together or neither does; the engine re-checks every tick and shifts the moment the condition is met. Legs opened AFTER a step has taken effect are born with the tightened stop. 1-DTE has no schedule on either index.",
   "sl_arm_gap": 10,
 
   "sl_watchdog_gap": 10,
@@ -31,7 +31,9 @@
       "1": { "target": 25, "prefer_min": null, "prefer_max": null, "sl": 50 }
     },
     "SENSEX": {
-      "0": { "target": 40, "prefer_min": null, "prefer_max": null, "sl": 80 },
+      "0": { "target": 40, "prefer_min": null, "prefer_max": null, "sl": 80,
+             "sl_schedule": [ { "from": "12:00", "sl": 60 },
+                              { "from": "14:00", "sl": 40 } ] },
       "1": { "target": 40, "prefer_min": null, "prefer_max": null, "sl": 80 }
     }
   },

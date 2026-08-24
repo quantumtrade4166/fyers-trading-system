@@ -724,11 +724,19 @@ class DNController:
             return
 
         legs = self.position.live_legs()
-        need = self.sl - self.sl_arm_gap         # every leg must be at/below this
+        # TWO conditions, and both matter:
+        #   1. at least `arm_gap` below the stop in force — the user's rule, "let
+        #      the premium come 10 below the old SL before tightening"
+        #   2. STRICTLY below the new stop — a buy-stop must sit above the market,
+        #      so this is what makes the new stop placeable at all
+        # For Nifty (40->30, gap 10) the two coincide. For Sensex (80->60, gap 10)
+        # they do not: rule 1 alone would arm at a premium of 65 and then try to
+        # put a stop at 60 underneath it, which the broker rejects.
+        need = self.sl - self.sl_arm_gap
         blockers = []
         for leg in legs:
             m = self._mark(leg)
-            if m is None or m > need:
+            if m is None or m > need or m >= new_sl:
                 blockers.append(f"{leg.strike}{leg.opt_type}@{m}")
         if blockers:
             # log the deferral ONCE per (step, reason) — this runs every tick
@@ -736,7 +744,8 @@ class DNController:
             if self._sl_defer_logged != key:
                 self._sl_defer_logged = key
                 self._log("sl_step_deferred", due=at, from_sl=self.sl, to_sl=new_sl,
-                          need_at_or_below=need, waiting_on=", ".join(blockers))
+                          need_at_or_below=min(need, new_sl),
+                          waiting_on=", ".join(blockers))
             return
 
         old = self.sl

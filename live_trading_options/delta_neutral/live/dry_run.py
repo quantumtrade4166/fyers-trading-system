@@ -446,10 +446,59 @@ step(c12, calm, "12:05:00")
 check("1-DTE never tightens", c12.sl, 50)
 check("1-DTE legs keep 50", c12.position.ce.sl_trigger, 50)
 
-# Sensex 0-DTE has no schedule yet (user is supplying the numbers separately)
+# ── Sensex 0-DTE: 80 -> 60 -> 40, steps of 20 not 10 ────────────────────
+print("\n [14b] Sensex 0-DTE schedule — the arming rule must handle a 20-wide step")
 c13 = new_ctrl(dte=0, index="SENSEX")
-check("Sensex 0-DTE has no schedule yet", c13.sl_steps, [])
-check("Sensex 0-DTE stop stays flat at 80", c13.sl, 80)
+check("Sensex 0-DTE opens on 80", c13.sl, 80)
+check("Sensex 0-DTE has two steps", [(a, v) for a, v in c13.sl_steps],
+      [("12:00", 60.0), ("14:00", 40.0)])
+
+SIV, SATM = 100, 77_400
+
+
+def schain(ce, pe, atm=SATM):
+    c = {(atm, CE): 200.0, (atm, PE): 200.0}
+    for n, p in ce.items():
+        c[(atm + n * SIV, CE)] = p
+    for n, p in pe.items():
+        c[(atm - n * SIV, PE)] = p
+    return c
+
+
+s_open = schain({1: 60, 2: 48, 3: 39, 4: 30}, {1: 58, 2: 46, 3: 38, 4: 29})
+c13.on_tick(s_open, SATM, at("09:30:02"))
+check("Sensex entered", c13.position.is_complete, True)
+check("Sensex legs carry the 80 stop", c13.position.ce.sl_trigger, 80)
+check("Sensex SL limit uses its own 4-pt buffer (80 -> 84)",
+      c13.position.ce.sl_limit, 84.0)
+
+# THE case that was broken: a leg at 65 is 10+ below the 80 stop, but a buy-stop
+# at 60 cannot sit under a market of 65. The step must NOT arm.
+hot_s = schain({1: 95, 2: 78, 3: 65, 4: 52}, {1: 40, 2: 30, 3: 22, 4: 16})
+c13.on_tick(hot_s, SATM, at("12:00:05"))
+check("step does NOT arm at premium 65 (below 80-10, but above the new 60)",
+      c13.sl, 80)
+check("deferral logged", len(evs(c13, "sl_step_deferred")), 1)
+
+# once both legs are under 60 it arms
+cool_s = schain({1: 80, 2: 66, 3: 55, 4: 42}, {1: 38, 2: 28, 3: 20, 4: 14})
+c13.on_tick(cool_s, SATM, at("12:04:00"))
+check("arms once both legs are below the NEW stop", c13.sl, 60)
+check("Sensex CE stop moved to 60", c13.position.ce.sl_trigger, 60)
+check("Sensex limit follows (60 -> 64)", c13.position.ce.sl_limit, 64.0)
+
+# 14:00 -> 40, same rule again
+c13.on_tick(cool_s, SATM, at("14:00:05"))
+check("14:00 step deferred while a leg is above 40", c13.sl, 60)
+late_s = schain({1: 34, 2: 26, 3: 19, 4: 13}, {1: 30, 2: 22, 3: 16, 4: 11})
+c13.on_tick(late_s, SATM, at("14:03:00"))
+check("second Sensex step arms", c13.sl, 40)
+check("both Sensex tightenings recorded", len(c13.sl_history), 2)
+
+# 1-DTE Sensex is untouched
+c14b = new_ctrl(dte=1, index="SENSEX")
+check("Sensex 1-DTE has no schedule", c14b.sl_steps, [])
+check("Sensex 1-DTE stays flat at 80", c14b.sl, 80)
 
 # ══ 15. both legs stopped out → done for the day ═════════════════════════
 print("\n [15] both SLs hit → no re-entry, day over")
