@@ -44,15 +44,25 @@ UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
 
 
-def _inputs(html: str) -> dict:
-    """Every <input name=... value=...> on the page, as a dict."""
+def _inputs(html: str, by: str = "name") -> dict:
+    """Every <input> on the page, keyed by `name` or by `id`.
+
+    Which one matters: the page posts through jQuery, and its serializeJSON()
+    keys the payload by element **id**, skipping anything without one:
+
+        form.find('input, select, textarea').each(function () {
+            if (!this.id) return;
+            json[this.id] = this.value; ...
+
+    Posting by `name` — the obvious thing — gets a bare "Invalid request."
+    """
     out = {}
     for tag in re.findall(r"<input[^>]*>", html, re.I):
-        name = re.search(r"name=['\"]([^'\"]+)['\"]", tag, re.I)
-        if not name:
+        key = re.search(rf"{by}=['\"]([^'\"]+)['\"]", tag, re.I)
+        if not key:
             continue
         val = re.search(r"value=['\"]([^'\"]*)['\"]", tag, re.I)
-        out[name.group(1)] = val.group(1) if val else ""
+        out[key.group(1)] = val.group(1) if val else ""
     return out
 
 
@@ -98,8 +108,8 @@ def login(debug: bool = False) -> str:
     # --- 2. real login page -------------------------------------------------
     r2 = s.post(f"{BASE}/tradelogin", data=handshake, timeout=30)
     r2.raise_for_status()
-    fields = _inputs(r2.text)
-    pub_key = fields.get("ctl00$ContentPlaceHolder1$hidpv", "")
+    fields = _inputs(r2.text, by="id")
+    pub_key = fields.get("hidpv", "")
     if not pub_key.strip().startswith("-----BEGIN"):
         raise RuntimeError(
             "No RSA public key on the login page — the flow has changed. "
@@ -108,13 +118,20 @@ def login(debug: bool = False) -> str:
     if debug:
         print(f"[2] login page  {r2.status_code}  rsa key {len(pub_key)} chars")
 
+    # The page posts by AJAX; without these the server answers "Invalid request".
+    s.headers.update({
+        "X-Requested-With": "XMLHttpRequest",
+        "Referer": f"{BASE}/tradelogin",
+        "Origin": "https://api.icicidirect.com",
+    })
+
     # --- 3. encrypt the password exactly as the browser does ----------------
-    payload = dict(fields)
-    payload["User/Login Id"] = user_id
+    payload = {k: v for k, v in fields.items() if k != "btnSubmit"}
+    payload["txtuid"] = user_id
     payload["hidp"] = _rsa_encrypt(pub_key, password)
-    payload["Password"] = "************"      # what the page actually posts
-    payload["chkssTnc"] = "on"                 # terms checkbox
-    payload.pop("hiddob", None)
+    payload["txtPass"] = "************"   # the page blanks the real box first
+    payload["txtdob"] = "************"
+    payload["chkssTnc"] = "Y"             # terms checkbox, value="Y"
 
     # --- 4. trigger 2FA -----------------------------------------------------
     r3 = s.post(f"{BASE}/tradelogin/getotp", data=payload, timeout=30)
@@ -123,18 +140,21 @@ def login(debug: bool = False) -> str:
         print("    body:", re.sub(r"\s+", " ", r3.text[:400]))
 
     low = r3.text.lower()
-    if "sms" in low or "mobile" in low or "registered number" in low:
-        print("\n⚠ This account's 2FA looks like an SMS/mobile OTP, not an "
-              "authenticator app.\n  No script can read an SMS — the daily "
-              "login stays manual.\n  Switch the account to TOTP in ICICI's "
-              "settings to make this work.")
+    if "shwcap" in low or "captcha" in low:
+        raise RuntimeError(
+            "The server is demanding a captcha (SHWCAP). That usually clears "
+            "after a successful manual login — log in once in a browser, then "
+            "retry."
+        )
+    if "sms" in low or "registered mobile" in low:
+        print("\n⚠ This account's second factor looks like an SMS code, not an "
+              "authenticator app.\n  Nothing can script an SMS — the daily "
+              "login would stay manual.")
 
     # --- 5. submit the authenticator code -----------------------------------
     code = pyotp.TOTP(totp_secret).now()
     otp_payload = dict(payload)
-    otp_payload.update({"otp": code, "OTP": code, "txtOTP": code})
-    for i, digit in enumerate(code, start=1):       # the page splits it per box
-        otp_payload[f"otp{i}"] = digit
+    otp_payload["hiotp"] = code           # what submitotp() fills in
 
     r4 = s.post(f"{BASE}/tradelogin/validateuser", data=otp_payload,
                 timeout=30, allow_redirects=True)

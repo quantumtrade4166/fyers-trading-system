@@ -17,6 +17,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
 import argparse
+import base64
 import getpass
 import subprocess
 
@@ -63,23 +64,32 @@ def write_local() -> dict:
 
 
 def push_to_vps(values: dict) -> None:
-    """Mirror the BREEZE_* lines to the VPS without echoing them anywhere."""
+    """Mirror the BREEZE_* lines to the VPS without echoing them anywhere.
+
+    The command is base64-encoded and handed to powershell -EncodedCommand.
+    ssh hands the remote command to cmd.exe first, and cmd eats pipes and
+    quotes before PowerShell ever sees them — encoding sidesteps that whole
+    layer. The credentials still travel by stdin, never on the command line.
+    """
     payload = "\n".join(f"{k}={values[k]}" for k, _, _ in KEYS if values[k])
 
     ps = (
-        "$in=[Console]::In.ReadToEnd();"
+        "$in=[Console]::In.ReadToEnd() -replace \"`r\",'';"
         f"$p='{VPS_ENV}';"
+        "$new = $in -split \"`n\" | Where-Object { $_.Trim() };"
+        "$keys = $new | ForEach-Object { ($_ -split '=')[0] };"
         "$old = if (Test-Path $p) { Get-Content $p } else { @() };"
-        "$keys = ($in -split \"`n\" | ForEach-Object { ($_ -split '=')[0] }) "
-        "| Where-Object { $_ };"
-        "$kept = $old | Where-Object { $k=($_ -split '=')[0]; $keys -notcontains $k };"
-        "($kept + ($in -split \"`n\")) | Set-Content $p -Encoding utf8;"
-        "Write-Output ('VPS .env now has ' + "
-        "((Get-Content $p) -match '^BREEZE').Count + ' BREEZE keys')"
+        "$kept = $old | Where-Object { $keys -notcontains ($_ -split '=')[0] };"
+        "$out = @($kept | Where-Object { $_.Trim() }) + $new;"
+        "Set-Content -Path $p -Value $out -Encoding utf8;"
+        "Write-Output ('VPS .env BREEZE keys: ' + "
+        "(@(Get-Content $p | Where-Object { $_ -match '^BREEZE_' }).Count))"
     )
+    encoded = base64.b64encode(ps.encode("utf-16-le")).decode()
 
     r = subprocess.run(
-        ["ssh", "-o", "ConnectTimeout=20", VPS, "powershell", "-NoProfile", "-Command", ps],
+        ["ssh", "-o", "ConnectTimeout=20", VPS,
+         "powershell", "-NoProfile", "-EncodedCommand", encoded],
         input=payload, text=True, capture_output=True, timeout=90,
     )
     out = "\n".join(ln for ln in (r.stdout + r.stderr).splitlines()
@@ -94,7 +104,21 @@ def push_to_vps(values: dict) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description="Set Breeze credentials, local + VPS")
     ap.add_argument("--local-only", action="store_true", help="skip the VPS copy")
+    ap.add_argument("--push-only", action="store_true",
+                    help="mirror what is already in the local .env to the VPS, "
+                         "without prompting for anything")
     args = ap.parse_args()
+
+    if args.push_only:
+        env = _load_env()
+        values = {k: env.get(k, "") for k, _, _ in KEYS}
+        have = [k for k, _, _ in KEYS if values[k]]
+        if not have:
+            print(f"❌ No BREEZE_* keys in {ENV_PATH} — run without --push-only first.")
+            return 1
+        print(f"Mirroring {len(have)} BREEZE keys to the VPS...")
+        push_to_vps(values)
+        return 0
 
     values = write_local()
     if not args.local_only:
