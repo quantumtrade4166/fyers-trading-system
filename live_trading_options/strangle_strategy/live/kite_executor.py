@@ -114,11 +114,16 @@ def place_limit(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
 
 
 def _find_recent_order(kite, tradingsymbol: str, side: str, qty: int, since,
-                       tag: str = "vwstrangle", wait: float = 3.0) -> str | None:
+                       tag: str = "vwstrangle", wait: float = 3.0,
+                       order_type: str = None) -> str | None:
     """Poll the order book briefly for an order we may have placed but whose HTTP
     response we LOST (timeout/network error). Matched by tag+symbol+side+qty placed
     at/after `since`. This is what makes a placement timeout safe — before we ever
-    retry, we confirm whether the first request actually landed in the OMS."""
+    retry, we confirm whether the first request actually landed in the OMS.
+
+    `order_type` narrows the match (e.g. "SL"), which matters once a strategy has
+    BOTH a resting stop and a plain exit on the same leg: without it a lost stop
+    placement could adopt the exit's order id."""
     import time as _t
     deadline = _t.monotonic() + wait
     while True:
@@ -130,6 +135,7 @@ def _find_recent_order(kite, tradingsymbol: str, side: str, qty: int, since,
             if (o.get("tag") == tag and o.get("tradingsymbol") == tradingsymbol
                     and o.get("transaction_type") == side
                     and int(o.get("quantity") or 0) == int(qty)
+                    and (order_type is None or o.get("order_type") == order_type)
                     and o.get("status") not in ("REJECTED", "CANCELLED")):
                 ots = o.get("order_timestamp")
                 if since is not None and hasattr(ots, "year") and ots < since:
@@ -166,6 +172,89 @@ def place_limit_verified(kite, tradingsymbol: str, exchange: str, side: str, qty
     raise last_err
 
 
+# ── resting stop-loss orders (used by the delta-neutral strangle) ─────────────
+# A short option leg's stop is a BUY order that triggers ABOVE the entry premium.
+# Zerodha rejects SL-M on options exactly as it rejects MARKET, so the stop must be
+# SL: a trigger price plus a limit priced THROUGH the trigger so it actually fills
+# when it fires. The limit is a worst-case cap, never the expected fill.
+# Gap between the trigger and the limit, in POINTS: trigger 40 -> limit 42. The
+# gap is what makes the stop actually fill — a limit sitting exactly at the trigger
+# is jumped by any move that gaps through it, and the "stop" then protects nothing.
+# Too wide and the fill is needlessly bad; 2 points suits Nifty-sized premiums.
+# Overridable per strategy via the `buffer` argument.
+_SL_LIMIT_BUFFER = 2.0
+
+
+def sl_limit_price(trigger: float, side: str = BUY, buffer: float = None) -> float:
+    """Limit price to pair with an SL trigger, rounded to the 0.05 option tick.
+    A BUY stop needs limit ABOVE the trigger (Zerodha requires limit >= trigger);
+    a SELL stop needs it below."""
+    b = _SL_LIMIT_BUFFER if buffer is None else abs(float(buffer))
+    return _round_tick(trigger + b) if side == BUY else _round_tick(max(0.05, trigger - b))
+
+
+def place_sl(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
+             trigger: float, product: str = "MIS", tag: str = "dnstrangle",
+             buffer: float = None) -> str:
+    """Place a resting SL (stop-loss) order and return its order_id. ⚠️ REAL ORDER.
+    It sits at the exchange until the trigger is hit, so it protects the position
+    even if this engine, the dashboard, or the whole VPS dies."""
+    return kite.place_order(
+        variety=kite.VARIETY_REGULAR, exchange=exchange, tradingsymbol=tradingsymbol,
+        transaction_type=side, quantity=qty, product=product,
+        order_type=kite.ORDER_TYPE_SL, trigger_price=_round_tick(trigger),
+        price=sl_limit_price(trigger, side, buffer), tag=tag)
+
+
+def place_sl_verified(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
+                      trigger: float, product: str = "MIS", tag: str = "dnstrangle",
+                      retries: int = 2, buffer: float = None) -> str:
+    """place_sl that survives a lost/timed-out HTTP response without ever placing
+    two stops on the same leg (which would buy back double on a trigger). Same
+    look-before-retry contract as place_limit_verified, narrowed to SL orders."""
+    import datetime as _dt
+    import time as _t
+    last_err = None
+    for attempt in range(retries + 1):
+        since = _dt.datetime.now() - _dt.timedelta(seconds=6)
+        try:
+            return place_sl(kite, tradingsymbol, exchange, side, qty, trigger,
+                            product, tag, buffer)
+        except Exception as e:
+            last_err = e
+            found = _find_recent_order(kite, tradingsymbol, side, qty, since, tag,
+                                       order_type="SL")
+            if found:
+                return found                       # it DID land — adopt it, never re-place
+            if attempt < retries:
+                _t.sleep(1.0)
+    raise last_err
+
+
+def modify_sl(kite, order_id: str, trigger: float, buffer: float = None):
+    """Move an existing resting SL to a new trigger (and re-derive its limit).
+
+    MODIFY, never cancel-then-replace: a cancel leaves the leg unprotected for the
+    round trip in between, and if the replacement is rejected the position is naked
+    with nobody watching. Modifying keeps a stop in the book the whole time."""
+    return kite.modify_order(
+        variety=kite.VARIETY_REGULAR, order_id=order_id,
+        trigger_price=_round_tick(trigger),
+        price=sl_limit_price(trigger, BUY, buffer))
+
+
+def is_resting(kite, order_id: str) -> bool:
+    """True when the order is live at the exchange and still waiting (a stop that
+    is actually protecting the leg). This is the check that must pass before a
+    short position is treated as open."""
+    try:
+        hist = kite.order_history(order_id) or []
+    except Exception:
+        return False
+    st = (hist[-1] if hist else {}).get("status")
+    return st in ("TRIGGER PENDING", "OPEN", "OPEN PENDING", "VALIDATION PENDING")
+
+
 def order_status(kite, order_id: str) -> dict:
     """Latest status + fill for an order_id: {status, filled_qty, avg_price, fill_time}.
     fill_time = the broker's exchange timestamp (HH:MM:SS) of the fill — used to show
@@ -189,6 +278,63 @@ def order_status(kite, order_id: str) -> dict:
 
 def cancel(kite, order_id: str):
     return kite.cancel_order(variety=kite.VARIETY_REGULAR, order_id=order_id)
+
+
+def contract_for(kite, exchange: str, tradingsymbol: str) -> dict | None:
+    """Reverse lookup: broker symbol -> {strike, opt_type, expiry, lot_size}.
+    Needed when rebuilding state from the order book after a restart, where all we
+    have is the tradingsymbol we traded. Reads the same cached instrument dump."""
+    for r in _instruments(kite, exchange):
+        if r.get("tradingsymbol") == tradingsymbol:
+            return {"strike": int(r.get("strike", 0)),
+                    "opt_type": r.get("instrument_type"),
+                    "expiry": r.get("expiry"), "lot_size": r.get("lot_size")}
+    return None
+
+
+RESTING = ("TRIGGER PENDING", "OPEN", "OPEN PENDING", "VALIDATION PENDING")
+
+
+def orders_by_id(kite, tag: str = "dnstrangle") -> dict:
+    """{order_id: {...}} for every order THIS strategy placed today, in ONE call.
+
+    One `kite.orders()` beats polling `order_history` per leg: it costs a single
+    request no matter how many legs are live, which matters when this runs every
+    couple of seconds all day. Used to answer both "did a stop fire?" and "is that
+    stop still actually resting at the exchange?" from the same snapshot."""
+    out = {}
+    for o in (kite.orders() or []):
+        if o.get("tag") != tag:
+            continue
+        ts = o.get("exchange_timestamp") or o.get("order_timestamp")
+        out[o.get("order_id")] = {
+            "status": o.get("status"), "order_type": o.get("order_type"),
+            "tradingsymbol": o.get("tradingsymbol"), "exchange": o.get("exchange"),
+            "side": o.get("transaction_type"),
+            "qty": int(o.get("quantity") or 0),
+            "filled_qty": int(o.get("filled_quantity") or 0),
+            "avg_price": o.get("average_price"),
+            "trigger_price": o.get("trigger_price"),
+            "resting": o.get("status") in RESTING,
+            "fill_time": ts.strftime("%H:%M:%S") if hasattr(ts, "strftime") else (str(ts)[-8:] if ts else None),
+        }
+    return out
+
+
+def resting_stops(kite, tag: str = "dnstrangle") -> list:
+    """This strategy's SL orders that are still waiting at the exchange.
+    After a restart these are the proof that a recovered position is protected —
+    without them the position would look naked and get covered unnecessarily."""
+    out = []
+    for o in (kite.orders() or []):
+        if (o.get("tag") == tag and o.get("order_type") == "SL"
+                and o.get("status") in ("TRIGGER PENDING", "OPEN", "OPEN PENDING")):
+            out.append({"order_id": o.get("order_id"),
+                        "tradingsymbol": o.get("tradingsymbol"),
+                        "exchange": o.get("exchange"),
+                        "trigger_price": o.get("trigger_price"),
+                        "quantity": int(o.get("quantity") or 0)})
+    return out
 
 
 def strategy_fills(kite, tag: str = "vwstrangle") -> list:

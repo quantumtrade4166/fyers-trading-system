@@ -1,0 +1,64 @@
+{
+  "_comment": "Delta-Neutral Strangle parameters. 'Delta neutral' here is achieved by PREMIUM SYMMETRY, not by option greeks: the two legs are re-balanced whenever one leg's premium reaches 2x the other's. Loaded at engine start; changes take effect next trading day (qty + max loss are overridable live from the dashboard).",
+
+  "lot_sizes":       { "NIFTY": 65,   "SENSEX": 20 },
+  "strike_interval": { "NIFTY": 50,   "SENSEX": 100 },
+  "index_symbols":   { "NIFTY": "NSE:NIFTY50-INDEX", "SENSEX": "BSE:SENSEX-INDEX" },
+
+  "entry_time": "09:30",
+  "square_off": "15:14",
+
+  "_windows_note": "Adjustments are evaluated ONLY inside a 1-minute window every 15 minutes: 09:45-09:46, 10:00-10:01 ... 15:00-15:01. Outside a window nothing is ever adjusted.",
+  "adjust_windows": {
+    "first": "09:45",
+    "last":  "15:00",
+    "every_minutes": 15,
+    "window_seconds": 60
+  },
+
+  "_entry_note": "Per index per DTE: target premium to sell, an optional preferred band (tried first), and the leg stop-loss (absolute premium). Scan starts at OTM1 and moves outward — ATM is NEVER sold.",
+  "_sl_schedule_note": "EXPIRY-DAY ONLY (0 DTE). The leg stop TIGHTENS as the day runs on. A step is DUE at its time but only ARMS once EVERY open leg is trading at least `arm_gap` below the CURRENT stop — a buy-stop must sit above the market, so tightening onto a leg that has already run past the new level is impossible at the broker and would be an instant forced exit if it weren't. Both legs shift together or neither does; the engine keeps re-checking every tick and shifts the moment the condition is met. Legs opened AFTER a step has taken effect are born with the tightened stop. SENSEX 0-DTE has no schedule yet (flat 80) — pending the user's numbers.",
+  "sl_arm_gap": 10,
+
+  "sl_watchdog_gap": 10,
+  "_sl_watchdog_note": "POINTS past the trigger at which the engine stops waiting for the exchange and covers the leg itself. Zerodha blocks SL-M on options, so the stop is an SL with a limit (trigger 40 / limit 42); in a violent gap-through the market can jump straight past 42 and the stop rests unfilled while the leg keeps bleeding — the screen would still show it protected. This is the backstop for exactly that: premium >= trigger + gap and no fill -> cancel the stop, buy the leg back now. It should essentially never fire; every time it does, the audit log records that the exchange stop was skipped.",
+
+  "entry": {
+    "NIFTY": {
+      "0": { "target": 20, "prefer_min": 15, "prefer_max": 20, "sl": 40,
+             "sl_schedule": [ { "from": "12:00", "sl": 30 },
+                              { "from": "14:00", "sl": 20 } ] },
+      "1": { "target": 25, "prefer_min": null, "prefer_max": null, "sl": 50 }
+    },
+    "SENSEX": {
+      "0": { "target": 40, "prefer_min": null, "prefer_max": null, "sl": 80 },
+      "1": { "target": 40, "prefer_min": null, "prefer_max": null, "sl": 80 }
+    }
+  },
+
+  "adjust_trigger_ratio": 2.0,
+  "_ratio_note": "Adjust when max(leg premium) >= ratio * min(leg premium).",
+
+  "sl_limit_buffer": { "NIFTY": 2, "SENSEX": 4 },
+  "_sl_limit_buffer_note": "POINTS between an SL order's trigger and its limit: SL 40 -> trigger 40, limit 42. Zerodha blocks SL-M on options, so the stop is an SL (trigger + limit) and this gap is what makes it actually fill — a limit sitting exactly on the trigger gets jumped by the very move the stop exists for. Too wide only worsens the fill. Sensex premiums run ~4x Nifty's, so it takes a wider gap in points to be the same gap in practice.",
+
+  "lots": 1,
+  "max_loss": 5000,
+  "_max_loss_note": "Rupee MAGNITUDE. Own-book MTM <= -max_loss -> square off everything + stop for the day. There is no profit target by design. IMPORTANT: set this ABOVE the worst case the leg stops themselves allow, or it fires first and the per-leg stops never get to work. At 1 lot: NIFTY 0-DTE both legs stopping = ~Rs3,120 (entry ~16 -> SL 40, x65, x2 legs); NIFTY 1-DTE ~Rs3,250; SENSEX ~Rs1,600. The dashboard shows this figure live next to the field.",
+  "max_fresh_entries": 3,
+  "_max_fresh_note": "How many times a full strangle may be opened from FLAT in a day (the 09:30 entry counts as the first). Caps the retry loop if entries keep failing, and caps re-opening after both legs are stopped out.",
+  "max_lots": 15,
+
+  "chain_span": 15,
+  "_chain_span_note": "Strikes each side of ATM to stream + display in the live option chain.",
+
+  "live_orders": {
+    "_comment": "Real orders fire ONLY when enabled=true AND allow_live=true AND the dashboard arm switch for that index says mode=live. Order tag is 'dnstrangle' — the own-book scope, kept separate from the VWAP strangle's 'vwstrangle'.",
+    "enabled": true,
+    "allow_live": true,
+    "indices": ["NIFTY", "SENSEX"],
+    "tag": "dnstrangle"
+  },
+
+  "last_saved": "2026-08-24"
+}

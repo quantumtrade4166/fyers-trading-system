@@ -27,16 +27,23 @@ _DEFAULT = {"mode": "paper", "kill": False, "qty": None, "mtm_stop": None, "upda
 # so an open position is never resized mid-trade.
 
 
-def _control_file(index: str = None) -> Path:
+def _control_file(index: str = None, state_dir: Path = None) -> Path:
     """PER-INDEX arm switch so NIFTY and SENSEX are armed independently. `index=None`
-    falls back to the legacy global file (backward compat)."""
+    falls back to the legacy global file (backward compat).
+
+    `state_dir` lets a SECOND strategy reuse this exact control channel with its own
+    files (the delta-neutral strangle keeps its flags under its own data/live_state),
+    so both strategies share one implementation and can never read each other's arm
+    switch. Default = the VWAP strangle's directory, unchanged."""
+    d = state_dir or STATE_DIR
+    d.mkdir(parents=True, exist_ok=True)
     if index:
-        return STATE_DIR / f"live_control_{index.upper()}.json"
-    return CONTROL_FILE
+        return d / f"live_control_{index.upper()}.json"
+    return d / CONTROL_FILE.name
 
 
-def read_control(index: str = None) -> dict:
-    f = _control_file(index)
+def read_control(index: str = None, state_dir: Path = None) -> dict:
+    f = _control_file(index, state_dir)
     if f.exists():
         try:
             d = json.loads(f.read_text())
@@ -47,8 +54,9 @@ def read_control(index: str = None) -> dict:
 
 
 def write_control(index: str = None, mode: str = None, kill: bool = None,
-                  qty: int = None, mtm_stop: float = None) -> dict:
-    c = read_control(index)
+                  qty: int = None, mtm_stop: float = None,
+                  state_dir: Path = None) -> dict:
+    c = read_control(index, state_dir)
     if mode is not None:
         c["mode"] = "live" if str(mode).lower() == "live" else "paper"
     if kill is not None:
@@ -58,5 +66,5 @@ def write_control(index: str = None, mode: str = None, kill: bool = None,
     if mtm_stop is not None:                # set an explicit MTM-stop override
         c["mtm_stop"] = float(mtm_stop) if mtm_stop else None
     c["updated"] = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    _control_file(index).write_text(json.dumps(c, indent=2))
+    _control_file(index, state_dir).write_text(json.dumps(c, indent=2))
     return c

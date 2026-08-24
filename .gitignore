@@ -3,6 +3,8 @@
 
 # Sensitive files
 config/access_token.txt
+config/breeze_session.json
+config/breeze_call_budget.json
 config/credentials.json
 config/authorized_user.json
 deployment/.env
@@ -15,6 +17,22 @@ Nifty 500 Daily Data/
 
 # Strangle system runtime artifacts (flags + paper log are VPS-generated state)
 strangle_system/flags/
+
+# Delta-neutral strangle: everything under data/ is VPS-generated runtime state —
+# live snapshots, tick files, chain files, symbol-master cache, audit logs. The
+# VPS is the source of truth for these; committing them would let a local run
+# overwrite a real trading day's record.
+live_trading_options/delta_neutral/data/
+live_trading_options/delta_neutral/_cache/
+
+# Both strategies' audit logs, live snapshots and chart archives are VPS-generated
+# trading records. `chart_archive.py` is code and stays tracked; the rest must not
+# be — a local test run must never be able to overwrite a real day's audit trail.
+live_trading_options/strangle_strategy/data/audit/
+live_trading_options/strangle_strategy/data/live_state/
+live_trading_options/strangle_strategy/data/chart_history/
+live_trading_options/strangle_strategy/data/intraday_state/
+live_trading_options/strangle_strategy/data/symbol_master/
 
 # Position/trade state (VPS manages its own)
 deployment/positions.json

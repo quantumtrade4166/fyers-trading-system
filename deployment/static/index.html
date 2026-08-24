@@ -172,6 +172,9 @@
     <button class="tab-btn" id="tab-vwapstrangle" onclick="switchTab('vwapstrangle')">
       📉 Vwap Strangle
     </button>
+    <button class="tab-btn" id="tab-deltaneutral" onclick="switchTab('deltaneutral')">
+      ⚖️ Delta Neutral
+    </button>
     <button class="tab-btn" id="tab-terminal" onclick="switchTab('terminal')">
       💼 Terminal
     </button>
@@ -646,6 +649,125 @@
   <!-- ══════════════════════════════════════════════════════════
        TAB 4 — Terminal (multi-broker live positions)
   ══════════════════════════════════════════════════════════ -->
+  <!-- ══════════════════════════════════════════════════════════
+       TAB 6 — Delta Neutral Strangle (live trading terminal)
+  ══════════════════════════════════════════════════════════ -->
+  <div id="page-deltaneutral" style="display:none">
+
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-2">
+      <div>
+        <h2 class="text-lg font-semibold text-white">Delta Neutral Strangle</h2>
+        <p class="text-xs text-slate-500">Nifty &amp; Sensex · premium-symmetry rebalancing · 09:30 entry ·
+          15-min adjustment windows · exchange stop on every leg · 15:14 square-off</p>
+      </div>
+      <div class="flex items-center gap-2">
+        <div class="flex gap-1">
+          <button class="sca-idx-btn active" id="dn-btn-NIFTY" onclick="dnSetIndex('NIFTY')">NIFTY</button>
+          <button class="sca-idx-btn" id="dn-btn-SENSEX" onclick="dnSetIndex('SENSEX')">SENSEX</button>
+        </div>
+        <div class="flex gap-1" title="Terminal = live view · Log = the permanent append-only audit trail">
+          <button class="sca-idx-btn active" id="dn-view-TERM" onclick="dnSetView('TERM')">▦ Terminal</button>
+          <button class="sca-idx-btn" id="dn-view-LOG" onclick="dnSetView('LOG')">📜 Log</button>
+        </div>
+        <select id="dn-date" onchange="dnRender()"
+                class="bg-[#151a26] text-slate-300 text-xs rounded px-2 py-1 border border-[#2d3748]"></select>
+        <span id="dn-updated" class="text-xs text-slate-600 ml-1">—</span>
+      </div>
+    </div>
+
+    <!-- effective status -->
+    <div id="dn-status-banner"></div>
+
+    <!-- arming + size (same pattern as the Vwap Strangle terminal) -->
+    <div id="dn-arm-box"></div>
+
+    <!-- ── LOG view: the permanent append-only audit trail ────────────── -->
+    <div id="dn-logview" style="display:none">
+      <div class="card p-4">
+        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <div>
+            <h3 class="text-sm font-medium text-slate-300">Audit Log — append-only, kept forever</h3>
+            <p class="text-xs text-slate-500">every action both indices took, plus a full status
+              line every 15 minutes. Flushed per line, so it survives a crash.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <label class="text-[10px] text-slate-500 flex items-center gap-1">
+              <input type="checkbox" id="dn-log-follow" checked onchange="dnLoadLog()"> follow</label>
+            <input id="dn-log-filter" placeholder="filter…" oninput="dnRenderLogFile()"
+                   class="bg-[#0b0f18] text-slate-300 text-xs rounded px-2 py-1 border border-[#2d3748]"
+                   style="width:150px;font-family:ui-monospace,monospace">
+            <button class="sca-idx-btn" onclick="dnLoadLog()">⟳ refresh</button>
+            <span id="dn-log-meta" class="text-[10px] text-slate-600">—</span>
+          </div>
+        </div>
+        <pre id="dn-log-file" style="max-height:620px;overflow:auto;background:#0b0f18;
+             border:1px solid #1e2636;border-radius:6px;padding:10px;font-size:11px;
+             line-height:1.55;color:#cbd5e1;font-family:ui-monospace,Menlo,monospace;
+             white-space:pre;margin:0">loading…</pre>
+      </div>
+    </div>
+
+    <!-- ── TERMINAL view ─────────────────────────────────────────────── -->
+    <div id="dn-termview">
+
+    <!-- live strip: DTE · spot/ATM · next window · position shape -->
+    <div id="dn-strip" class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4"></div>
+
+    <!-- P&L -->
+    <div id="dn-pnl" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4"></div>
+
+    <!-- position monitor: the two legs -->
+    <div class="card p-4 mb-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-medium text-slate-300">Position Monitor</h3>
+        <span class="text-[10px] text-slate-600">entry vs live premium · stop status per leg</span>
+      </div>
+      <div id="dn-legs" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+    </div>
+
+    <!-- closed positions -->
+    <div class="card p-4 mb-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-medium text-slate-300">Closed Positions</h3>
+        <span class="text-[10px] text-slate-600">every leg the day has been through · gross of brokerage &amp; taxes</span>
+      </div>
+      <div id="dn-closed" style="max-height:340px;overflow-y:auto" class="dn-scroll"></div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <!-- live option chain -->
+      <div class="card p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-medium text-slate-300">Live Option Chain</h3>
+          <span id="dn-chain-meta" class="text-[10px] text-slate-600">—</span>
+        </div>
+        <div style="max-height:460px;overflow-y:auto" class="dn-scroll">
+          <table class="w-full text-xs" style="font-family:ui-monospace,Menlo,monospace">
+            <thead class="sticky top-0" style="background:#151a26">
+              <tr class="text-slate-500 text-[10px] uppercase">
+                <th class="text-right py-1.5 px-2">CE</th>
+                <th class="text-center py-1.5 px-2">Strike</th>
+                <th class="text-left py-1.5 px-2">PE</th>
+              </tr>
+            </thead>
+            <tbody id="dn-chain-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- action log -->
+      <div class="card p-4">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-medium text-slate-300">Adjustment &amp; Action Log</h3>
+          <span class="text-[10px] text-slate-600">every decision, with timestamp</span>
+        </div>
+        <div id="dn-log" style="max-height:460px;overflow-y:auto"
+             class="dn-scroll text-xs space-y-1"></div>
+      </div>
+    </div>
+    </div><!-- /dn-termview -->
+  </div>
+
   <div id="page-terminal" style="display:none">
 
     <!-- top action row -->
@@ -740,7 +862,8 @@ let _activeTab = 'statarb';
 // ── tab switching ─────────────────────────────────────────────────────────────
 function switchTab(tab) {
   _activeTab = tab;
-  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'terminal'].forEach(t => {
+  if (tab === 'deltaneutral') { dnInit(); dnStartPoll(); } else { dnStopPoll(); }
+  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'terminal'].forEach(t => {
     const pg = document.getElementById('page-' + t);
     if (pg) pg.style.display = (t === tab) ? '' : 'none';
     const btn = document.getElementById('tab-' + t);
@@ -1649,6 +1772,592 @@ function scaEnsureChart() {
     if (scaChart) scaChart.resize(el.clientWidth, 440);
     if (scaMtmChart) scaMtmChart.resize(mtmEl.clientWidth, 170);
   });
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   DELTA NEUTRAL STRANGLE — live trading terminal
+   ══════════════════════════════════════════════════════════════════════════
+   Two polls, deliberately different speeds:
+     dnTickPoll   ~1s   premiums, MTM, the window countdown — the numbers that
+                        must feel live
+     dnRender     ~5s   position, chain table, log — structure that only changes
+                        when the strategy acts
+   The size/max-loss inputs follow the Vwap Strangle pattern exactly: validated on
+   every keystroke, remembered across re-renders, and LOCKED once armed or in a
+   position so nothing can be resized underneath an open trade.
+   ═════════════════════════════════════════════════════════════════════════ */
+let dnIndex = 'NIFTY', dnPollId = null, dnTickId = null, dnCdId = null;
+let dnCfg = { lot_sizes: { NIFTY: 65, SENSEX: 20 }, max_lots: 15, entry: {}, ratio: 2 };
+let dnQtyInput = {}, dnMaxLossInput = {};      // remembered edits, per index
+let dnLastStatus = null, dnCountdown = null;
+
+const dnRs = v => (v === null || v === undefined || isNaN(v))
+  ? '—' : (v < 0 ? '-₹' : '₹') + Math.abs(Math.round(v)).toLocaleString('en-IN');
+const dnNum = (v, d = 2) => (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toFixed(d);
+const dnToday = () => new Date().toLocaleDateString('en-CA');
+
+async function dnInit() {
+  try { dnCfg = Object.assign(dnCfg, await (await fetch('/api/dn/config')).json()); } catch (e) {}
+  try {
+    const d = await (await fetch('/api/dn/dates')).json();
+    const dates = [...new Set((d.days || []).map(x => x.date))];
+    if (!dates.includes(dnToday())) dates.unshift(dnToday());
+    const sel = document.getElementById('dn-date');
+    const keep = sel.value;
+    sel.innerHTML = dates.map(x => `<option value="${x}">${x}</option>`).join('');
+    sel.value = dates.includes(keep) ? keep : dates[0];
+  } catch (e) {}
+  dnRender();
+}
+
+function dnSetIndex(i) {
+  dnIndex = i;
+  dnCountdown = null;                 // the other index's countdown must not carry over
+  ['NIFTY', 'SENSEX'].forEach(x =>
+    document.getElementById('dn-btn-' + x).classList.toggle('active', x === i));
+  dnRender();
+}
+
+/* ── Terminal / Log view toggle ────────────────────────────────────────
+   The log is the SAME file the engine flushes line-by-line to disk, shown raw.
+   Deliberately not prettified into cards: when something has gone wrong at 3am
+   you want the exact bytes that were written, in order, not a rendering of them. */
+let dnView = 'TERM', dnLogText = '';
+
+function dnSetView(v) {
+  dnView = v;
+  document.getElementById('dn-view-TERM').classList.toggle('active', v === 'TERM');
+  document.getElementById('dn-view-LOG').classList.toggle('active', v === 'LOG');
+  document.getElementById('dn-termview').style.display = (v === 'TERM') ? '' : 'none';
+  document.getElementById('dn-logview').style.display = (v === 'LOG') ? '' : 'none';
+  if (v === 'LOG') dnLoadLog();
+}
+
+async function dnLoadLog() {
+  const date = document.getElementById('dn-date')?.value;
+  const pre = document.getElementById('dn-log-file');
+  if (!date || !pre) return;
+  try {
+    const r = await (await fetch(`/api/dn/audit?date=${date}`)).json();
+    dnLogText = r.text || '';
+  } catch (e) { dnLogText = '(could not read the log)'; }
+  dnRenderLogFile();
+}
+
+function dnRenderLogFile() {
+  const pre = document.getElementById('dn-log-file');
+  const meta = document.getElementById('dn-log-meta');
+  const q = (document.getElementById('dn-log-filter')?.value || '').trim().toLowerCase();
+  if (!dnLogText) {
+    pre.textContent = 'nothing logged for this day yet';
+    if (meta) meta.textContent = '0 lines';
+    return;
+  }
+  const all = dnLogText.replace(/\s+$/, '').split('\n');
+  const lines = q ? all.filter(l => l.toLowerCase().includes(q)) : all;
+  pre.textContent = lines.join('\n');
+  if (meta) meta.textContent = q ? `${lines.length} of ${all.length} lines`
+                                 : `${all.length} lines`;
+  if (document.getElementById('dn-log-follow')?.checked) pre.scrollTop = pre.scrollHeight;
+}
+
+function dnStartPoll() {
+  dnStopPoll();
+  dnPollId = setInterval(() => { dnRender(); if (dnView === 'LOG') dnLoadLog(); }, 5000);
+  dnTickId = setInterval(dnTickPoll, 1000);
+  dnCdId = setInterval(dnTickCountdown, 1000);
+}
+function dnStopPoll() {
+  [dnPollId, dnTickId, dnCdId].forEach(id => id && clearInterval(id));
+  dnPollId = dnTickId = dnCdId = null;
+}
+
+/* ── the size + max-loss inputs ─────────────────────────────────────────
+   Max loss must sit ABOVE what the per-leg stops themselves can lose, or it
+   fires first and the leg stops never get to act. The worst case is shown live
+   next to the field so that trade-off is visible while typing, not discovered
+   on a bad day. */
+function dnWorstCase(qty) {
+  const d = dnLastStatus;
+  if (!d || d.sl == null || !qty) return null;
+  const p = d.position || {};
+  // Once legs are on, use their ACTUAL fills — the entry rarely lands exactly on
+  // the target, and the gap between fill and stop is the real exposure.
+  const ce = p.ce && p.ce.entry_price, pe = p.pe && p.pe.entry_price;
+  if (ce != null && pe != null) return Math.round((d.sl - ce) * qty + (d.sl - pe) * qty);
+  if (d.target == null) return null;
+  return Math.round((d.sl - d.target) * qty * 2);      // pre-entry estimate
+}
+
+function dnSizeChanged() {
+  const qEl = document.getElementById('dn-qty'), mEl = document.getElementById('dn-maxloss');
+  const note = document.getElementById('dn-size-note'), btn = document.getElementById('dn-golive-btn');
+  if (!qEl || !mEl) return null;
+  const lot = dnCfg.lot_sizes[dnIndex] || 65;
+  const qty = parseInt(qEl.value, 10);
+  const mtm = Math.abs(parseFloat(mEl.value));
+  if (!qEl.disabled) {
+    dnQtyInput[dnIndex] = Number.isFinite(qty) && qty > 0 ? qty : null;
+    dnMaxLossInput[dnIndex] = Number.isFinite(mtm) && mtm > 0 ? mtm : null;
+  }
+  const lots = qty / lot;
+  const qtyOk = Number.isInteger(qty) && qty > 0 && qty % lot === 0 && lots <= dnCfg.max_lots;
+  const mtmOk = Number.isFinite(mtm) && mtm > 0;
+  const worst = dnWorstCase(qty);
+  if (note) {
+    if (!qtyOk) {
+      note.textContent = (!Number.isInteger(qty) || qty <= 0 || qty % lot !== 0)
+        ? `✗ qty must be a positive multiple of ${lot}`
+        : `✗ max ${dnCfg.max_lots} lots (${dnCfg.max_lots * lot})`;
+      note.style.color = '#ef5350';
+    } else if (!mtmOk) {
+      note.textContent = '✗ enter a max loss amount (₹)';
+      note.style.color = '#ef5350';
+    } else if (worst && mtm < worst) {
+      note.textContent = `⚠ ${lots} lot${lots > 1 ? 's' : ''} · both legs stopping out costs ≈ ${dnRs(worst)}`
+        + ` — a ${dnRs(mtm)} limit fires FIRST, so the leg stops never act`;
+      note.style.color = '#fbbf24';
+    } else {
+      note.textContent = `= ${lots} lot${lots > 1 ? 's' : ''} · stops out at −${dnRs(mtm)}`
+        + (worst ? ` · both legs stopping ≈ ${dnRs(worst)}` : '');
+      note.style.color = '#26a69a';
+    }
+  }
+  if (btn && !qEl.disabled) {                    // a warning still allows arming
+    const ok = qtyOk && mtmOk;
+    btn.disabled = !ok;
+    btn.style.opacity = ok ? '1' : '.5';
+    btn.style.cursor = ok ? 'pointer' : 'not-allowed';
+  }
+  return { qty, mtm, lot, lots, qtyOk, mtmOk, worst };
+}
+
+async function dnArmConfirm() {
+  const v = dnSizeChanged();
+  if (!v || !v.qtyOk || !v.mtmOk) {
+    alert('Fix the size / max loss first:\n' +
+      (document.getElementById('dn-size-note')?.textContent || ''));
+    return;
+  }
+  const d = dnLastStatus || {};
+  if (!confirm(
+      '⚠ GO LIVE — REAL ORDERS · Delta Neutral · ' + dnIndex + '\n\n' +
+      'Qty:        ' + v.qty + '   (' + v.lots + ' lot' + (v.lots > 1 ? 's' : '') + ' × ' + v.lot + ')\n' +
+      'Max loss:   −₹' + v.mtm + (v.worst ? '   (both legs stopping ≈ ₹' + v.worst + ')' : '') + '\n' +
+      'Entry:      ' + (d.entry_time || '09:30') + ' at premium ≈ ' + (d.target ?? '—') +
+      ',  stop ' + (d.sl ?? '—') + ' per leg\n' +
+      'Adjust:     every 15 min, 1-minute window, ' + (d.ratio ?? 2) + '× rule\n' +
+      'Square-off: 15:14\n\n' +
+      'REAL Zerodha orders will be placed on ' + dnIndex + ' only. Each leg gets a resting\n' +
+      'stop at the exchange. The KILL button still applies.\n\nArm live ' + dnIndex + ' now?')) return;
+  const r = await (await fetch(`/api/dn/control?index=${dnIndex}&mode=live&qty=${v.qty}&mtm_stop=${v.mtm}`,
+    { method: 'POST' })).json();
+  if (r && r.error) { alert('Not armed — ' + r.error); return; }
+  setTimeout(dnRender, 500);
+}
+
+async function dnSetMode(m) {
+  await fetch(`/api/dn/control?index=${dnIndex}&mode=${m}`, { method: 'POST' });
+  setTimeout(dnRender, 500);
+}
+async function dnKill() {
+  if (!confirm('KILL SWITCH · Delta Neutral · ' + dnIndex + '\n\nImmediately cancel every stop, ' +
+    'close both legs and stop ' + dnIndex + ' for the day. Confirm?')) return;
+  await fetch(`/api/dn/control?index=${dnIndex}&kill=true`, { method: 'POST' });
+  setTimeout(dnRender, 400);
+}
+async function dnResume() {
+  if (!confirm('Clear the ' + dnIndex + ' kill flag and allow trading again?')) return;
+  await fetch(`/api/dn/control?index=${dnIndex}&kill=false`, { method: 'POST' });
+  setTimeout(dnRender, 400);
+}
+
+/* ── the fast tick: live premiums, MTM and the window countdown ───────── */
+async function dnTickPoll() {
+  const date = document.getElementById('dn-date')?.value;
+  if (date !== dnToday()) return;                 // a past day has no live tick
+  let t = null;
+  try { t = await (await fetch(`/api/dn/tick?date=${date}&index=${dnIndex}`)).json(); }
+  catch (e) { return; }
+  if (!t || t.error) return;
+  const set = (id, txt, col) => {
+    const el = document.getElementById(id);
+    if (el) { el.textContent = txt; if (col) el.style.color = col; }
+  };
+  set('dn-live-mtm', dnRs(t.mtm), t.mtm >= 0 ? '#26a69a' : '#ef5350');
+  set('dn-live-spot', dnNum(t.spot, 2));
+  set('dn-ce-live', dnNum(t.ce));
+  set('dn-pe-live', dnNum(t.pe));
+  set('dn-updated', 'tick ' + (t.updated || '—'));
+  if (t.next_window_secs != null) dnCountdown = t.next_window_secs;
+}
+
+function dnTickCountdown() {
+  const el = document.getElementById('dn-next-window');
+  if (!el || dnCountdown == null) return;
+  if (dnCountdown > 0) dnCountdown -= 1;
+  const m = Math.floor(dnCountdown / 60), s = dnCountdown % 60;
+  el.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+/* ── the 5-second structural render ──────────────────────────────────── */
+async function dnRender() {
+  const date = document.getElementById('dn-date')?.value;
+  if (!date) return;
+  let d = {}, ch = {}, cf = {};
+  try { d = await (await fetch(`/api/dn/status?date=${date}&index=${dnIndex}`)).json(); } catch (e) {}
+  try { ch = await (await fetch(`/api/dn/chain?date=${date}&index=${dnIndex}`)).json(); } catch (e) {}
+  try { cf = await (await fetch(`/api/dn/control?index=${dnIndex}`)).json(); } catch (e) {}
+  const live = d && !d.error;
+  dnLastStatus = live ? d : null;
+  dnRenderStatus(d, cf, date, live);
+  dnRenderArm(d, cf, live);
+  dnRenderStrip(d, live);
+  dnRenderPnl(d, live);
+  dnRenderLegs(d, live);
+  dnRenderClosed(d, live);
+  dnRenderChain(ch);
+  dnRenderLog(d, live);
+  dnSizeChanged();
+}
+
+function dnRenderStatus(d, cf, date, live) {
+  const armed = cf.mode === 'live', killed = !!cf.kill || !!(d && d.killed);
+  const isToday = date === dnToday();
+  let txt, col, bg;
+  if (!isToday) { txt = '📅 Historical view — ' + date + ' · not the live session'; col = '#93c5fd'; bg = '#1e293b'; }
+  else if (!armed) { txt = '◉ STANDBY — watching only, NO real orders (not armed)'; col = '#99f6e4'; bg = '#0f3d38'; }
+  else if (killed) { txt = '⏹ ARMED but STOPPED for the day' + (d && d.kill_reason ? ' — ' + d.kill_reason : ''); col = '#fca5a5'; bg = '#5b1a1a'; }
+  else if (!live) { txt = '● ARMED — goes live once the engine starts'; col = '#fcd34d'; bg = '#4a3410'; }
+  else if (d.trades_allowed === false) { txt = '● ARMED but DTE ' + d.dte + ' — no-trade day, chain only'; col = '#fcd34d'; bg = '#4a3410'; }
+  else if (d.broker_ready === false) { txt = '⚠ ARMED but BROKER NOT CONNECTED — orders will NOT reach Zerodha'; col = '#fca5a5'; bg = '#5b1a1a'; }
+  else if (d.position && d.position.is_single) { txt = '⚠ LIVE · SINGLE LEG — ' + d.position.missing_side + ' was stopped out, re-entry at the next window'; col = '#fed7aa'; bg = '#7c2d12'; }
+  else { txt = '● LIVE — real orders active'; col = '#fecaca'; bg = '#7f1d1d'; }
+
+  const unprotected = (live && d.position && (d.position.unprotected || []).length)
+    ? `<div style="margin-top:6px;padding:5px 8px;background:#7f1d1d;border-radius:5px;color:#fecaca;font-weight:700;font-size:12px">
+         🚨 UNPROTECTED LEG — ${d.position.unprotected.join(', ')} has no confirmed stop. It is being covered.</div>` : '';
+  const g = (ok, y, n) => `<span style="color:${ok ? '#26a69a' : '#ef5350'}">${ok ? '✓' : '✗'} ${ok ? y : n}</span>`;
+  const gates = (!isToday) ? '<span style="color:#64748b">past session</span>'
+    : live ? [g(armed, 'armed', 'not armed'),
+              g(d.trades_allowed !== false, 'DTE ' + d.dte + ' trades', 'DTE ' + d.dte + ' no-trade'),
+              g(d.broker_ready === true, 'broker linked', 'broker OFF'),
+              g(!(d.position && d.position.unprotected || []).length, 'all legs protected', 'UNPROTECTED LEG'),
+              g(!( !!cf.kill || d.killed), 'active', 'STOPPED')].join(' &nbsp;·&nbsp; ')
+    : `${g(armed, 'armed', 'not armed')} &nbsp;·&nbsp; <span style="color:#64748b">engine not started</span>`;
+  document.getElementById('dn-status-banner').innerHTML = `
+    <div style="padding:10px 12px;border-radius:8px;margin-bottom:12px;background:${bg};border:1px solid rgba(255,255,255,.08)">
+      <div style="font-weight:700;font-size:14px;color:${col}">${txt}</div>
+      <div class="mt-1" style="font-size:11px;color:#94a3b8">${gates}</div>${unprotected}
+    </div>`;
+}
+
+function dnRenderArm(d, cf, live) {
+  const lot = dnCfg.lot_sizes[dnIndex] || 65;
+  const armed = cf.mode === 'live';
+  const inPos = !!(live && d.position && !d.position.is_flat);
+  const locked = armed || inPos;
+  const killed = !!cf.kill || !!(d && d.killed);
+  const pos = (v, def) => (Number.isFinite(v) && v > 0 ? v : def);
+  const qtyVal = locked ? pos(cf.qty, pos(live && d.qty, lot)) : pos(dnQtyInput[dnIndex], pos(cf.qty, lot));
+  const mtmVal = locked ? pos(cf.mtm_stop, dnCfg.max_loss || 5000)
+                        : pos(dnMaxLossInput[dnIndex], pos(cf.mtm_stop, dnCfg.max_loss || 5000));
+  const css = 'width:104px;background:#0b0f18;border:1px solid #2d3748;border-radius:5px;padding:3px 6px;color:#e2e8f0;font-family:ui-monospace,monospace';
+  document.getElementById('dn-arm-box').innerHTML = `
+    <div class="mb-3" style="padding:10px 12px;background:#0f1420;border:1px solid #1e2636;border-radius:8px">
+      <div class="flex items-center gap-3 flex-wrap mb-2">
+        <span class="text-[10px] text-slate-500 uppercase">size · ${dnIndex}</span>
+        <label class="text-xs text-slate-400 flex items-center gap-1">Qty
+          <input id="dn-qty" type="number" min="${lot}" step="${lot}" value="${qtyVal}" ${locked ? 'disabled' : ''}
+            oninput="dnSizeChanged()" style="${css}${locked ? ';opacity:.55' : ''}"></label>
+        <label class="text-xs text-slate-400 flex items-center gap-1"
+               title="rupee loss at which everything is squared off and the day stops">Max loss ₹
+          <input id="dn-maxloss" type="number" min="1" step="500" value="${mtmVal}" ${locked ? 'disabled' : ''}
+            oninput="dnSizeChanged()" style="${css}${locked ? ';opacity:.55' : ''}"></label>
+        <span id="dn-size-note" class="text-xs font-medium"></span>
+        ${locked
+          ? `<span class="text-[10px] text-slate-500">🔒 locked while ${armed ? 'armed — STOP to change' : 'in a position'}</span>`
+          : `<span class="text-[10px] text-slate-600">max ${dnCfg.max_lots} lots · multiples of ${lot}</span>`}
+      </div>
+      <div class="flex items-center gap-3 flex-wrap">
+        <span class="text-[10px] text-slate-500 uppercase">arming · ${dnIndex}</span>
+        <button id="dn-golive-btn" onclick="${armed ? `dnSetMode('paper')` : `dnArmConfirm()`}"
+          style="padding:6px 18px;border-radius:6px;font-weight:800;font-size:13px;border:1px solid;cursor:pointer;
+          ${armed ? 'background:#b91c1c;color:#fff;border-color:#b91c1c' : 'background:#134e4a;color:#a7f3d0;border-color:#0f766e'}">
+          ${armed ? '● LIVE — click to STOP' : '▶ GO LIVE — real orders'}
+        </button>
+        <span class="text-xs font-semibold" style="color:${armed ? '#f87171' : '#64748b'}">
+          ${armed ? 'REAL ORDERS ARMED' : 'standby · not armed · no orders'}
+        </span>
+        ${killed
+          ? `<button onclick="dnResume()" class="sca-idx-btn">clear kill</button>`
+          : `<button onclick="dnKill()" style="background:#7f1d1d;color:#fff;padding:6px 16px;border-radius:6px;font-weight:800;font-size:13px;cursor:pointer;border:1px solid #b91c1c">■ KILL</button>`}
+      </div>
+    </div>`;
+}
+
+function dnCard(label, value, sub, colour) {
+  return `<div class="card p-3">
+    <p class="text-[10px] text-slate-500 uppercase tracking-wide mb-1">${label}</p>
+    <p class="text-lg font-semibold" style="color:${colour || '#e2e8f0'}">${value}</p>
+    <p class="text-[10px] text-slate-600 mt-0.5">${sub || ''}</p></div>`;
+}
+
+function dnRenderStrip(d, live) {
+  const p = live ? d.position : null;
+  const shape = !p ? '—' : p.is_complete ? 'STRANGLE' : p.is_single ? 'SINGLE LEG' : 'FLAT';
+  const shapeCol = !p ? '#64748b' : p.is_complete ? '#26a69a' : p.is_single ? '#fb923c' : '#94a3b8';
+  // seed the countdown from the snapshot so this 5-second re-render never blanks
+  // the digits for the second until dnTickCountdown next fires
+  if (live && d.next_window_secs != null && dnCountdown == null) dnCountdown = d.next_window_secs;
+  const cd = dnCountdown == null ? '--:--'
+    : `${String(Math.floor(dnCountdown / 60)).padStart(2, '0')}:${String(dnCountdown % 60).padStart(2, '0')}`;
+  document.getElementById('dn-strip').innerHTML =
+      dnCard('DTE', live ? ('DTE ' + d.dte) : '—',
+             live ? ('expiry ' + d.expiry) : 'engine not started',
+             live && d.trades_allowed ? '#e2e8f0' : '#fbbf24')
+    + dnCard('Spot / ATM', `<span id="dn-live-spot">${live ? dnNum(d.spot, 2) : '—'}</span>`,
+             live ? ('ATM ' + (d.atm ?? '—')) : '')
+    + dnCard('Next window', `<span id="dn-next-window">${cd}</span>`,
+             live && d.in_window ? ('● IN WINDOW ' + d.in_window) : 'adjustments every 15 min',
+             live && d.in_window ? '#fb923c' : '#e2e8f0')
+    + dnCard('Position', shape,
+             live ? `${p.n_live} leg${p.n_live === 1 ? '' : 's'} · target ${d.target ?? '—'} · ${d.fresh_entries}/${d.max_fresh_entries} entries` : '',
+             shapeCol)
+    + dnStopCard(d, live);
+}
+
+/* The stop level is not a constant on expiry day — it steps down through the
+   schedule. Showing the level in force PLUS what is pending (and what is holding
+   a pending step back) is the difference between "why hasn't it tightened yet"
+   being obvious and being a support call. */
+function dnStopCard(d, live) {
+  if (!live) return dnCard('Stop level', '—', 'engine not started');
+  const steps = d.sl_steps || [], i = d.sl_step_i || 0;
+  const tightened = d.sl_open != null && d.sl !== d.sl_open;
+  let sub, col = tightened ? '#fb923c' : '#e2e8f0';
+  if (!steps.length) {
+    sub = `flat all day · DTE ${d.dte}`;
+  } else if (i >= steps.length) {
+    sub = `fully tightened from ${d.sl_open}`;
+  } else {
+    const nxt = steps[i];
+    // is the next step due but waiting on a leg? the engine logs it; mirror it here
+    const defer = (d.events || []).filter(e => e.type === 'sl_step_deferred').slice(-1)[0];
+    sub = defer
+      ? `⏸ ${nxt.sl} due ${nxt.at} — waiting on ${defer.waiting_on}`
+      : `→ ${nxt.sl} at ${nxt.at}`;
+    if (defer) col = '#fbbf24';
+  }
+  return dnCard('Stop level', (d.sl ?? '—') + (tightened ? ` <span style="font-size:11px;color:#64748b">was ${d.sl_open}</span>` : ''),
+                sub, col);
+}
+
+function dnRenderPnl(d, live) {
+  const p = live ? d.position : null;
+  const mtm = p ? p.mtm : null, re = p ? p.realized : null, un = p ? p.unrealized : null;
+  document.getElementById('dn-pnl').innerHTML =
+      dnCard('Live MTM', `<span id="dn-live-mtm">${dnRs(mtm)}</span>`, 'realized + open',
+             mtm == null ? '#e2e8f0' : mtm >= 0 ? '#26a69a' : '#ef5350')
+    + dnCard('Realized', dnRs(re), 'closed legs', re == null ? '#e2e8f0' : re >= 0 ? '#26a69a' : '#ef5350')
+    + dnCard('Open', dnRs(un), 'legs still on', un == null ? '#e2e8f0' : un >= 0 ? '#26a69a' : '#ef5350')
+    + dnCard('Max loss', live ? dnRs(-Math.abs(d.max_loss)) : '—', 'squares off + stops the day', '#f87171');
+}
+
+function dnLegCard(leg, side) {
+  if (!leg) {
+    return `<div class="card p-3" style="border:1px dashed #334155">
+      <div class="flex items-center justify-between mb-1">
+        <span class="text-xs font-semibold text-slate-400">${side}</span>
+        <span class="text-[10px] px-2 py-0.5 rounded" style="background:#334155;color:#94a3b8">NOT IN POSITION</span>
+      </div>
+      <p class="text-[11px] text-slate-600 mt-2">re-entry is evaluated at the next adjustment window</p></div>`;
+  }
+  const live = leg.mark, pnl = leg.pnl;
+  /* The stop badge has THREE states, never two. A green shield means the broker
+     is holding a real SL order — nothing weaker is allowed to look like one, or
+     the screen would promise protection that does not exist. A paper/simulated
+     stop is shown in amber and says so. */
+  const atBroker = !!leg.sl_at_broker;
+  const simulated = !atBroker && leg.sl_verified && leg.status === 'OPEN';
+  const slText = leg.sl_trigger == null ? '—'
+    : leg.sl_trigger + (leg.sl_limit ? ' → ' + leg.sl_limit : '');
+  const slBadge = atBroker
+    ? { bg: '#14532d', fg: '#86efac', txt: '🛡 SL ' + slText + ' · AT BROKER' }
+    : simulated
+      ? { bg: '#4a3410', fg: '#fcd34d', txt: '◑ SL ' + slText + ' · PAPER (not at broker)' }
+      : { bg: '#7f1d1d', fg: '#fecaca', txt: '🚨 NO STOP AT BROKER' };
+  // how close this leg is to its own stop — the number that matters most intraday
+  const dist = (live != null && leg.sl_trigger) ? (leg.sl_trigger - live) : null;
+  const distPct = (dist != null && leg.sl_trigger) ? (dist / leg.sl_trigger * 100) : null;
+  const heat = distPct == null ? '#64748b' : distPct < 15 ? '#ef5350' : distPct < 35 ? '#fb923c' : '#26a69a';
+  return `<div class="card p-3" style="border-left:3px solid ${side === 'CE' ? '#60a5fa' : '#c084fc'}">
+    <div class="flex items-center justify-between mb-2">
+      <div>
+        <span class="text-sm font-semibold text-white">${leg.strike} ${side}</span>
+        <span class="text-[10px] text-slate-500 ml-2">OTM${leg.otm_level ?? '?'} · ${leg.qty} qty</span>
+      </div>
+      <span class="text-[10px] px-2 py-0.5 rounded font-bold"
+            title="${atBroker ? 'confirmed resting at the broker, last checked ' + (leg.sl_checked || '—') + ' · order ' + (leg.sl_order_id || '')
+                   : simulated ? 'paper mode — this stop is simulated by the engine and does NOT exist in your broker account'
+                   : 'this leg has no stop at the broker and is being covered'}"
+            style="background:${slBadge.bg};color:${slBadge.fg}">
+        ${slBadge.txt}</span>
+    </div>
+    <div class="grid grid-cols-3 gap-2 text-center" style="font-family:ui-monospace,monospace">
+      <div><p class="text-[10px] text-slate-500">ENTRY</p>
+           <p class="text-sm text-slate-300">${dnNum(leg.entry_price)}</p></div>
+      <div><p class="text-[10px] text-slate-500">LIVE</p>
+           <p class="text-sm font-semibold" id="dn-${side.toLowerCase()}-live"
+              style="color:${live == null ? '#94a3b8' : live > leg.entry_price ? '#ef5350' : '#26a69a'}">${dnNum(live)}</p></div>
+      <div><p class="text-[10px] text-slate-500">P&L</p>
+           <p class="text-sm font-semibold" style="color:${pnl == null ? '#94a3b8' : pnl >= 0 ? '#26a69a' : '#ef5350'}">${dnRs(pnl)}</p></div>
+    </div>
+    <div class="mt-2 pt-2" style="border-top:1px solid #1e2636">
+      <div class="flex items-center justify-between text-[10px]">
+        <span class="text-slate-500">distance to stop</span>
+        <span style="color:${heat};font-weight:700;font-family:ui-monospace,monospace">
+          ${dist == null ? '—' : dnNum(dist) + ' pts (' + dnNum(distPct, 0) + '%)'}</span>
+      </div>
+      <p class="text-[10px] text-slate-600 mt-1">entered ${leg.entry_time || '—'} · ${leg.reason || ''}</p>
+      <p class="text-[10px] mt-0.5" style="color:${atBroker ? '#475569' : simulated ? '#a16207' : '#ef5350'}">
+        ${atBroker ? 'stop confirmed ' + (leg.sl_checked || '—') + ' · order ' + (leg.sl_order_id || '—')
+          : simulated ? 'simulated stop — nothing is resting in your broker account'
+          : 'no broker stop — being covered'}</p>
+    </div></div>`;
+}
+
+function dnRenderLegs(d, live) {
+  const p = live ? d.position : null;
+  document.getElementById('dn-legs').innerHTML =
+    dnLegCard(p ? p.ce : null, 'CE') + dnLegCard(p ? p.pe : null, 'PE');
+}
+
+/* ── closed positions ───────────────────────────────────────────────────
+   One row per RETIRED leg, not per strangle. Legs are replaced individually
+   (the 2x rule swaps one side, a stop takes out one side), so per-leg is the
+   only honest unit — pairing them into "trades" would invent round trips that
+   never happened. `why` is what closed it: its stop, an adjustment, or 15:14. */
+function dnRenderClosed(d, live) {
+  const el = document.getElementById('dn-closed');
+  const hist = (live && d.position && d.position.history) || [];
+  if (!hist.length) {
+    el.innerHTML = `<p class="text-center text-slate-600 py-8 text-xs">
+      nothing closed yet today</p>`;
+    return;
+  }
+  const total = hist.reduce((a, l) => a + (l.pnl || 0), 0);
+  const wins = hist.filter(l => (l.pnl || 0) > 0).length;
+  const reasonStyle = r => {
+    if (!r) return ['#94a3b8', r || '—'];
+    if (r.includes('stop loss')) return ['#ef5350', '🛑 stop loss'];
+    if (r.includes('adjustment')) return ['#fb923c', '⚖ ' + r.replace('adjustment ', '')];
+    if (r.includes('square-off')) return ['#60a5fa', '⏹ square-off'];
+    if (r.includes('max loss')) return ['#ef5350', '🚨 max loss'];
+    if (r.includes('unwound') || r.includes('no stop')) return ['#f87171', '⛔ ' + r];
+    return ['#94a3b8', r];
+  };
+  const rows = hist.map(l => {
+    const pts = (l.entry_price != null && l.exit_price != null)
+      ? (l.entry_price - l.exit_price) : null;
+    const [rc, rt] = reasonStyle(l.exit_reason);
+    const pnlCol = l.pnl == null ? '#94a3b8' : l.pnl >= 0 ? '#26a69a' : '#ef5350';
+    return `<tr style="border-top:1px solid #1e2636">
+      <td class="py-1.5 px-2 text-slate-500">${l.entry_time || '—'}<span class="text-slate-700"> → </span>${l.exit_time || '—'}</td>
+      <td class="py-1.5 px-2">
+        <span style="color:${l.opt_type === 'CE' ? '#60a5fa' : '#c084fc'};font-weight:700">${l.strike} ${l.opt_type}</span>
+        <span class="text-slate-600 text-[10px]"> ×${l.qty}</span></td>
+      <td class="py-1.5 px-2 text-right text-slate-300">${dnNum(l.entry_price)}</td>
+      <td class="py-1.5 px-2 text-right text-slate-300">${dnNum(l.exit_price)}</td>
+      <td class="py-1.5 px-2 text-right" style="color:${pts == null ? '#94a3b8' : pts >= 0 ? '#26a69a' : '#ef5350'}">${dnNum(pts)}</td>
+      <td class="py-1.5 px-2 text-right font-semibold" style="color:${pnlCol}">${dnRs(l.pnl)}</td>
+      <td class="py-1.5 px-2 text-[10px]" style="color:${rc}">${rt}</td>
+    </tr>`;
+  }).join('');
+  el.innerHTML = `
+    <table class="w-full text-xs" style="font-family:ui-monospace,Menlo,monospace">
+      <thead><tr class="text-slate-500 text-[10px] uppercase">
+        <th class="text-left py-1 px-2">In → Out</th>
+        <th class="text-left py-1 px-2">Leg</th>
+        <th class="text-right py-1 px-2">Entry</th>
+        <th class="text-right py-1 px-2">Exit</th>
+        <th class="text-right py-1 px-2">Pts</th>
+        <th class="text-right py-1 px-2">P&L</th>
+        <th class="text-left py-1 px-2">Closed by</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+      <tfoot><tr style="border-top:2px solid #2d3748">
+        <td class="py-2 px-2 text-slate-400 font-semibold" colspan="5">
+          ${hist.length} closed leg${hist.length === 1 ? '' : 's'} · ${wins} up / ${hist.length - wins} down</td>
+        <td class="py-2 px-2 text-right font-bold" style="color:${total >= 0 ? '#26a69a' : '#ef5350'}">${dnRs(total)}</td>
+        <td class="py-2 px-2 text-[10px] text-slate-600">net realized</td>
+      </tr></tfoot>
+    </table>`;
+}
+
+function dnRenderChain(ch) {
+  const body = document.getElementById('dn-chain-body');
+  const meta = document.getElementById('dn-chain-meta');
+  if (!ch || ch.error || !(ch.rows || []).length) {
+    body.innerHTML = `<tr><td colspan="3" class="text-center text-slate-600 py-8 text-xs">
+      chain streams once the engine is running</td></tr>`;
+    meta.textContent = '—';
+    return;
+  }
+  meta.textContent = `spot ${dnNum(ch.spot, 2)} · ATM ${ch.atm} · ${ch.updated || ''}`;
+  const sold = ch.sold || {};
+  const cell = (v, key, align) => {
+    const s = sold[key];
+    if (!s) return `<td class="text-${align} py-1 px-2 text-slate-300">${dnNum(v)}</td>`;
+    // a strike this strategy is SHORT — overlaid with its entry and stop
+    return `<td class="text-${align} py-1 px-2">
+      <span style="display:inline-block;background:#7f1d1d;border:1px solid #b91c1c;border-radius:4px;
+                   padding:1px 6px;color:#fecaca;font-weight:700"
+            title="short ${s.qty} @ ${s.entry} · stop ${s.sl}">
+        ${dnNum(v)} <span style="opacity:.8;font-size:9px">SOLD ${dnNum(s.entry)} · SL ${s.sl}</span>
+      </span></td>`;
+  };
+  body.innerHTML = ch.rows.map(r => `
+    <tr style="${r.is_atm ? 'background:#1e293b' : ''}">
+      ${cell(r.ce, r.strike + 'CE', 'right')}
+      <td class="text-center py-1 px-2 font-semibold ${r.is_atm ? 'text-amber-400' : 'text-slate-500'}">
+        ${r.strike}${r.is_atm ? ' <span class="text-[9px]">ATM</span>' : ''}</td>
+      ${cell(r.pe, r.strike + 'PE', 'left')}
+    </tr>`).join('');
+}
+
+const DN_LOG_STYLE = {
+  entry_complete:   ['#26a69a', '✅'], entry_start: ['#94a3b8', '▶'],
+  leg_open:         ['#26a69a', '🟢'], leg_closed:  ['#94a3b8', '⚪'],
+  stop_hit:         ['#ef5350', '🛑'], stop_placed: ['#60a5fa', '🛡'],
+  adjust_triggered: ['#fb923c', '⚖'],  reentry:     ['#fbbf24', '↩'],
+  window_skipped:   ['#64748b', '⏭'],  window_checked: ['#475569', '·'],
+  max_loss_hit:     ['#ef5350', '🚨'], flatten:     ['#f87171', '⏹'],
+  entry_aborted:    ['#ef5350', '⛔'], entry_blocked: ['#94a3b8', '🚫'],
+  unprotected_cover:['#ef5350', '🚨'], stop_failed: ['#ef5350', '⚠'],
+  sl_tightened:     ['#fb923c', '🔻'], sl_step_deferred: ['#64748b', '⏸'],
+  stop_vanished:    ['#ef5350', '❗'], stop_lost:   ['#ef5350', '❗'],
+};
+
+function dnRenderLog(d, live) {
+  const el = document.getElementById('dn-log');
+  const evs = live ? (d.events || []) : [];
+  if (!evs.length) {
+    el.innerHTML = `<p class="text-center text-slate-600 py-8 text-xs">
+      no actions yet — the day starts with the ${dnCfg.entry_time || '09:30'} entry</p>`;
+    return;
+  }
+  el.innerHTML = evs.slice().reverse().map(e => {
+    const [col, icon] = DN_LOG_STYLE[e.type] || ['#94a3b8', '·'];
+    const detail = Object.entries(e)
+      .filter(([k]) => k !== 't' && k !== 'type')
+      .map(([k, v]) => `<span style="color:#64748b">${k}</span>=${v}`).join('  ');
+    return `<div style="padding:3px 6px;border-left:2px solid ${col};background:#0f1420;border-radius:3px">
+      <span style="color:#64748b;font-family:ui-monospace,monospace">${e.t}</span>
+      <span style="color:${col};font-weight:700"> ${icon} ${e.type}</span>
+      <div style="font-size:10px;font-family:ui-monospace,monospace;color:#cbd5e1;margin-top:1px">${detail}</div>
+    </div>`;
+  }).join('');
 }
 
 // epoch (encoded as IST-wall-clock-in-UTC) -> "HH:MM"

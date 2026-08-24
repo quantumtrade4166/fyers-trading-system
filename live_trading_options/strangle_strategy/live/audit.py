@@ -24,18 +24,21 @@ except Exception:
     pass
 
 
-def file_for(date_str: str = None) -> Path:
+def file_for(date_str: str = None, system: str = None) -> Path:
+    """Today's audit file. `system` gives a strategy its OWN log (e.g. system='dn'
+    -> {date}_dn_audit.log) so two strategies running side by side never interleave
+    into one file — the whole value of this log is being readable at 3am."""
     d = date_str or dt.date.today().isoformat()
-    return AUDIT_DIR / f"{d}_audit.log"
+    return AUDIT_DIR / (f"{d}_{system}_audit.log" if system else f"{d}_audit.log")
 
 
-def log(index, event: str, **fields):
+def log(index, event: str, system: str = None, **fields):
     """Append ONE flushed line to today's audit log. Never raises."""
     try:
         ts = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         detail = "  ".join(f"{k}={v}" for k, v in fields.items() if v is not None)
         line = f"{ts}  {str(index):<6}  {event:<20}  {detail}\n"
-        with open(file_for(), "a", encoding="utf-8") as fh:
+        with open(file_for(system=system), "a", encoding="utf-8") as fh:
             fh.write(line)
             fh.flush()
     except Exception:

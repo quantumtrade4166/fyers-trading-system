@@ -444,6 +444,132 @@ async def api_strangle_chart(date: str, index: str, version: str = "V1"):
     return _json.loads(f.read_text())
 
 
+# ── Delta-Neutral Strangle endpoints ─────────────────────────────────────────
+# Separate strategy, separate state directory, separate arm switch and audit log
+# from the VWAP strangle above — the two must never be able to read or write each
+# other's control flags. All read-only except /control.
+
+_DN_DIR = (Path(__file__).parent.parent /
+           "live_trading_options" / "delta_neutral" / "data" / "live_state")
+_DN_ROOT = Path(__file__).parent.parent / "live_trading_options" / "delta_neutral"
+
+
+def _dn_read(name: str) -> dict:
+    f = _DN_DIR / name
+    if not f.exists():
+        return {"error": "not found", "file": name}
+    try:
+        return _json.loads(f.read_text())
+    except Exception as e:
+        return {"error": f"read failed: {e}"}
+
+
+def _dn_params() -> dict:
+    try:
+        return _json.loads((_DN_ROOT / "config" / "parameters.json").read_text())
+    except Exception:
+        return {}
+
+
+_dn_broker = None
+
+
+def _dn_control_mod():
+    """Load the delta-neutral control channel BY PATH, not by `import live.broker`.
+    Both strategy packages have a `live/` subpackage and this process already has
+    the VWAP strangle's on sys.path, so a plain import would resolve to whichever
+    came first — i.e. it could arm the wrong strategy. Cached after first load."""
+    global _dn_broker
+    if _dn_broker is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_dn_broker", _DN_ROOT / "live" / "broker.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _dn_broker = mod
+    return _dn_broker
+
+
+@app.get("/api/dn/config")
+async def api_dn_config():
+    """Lot sizes, entry table and limits — so the UI never hardcodes them."""
+    p = _dn_params()
+    return {"lot_sizes": p.get("lot_sizes", {}), "entry": p.get("entry", {}),
+            "max_lots": p.get("max_lots", 15), "max_loss": p.get("max_loss", 5000),
+            "indices": p.get("live_orders", {}).get("indices", []),
+            "ratio": p.get("adjust_trigger_ratio", 2.0),
+            "square_off": p.get("square_off", "15:14"),
+            "entry_time": p.get("entry_time", "09:30")}
+
+
+@app.get("/api/dn/status")
+async def api_dn_status(date: str, index: str = "NIFTY"):
+    """Full snapshot for one index/day: legs, stops, adjustments, P&L, windows."""
+    return _dn_read(f"{date}_{index.upper()}_DN.json")
+
+
+@app.get("/api/dn/tick")
+async def api_dn_tick(date: str, index: str = "NIFTY"):
+    """Fast tick snapshot (~0.4s) — live premiums, MTM, next-window countdown."""
+    return _dn_read(f"{date}_{index.upper()}_TICK.json")
+
+
+@app.get("/api/dn/chain")
+async def api_dn_chain(date: str, index: str = "NIFTY"):
+    """The live option chain rows plus which strikes this strategy is short."""
+    return _dn_read(f"{date}_{index.upper()}_CHAIN.json")
+
+
+@app.get("/api/dn/dates")
+async def api_dn_dates():
+    """(date, index) pairs that have a snapshot, newest first."""
+    if not _DN_DIR.exists():
+        return {"days": []}
+    out = []
+    for f in sorted(_DN_DIR.glob("*_DN.json"), reverse=True):
+        parts = f.stem.split("_")               # {date}_{index}_DN
+        if len(parts) == 3:
+            out.append({"date": parts[0], "index": parts[1]})
+    return {"days": out}
+
+
+@app.get("/api/dn/audit")
+async def api_dn_audit(date: str):
+    """This strategy's own append-only audit log for one day."""
+    f = (_DN_ROOT.parent / "strangle_strategy" / "data" / "audit" / f"{date}_dn_audit.log")
+    if not f.exists():
+        return {"date": date, "text": ""}
+    try:
+        return {"date": date, "text": f.read_text(encoding="utf-8", errors="replace")}
+    except Exception as e:
+        return {"date": date, "text": "", "error": str(e)}
+
+
+@app.get("/api/dn/control")
+async def api_dn_get_control(index: str = "NIFTY"):
+    return _dn_control_mod().read_control(index.upper())
+
+
+@app.post("/api/dn/control")
+async def api_dn_set_control(index: str = "NIFTY", mode: str = None, kill: bool = None,
+                             qty: int = None, mtm_stop: float = None):
+    """Arm / kill / resize for ONE index. Server-side validation behind the browser's:
+    qty must be a positive multiple of that index's lot size within the lot cap, and
+    the max loss must be positive. A rejected value writes NOTHING."""
+    idx = index.upper()
+    p = _dn_params()
+    if qty is not None:
+        lot = (p.get("lot_sizes") or {}).get(idx)
+        cap = int(p.get("max_lots", 15))
+        if not lot or qty <= 0 or qty % lot != 0 or (qty // lot) > cap:
+            return {"error": f"qty must be a positive multiple of {lot} "
+                             f"(1–{cap} lots) for {idx} — got {qty}"}
+    if mtm_stop is not None and mtm_stop <= 0:
+        return {"error": f"max loss must be > 0 — got {mtm_stop}"}
+    return _dn_control_mod().write_control(idx, mode=mode, kill=kill,
+                                           qty=qty, mtm_stop=mtm_stop)
+
+
 # ── WebSocket — push updates every 60s during market hours, 5 min otherwise ──
 
 @app.websocket("/ws")

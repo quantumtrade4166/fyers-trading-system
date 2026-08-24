@@ -211,6 +211,12 @@ def _strangle_intraday():
         _ensure_v2_running()
     except Exception as e:
         print(f"  [scheduler] ensure_v2 failed: {e}")
+    # the delta-neutral engine is independent of V2 — one failing must never stop
+    # the other, so it gets its own try
+    try:
+        _ensure_dn_running()
+    except Exception as e:
+        print(f"  [scheduler] ensure_dn failed: {e}")
 
 
 _V2_PS_FILTER = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' "
@@ -273,6 +279,56 @@ def _ensure_v2_running():
         subprocess.run(["schtasks", "/Run", "/TN", "StrangleV2Engine"], capture_output=True, timeout=20)
         print(f"  [scheduler] V2 {'restart' if stalled else 'start'} "
               f"(running={running}, zombie={zombie}, gap={freshest})")
+
+
+_DN_PS_FILTER = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' "
+                 "-and $_.CommandLine -like '*delta_neutral*engine*' }")
+
+
+def _ensure_dn_running():
+    """Keep the delta-neutral engine alive from 09:20.
+
+    It must be up BEFORE its 09:30 entry, so unlike the V2 engine (which only
+    starts once strikes are cached) this one starts on the clock. Staleness is
+    judged from the TICK file the controller rewrites every ~0.4s: if that stops
+    advancing the engine is a zombie and gets replaced.
+    """
+    import datetime, subprocess, json as _json
+    from pathlib import Path
+    import pytz
+    now = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
+    if not (now.weekday() < 5 and (9, 20) <= (now.hour, now.minute) <= (15, 20)):
+        return
+
+    state = (Path(__file__).parent.parent / "live_trading_options" / "delta_neutral"
+             / "data" / "live_state")
+    today = now.strftime("%Y-%m-%d")
+
+    r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                        f"({_DN_PS_FILTER} | Measure-Object).Count"],
+                       capture_output=True, text=True, timeout=20)
+    running = (r.stdout.strip() or "0") != "0"
+
+    # how long since the newest TICK file was last written (seconds)
+    gap = None
+    for i in ("NIFTY", "SENSEX"):
+        f = state / f"{today}_{i}_TICK.json"
+        if not f.exists():
+            continue
+        g = (datetime.datetime.now().timestamp() - f.stat().st_mtime)
+        gap = g if gap is None else min(gap, g)
+    # grace until 9:25 so a just-started engine isn't judged before its first write
+    stalled = running and now.time() >= datetime.time(9, 25) and (gap is None or gap > 180)
+
+    if (not running) or stalled:
+        if stalled:
+            subprocess.run(["powershell", "-NoProfile", "-Command",
+                            f"{_DN_PS_FILTER} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"],
+                           capture_output=True, timeout=20)
+        subprocess.run(["schtasks", "/Run", "/TN", "DeltaNeutralEngine"],
+                       capture_output=True, timeout=20)
+        print(f"  [scheduler] DN {'restart' if stalled else 'start'} "
+              f"(running={running}, tick_gap={gap})")
 
 
 def _start_feed():
