@@ -33,13 +33,13 @@ CE, PE = "CE", "PE"
 
 
 class Leg:
-    def __init__(self, opt_type: str, strike: int, fy_symbol: str, qty: int,
-                 *, tradingsymbol: str = None, exchange: str = None,
-                 otm_level: int = None, reason: str = None):
+    def __init__(self, opt_type: str, strike: int, tradingsymbol: str, qty: int,
+                 *, exchange: str = None, otm_level: int = None, reason: str = None):
         self.opt_type = opt_type
         self.strike = strike
-        self.fy_symbol = fy_symbol          # Fyers symbol — the tick/chain key
-        self.tradingsymbol = tradingsymbol  # Kite symbol — the order key
+        # The Kite tradingsymbol is the leg's identity AND its order key — one
+        # field, because two that must be kept in sync is a bug waiting to happen.
+        self.tradingsymbol = tradingsymbol
         self.exchange = exchange
         self.qty = qty
         self.otm_level = otm_level
@@ -66,6 +66,11 @@ class Leg:
         self.exit_time = None
         self.exit_reason = None
         self.created = dt.datetime.now().strftime("%H:%M:%S")
+
+    @property
+    def symbol(self) -> str:
+        """Alias kept because marks/ledger key on it; always the tradingsymbol."""
+        return self.tradingsymbol
 
     # ── state ────────────────────────────────────────────────────────────
     @property
@@ -135,7 +140,7 @@ class Leg:
     def to_dict(self, mark: float = None) -> dict:
         return {
             "opt_type": self.opt_type, "strike": self.strike,
-            "fy_symbol": self.fy_symbol, "tradingsymbol": self.tradingsymbol,
+            "symbol": self.symbol, "tradingsymbol": self.tradingsymbol,
             "qty": self.qty, "otm_level": self.otm_level, "reason": self.reason,
             "status": self.status, "entry_price": self.entry_price,
             "entry_time": self.entry_time, "entry_order_id": self.entry_order_id,
@@ -220,7 +225,7 @@ class Position:
         return round(sum(l.pnl() or 0 for l in self.history), 2)
 
     def unrealized(self, marks: dict) -> float:
-        return round(sum(l.pnl(marks.get(l.fy_symbol)) or 0 for l in self.live_legs()), 2)
+        return round(sum(l.pnl(marks.get(l.symbol)) or 0 for l in self.live_legs()), 2)
 
     def mtm(self, marks: dict) -> float:
         return round(self.realized() + self.unrealized(marks), 2)
@@ -228,13 +233,13 @@ class Position:
     def to_dict(self, marks: dict) -> dict:
         m = marks or {}
         return {
-            "ce": self.ce.to_dict(m.get(self.ce.fy_symbol)) if self.ce else None,
-            "pe": self.pe.to_dict(m.get(self.pe.fy_symbol)) if self.pe else None,
+            "ce": self.ce.to_dict(m.get(self.ce.symbol)) if self.ce else None,
+            "pe": self.pe.to_dict(m.get(self.pe.symbol)) if self.pe else None,
             "history": [l.to_dict() for l in self.history],
             "n_live": self.n_live, "is_complete": self.is_complete,
             "is_single": self.is_single, "is_flat": self.is_flat,
             "missing_side": self.missing_side(),
-            "unprotected": [l.fy_symbol for l in self.unprotected_legs()],
+            "unprotected": [l.symbol for l in self.unprotected_legs()],
             "realized": self.realized(), "unrealized": self.unrealized(m),
             "mtm": self.mtm(m),
         }

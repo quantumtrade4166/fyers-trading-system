@@ -160,7 +160,7 @@ class DNController:
             if leg is not None:
                 m = self._mark(leg)
                 if m is not None:
-                    out[leg.fy_symbol] = m
+                    out[leg.symbol] = m
         return out
 
     # ── control channel (arm / kill / qty / max loss) ─────────────────────
@@ -259,10 +259,8 @@ class DNController:
                           reason="contract not found in the instrument dump")
                 continue
             side = c["opt_type"]
-            fy = self._symbol_lookup(c["strike"], side) if self._symbol_lookup else None
             last = sells[ts][-1]
-            leg = Leg(side, c["strike"], fy or ts, qty, tradingsymbol=ts,
-                      exchange=self.executor.exchange,
+            leg = Leg(side, c["strike"], ts, qty, exchange=self.executor.exchange,
                       reason="recovered from the broker after a restart")
             leg.mark_filled(last["order_id"], last["avg_price"], last.get("fill_time"))
             st = stop_by_sym.get(ts)
@@ -493,21 +491,18 @@ class DNController:
 
     # ── opening and closing single legs ──────────────────────────────────
     def _build_leg(self, side: str, cand: dict) -> Leg | None:
-        """Turn a selection into a placeable leg (both symbols resolved)."""
-        fy = self._symbol_lookup(cand["strike"], side) if self._symbol_lookup else None
-        if not fy:
+        """Turn a selection into a placeable leg.
+
+        The tradingsymbol comes from the chain, which built it from Kite's own
+        instrument dump — the same dump the order layer resolves against, so the
+        contract we priced is by construction the contract we trade."""
+        ts = self._symbol_lookup(cand["strike"], side) if self._symbol_lookup else None
+        if not ts:
             self._log("leg_build_failed", side=side, strike=cand["strike"],
-                      reason="no Fyers symbol")
+                      reason="strike not in the Kite chain")
             return None
-        leg = Leg(side, cand["strike"], fy, self.qty, otm_level=cand.get("otm_level"),
-                  reason=cand.get("why"))
-        k = self.executor.resolve(cand["strike"], side)
-        if k:
-            leg.tradingsymbol, leg.exchange = k["tradingsymbol"], k["exchange"]
-        elif self.executor.is_live:
-            self._log("leg_build_failed", side=side, strike=cand["strike"],
-                      reason="no Kite contract")
-            return None
+        leg = Leg(side, cand["strike"], ts, self.qty, exchange=self.executor.exchange,
+                  otm_level=cand.get("otm_level"), reason=cand.get("why"))
         return leg
 
     def _open_leg(self, leg: Leg, mark: float) -> bool:

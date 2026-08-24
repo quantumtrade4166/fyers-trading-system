@@ -2,18 +2,24 @@
 engine.py — the delta-neutral strangle live engine.
 ===================================================
 
-STANDALONE process with its OWN Fyers WebSocket. Streams the option chain around
-ATM for each configured index, keeps a `LiveChain` current from the ticks, and
-drives one `DNController` per index.
+STANDALONE process with its own **Kite** WebSocket. Streams the option chain
+around ATM for each configured index, keeps a `LiveChain` current from the ticks,
+and drives one `DNController` per index.
 
-Deliberately a separate process from the VWAP strangle's `live_tick_engine.py`
-and from `deployment/live_feed.py`: each strategy owning its own socket means a
-fault in one can never disturb another that is holding real positions. It also
-holds its own single-instance lock (port 47653).
+Kite for data as well as orders, deliberately:
+  - the VWAP strangle owns the Fyers socket. Two Fyers connections on one token
+    risk the broker dropping one, and whichever strategy loses its feed goes
+    blind — no stop monitoring, no square-off. Different provider, no contention.
+  - prices arrive from the venue the orders go to, so a stop trigger is measured
+    against the book it will execute against.
+  - no Fyers symbol master and no pandas in the runtime path.
 
-Run (system python — fyers_apiv3 lives there, not in .venv):
+It also holds its own single-instance lock (port 47653), separate from the
+dashboard's and the VWAP engine's.
 
-    python live_trading_options/delta_neutral/engine.py
+Run (VPS venv python — that is where pandas/kiteconnect live):
+
+    .venv\\Scripts\\python.exe live_trading_options/delta_neutral/engine.py
 
 Start it any time from ~09:20; it seeds from the current chain, and a mid-day
 restart recovers the day's real position from the broker before trading again.
@@ -33,27 +39,24 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
-from fyers_apiv3.FyersWebsocket import data_ws
-
-from core.shared import (symbol_master, fyers_client, singleton, is_trade_day,
-                         PORT_DN_ENGINE)
-from core.chain import LiveChain
-from live.controller import DNController
-from live.broker import audit_log
+from core.shared import singleton, PORT_DN_ENGINE
+from core.chain import LiveChain, is_trade_day
+from live.controller import DNController, STATE_DIR
+from live.broker import audit_log, kite_executor as kx
 
 PARAMS = json.loads((ROOT / "config" / "parameters.json").read_text())
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 MKT_END = dt.time(15, 30)
 
-# how often the controllers are stepped. Ticks arrive far faster than any decision
-# the strategy makes (the tightest is a 60-second window), so stepping on every
-# tick would just burn CPU re-deciding the same thing.
+# Ticks arrive far faster than any decision this strategy makes (the tightest is
+# a 60-second window), so stepping on every tick would burn CPU re-deciding the
+# same thing.
 _STEP_SECONDS = 0.2
 
 _chains: dict[str, LiveChain] = {}
 _ctrls: dict[str, DNController] = {}
-_sym_index: dict[str, str] = {}        # fyers symbol -> index it belongs to
-_ws = None
+_token_index: dict[int, str] = {}      # instrument_token -> index it belongs to
+_kws = None
 _last_tick = None
 _lock = threading.Lock()
 
@@ -63,43 +66,35 @@ def _now() -> dt.datetime:
 
 
 # ── setup ─────────────────────────────────────────────────────────────────
-def build(date_str: str):
+def build(date_str: str, kite):
     """One chain + one controller per configured index."""
-    kite = _get_kite()
     for index in PARAMS["live_orders"].get("indices", []):
         try:
-            tradeable, dte, expiry = is_trade_day(index)
+            tradeable, dte, expiry = is_trade_day(kite, index)
         except Exception as e:
             print(f"  [dn] {index} expiry lookup failed: {e}")
             continue
 
-        chain = LiveChain(index, expiry, PARAMS["strike_interval"][index],
-                          PARAMS["index_symbols"][index], span=PARAMS.get("chain_span", 15))
-        chain.load_strikes()
+        chain = LiveChain(index, expiry, PARAMS["strike_interval"][index], kite,
+                          span=PARAMS.get("chain_span", 15))
+        try:
+            chain.load()
+        except Exception as e:
+            print(f"  [dn] {index} chain load failed: {e}")
+            continue
 
-        # Lot size: prefer the BROKER's own figure for the exact contract — it is
-        # what the order will actually be sized in, and it changes from time to
-        # time (NIFTY has been 50, 75 and 65). parameters.json is the fallback.
-        lot = PARAMS["lot_sizes"].get(index, 1)
-        if kite:
-            try:
-                from live.broker import kite_executor as kx
-                probe = chain.band(chain.atm or chain._all_strikes[len(chain._all_strikes) // 2])
-                c = kx.resolve(kite, index, expiry, probe[len(probe) // 2], "CE")
-                if c.get("lot_size"):
-                    if int(c["lot_size"]) != lot:
-                        print(f"  [dn] {index}: lot size {lot} (config) -> "
-                              f"{c['lot_size']} (broker) — using the broker's")
-                    lot = int(c["lot_size"])
-            except Exception as e:
-                print(f"  [dn] {index}: broker lot size unavailable, using config {lot} ({e})")
+        # Kite's own lot size for this contract wins over config — it is what the
+        # order is actually sized in, and it has changed before (50 -> 75 -> 65).
+        lot = chain.lot_size or PARAMS["lot_sizes"].get(index, 1)
+        if lot != PARAMS["lot_sizes"].get(index):
+            print(f"  [dn] {index}: lot size {PARAMS['lot_sizes'].get(index)} (config) "
+                  f"-> {lot} (Kite) — using Kite's")
 
         ctrl = DNController(index, date_str, expiry, dte, params=PARAMS,
-                            lot_size=lot, kite=kite,
-                            symbol_lookup=chain.symbol_for)
+                            lot_size=lot, kite=kite, symbol_lookup=chain.symbol_for)
         # A mid-day (re)start must recover the real position BEFORE the first tick
-        # reaches the strategy — otherwise the next adjustment window sees "flat"
-        # and opens a second strangle on top of the live one.
+        # reaches the strategy — otherwise the next window sees "flat" and opens a
+        # second strangle on top of the live one.
         try:
             ctrl.reconcile_broker()
         except Exception as e:
@@ -107,102 +102,93 @@ def build(date_str: str):
 
         _chains[index], _ctrls[index] = chain, ctrl
         print(f"  [dn] {index}: expiry={expiry} dte={dte} "
-              f"{'TRADES' if tradeable else 'no-trade day (chart only)'} "
-              f"target={ctrl.target} sl={ctrl.sl} lot={lot}")
+              f"{'TRADES' if tradeable else 'no-trade day (chain only)'} "
+              f"target={ctrl.target} sl={ctrl.sl} lot={lot} "
+              f"strikes={len(chain.strikes)} spot_token={chain.spot_token}")
         audit_log(index, "ENGINE_BUILD", expiry=str(expiry), dte=dte,
-                  tradeable=tradeable, target=ctrl.target, sl=ctrl.sl,
-                  broker_ready=bool(kite))
+                  tradeable=tradeable, target=ctrl.target, sl=ctrl.sl, lot=lot,
+                  feed="kite")
 
 
-def _get_kite():
-    """Kite client for real orders, or None (paper-only) if it can't be built."""
+def _seed_spot(kite):
+    """One REST quote per index so ATM is known before the first tick — otherwise
+    we would not know which strikes to subscribe to."""
+    want = {i: f"{c.index}" for i, c in _chains.items()}
+    del want
+    syms = []
+    from core.chain import SPOT
+    for index in _chains:
+        exch, name = SPOT[index]
+        syms.append(f"{exch}:{name}")
     try:
-        from live.broker import kite_executor as kx
-        k = kx.get_kite()
-        k.profile()                              # prove the token actually works
-        return k
+        q = kite.quote(syms)
     except Exception as e:
-        print(f"  [dn] Kite unavailable — paper only: {e}")
-        return None
-
-
-def _subscribe(symbols: list[str], index: str):
-    if not symbols:
+        print(f"  [dn] spot seed failed: {e}")
         return
-    for s in symbols:
-        _sym_index[s] = index
+    for index, chain in _chains.items():
+        exch, name = SPOT[index]
+        row = q.get(f"{exch}:{name}") or {}
+        lp = row.get("last_price")
+        if lp:
+            chain.on_tick(chain.spot_token, float(lp))
+            print(f"  [dn] {index}: spot {chain.spot} atm {chain.atm}")
+
+
+def _subscribe(tokens: list[int], index: str):
+    if not tokens:
+        return
+    for t in tokens:
+        _token_index[int(t)] = index
     try:
-        _ws.subscribe(symbols=symbols, data_type="SymbolUpdate")
-        _chains[index].mark_subscribed(symbols)
-        print(f"  [dn] {index}: subscribed {len(symbols)} contracts")
+        _kws.subscribe(tokens)
+        _kws.set_mode(_kws.MODE_LTP, tokens)      # last price is all we need
+        _chains[index].mark_subscribed(tokens)
+        print(f"  [dn] {index}: subscribed {len(tokens)} instruments")
     except Exception as e:
         print(f"  [dn] {index} subscribe failed: {e}")
 
 
-def _seed_spot():
-    """One REST quote per index so ATM is known before the first tick — otherwise
-    we would not know which strikes to subscribe to."""
-    try:
-        client = fyers_client.get_client()
-    except Exception as e:
-        print(f"  [dn] no Fyers client for spot seed: {e}")
-        return
-    syms = [c.index_symbol for c in _chains.values()]
-    try:
-        resp = client.quotes({"symbols": ",".join(syms)})
-        for row in (resp.get("d") or []):
-            n, v = row.get("n"), row.get("v") or {}
-            for c in _chains.values():
-                if c.index_symbol == n and v.get("lp") is not None:
-                    c.on_tick(n, float(v["lp"]))
-                    print(f"  [dn] {c.index}: spot {c.spot} atm {c.atm}")
-    except Exception as e:
-        print(f"  [dn] spot seed failed: {e}")
-
-
 # ── websocket ─────────────────────────────────────────────────────────────
-def _on_message(msg):
+def _on_ticks(ws, ticks):
     """A single bad tick must never escape and kill the socket's read loop."""
     global _last_tick
     try:
-        ticks = []
-        if isinstance(msg, dict):
-            d = msg.get("d")
-            ticks = d if isinstance(d, list) else ([d] if isinstance(d, dict) else [msg])
-        elif isinstance(msg, list):
-            ticks = msg
         for t in ticks:
             try:
-                if not isinstance(t, dict):
+                tok = t.get("instrument_token")
+                ltp = t.get("last_price")
+                if tok is None or ltp is None:
                     continue
-                sym, ltp = t.get("symbol"), t.get("ltp")
-                if not sym or ltp is None:
-                    continue
-                index = _sym_index.get(sym)
+                index = _token_index.get(int(tok))
                 if not index:
                     continue
                 with _lock:
-                    _chains[index].on_tick(sym, float(ltp))
+                    _chains[index].on_tick(tok, float(ltp))
                 _last_tick = time.monotonic()
             except Exception as e:
                 print(f"  [dn] tick skipped: {e}")
     except Exception as e:
-        print(f"  [dn] on_message error: {e}")
+        print(f"  [dn] on_ticks error: {e}")
 
 
-def _on_open():
+def _on_connect(ws, response):
+    print("  [dn] Kite ticker connected")
     for index, chain in _chains.items():
-        _subscribe(chain.symbols_to_add(), index)
+        _subscribe(chain.tokens_to_add(), index)
 
 
-def _on_error(m): print(f"  [dn] WS error: {m}")
-def _on_close(m): print(f"  [dn] WS closed: {m}")
+def _on_close(ws, code, reason):
+    print(f"  [dn] ticker closed: {code} {reason}")
+
+
+def _on_error(ws, code, reason):
+    print(f"  [dn] ticker error: {code} {reason}")
 
 
 # ── the strategy loop ─────────────────────────────────────────────────────
-def _step_loop(date_str: str):
-    """Step every controller on a fixed cadence. Runs in its own thread so a slow
-    order round-trip inside a controller can never block the socket's reader."""
+def _step_loop():
+    """Step every controller on a fixed cadence. Its own thread, so a slow order
+    round-trip inside a controller can never block the socket's reader."""
     while True:
         time.sleep(_STEP_SECONDS)
         now = _now()
@@ -217,15 +203,15 @@ def _step_loop(date_str: str):
                     snap, spot = chain.chain(), chain.spot
                 ctrl.on_tick(snap, spot, now)
             except Exception as e:
-                # never let one index's failure stop the other's — it may be holding
-                # a real position that still needs its square-off
+                # never let one index's failure stop the other's — it may be
+                # holding a real position that still needs its square-off
                 print(f"  [dn] {index} step error: {e}", flush=True)
                 audit_log(index, "STEP_ERROR", error=f"{type(e).__name__}: {e}")
 
 
 def _writer_loop(date_str: str, every: int = 10):
-    """Persist snapshots, extend the subscribed band as spot drifts, self-heal a
-    silent socket stall, and exit cleanly after the close."""
+    """Persist snapshots, extend the subscription as spot drifts, self-heal a
+    silent stall, and exit cleanly after the close."""
     STALL_SECS = 90
     while True:
         time.sleep(every)
@@ -236,9 +222,9 @@ def _writer_loop(date_str: str, every: int = 10):
                 _write_chain(index, date_str)
             except Exception as e:
                 print(f"  [dn] {index} persist error: {e}")
-            try:                                  # follow spot if it has drifted
+            try:
                 with _lock:
-                    add = _chains[index].symbols_to_add()
+                    add = _chains[index].tokens_to_add()
                 _subscribe(add, index)
             except Exception:
                 pass
@@ -246,8 +232,6 @@ def _writer_loop(date_str: str, every: int = 10):
         if now.time() > dt.time(15, 35):
             print("  [dn] market closed — final snapshots written, exiting.")
             audit_log("SYSTEM", "ENGINE_EXIT", reason="market closed")
-            # hard exit: the Fyers WS keeps the main thread blocked forever, so a
-            # plain return would leave a zombie that blocks tomorrow's start
             os._exit(0)
 
         if (_last_tick is not None and (time.monotonic() - _last_tick) > STALL_SECS
@@ -259,7 +243,6 @@ def _writer_loop(date_str: str, every: int = 10):
 
 def _write_chain(index: str, date_str: str):
     """Publish the chain table the terminal renders."""
-    from live.controller import STATE_DIR
     with _lock:
         chain = _chains[index]
         rows, spot, atm, upd = chain.rows(), chain.spot, chain.atm, chain.updated
@@ -272,40 +255,45 @@ def _write_chain(index: str, date_str: str):
                 "status": leg.status, "qty": leg.qty}
     (STATE_DIR / f"{date_str}_{index}_CHAIN.json").write_text(json.dumps({
         "index": index, "spot": spot, "atm": atm, "rows": rows, "sold": sold,
-        "expiry": str(chain.expiry), "updated": upd,
+        "expiry": str(chain.expiry), "updated": upd, "feed": "kite",
         "written": dt.datetime.now().strftime("%H:%M:%S")}))
 
 
 # ── main ──────────────────────────────────────────────────────────────────
 def main():
-    global _ws
+    global _kws
     if not singleton.acquire(PORT_DN_ENGINE):
         print("  [dn] another engine holds the lock — this duplicate exits.")
         return
 
-    st = fyers_client.token_status()
-    print(f"  [dn] Fyers token date={st['date']} valid={st['valid']}")
-    audit_log("SYSTEM", "ENGINE_START", pid=os.getpid(), fyers_valid=st.get("valid"))
-    if not st["valid"]:
-        print("  [dn] Fyers token invalid — aborting.")
+    try:
+        kite = kx.get_kite()
+        who = kite.profile().get("user_id")
+        print(f"  [dn] Kite auth ok: {who}")
+    except Exception as e:
+        print(f"  [dn] Kite unavailable — aborting: {e}")
+        audit_log("SYSTEM", "ENGINE_ABORT", reason=f"kite auth: {e}")
         return
 
+    audit_log("SYSTEM", "ENGINE_START", pid=os.getpid(), feed="kite", user=who)
     date_str = dt.date.today().isoformat()
-    build(date_str)
+    build(date_str, kite)
     if not _ctrls:
         print("  [dn] no indices configured — aborting.")
         return
-    _seed_spot()
+    _seed_spot(kite)
 
-    _ws = data_ws.FyersDataSocket(
-        access_token=f"{fyers_client.CLIENT_ID}:{fyers_client.load_raw_token()}",
-        log_path="", litemode=False, write_to_file=False, reconnect=True,
-        on_connect=_on_open, on_close=_on_close, on_error=_on_error,
-        on_message=_on_message)
+    from kiteconnect import KiteTicker
+    _kws = KiteTicker(kx._API_KEY, kx.access_token())
+    _kws.on_ticks = _on_ticks
+    _kws.on_connect = _on_connect
+    _kws.on_close = _on_close
+    _kws.on_error = _on_error
 
-    threading.Thread(target=_step_loop, args=(date_str,), daemon=True, name="dn-step").start()
-    threading.Thread(target=_writer_loop, args=(date_str,), daemon=True, name="dn-writer").start()
-    _ws.connect()
+    threading.Thread(target=_step_loop, daemon=True, name="dn-step").start()
+    threading.Thread(target=_writer_loop, args=(date_str,), daemon=True,
+                     name="dn-writer").start()
+    _kws.connect()          # blocks, reconnects on its own
 
 
 if __name__ == "__main__":
