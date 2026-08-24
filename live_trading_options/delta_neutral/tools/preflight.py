@@ -34,8 +34,15 @@ P = json.loads((ROOT / "config" / "parameters.json").read_text())
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--date", help="check a future trading day instead of today "
+                                   "(YYYY-MM-DD) — lets tomorrow's rules be verified "
+                                   "tonight, against the real Kite expiry list")
+    a = ap.parse_args()
     now = dt.datetime.now()
-    print(f"\n  today: {now:%Y-%m-%d %A}   preflight run at {now:%H:%M:%S}\n")
+    day = dt.date.fromisoformat(a.date) if a.date else now.date()
+    label = "TODAY" if day == now.date() else f"PROJECTED for {day:%A}"
+    print(f"\n  {label}: {day:%Y-%m-%d %A}   (run at {now:%Y-%m-%d %H:%M:%S})\n")
     try:
         k = kx.get_kite()
         print(f"  kite      : ok ({k.profile().get('user_id')})")
@@ -54,7 +61,7 @@ def main():
             continue
         print(f"    expiry    : {expiry}   DTE {dte}")
         if not tradeable:
-            print(f"    verdict   : NO TRADE today (strategy trades DTE 0 and 1 only)")
+            print(f"    verdict   : NO TRADE (strategy trades DTE 0 and 1 only)")
             print(f"    the chain still streams, so the tab shows prices — no orders.")
             continue
 
