@@ -502,16 +502,55 @@ async def api_dn_config():
             "entry_time": p.get("entry_time", "09:30")}
 
 
+def _book_suffix(book: str) -> str:
+    """'' for the real book, '_PAPER' for the shadow benchmark that runs the same
+    strategy on simulated fills. The gap between the two is execution cost."""
+    return "_PAPER" if str(book).lower() == "paper" else ""
+
+
 @app.get("/api/dn/status")
-async def api_dn_status(date: str, index: str = "NIFTY"):
+async def api_dn_status(date: str, index: str = "NIFTY", book: str = "live"):
     """Full snapshot for one index/day: legs, stops, adjustments, P&L, windows."""
-    return _dn_read(f"{date}_{index.upper()}_DN.json")
+    return _dn_read(f"{date}_{index.upper()}_DN{_book_suffix(book)}.json")
 
 
 @app.get("/api/dn/tick")
-async def api_dn_tick(date: str, index: str = "NIFTY"):
+async def api_dn_tick(date: str, index: str = "NIFTY", book: str = "live"):
     """Fast tick snapshot (~0.4s) — live premiums, MTM, next-window countdown."""
-    return _dn_read(f"{date}_{index.upper()}_TICK.json")
+    return _dn_read(f"{date}_{index.upper()}_TICK{_book_suffix(book)}.json")
+
+
+@app.get("/api/dn/compare")
+async def api_dn_compare(date: str, index: str = "NIFTY"):
+    """Live book vs paper benchmark, side by side.
+
+    Same strategy, same ticks; the only difference is that one placed real orders
+    and the other filled at the touch. So the delta is execution: slippage, fill
+    quality, and anything the broker rejected."""
+    idx = index.upper()
+    out = {"date": date, "index": idx}
+    for book, sfx in (("live", ""), ("paper", "_PAPER")):
+        d = _dn_read(f"{date}_{idx}_DN{sfx}.json")
+        if d.get("error"):
+            out[book] = None
+            continue
+        pos = d.get("position") or {}
+        out[book] = {
+            "mtm": pos.get("mtm"), "realized": pos.get("realized"),
+            "unrealized": pos.get("unrealized"),
+            "closed_legs": len(pos.get("history") or []),
+            "n_live": pos.get("n_live"), "shape": (
+                "strangle" if pos.get("is_complete") else
+                "single leg" if pos.get("is_single") else "flat"),
+            "entries": d.get("fresh_entries"), "sl": d.get("sl"),
+            "killed": d.get("killed"), "done": d.get("done"),
+            "armed": d.get("armed"),
+        }
+    if out.get("live") and out.get("paper"):
+        lm, pm = out["live"]["mtm"], out["paper"]["mtm"]
+        if lm is not None and pm is not None:
+            out["execution_cost"] = round(pm - lm, 2)   # paper minus real
+    return out
 
 
 @app.get("/api/dn/chain")

@@ -54,7 +54,8 @@ MKT_END = dt.time(15, 30)
 _STEP_SECONDS = 0.2
 
 _chains: dict[str, LiveChain] = {}
-_ctrls: dict[str, DNController] = {}
+_ctrls: dict[str, DNController] = {}          # real book
+_shadows: dict[str, DNController] = {}        # paper benchmark
 _token_index: dict[int, str] = {}      # instrument_token -> index it belongs to
 _kws = None
 _last_tick = None
@@ -92,6 +93,12 @@ def build(date_str: str, kite):
 
         ctrl = DNController(index, date_str, expiry, dte, params=PARAMS,
                             lot_size=lot, kite=kite, symbol_lookup=chain.symbol_for)
+        # The paper benchmark: same strategy, same ticks, simulated fills. Runs
+        # regardless of arming, so the difference between the two books at the end
+        # of the day IS the cost of execution.
+        shadow = DNController(index, date_str, expiry, dte, params=PARAMS,
+                              lot_size=lot, kite=None,
+                              symbol_lookup=chain.symbol_for, shadow=True)
         # A mid-day (re)start must recover the real position BEFORE the first tick
         # reaches the strategy — otherwise the next window sees "flat" and opens a
         # second strangle on top of the live one.
@@ -101,6 +108,7 @@ def build(date_str: str, kite):
             print(f"  [dn] {index} reconcile failed: {e}")
 
         _chains[index], _ctrls[index] = chain, ctrl
+        _shadows[index] = shadow
         print(f"  [dn] {index}: expiry={expiry} dte={dte} "
               f"{'TRADES' if tradeable else 'no-trade day (chain only)'} "
               f"target={ctrl.target} sl={ctrl.sl} lot={lot} "
@@ -202,6 +210,9 @@ def _step_loop():
                 with _lock:
                     snap, spot = chain.chain(), chain.spot
                 ctrl.on_tick(snap, spot, now)
+                sh = _shadows.get(index)
+                if sh is not None:
+                    sh.on_tick(snap, spot, now)
             except Exception as e:
                 # never let one index's failure stop the other's — it may be
                 # holding a real position that still needs its square-off
@@ -219,6 +230,9 @@ def _writer_loop(date_str: str, every: int = 10):
         for index, ctrl in list(_ctrls.items()):
             try:
                 ctrl.persist()
+                sh = _shadows.get(index)
+                if sh is not None:
+                    sh.persist()
                 _write_chain(index, date_str)
             except Exception as e:
                 print(f"  [dn] {index} persist error: {e}")

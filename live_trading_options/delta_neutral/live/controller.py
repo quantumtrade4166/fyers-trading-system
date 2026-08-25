@@ -67,7 +67,15 @@ STATE_DIR.mkdir(parents=True, exist_ok=True)
 
 class DNController:
     def __init__(self, index: str, date_str: str, expiry, dte: int, *,
-                 params: dict, lot_size: int, kite=None, symbol_lookup=None):
+                 params: dict, lot_size: int, kite=None, symbol_lookup=None,
+                 shadow: bool = False):
+        # A SHADOW controller is the paper benchmark: identical strategy, identical
+        # ticks, fills simulated at the touch. It runs the whole day no matter what
+        # the arm switch or the KILL button say, because its job is to answer "what
+        # would the strategy have made, untouched" — which is only meaningful if
+        # nothing interferes with it. Compare its P&L against the live book and the
+        # difference is execution: slippage, fill quality, rejected orders.
+        self.shadow = shadow
         self.index, self.date, self.expiry, self.dte = index, date_str, expiry, dte
         self.params = params
         self.lot_size = lot_size
@@ -129,6 +137,7 @@ class DNController:
         self._last_tick_write = 0.0
         self._last_stop_poll = 0.0
         self._last_heartbeat = None
+        self._suffix = "_PAPER" if shadow else ""
 
     # ── logging ──────────────────────────────────────────────────────────
     def _log(self, etype: str, **fields):
@@ -140,9 +149,11 @@ class DNController:
         able to reconstruct what the strategy thought it was doing."""
         ev = {"t": self._hm(), "type": etype, **fields}
         self.events.append(ev)
-        print(f"  [dn] {self.index} {etype}: "
+        tag = f"{self.index}~paper" if self.shadow else self.index
+        print(f"  [dn] {tag} {etype}: "
               + " ".join(f"{k}={v}" for k, v in fields.items()), flush=True)
-        audit_log(self.index, etype.upper(), mode=self.mode, **fields)
+        if not self.shadow:
+            audit_log(self.index, etype.upper(), mode=self.mode, **fields)
 
     def _hm(self) -> str:
         return (self._now or dt.datetime.now()).strftime("%H:%M:%S")
@@ -186,6 +197,10 @@ class DNController:
             m = c.get("mtm_stop")
             if isinstance(m, (int, float)) and m > 0:
                 self.max_loss = abs(float(m))
+        if self.shadow:
+            # size + max-loss track the live book so the comparison is like for
+            # like, but arming and KILL are deliberately ignored — see __init__
+            return
         new_mode = c.get("mode")
         if new_mode in ("paper", "live") and new_mode != self.mode:
             self.mode = new_mode
@@ -811,6 +826,8 @@ class DNController:
                  else "single-leg" if self.position.is_single else "flat")
         pending = (f"{self.sl_steps[self.sl_step_i][0]}->{self.sl_steps[self.sl_step_i][1]}"
                    if self.sl_step_i < len(self.sl_steps) else None)
+        if self.shadow:
+            return
         audit_log(self.index, "STATUS", mode=self.mode, at=key, shape=shape,
                   sl_now=self.sl, sl_next=pending,
                   spot=self.spot, atm=self.atm, dte=self.dte,
@@ -841,7 +858,7 @@ class DNController:
                 self._now or dt.datetime.now(),
                 first=self.wcfg.get("first", "09:45"), last=self.wcfg.get("last", "15:00"),
                 every_minutes=self.wcfg.get("every_minutes", 15))
-            (STATE_DIR / f"{self.date}_{self.index}_TICK.json").write_text(json.dumps({
+            (STATE_DIR / f"{self.date}_{self.index}_TICK{self._suffix}.json").write_text(json.dumps({
                 "t": self._hm(), "spot": self.spot, "atm": self.atm,
                 "mtm": self.position.mtm(m),
                 "realized": self.position.realized(),
@@ -859,6 +876,7 @@ class DNController:
         now = self._now or dt.datetime.now()
         return {
             "index": self.index, "date": self.date, "dte": self.dte,
+            "book": "paper" if self.shadow else "live",
             "expiry": str(self.expiry), "mode": self.mode,
             "armed": self.executor.is_live, "broker_ready": self.executor.broker_ready,
             "trades_allowed": self.trades_allowed, "killed": self.killed,
@@ -888,5 +906,5 @@ class DNController:
         }
 
     def persist(self):
-        (STATE_DIR / f"{self.date}_{self.index}_DN.json").write_text(
+        (STATE_DIR / f"{self.date}_{self.index}_DN{self._suffix}.json").write_text(
             json.dumps(self.snapshot(), indent=2))

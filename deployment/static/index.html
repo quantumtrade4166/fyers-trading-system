@@ -665,6 +665,10 @@
           <button class="sca-idx-btn active" id="dn-btn-NIFTY" onclick="dnSetIndex('NIFTY')">NIFTY</button>
           <button class="sca-idx-btn" id="dn-btn-SENSEX" onclick="dnSetIndex('SENSEX')">SENSEX</button>
         </div>
+        <div class="flex gap-1" title="Live = the real book · Paper = the same strategy on simulated fills, run untouched all day as a benchmark">
+          <button class="sca-idx-btn active" id="dn-book-live" onclick="dnSetBook('live')">Live book</button>
+          <button class="sca-idx-btn" id="dn-book-paper" onclick="dnSetBook('paper')">Paper</button>
+        </div>
         <div class="flex gap-1" title="Terminal = live view · Log = the permanent append-only audit trail">
           <button class="sca-idx-btn active" id="dn-view-TERM" onclick="dnSetView('TERM')">▦ Terminal</button>
           <button class="sca-idx-btn" id="dn-view-LOG" onclick="dnSetView('LOG')">📜 Log</button>
@@ -712,6 +716,9 @@
 
     <!-- live strip: DTE · spot/ATM · next window · position shape -->
     <div id="dn-strip" class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4"></div>
+
+    <!-- live vs paper -->
+    <div id="dn-compare" class="mb-4"></div>
 
     <!-- P&L -->
     <div id="dn-pnl" class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4"></div>
@@ -1822,7 +1829,19 @@ function dnSetIndex(i) {
    The log is the SAME file the engine flushes line-by-line to disk, shown raw.
    Deliberately not prettified into cards: when something has gone wrong at 3am
    you want the exact bytes that were written, in order, not a rendering of them. */
-let dnView = 'TERM', dnLogText = '';
+let dnView = 'TERM', dnLogText = '', dnBook = 'live';
+
+/* The PAPER book runs the identical strategy on the identical ticks with
+   fills simulated at the touch, and it runs all day regardless of arming or
+   KILL. So paper-minus-live is the cost of execution: slippage, fill quality,
+   and anything the broker refused. */
+function dnSetBook(b) {
+  dnBook = b;
+  document.getElementById('dn-book-live').classList.toggle('active', b === 'live');
+  document.getElementById('dn-book-paper').classList.toggle('active', b === 'paper');
+  dnCountdown = null;
+  dnRender();
+}
 
 function dnSetView(v) {
   dnView = v;
@@ -1977,7 +1996,7 @@ async function dnTickPoll() {
   const date = document.getElementById('dn-date')?.value;
   if (date !== dnToday()) return;                 // a past day has no live tick
   let t = null;
-  try { t = await (await fetch(`/api/dn/tick?date=${date}&index=${dnIndex}`)).json(); }
+  try { t = await (await fetch(`/api/dn/tick?date=${date}&index=${dnIndex}&book=${dnBook}`)).json(); }
   catch (e) { return; }
   if (!t || t.error) return;
   const set = (id, txt, col) => {
@@ -2005,11 +2024,12 @@ async function dnRender() {
   const date = document.getElementById('dn-date')?.value;
   if (!date) return;
   let d = {}, ch = {}, cf = {};
-  try { d = await (await fetch(`/api/dn/status?date=${date}&index=${dnIndex}`)).json(); } catch (e) {}
+  try { d = await (await fetch(`/api/dn/status?date=${date}&index=${dnIndex}&book=${dnBook}`)).json(); } catch (e) {}
   try { ch = await (await fetch(`/api/dn/chain?date=${date}&index=${dnIndex}`)).json(); } catch (e) {}
   try { cf = await (await fetch(`/api/dn/control?index=${dnIndex}`)).json(); } catch (e) {}
   const live = d && !d.error;
   dnLastStatus = live ? d : null;
+  dnRenderCompare(date);
   dnRenderStatus(d, cf, date, live);
   dnRenderArm(d, cf, live);
   dnRenderStrip(d, live);
@@ -2019,6 +2039,41 @@ async function dnRender() {
   dnRenderChain(ch);
   dnRenderLog(d, live);
   dnSizeChanged();
+}
+
+async function dnRenderCompare(date) {
+  const el = document.getElementById('dn-compare');
+  if (!el) return;
+  let c = null;
+  try { c = await (await fetch(`/api/dn/compare?date=${date}&index=${dnIndex}`)).json(); } catch (e) { return; }
+  if (!c || (!c.live && !c.paper)) { el.innerHTML = ''; return; }
+  const cell = (name, b, note) => {
+    if (!b) return `<div style="flex:1"><p class="text-[10px] text-slate-500 uppercase">${name}</p>
+      <p class="text-lg text-slate-600">—</p><p class="text-[10px] text-slate-600">${note}</p></div>`;
+    const col = b.mtm == null ? '#94a3b8' : b.mtm >= 0 ? '#26a69a' : '#ef5350';
+    return `<div style="flex:1"><p class="text-[10px] text-slate-500 uppercase">${name}</p>
+      <p class="text-lg font-semibold" style="color:${col}">${dnRs(b.mtm)}</p>
+      <p class="text-[10px] text-slate-600">${b.shape} · ${b.closed_legs} closed · SL ${b.sl ?? '—'}${b.killed ? ' · STOPPED' : ''}</p></div>`;
+  };
+  const gap = c.execution_cost;
+  const gapCol = gap == null ? '#94a3b8' : gap > 0 ? '#ef5350' : '#26a69a';
+  const gapNote = gap == null ? 'both books needed'
+    : gap > 0 ? 'paper did better — this is what execution cost'
+    : 'live did better than the simulated fills';
+  el.innerHTML = `
+    <div class="card p-3" style="border-left:3px solid #64748b">
+      <div class="flex items-center gap-4 flex-wrap">
+        ${cell('Live book', c.live, 'not running')}
+        ${cell('Paper benchmark', c.paper, 'not running')}
+        <div style="flex:1">
+          <p class="text-[10px] text-slate-500 uppercase">Execution cost</p>
+          <p class="text-lg font-semibold" style="color:${gapCol}">${gap == null ? '—' : dnRs(gap)}</p>
+          <p class="text-[10px] text-slate-600">${gapNote}</p>
+        </div>
+      </div>
+      <p class="text-[10px] text-slate-600 mt-2">same strategy, same ticks — paper fills at the touch and
+        ignores arming/KILL, so it is the untouched benchmark for the day</p>
+    </div>`;
 }
 
 function dnRenderStatus(d, cf, date, live) {
