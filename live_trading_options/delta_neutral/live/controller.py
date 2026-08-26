@@ -575,8 +575,11 @@ class DNController:
         if not self.executor.cancel_stop(leg):
             self._log("stop_cancel_failed", side=leg.opt_type, strike=leg.strike,
                       order=leg.sl_order_id)
-        mark = (self._mark(leg) or leg.entry_price) * max(1.0, urgency)
-        fill = self.executor.buy(leg, mark, kind="exit")
+        # the mark is now only the FALLBACK for when the book cannot be read; the
+        # real price comes from the depth, so urgency goes to the executor instead
+        # of being baked into an inflated mark
+        mark = self._mark(leg) or leg.entry_price
+        fill = self.executor.buy(leg, mark, kind="exit", urgency=urgency)
         if not fill.ok:
             self._log("cover_failed", side=leg.opt_type, strike=leg.strike,
                       mark=round(mark, 2), reason=reason, order=fill.order_id,

@@ -110,24 +110,36 @@ class Executor:
             return self._paper_fill("sell", mark)
         return self._live_order(leg, SELL, mark, "entry")
 
-    def buy(self, leg, mark: float, kind: str = "exit") -> Fill:
-        """Cover one leg."""
+    def buy(self, leg, mark: float, kind: str = "exit", urgency: float = 1.0) -> Fill:
+        """Cover one leg. `urgency` widens how far through the book we are willing
+        to reach — used by the retry loop when a cover will not fill."""
         if not self.is_live:
             return self._paper_fill("buy", mark)
-        return self._live_order(leg, BUY, mark, kind)
+        return self._live_order(leg, BUY, mark, kind, urgency=urgency)
 
     def _limit_price(self, side: str, mark: float, buf: float) -> float:
         if not mark or mark <= 0:                  # no mark yet → uncapped marketable
             return 0.05 if side == SELL else 100000.0
         return mark * (1 - buf) if side == SELL else mark * (1 + buf)
 
-    def _live_order(self, leg, side: str, mark: float, kind: str) -> Fill:
-        """Place a marketable LIMIT and poll for the fill, escalating the price on
-        a laggard. Cancels anything that will not fill so nothing rests unnoticed."""
+    def _live_order(self, leg, side: str, mark: float, kind: str,
+                    urgency: float = 1.0) -> Fill:
+        """Place a marketable LIMIT and poll for the fill, escalating on a laggard.
+        Cancels anything that will not fill so nothing rests unnoticed.
+
+        Each rung is priced off the ACTUAL order book when it can be read: the
+        price that clears our size against the visible levels, plus a few ticks.
+        A multiple of the last mark is only the fallback — it is a guess that can
+        be far too tight (never fills) or far too wide (sweeps a thin book)."""
         import time
         last_oid = None
         for attempt, buf in enumerate(_MKT_BUFS):
-            price = self._limit_price(side, mark, buf)
+            # cushion grows with the rung AND with urgency, but in TICKS against
+            # real levels rather than as a percentage of a stale mark
+            cushion = int((2 + attempt * 4) * max(1.0, urgency))
+            price = kx.marketable_price(
+                self.kite, leg.exchange, leg.tradingsymbol, side, leg.qty,
+                fallback=self._limit_price(side, mark, buf), cushion_ticks=cushion)
             oid = kx.place_limit_verified(self.kite, leg.tradingsymbol, leg.exchange,
                                           side, leg.qty, price, self.product, self.tag)
             last_oid = oid

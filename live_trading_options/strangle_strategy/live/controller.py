@@ -69,6 +69,7 @@ class LiveController:
         self._cum_pv = 0.0                     # running VWAP: Σ(typical × volume)
         self._cum_vol = 0.0                    #               Σ(volume), from 9:15
         self._mtm_series = []                  # [{t, rupees}] intraday equity curve
+        self._last_flatten_try = 0.0           # throttle for the keep-trying flatten
         self._last_fill_time = {}              # sym -> broker fill time (HH:MM:SS) of the last fill
         self._trades_allowed = dte in (0, 1)   # strategy trades ONLY DTE 0/1; else chart-only
 
@@ -136,6 +137,15 @@ class LiveController:
             breached, _ = self.guard.check_mtm(self.marks)
             if breached:
                 self._flatten("MTM stop")
+            elif self.guard.killed:
+                # Killed, yet still short: a previous flatten did not fill. Keep
+                # trying. Without this the retry depended on MTM STAYING breached —
+                # if premiums eased back the leg just sat there, unprotected and
+                # unattended, until the 15:14 square-off.
+                import time as _t
+                if _t.monotonic() - self._last_flatten_try >= 2.0:
+                    self._last_flatten_try = _t.monotonic()
+                    self._flatten("still short after kill — retrying")
             elif self.guard.must_square_off(self._now()):
                 # TICK-driven time square-off: fire the instant the clock reaches square_off
                 # (e.g. 15:14) instead of waiting for the 5-min candle CLOSE, which lands ~5
@@ -474,12 +484,31 @@ class LiveController:
     # escalating marketable buffers for retrying a laggard leg (fill harder each try)
     _RETRY_BUFS = (0.30, 0.60, 0.90)
 
-    def _limit_price(self, sym: str, side: str, buf: float = None) -> float:
+    def _limit_price(self, sym: str, side: str, buf: float = None,
+                     cushion_ticks: int = 2) -> float:
+        """Marketable limit for one leg, priced off the ACTUAL order book when it
+        can be read, and off a multiple of the mark only as a fallback.
+
+        A multiple of the mark is a guess: too tight and the order never fills,
+        too wide and it can sweep a thin book and fill somewhere terrible. The
+        depth says what is really on offer and in what size, so we reach exactly
+        as far as our quantity requires plus a few ticks."""
         buf = self._MKT_BUF if buf is None else buf
         ref = self.marks.get(sym) or 0.0
         if ref <= 0:                                  # no mark yet → uncapped marketable
-            return 0.05 if side == SELL else 100000.0
-        return ref * (1 - buf) if side == SELL else ref * (1 + buf)
+            fallback = 0.05 if side == SELL else 100000.0
+        else:
+            fallback = ref * (1 - buf) if side == SELL else ref * (1 + buf)
+        if not (self.is_live_armed() and self.kite and (self.kite_syms or {}).get(sym)):
+            return fallback                           # paper, or no resolved contract
+        try:
+            from live import kite_executor as kx
+            ks = self.kite_syms[sym]
+            return kx.marketable_price(self.kite, ks["exchange"], ks["tradingsymbol"],
+                                       side, self.qty, fallback=fallback,
+                                       cushion_ticks=cushion_ticks) or fallback
+        except Exception:
+            return fallback
 
     # ── smart two-leg entry: fire BOTH shorts together, then retry a laggard ──
     def _fire_leg(self, kx, sym: str, side: str, cycle: int, kind: str, buf: float) -> dict:

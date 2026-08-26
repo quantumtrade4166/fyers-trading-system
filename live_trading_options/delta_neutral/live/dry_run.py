@@ -600,8 +600,8 @@ step(c19, chain_of({1: 30, 2: 22, 3: 16, 4: 11}, {1: 28, 2: 21, 3: 15, 4: 10}), 
 check("entered", c19.position.is_complete, True)
 
 # broker refuses every buy from here
-c19.executor.buy = lambda leg, mark, kind="exit": _Fill(f"rej-{leg.strike}", None, None,
-                                                        status="NOFILL")
+c19.executor.buy = lambda leg, mark, kind="exit", urgency=1.0: _Fill(
+    f"rej-{leg.strike}", None, None, status="NOFILL")
 # entry 16 + 15 = 31 combined; 1000/65 = 15.4 pts, so 55 combined breaches it while
 # BOTH legs stay under the 40 stop — the cover path, not a stop-out
 _blown = chain_of({1: 30, 2: 22, 3: 30, 4: 11}, {1: 28, 2: 21, 3: 25, 4: 10})
@@ -623,7 +623,7 @@ check("kept retrying", c19.stuck_attempts > _before, True)
 check("still short, still not done", c19.position.n_live == 2 and not c19.done, True)
 
 # broker starts accepting again
-c19.executor.buy = lambda leg, mark, kind="exit": _Fill(f"ok-{leg.strike}", mark, "10:07:00")
+c19.executor.buy = lambda leg, mark, kind="exit", urgency=1.0: _Fill(f"ok-{leg.strike}", mark, "10:07:00")
 c19._last_stuck_try = 0.0
 step(c19, _blown, "10:07:00")
 check("finally flat", c19.position.is_flat, True)

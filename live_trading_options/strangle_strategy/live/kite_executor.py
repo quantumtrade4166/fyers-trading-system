@@ -102,6 +102,77 @@ def _round_tick(price: float, tick: float = 0.05) -> float:
     return round(round(price / tick) * tick, 2)
 
 
+# ── order-book depth ──────────────────────────────────────────────────────
+# Pricing a marketable limit off a MULTIPLE of the last mark is a guess: too tight
+# and it will not fill, too wide and it can sweep a thin book and fill somewhere
+# terrible. The book itself is the honest answer — it says what is actually on
+# offer and in what size. One REST quote is cheap, and these paths are rare.
+
+def quote_book(kite, exchange: str, tradingsymbol: str) -> dict | None:
+    """Top-of-book + 5-level depth for one contract, or None if it cannot be read.
+
+    Returns {bid, ask, ltp, buy:[levels], sell:[levels]} where each level is
+    {price, quantity}. Never raises — the caller must be able to fall back."""
+    key = f"{exchange}:{tradingsymbol}"
+    try:
+        row = (kite.quote([key]) or {}).get(key) or {}
+    except Exception:
+        return None
+    d = row.get("depth") or {}
+    buy = [{"price": l.get("price"), "quantity": l.get("quantity", 0)}
+           for l in (d.get("buy") or []) if l.get("price")]
+    sell = [{"price": l.get("price"), "quantity": l.get("quantity", 0)}
+            for l in (d.get("sell") or []) if l.get("price")]
+    if not buy and not sell and not row.get("last_price"):
+        return None
+    return {"bid": buy[0]["price"] if buy else None,
+            "ask": sell[0]["price"] if sell else None,
+            "ltp": row.get("last_price"), "buy": buy, "sell": sell}
+
+
+def sweep_price(levels: list, qty: int, side: str, cushion_ticks: int = 2,
+                tick: float = 0.05) -> float | None:
+    """The price that would actually clear `qty` against `levels`, plus a cushion.
+
+    Walks the real book instead of guessing. For a BUY pass the SELL levels (you
+    lift offers); for a SELL pass the BUY levels. If `qty` is larger than the five
+    visible levels, the deepest visible price is used — still anchored to something
+    real, and the cushion carries the rest.
+
+    Returns None when the book is empty, so the caller falls back to its own
+    estimate rather than sending a price built from nothing."""
+    if not levels:
+        return None
+    need, last = qty, None
+    for lvl in levels:
+        px = lvl.get("price")
+        if not px:
+            continue
+        last = px
+        need -= (lvl.get("quantity") or 0)
+        if need <= 0:
+            break
+    if last is None:
+        return None
+    cushion = max(0, cushion_ticks) * tick
+    return _round_tick(last + cushion if side == BUY else last - cushion)
+
+
+def marketable_price(kite, exchange: str, tradingsymbol: str, side: str, qty: int,
+                     fallback: float = None, cushion_ticks: int = 2) -> float | None:
+    """Depth-derived marketable limit for `qty`, falling back to `fallback`.
+
+    This is the price to send when you need the order to FILL: it clears the
+    visible size and adds a few ticks, rather than multiplying a stale mark."""
+    book = quote_book(kite, exchange, tradingsymbol)
+    if book:
+        levels = book["sell"] if side == BUY else book["buy"]
+        px = sweep_price(levels, qty, side, cushion_ticks=cushion_ticks)
+        if px and px > 0:
+            return px
+    return fallback
+
+
 def place_limit(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
                 price: float, product: str = "MIS", tag: str = "vwstrangle") -> str:
     """Place a LIMIT order (the ONLY order type Zerodha allows for options). ⚠️ REAL
