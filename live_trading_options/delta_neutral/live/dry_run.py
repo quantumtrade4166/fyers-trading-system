@@ -587,5 +587,50 @@ check("both legs force-covered", len(evs(c18, "stop_skipped")), 2)
 check("flat", c18.position.is_flat, True)
 check("day over, same as a normal double stop-out", c18.done, True)
 
+# ── a cover that does NOT fill ────────────────────────────────────────────
+# The exit path's worst case: max loss fires, the buy-backs are refused, and the
+# stops have already been cancelled. This used to write both legs closed at an
+# invented price and end the day — leaving a real naked short at the broker with
+# nothing watching it. The book must now stay honest and keep trying until filled.
+from live.executor import Fill as _Fill
+
+c19 = new_ctrl(dte=0)
+c19.max_loss = 1000.0
+step(c19, chain_of({1: 30, 2: 22, 3: 16, 4: 11}, {1: 28, 2: 21, 3: 15, 4: 10}), "09:30:02")
+check("entered", c19.position.is_complete, True)
+
+# broker refuses every buy from here
+c19.executor.buy = lambda leg, mark, kind="exit": _Fill(f"rej-{leg.strike}", None, None,
+                                                        status="NOFILL")
+# entry 16 + 15 = 31 combined; 1000/65 = 15.4 pts, so 55 combined breaches it while
+# BOTH legs stay under the 40 stop — the cover path, not a stop-out
+_blown = chain_of({1: 30, 2: 22, 3: 30, 4: 11}, {1: 28, 2: 21, 3: 25, 4: 10})
+step(c19, _blown, "10:00:00")
+
+check("max loss fired", c19.killed, True)
+check("legs NOT faked closed", c19.position.n_live, 2)
+check("book not reported flat", c19.position.is_flat, False)
+check("both sides stuck", sorted(c19.stuck), sorted([CE, PE]))
+check("day NOT done while short", c19.done, False)
+check("cover_failed logged", len(evs(c19, "cover_failed")) >= 2, True)
+check("flatten_failed logged", len(evs(c19, "flatten_failed")), 1)
+
+_before = c19.stuck_attempts
+for _i in range(5):
+    c19._last_stuck_try = 0.0                 # bypass the 2s throttle in the test
+    step(c19, _blown, f"10:0{_i + 1}:00")
+check("kept retrying", c19.stuck_attempts > _before, True)
+check("still short, still not done", c19.position.n_live == 2 and not c19.done, True)
+
+# broker starts accepting again
+c19.executor.buy = lambda leg, mark, kind="exit": _Fill(f"ok-{leg.strike}", mark, "10:07:00")
+c19._last_stuck_try = 0.0
+step(c19, _blown, "10:07:00")
+check("finally flat", c19.position.is_flat, True)
+check("stuck cleared", c19.stuck, {})
+check("done only once genuinely out", c19.done, True)
+check("cover_recovered logged", len(evs(c19, "cover_recovered")) >= 1, True)
+check("flatten_complete logged", len(evs(c19, "flatten_complete")), 1)
+
 print(f"\n  {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

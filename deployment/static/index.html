@@ -717,6 +717,9 @@
     <!-- live strip: DTE · spot/ATM · next window · position shape -->
     <div id="dn-strip" class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4"></div>
 
+    <!-- a cover that will not fill: the loudest thing on the page -->
+    <div id="dn-stuck" class="mb-4"></div>
+
     <!-- live vs paper -->
     <div id="dn-compare" class="mb-4"></div>
 
@@ -2029,6 +2032,7 @@ async function dnRender() {
   try { cf = await (await fetch(`/api/dn/control?index=${dnIndex}`)).json(); } catch (e) {}
   const live = d && !d.error;
   dnLastStatus = live ? d : null;
+  dnRenderStuck(d);
   dnRenderCompare(date);
   dnRenderStatus(d, cf, date, live);
   dnRenderArm(d, cf, live);
@@ -2039,6 +2043,29 @@ async function dnRender() {
   dnRenderChain(ch);
   dnRenderLog(d, live);
   dnSizeChanged();
+}
+
+/* A leg whose buy-back did not fill is STILL SHORT at the broker, with its stop
+   already cancelled. The engine keeps retrying at a rising price until the fill is
+   confirmed, but the user needs to know NOW — they may want to close it by hand in
+   the broker terminal rather than wait. Nothing on this page outranks it. */
+function dnRenderStuck(d) {
+  const el = document.getElementById('dn-stuck');
+  if (!el) return;
+  const stuck = (d && d.stuck) || [];
+  if (!stuck.length) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div class="card p-4" style="border:2px solid #ef5350;background:rgba(239,83,80,.12)">
+      <p class="text-base font-bold" style="color:#ef5350">
+        ⚠ COULD NOT CLOSE — ${stuck.join(' + ')} STILL SHORT AT THE BROKER</p>
+      <p class="text-xs text-slate-300 mt-1">
+        The buy-back has not filled after ${d.stuck_attempts || 0} attempts. The stop on
+        ${stuck.length > 1 ? 'these legs is' : 'this leg is'} already cancelled, so
+        ${stuck.length > 1 ? 'they are' : 'it is'} unprotected. The engine is retrying every
+        few seconds at a rising price and will not stop until the fill is confirmed.</p>
+      <p class="text-xs mt-2" style="color:#fbbf24">
+        If this persists, close it yourself in the broker terminal — do not wait.</p>
+    </div>`;
 }
 
 async function dnRenderCompare(date) {

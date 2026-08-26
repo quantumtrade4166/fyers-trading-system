@@ -138,6 +138,13 @@ class DNController:
         self._last_stop_poll = 0.0
         self._last_heartbeat = None
         self._suffix = "_PAPER" if shadow else ""
+        # Legs whose buy-back did NOT fill. side -> reason. While this is non-empty
+        # the day is NOT over: the stop has already been cancelled by the time we
+        # try to cover, so a leg left behind is a naked short with nothing watching
+        # it. Retried every tick, at a rising price, until the broker confirms.
+        self.stuck: dict[str, str] = {}
+        self.stuck_attempts = 0
+        self._last_stuck_try = 0.0
 
     # ── logging ──────────────────────────────────────────────────────────
     def _log(self, etype: str, **fields):
@@ -220,7 +227,9 @@ class DNController:
             self.kill_reason = reason
         if not self.position.is_flat:
             self._flatten(reason)
-        self.done = True
+        # A failed cover leaves the leg live and registered in `self.stuck`; the day
+        # is NOT over until the retry loop actually gets us out.
+        self.done = self.position.is_flat and not self.stuck
 
     # ── restart recovery ─────────────────────────────────────────────────
     def reconcile_broker(self):
@@ -306,6 +315,11 @@ class DNController:
             self.atm = atm_strike(self.spot, self.interval)
         self._check_control()
 
+        # Before anything else: a leg whose cover did not fill is still short at
+        # the broker with its stop already cancelled. Nothing matters more, and no
+        # early return below is allowed to skip it.
+        self._retry_stuck()
+
         self._check_sl_step(now)
         self._heartbeat(now)
 
@@ -319,16 +333,17 @@ class DNController:
 
         if not self.position.is_flat:
             mtm = self.position.mtm(self.marks())
-            if mtm <= -self.max_loss:
+            if mtm <= -self.max_loss and not self.killed:
                 self._log("max_loss_hit", mtm=mtm, limit=-self.max_loss)
                 self._kill(f"max loss hit ({mtm} <= -{self.max_loss})")
                 self._write_tick()
                 return
 
         if W.past_square_off(now, self.square_off):
-            if not self.done:
+            if not self.done and not self.stuck:
                 self._flatten("15:14 square-off")
-                self.done = True
+            # `done` means the position is genuinely gone, not merely attempted.
+            self.done = self.position.is_flat and not self.stuck
             self._write_tick()
             return
 
@@ -479,8 +494,7 @@ class DNController:
                       note="exchange stop did not fill — covering at market")
             # booked as a stop loss, because that is what it is — the exchange just
             # failed to execute it, so it must not read as a normal exit
-            self._cover(leg, f"stop loss (skipped at {leg.sl_trigger} — force covered)")
-            self._retire(side)
+            self._cover_and_retire(leg, f"stop loss (skipped at {leg.sl_trigger} — force covered)")
             if self.position.is_flat:
                 self._stopped_flat()
                 return
@@ -501,8 +515,7 @@ class DNController:
                 continue
             self._log("unprotected_cover", side=leg.opt_type, strike=leg.strike,
                       reason="stop could not be placed")
-            self._cover(leg, "no stop — covered for safety")
-            self._retire(leg.opt_type)
+            self._cover_and_retire(leg, "no stop — covered for safety")
 
     # ── opening and closing single legs ──────────────────────────────────
     def _build_leg(self, side: str, cand: dict) -> Leg | None:
@@ -543,20 +556,78 @@ class DNController:
                   qty=leg.qty, order=fill.order_id, sl_order=oid, why=leg.reason)
         return True
 
-    def _cover(self, leg: Leg, reason: str) -> float | None:
+    def _cover(self, leg: Leg, reason: str, urgency: float = 1.0) -> float | None:
         """Cancel a leg's stop, then buy it back. The cancel MUST come first — a
         stop left resting after the leg is closed would fire later and open a new,
-        unwanted long position."""
+        unwanted long position.
+
+        Returns the fill price, or None if the buy did NOT fill.
+
+        A leg that does not fill is LEFT OPEN in the book. Writing it closed at an
+        assumed price — which is what this used to do — is how a failed cover turned
+        into an invisible naked short: the book went flat, MTM stopped moving, the
+        max-loss check could never fire again, and nothing ever tried a second time.
+        The caller registers the failure in `self.stuck` and we retry until filled.
+
+        `urgency` scales the mark the limit ladder is priced off, so repeated
+        attempts bid progressively higher. It stays a LIMIT at every level: Zerodha
+        rejects MARKET orders on options, so "escalate to market" is not available."""
         if not self.executor.cancel_stop(leg):
             self._log("stop_cancel_failed", side=leg.opt_type, strike=leg.strike,
                       order=leg.sl_order_id)
-        mark = self._mark(leg) or leg.entry_price
+        mark = (self._mark(leg) or leg.entry_price) * max(1.0, urgency)
         fill = self.executor.buy(leg, mark, kind="exit")
-        price = fill.price if fill.ok else mark
-        leg.mark_closed(price, reason, fill.order_id, fill.time)
+        if not fill.ok:
+            self._log("cover_failed", side=leg.opt_type, strike=leg.strike,
+                      mark=round(mark, 2), reason=reason, order=fill.order_id,
+                      note="leg left OPEN — retrying every tick until it fills")
+            return None
+        leg.mark_closed(fill.price, reason, fill.order_id, fill.time)
         self._log("leg_closed", side=leg.opt_type, strike=leg.strike,
-                  exit=price, reason=reason, pnl=leg.pnl(), order=fill.order_id)
-        return price
+                  exit=fill.price, reason=reason, pnl=leg.pnl(), order=fill.order_id)
+        return fill.price
+
+    def _cover_and_retire(self, leg: Leg, reason: str) -> bool:
+        """Cover a leg and retire it — but ONLY if the buy actually filled."""
+        side = leg.opt_type
+        if self._cover(leg, reason) is None:
+            self.stuck[side] = reason
+            return False
+        self.stuck.pop(side, None)
+        self._retire(side)
+        return True
+
+    def _retry_stuck(self):
+        """Keep trying to close legs whose cover did not fill — every tick, all day,
+        bidding higher each round, until the broker confirms the fill.
+
+        This is the difference between "I tried once and assumed it worked" and
+        "I am not stopping until I see the fill". Throttled to ~2s so a stuck leg
+        does not hammer the order API several times a second."""
+        import time
+        if not self.stuck:
+            return
+        now = time.monotonic()
+        if now - self._last_stuck_try < 2.0:
+            return
+        self._last_stuck_try = now
+        self.stuck_attempts += 1
+        # bid up as attempts mount, capped so we never chase a runaway print
+        urgency = min(1.0 + 0.25 * self.stuck_attempts, 3.0)
+        for side, reason in list(self.stuck.items()):
+            leg = self.position.leg(side)
+            if leg is None or not leg.is_live:      # already gone (its stop filled)
+                self.stuck.pop(side, None)
+                continue
+            if self._cover(leg, reason, urgency=urgency) is not None:
+                self.stuck.pop(side, None)
+                self._retire(side)
+                self._log("cover_recovered", side=side, attempts=self.stuck_attempts,
+                          urgency=round(urgency, 2))
+        if not self.stuck:
+            self._log("flatten_complete", attempts=self.stuck_attempts)
+            self.stuck_attempts = 0
+            self.done = True
 
     # ── the three window actions ─────────────────────────────────────────
     def _run_window(self, key: str):
@@ -609,8 +680,8 @@ class DNController:
                   from_strike=small_leg.strike, to_strike=cand["strike"],
                   new_premium=cand["premium"], sl_gated=cand.get("sl_gated"))
 
-        self._cover(small_leg, f"adjustment {key} — 2x rule")
-        self._retire(small_side)
+        if not self._cover_and_retire(small_leg, f"adjustment {key} — 2x rule"):
+            return              # old leg still open — do NOT stack a new one on top
         if self._open_leg(new_leg, cand["premium"]):
             self.position.set_leg(new_leg)
         else:
@@ -697,9 +768,8 @@ class DNController:
         the entry atomic."""
         for side, leg in legs.items():
             if leg.is_live:
-                self._cover(leg, f"entry unwound — {reason}")
                 self.position.set_leg(leg)
-                self._retire(side)
+                self._cover_and_retire(leg, f"entry unwound — {reason}")
         self._log("entry_aborted", reason=reason)
         self.persist()
 
@@ -708,9 +778,12 @@ class DNController:
         for side in (CE, PE):
             leg = self.position.leg(side)
             if leg is not None and leg.is_live:
-                self._cover(leg, reason)
-                self._retire(side)
-        self._log("flatten", reason=reason, realized=self.position.realized())
+                self._cover_and_retire(leg, reason)
+        if self.stuck:
+            self._log("flatten_failed", reason=reason, stuck=sorted(self.stuck),
+                      note="STILL SHORT at the broker — retrying every tick until filled")
+        else:
+            self._log("flatten", reason=reason, realized=self.position.realized())
         self._record_equity()
         self.persist()
 
@@ -877,6 +950,7 @@ class DNController:
         return {
             "index": self.index, "date": self.date, "dte": self.dte,
             "book": "paper" if self.shadow else "live",
+            "stuck": sorted(self.stuck), "stuck_attempts": self.stuck_attempts,
             "expiry": str(self.expiry), "mode": self.mode,
             "armed": self.executor.is_live, "broker_ready": self.executor.broker_ready,
             "trades_allowed": self.trades_allowed, "killed": self.killed,
