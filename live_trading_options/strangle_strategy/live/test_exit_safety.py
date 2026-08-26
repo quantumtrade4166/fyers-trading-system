@@ -155,5 +155,50 @@ c2.guard.check_mtm = lambda marks: (True, -20000.0)
 c2.on_tick(58.0, 30.0, 28.0, "11:00:00")
 check("an active breach reports as the MTM stop", calls2, ["MTM stop"])
 
+
+print("\n  ── a margin rejection flattens EVERYTHING ──")
+# The 2026-08-25 Delta Neutral incident, applied to VWAP: an order refused for want
+# of funds must not leave a matched short pair running on an account the broker has
+# already said no to. check_naked() only sees a LOPSIDED book, so it would not act.
+MARGIN = ("GeneralException: Insufficient funds. Margin required: 3565383.52. "
+          "Margin available: 3564721.64. Add 661.88 to place this order.")
+
+
+def _raises(msg):
+    def _f(*a, **k):
+        raise Exception(msg)
+    return _f
+
+
+c = ctrl(kite=StubKite(), mode="live")
+c.marks[CE], c.marks[PE] = 30.0, 28.0
+flat = []
+c._flatten = lambda reason: flat.append(reason)
+c.guard.validate_entry = lambda *a, **k: (True, "")
+c._sell_pair_live = _raises(MARGIN)
+c._enter(58.0, 1, "test")
+
+check("margin flagged on the event", c.events[-1].get("margin"), True)
+check("margin_halt recorded", bool(c.margin_halt), True)
+check("the broker's own words are kept", "661.88" in (c.margin_halt or ""), True)
+check("EVERYTHING flattened, not just an imbalance", len(flat), 1)
+check("and it says why", "margin shortfall" in (flat[0] if flat else ""), True)
+check("guard killed", c.guard.killed, True)
+check("snapshot carries the alarm", bool(c.snapshot().get("margin_halt")), True)
+
+# a NON-margin rejection keeps the old, narrower behaviour
+c2 = ctrl(kite=StubKite(), mode="live")
+c2.marks[CE], c2.marks[PE] = 30.0, 28.0
+flat2 = []
+c2._flatten = lambda reason: flat2.append(reason)
+c2.guard.validate_entry = lambda *a, **k: (True, "")
+c2.guard.check_naked = lambda ce, pe: None
+c2._sell_pair_live = _raises("InputException: bad price")
+c2._enter(58.0, 1, "test")
+check("non-margin error does NOT force a full flatten", len(flat2), 0)
+check("but still kills for the day", c2.guard.killed, True)
+check("and is not mislabelled as margin", c2.margin_halt, None)
+
+
 print(f"\n  {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

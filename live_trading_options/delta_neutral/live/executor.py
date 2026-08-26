@@ -36,8 +36,18 @@ _FILL_POLL_SECONDS = 5.0
 
 
 class Fill:
-    def __init__(self, order_id: str, price: float, time_str: str, status: str = "COMPLETE"):
+    def __init__(self, order_id: str, price: float, time_str: str, status: str = "COMPLETE",
+                 message: str = None):
         self.order_id, self.price, self.time, self.status = order_id, price, time_str, status
+        # why it failed, verbatim from the broker. A rejection has to travel back to
+        # the strategy as DATA — raising unwinds the tick and the strategy never
+        # learns its own order was refused.
+        self.message = message
+
+    @property
+    def margin(self) -> bool:
+        """The order was refused for want of funds."""
+        return kx.is_margin_error(self.message or "")
 
     @property
     def ok(self) -> bool:
@@ -140,8 +150,17 @@ class Executor:
             price = kx.marketable_price(
                 self.kite, leg.exchange, leg.tradingsymbol, side, leg.qty,
                 fallback=self._limit_price(side, mark, buf), cushion_ticks=cushion)
-            oid = kx.place_limit_verified(self.kite, leg.tradingsymbol, leg.exchange,
-                                          side, leg.qty, price, self.product, self.tag)
+            try:
+                oid = kx.place_limit_verified(self.kite, leg.tradingsymbol, leg.exchange,
+                                              side, leg.qty, price, self.product, self.tag)
+            except Exception as e:
+                # REJECTED comes back as a Fill, not an exception. A raise here
+                # unwinds the whole tick: the strategy never logs it, the snapshot
+                # never shows it, and a half-adjusted position is left running.
+                msg = f"{type(e).__name__}: {e}"
+                if kx.is_margin_error(e) or attempt == len(_MKT_BUFS) - 1:
+                    return Fill(None, None, None, status="REJECTED", message=msg)
+                continue                      # transient — try the next rung
             last_oid = oid
             deadline = time.monotonic() + (_FILL_POLL_SECONDS if attempt == 0 else 3.0)
             while time.monotonic() < deadline:
@@ -159,7 +178,8 @@ class Executor:
             st = kx.order_status(self.kite, oid)
             if st["status"] == "COMPLETE":          # filled during the cancel race
                 return Fill(oid, st.get("avg_price"), st.get("fill_time"))
-        return Fill(last_oid, None, None, status="NOFILL")
+        return Fill(last_oid, None, None, status="NOFILL",
+                    message="no fill after the full price ladder")
 
     # ── protective stops ─────────────────────────────────────────────────
     def place_stop(self, leg, trigger: float) -> tuple[str | None, bool, bool, float]:

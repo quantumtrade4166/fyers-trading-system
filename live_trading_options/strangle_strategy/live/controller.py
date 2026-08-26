@@ -70,6 +70,7 @@ class LiveController:
         self._cum_vol = 0.0                    #               Σ(volume), from 9:15
         self._mtm_series = []                  # [{t, rupees}] intraday equity curve
         self._last_flatten_try = 0.0           # throttle for the keep-trying flatten
+        self.margin_halt = None                # broker message, if funds ran out
         self._last_fill_time = {}              # sym -> broker fill time (HH:MM:SS) of the last fill
         self._trades_allowed = dte in (0, 1)   # strategy trades ONLY DTE 0/1; else chart-only
 
@@ -344,14 +345,29 @@ class LiveController:
             # re-fire and spin the counter). Log the exact error unbuffered, cover any
             # leg that DID fill, and stop trading for the day.
             msg = f"{type(e).__name__}: {e}"
-            print(f"  [live] {self.index} ENTRY ORDER FAILED cyc{cycle}: {msg}", flush=True)
+            try:
+                from live import kite_executor as _kx
+                margin = _kx.is_margin_error(e)
+            except Exception:
+                margin = False
+            print(f"  [live] {self.index} ENTRY ORDER FAILED cyc{cycle}"
+                  f"{' (MARGIN)' if margin else ''}: {msg}", flush=True)
             self.events.append({"t": self._hm, "type": "entry_order_failed",
-                                "cycle": cycle, "error": msg})
-            audit.log(self.index, "ORDER_FAILED", cyc=cycle, error=msg)
-            naked = self.guard.check_naked(self.ce, self.pe)
-            if naked:
-                self._cover_naked(naked, cycle, "entry failed mid-leg")
-            self.guard.kill(f"entry order failed: {msg}")
+                                "cycle": cycle, "error": msg, "margin": margin})
+            audit.log(self.index, "ORDER_FAILED", cyc=cycle, error=msg, margin=margin)
+            if margin:
+                # Out of funds: close EVERYTHING this strategy still holds, not just a
+                # qty imbalance. check_naked() only sees a lopsided book, so a fully
+                # matched short pair would have been left running on a broker account
+                # that has already refused an order.
+                self.margin_halt = msg[:300]
+                self.guard.kill(f"margin shortfall: {msg}")
+                self._flatten(f"margin shortfall — {msg}")
+            else:
+                naked = self.guard.check_naked(self.ce, self.pe)
+                if naked:
+                    self._cover_naked(naked, cycle, "entry failed mid-leg")
+                self.guard.kill(f"entry order failed: {msg}")
             self.trigger.done = True
             self.persist()
             return
@@ -627,7 +643,9 @@ class LiveController:
     def snapshot(self) -> dict:
         realized = sum(c["pnl"] for c in self.cycles if c["pnl"] is not None)
         mtm = self.ledger.mtm({k: v for k, v in self.marks.items() if v is not None})
-        return {"index": self.index, "date": self.date, "mode": self.mode, "dte": self.dte,
+        return {
+                "margin_halt": self.margin_halt,
+                "index": self.index, "date": self.date, "mode": self.mode, "dte": self.dte,
                 "armed": self.is_live_armed(), "trades_allowed": self._trades_allowed,
                 "broker_ready": bool(self.kite and self.kite_syms),
                 "ce_symbol": self.ce, "pe_symbol": self.pe, "qty": self.qty,

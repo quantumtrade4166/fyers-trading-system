@@ -102,6 +102,26 @@ def _round_tick(price: float, tick: float = 0.05) -> float:
     return round(round(price / tick) * tick, 2)
 
 
+# ── broker error classification ───────────────────────────────────────────
+# A rejected order must never escape as a bare exception. On 2026-08-25 a
+# replacement leg was refused for a Rs662 margin shortfall on a Rs35.6L
+# requirement; the exception unwound out of the strategy, so nothing reached the
+# snapshot the dashboard renders, and the position sat SINGLE-LEGGED and
+# unattended until the user happened to look at the broker terminal.
+
+MARGIN_MARKERS = ("insufficient funds", "margin required", "margin available",
+                  "insufficient margin", "margin shortfall", "available margin")
+
+
+def is_margin_error(exc: BaseException | str) -> bool:
+    """True when a broker error is a margin/funds shortfall.
+
+    Kite reports these as GeneralException or InputException with the detail only
+    in the message, so the text is all there is to go on."""
+    msg = str(exc or "").lower()
+    return any(m in msg for m in MARGIN_MARKERS)
+
+
 # ── order-book depth ──────────────────────────────────────────────────────
 # Pricing a marketable limit off a MULTIPLE of the last mark is a guess: too tight
 # and it will not fill, too wide and it can sweep a thin book and fill somewhere

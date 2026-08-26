@@ -142,6 +142,7 @@ class DNController:
         # the day is NOT over: the stop has already been cancelled by the time we
         # try to cover, so a leg left behind is a naked short with nothing watching
         # it. Retried every tick, at a rising price, until the broker confirms.
+        self.margin_halt = None                  # broker message, if funds ran out
         self.stuck: dict[str, str] = {}
         self.stuck_attempts = 0
         self._last_stuck_try = 0.0
@@ -540,7 +541,14 @@ class DNController:
         fill = self.executor.sell(leg, mark)
         if not fill.ok:
             self._log("entry_nofill", side=leg.opt_type, strike=leg.strike,
-                      order=fill.order_id)
+                      order=fill.order_id, status=fill.status,
+                      why=(fill.message or "")[:160])
+            if fill.margin:
+                # Out of funds. We cannot hold the shape the strategy requires, so
+                # do not limp on single-legged hoping the next window fixes it —
+                # that is exactly what happened on 2026-08-25 and it ran unattended
+                # for hours. Close what we still have and stop for the day.
+                self._margin_halt(fill.message)
             return False
         leg.mark_filled(fill.order_id, fill.price, fill.time)
         oid, ok, at_broker, limit = self.executor.place_stop(leg, self.sl)
@@ -555,6 +563,20 @@ class DNController:
                   sl_at_broker=at_broker, otm=leg.otm_level,
                   qty=leg.qty, order=fill.order_id, sl_order=oid, why=leg.reason)
         return True
+
+    def _margin_halt(self, message: str):
+        """Funds ran out. Flatten everything and stop for the day.
+
+        The flatten goes through the same never-give-up path as any other exit: if
+        a cover will not fill it lands in `self.stuck` and is retried every tick
+        until the broker confirms. Buying back a short RELEASES margin, so a cover
+        is not blocked by the shortfall that caused this."""
+        if self.margin_halt:                       # already halting
+            return
+        self.margin_halt = (message or "margin shortfall")[:300]
+        self._log("margin_halt", message=self.margin_halt,
+                  note="out of funds — flattening and stopping for the day")
+        self._kill(f"margin shortfall — {self.margin_halt}")
 
     def _cover(self, leg: Leg, reason: str, urgency: float = 1.0) -> float | None:
         """Cancel a leg's stop, then buy it back. The cancel MUST come first — a
@@ -954,6 +976,7 @@ class DNController:
             "index": self.index, "date": self.date, "dte": self.dte,
             "book": "paper" if self.shadow else "live",
             "stuck": sorted(self.stuck), "stuck_attempts": self.stuck_attempts,
+            "margin_halt": self.margin_halt,
             "expiry": str(self.expiry), "mode": self.mode,
             "armed": self.executor.is_live, "broker_ready": self.executor.broker_ready,
             "trades_allowed": self.trades_allowed, "killed": self.killed,

@@ -632,5 +632,66 @@ check("done only once genuinely out", c19.done, True)
 check("cover_recovered logged", len(evs(c19, "cover_recovered")) >= 1, True)
 check("flatten_complete logged", len(evs(c19, "flatten_complete")), 1)
 
+
+# ── a leg refused for MARGIN ──────────────────────────────────────────────
+# The 2026-08-25 incident, verbatim. The 09:45 adjustment closed the CE and its
+# replacement was refused for a Rs662 shortfall. The exception unwound out of the
+# tick, so nothing reached the snapshot, and the book ran SINGLE-LEGGED and
+# unattended until the user checked the broker terminal by chance.
+# Policy now: out of funds means flatten and stop, retrying until genuinely out.
+_MARGIN_MSG = ("GeneralException: Insufficient funds. Margin required: 3565383.52. "
+               "Margin available: 3564721.64. Add 661.88 to place this order.")
+
+c20 = new_ctrl(dte=0)
+step(c20, chain_of({1: 30, 2: 22, 3: 16, 4: 11}, {1: 28, 2: 21, 3: 15, 4: 10}), "09:30:02")
+check("entered with both legs", c20.position.is_complete, True)
+
+# every new SHORT is now refused for margin; covers still work
+c20.executor.sell = lambda leg, mark: _Fill(None, None, None, status="REJECTED",
+                                            message=_MARGIN_MSG)
+# force the 2x rule at 09:45 so an adjustment is attempted
+step(c20, chain_of({1: 30, 2: 22, 3: 11, 4: 8}, {1: 60, 2: 45, 3: 30, 4: 21}), "09:45:10")
+
+check("margin rejection is RECORDED, not swallowed", len(evs(c20, "entry_nofill")) >= 1, True)
+check("margin_halt raised", len(evs(c20, "margin_halt")), 1)
+check("the broker's own words are kept",
+      "661.88" in (evs(c20, "margin_halt")[0].get("message") or ""), True)
+check("NOT left running single-legged", c20.position.is_single, False)
+check("flattened", c20.position.is_flat, True)
+check("stopped for the day", c20.done, True)
+check("snapshot carries the alarm", bool(c20.snapshot().get("margin_halt")), True)
+
+# and if the HALT'S OWN FLATTEN cannot fill, it must keep trying.
+# Sequencing matters: the adjustment's cover has to succeed (otherwise _adjust
+# returns before it ever attempts the replacement sell, and no margin error is
+# ever discovered), so only the flatten that follows the halt is made to fail.
+c21 = new_ctrl(dte=0)
+step(c21, chain_of({1: 30, 2: 22, 3: 16, 4: 11}, {1: 28, 2: 21, 3: 15, 4: 10}), "09:30:02")
+c21.executor.sell = lambda leg, mark: _Fill(None, None, None, status="REJECTED",
+                                            message=_MARGIN_MSG)
+_buys = {"n": 0}
+
+
+def _buy_once_then_fail(leg, mark, kind="exit", urgency=1.0):
+    _buys["n"] += 1
+    if _buys["n"] == 1:                       # the adjustment's own cover works
+        return _Fill("ok-adjust", mark, "09:45:10")
+    return _Fill(None, None, None, status="NOFILL", message="no fill")
+
+
+c21.executor.buy = _buy_once_then_fail
+step(c21, chain_of({1: 30, 2: 22, 3: 11, 4: 8}, {1: 60, 2: 45, 3: 30, 4: 21}), "09:45:10")
+
+check("margin halt fired", len(evs(c21, "margin_halt")), 1)
+check("the remaining leg is NOT faked closed", c21.position.n_live, 1)
+check("registered as stuck", len(c21.stuck), 1)
+check("not marked done while still short", c21.done, False)
+
+c21.executor.buy = lambda leg, mark, kind="exit", urgency=1.0: _Fill("ok", mark, "09:46:00")
+c21._last_stuck_try = 0.0
+step(c21, chain_of({1: 30, 2: 22, 3: 11, 4: 8}, {1: 60, 2: 45, 3: 30, 4: 21}), "09:46:00")
+check("retry finally gets us out", c21.position.is_flat, True)
+check("and only then is the day done", c21.done, True)
+
 print(f"\n  {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

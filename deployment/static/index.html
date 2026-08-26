@@ -595,7 +595,8 @@
       </div>
 
       <!-- ── LIVE view (real Zerodha orders) ─────────────────────── -->
-      <div id="sca-live" style="display:none">
+      <div id="sc-margin" class="mb-3"></div>
+    <div id="sca-live" style="display:none">
         <div id="sca-live-ticker" class="flex flex-wrap items-center gap-5 mb-2 px-3 py-2"
              style="display:none;background:#0b0f18;border:1px solid #1e2636;border-radius:8px">
           <span class="text-xs text-slate-500 uppercase">live</span>
@@ -2053,8 +2054,22 @@ function dnRenderStuck(d) {
   const el = document.getElementById('dn-stuck');
   if (!el) return;
   const stuck = (d && d.stuck) || [];
-  if (!stuck.length) { el.innerHTML = ''; return; }
-  el.innerHTML = `
+  const margin = d && d.margin_halt;
+  if (!stuck.length && !margin) { el.innerHTML = ''; return; }
+  /* Out of funds. On 2026-08-25 this arrived as an exception that unwound out of
+     the tick, so the page showed a healthy strangle while one leg had actually
+     been refused and the book was running single-legged. It is now impossible to
+     miss. */
+  const marginBox = !margin ? '' : `
+    <div class="card p-4 mb-3" style="border:2px solid #ef5350;background:rgba(239,83,80,.12)">
+      <p class="text-base font-bold" style="color:#ef5350">⚠ MARGIN SHORTFALL — STRATEGY HALTED</p>
+      <p class="text-xs text-slate-300 mt-1">An order was refused for want of funds, so the
+        position is being closed and no new trades will be taken today.</p>
+      <p class="text-xs text-slate-400 mt-2" style="font-family:monospace;word-break:break-word">
+        ${String(margin).replace(/[<>&]/g, '')}</p>
+    </div>`;
+  if (!stuck.length) { el.innerHTML = marginBox; return; }
+  el.innerHTML = marginBox + `
     <div class="card p-4" style="border:2px solid #ef5350;background:rgba(239,83,80,.12)">
       <p class="text-base font-bold" style="color:#ef5350">
         ⚠ COULD NOT CLOSE — ${stuck.join(' + ')} STILL SHORT AT THE BROKER</p>
@@ -2712,6 +2727,24 @@ function scaLiveEnsureChart() {
   });
 }
 
+/* Out of funds. This used to arrive as an exception that unwound out of the tick,
+   so the page kept showing a healthy position while the broker had actually refused
+   an order. Loudest thing on the tab now. */
+function scaRenderMargin(d) {
+  const el = document.getElementById('sc-margin');
+  if (!el) return;
+  const m = d && d.margin_halt;
+  if (!m) { el.innerHTML = ''; return; }
+  el.innerHTML = `
+    <div class="card p-4" style="border:2px solid #ef5350;background:rgba(239,83,80,.12)">
+      <p class="text-base font-bold" style="color:#ef5350">⚠ MARGIN SHORTFALL — STRATEGY HALTED</p>
+      <p class="text-xs text-slate-300 mt-1">An order was refused for want of funds. The position
+        is being closed and no new cycles will be taken today.</p>
+      <p class="text-xs text-slate-400 mt-2" style="font-family:monospace;word-break:break-word">
+        ${String(m).replace(/[<>&]/g, '')}</p>
+    </div>`;
+}
+
 async function scaRenderLive(keepView = false) {
   const date = document.getElementById('sca-date').value;
   const el = document.getElementById('sca-live-panel');
@@ -2720,6 +2753,8 @@ async function scaRenderLive(keepView = false) {
   let d;
   try { d = await (await fetch(`/api/strangle/live?date=${date}&index=${scaIndex}`)).json(); }
   catch (e) { el.innerHTML = '<p class="text-xs text-rose-400 text-center py-10">Live state unavailable.</p>'; return; }
+
+  scaRenderMargin(d);
 
   // ── chart: V2 tick-built candles + VWAP, with ACTUAL live entry/exit arrows ──
   scaLiveEnsureChart();
