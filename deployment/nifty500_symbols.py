@@ -1,7 +1,6 @@
 """
 nifty500_symbols.py
 Hardcoded list of 500 NSE symbols for DualMom monthly rebalance.
-Generated from G:\fyers_data_pipeline\Nifty 500 Daily Data\*.parquet
 """
 
 NIFTY500 = [
