@@ -427,14 +427,15 @@ def run_month_end_rebalance():
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def init():
-    """Create JSON files if they don't exist. Call at app startup."""
+    """Create JSON files if they don't exist. Never overwrites existing data."""
     with _lock:
+        if not PAPER_JSON.exists():
+            _save_paper(_load_paper())
+        if not EQUITY_JSON.exists():
+            _save_equity(_load_equity())
+        if not SIGNAL_JSON.exists():
+            _save_signal_log(_load_signal_log())
         state = _load_paper()
-        eq    = _load_equity()
-        sl    = _load_signal_log()
-        _save_paper(state)
-        _save_equity(eq)
-        _save_signal_log(sl)
     _log.info(f"Initialized — status={state['status']}  NAV=₹{state['current_nav']:,.0f}")
 
 
