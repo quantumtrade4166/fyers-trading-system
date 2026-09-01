@@ -15,13 +15,17 @@ import pyotp
 from neo_api_client import NeoAPI
 
 
-def redact(o):
-    """Mask anything token-like (long strings) so structure/errors show but secrets don't."""
+_TOKEN_KEYS = ("token", "sid", "sessionid", "hsserverid", "access", "auth", "jwt", "bearer", "kid")
+
+
+def redact(o, key=""):
+    """Mask ONLY token-like values (by key name). Error messages / codes stay visible —
+    they aren't secrets and are what we need to diagnose."""
     if isinstance(o, dict):
-        return {k: redact(v) for k, v in o.items()}
+        return {k: redact(v, k) for k, v in o.items()}
     if isinstance(o, list):
-        return [redact(x) for x in o]
-    if isinstance(o, str) and len(o) > 22:
+        return [redact(x, key) for x in o]
+    if isinstance(o, str) and any(t in key.lower() for t in _TOKEN_KEYS) and len(o) > 8:
         return f"{o[:4]}…[{len(o)} chars]"
     return o
 
