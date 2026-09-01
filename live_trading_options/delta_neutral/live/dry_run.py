@@ -693,5 +693,34 @@ step(c21, chain_of({1: 30, 2: 22, 3: 11, 4: 8}, {1: 60, 2: 45, 3: 30, 4: 21}), "
 check("retry finally gets us out", c21.position.is_flat, True)
 check("and only then is the day done", c21.done, True)
 
+
+# -- product is stamped on the leg, and every later order follows it ------
+# Same reasoning as VWAP: a cover sent in the wrong product opens a long instead
+# of closing the short, and leaves the short running.
+c22 = new_ctrl(dte=0)
+check("controller takes the product from config", c22.product, "NRML")
+step(c22, chain_of({1: 30, 2: 22, 3: 16, 4: 11}, {1: 28, 2: 21, 3: 15, 4: 10}), "09:30:02")
+check("CE leg stamped at open", c22.position.ce.product, "NRML")
+check("PE leg stamped at open", c22.position.pe.product, "NRML")
+
+c22.product = "MIS"                     # operator changes config mid-day
+c22.executor.product = "MIS"
+check("the OPEN leg keeps the product it was opened with",
+      c22.position.ce.product, "NRML")
+
+_seen = {}
+_orig_buy = c22.executor.buy
+
+
+def _spy_buy(leg, mark, kind="exit", urgency=1.0):
+    _seen["product"] = leg.product or c22.executor.product
+    return _orig_buy(leg, mark, kind=kind, urgency=urgency)
+
+
+c22.executor.buy = _spy_buy
+c22._cover(c22.position.ce, "test cover")
+check("the cover used the leg's product, not the new config",
+      _seen.get("product"), "NRML")
+
 print(f"\n  {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

@@ -114,9 +114,11 @@ class DNController:
         # the same gap in POINTS is a very different gap in practice).
         buf = params.get("sl_limit_buffer", 2.0)
         self.sl_buffer = float(buf.get(index, 2.0) if isinstance(buf, dict) else buf)
+        self.product = params.get("product", "NRML")
         self.executor = Executor(index, expiry, tag=params.get("live_orders", {})
                                  .get("tag", "dnstrangle"), kite=kite, live=False,
-                                 clock=self._hm, sl_buffer=self.sl_buffer)
+                                 clock=self._hm, sl_buffer=self.sl_buffer,
+                                 product=self.product)
         self._symbol_lookup = symbol_lookup      # (strike, opt_type) -> fyers symbol
 
         self.position = Position()
@@ -287,6 +289,10 @@ class DNController:
             last = sells[ts][-1]
             leg = Leg(side, c["strike"], ts, qty, exchange=self.executor.exchange,
                       reason="recovered from the broker after a restart")
+            # The product the position is REALLY held in, not what config says now.
+            # A cover sent in the wrong product does not close the short — it opens
+            # a long beside it and leaves the short running.
+            leg.product = self._broker_product(ts) or self.product
             leg.mark_filled(last["order_id"], last["avg_price"], last.get("fill_time"))
             st = stop_by_sym.get(ts)
             if st:
@@ -538,6 +544,9 @@ class DNController:
         """Sell one leg and protect it. Returns True only when the leg ends up
         SHORT AND PROTECTED — any other outcome is unwound here, so the caller
         never has to reason about a half-open leg."""
+        # stamp the product BEFORE the order goes out, so the stop and every later
+        # cover follow this leg even if the config changes under a running engine
+        leg.product = leg.product or self.product
         fill = self.executor.sell(leg, mark)
         if not fill.ok:
             self._log("entry_nofill", side=leg.opt_type, strike=leg.strike,
@@ -563,6 +572,22 @@ class DNController:
                   sl_at_broker=at_broker, otm=leg.otm_level,
                   qty=leg.qty, order=fill.order_id, sl_order=oid, why=leg.reason)
         return True
+
+    def _broker_product(self, tradingsymbol: str) -> str | None:
+        """The product an open SHORT is really held in, per the broker.
+
+        Used when recovering a position this process did not open: defaulting to
+        the config would send the cover in the wrong product, which does not close
+        the short — it opens a long beside it."""
+        if not self.executor.kite:
+            return None
+        try:
+            for p in (self.executor.kite.positions() or {}).get("net", []):
+                if p.get("tradingsymbol") == tradingsymbol and (p.get("quantity") or 0) < 0:
+                    return p.get("product")
+        except Exception:
+            return None
+        return None
 
     def _margin_halt(self, message: str):
         """Funds ran out. Flatten everything and stop for the day.

@@ -200,5 +200,27 @@ check("but still kills for the day", c2.guard.killed, True)
 check("and is not mislabelled as margin", c2.margin_halt, None)
 
 
+
+print("\n  -- product: an exit follows the POSITION, not the config --")
+# Zerodha keeps MIS and NRML in separate buckets. A BUY in the wrong product does
+# not close the short - it opens a fresh long beside it and leaves the short
+# running. So changing the config under a live position must never orphan it.
+c = ctrl(kite=StubKite(), mode="live")
+c.product = "NRML"
+check("a SELL uses the configured product", c._product_for(CE, SELL), "NRML")
+check("the BUY that closes it reuses NRML", c._product_for(CE, BUY), "NRML")
+
+c.product = "MIS"                       # operator changes config mid-day
+check("config flip does NOT change the open position's exit",
+      c._product_for(CE, BUY), "NRML")
+check("but a NEW short takes the new product", c._product_for(PE, SELL), "MIS")
+check("and that one exits as MIS", c._product_for(PE, BUY), "MIS")
+check("the first leg is still remembered as NRML", c._product_for(CE, BUY), "NRML")
+
+c2 = ctrl(kite=StubKite(), mode="live")
+c2.product = "NRML"
+check("a symbol this process never opened falls back to config",
+      c2._product_for("NSE:UNSEEN", BUY), "NRML")
+
 print(f"\n  {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

@@ -44,6 +44,12 @@ class Leg:
         self.qty = qty
         self.otm_level = otm_level
         self.reason = reason                # why this strike was picked (for the log)
+        # The product this leg was OPENED with. Every later order on it — its stop,
+        # its cover — must use this, never the current config. Zerodha treats MIS
+        # and NRML as different positions: a BUY in the wrong product does not close
+        # the short, it opens a fresh long beside it. Changing the config must never
+        # be able to orphan a leg that is already live.
+        self.product = None
 
         self.status = PENDING
         self.entry_order_id = None

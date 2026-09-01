@@ -152,7 +152,8 @@ class Executor:
                 fallback=self._limit_price(side, mark, buf), cushion_ticks=cushion)
             try:
                 oid = kx.place_limit_verified(self.kite, leg.tradingsymbol, leg.exchange,
-                                              side, leg.qty, price, self.product, self.tag)
+                                              side, leg.qty, price,
+                                              leg.product or self.product, self.tag)
             except Exception as e:
                 # REJECTED comes back as a Fill, not an exception. A raise here
                 # unwinds the whole tick: the strategy never logs it, the snapshot
@@ -202,7 +203,8 @@ class Executor:
         import time
         try:
             oid = kx.place_sl_verified(self.kite, leg.tradingsymbol, leg.exchange,
-                                       BUY, leg.qty, trigger, self.product, self.tag,
+                                       BUY, leg.qty, trigger,
+                                       leg.product or self.product, self.tag,
                                        buffer=self.sl_buffer)
         except Exception:
             return None, False, False, limit

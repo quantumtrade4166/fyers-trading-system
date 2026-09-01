@@ -34,6 +34,9 @@
   "square_off": "15:14",
   "archive_retention_days": 0,
   "_retention_note": "0 = keep all trading days forever (no pruning).",
+  "product": "NRML",
+  "_product_note": "MIS or NRML. Zerodha keeps these in SEPARATE margin buckets and does NOT net one against the other, so an MIS short gets ZERO hedge benefit from an NRML long and is charged as fully naked. Match the product your hedges are held in. TRADE-OFF: MIS is auto-squared-off by the broker ~15:20 (a backstop if the engine dies); NRML is not. A leg ALWAYS exits with the product it was opened with.",
+
   "live_orders": {
     "_comment": "Phase 3 live Zerodha orders. GATES: enabled=run the controller (paper-live watch). mode toggle (paper/live) via the dashboard. allow_live=HARD gate for REAL orders. Real orders fire ONLY when enabled=true AND mode=live AND allow_live=true. For the paper-live watch: enabled=true, mode=paper, allow_live=false (no real orders possible).",
     "enabled": true,

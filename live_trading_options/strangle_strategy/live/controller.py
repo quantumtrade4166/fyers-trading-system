@@ -41,7 +41,8 @@ class LiveController:
     def __init__(self, index: str, date_str: str, ce_sym: str, pe_sym: str, dte,
                  *, lot_size: int, lots: int, max_cycles: int, mtm_stop: float,
                  entry_cutoff: str, square_off: str, mode: str = "paper", kite=None,
-                 kite_syms: dict | None = None, allow_live: bool = False):
+                 kite_syms: dict | None = None, allow_live: bool = False,
+                 product: str = "MIS"):
         self.index, self.date = index, date_str
         self.ce, self.pe, self.dte = ce_sym, pe_sym, dte
         self.lot_size, self.lots = lot_size, lots
@@ -71,6 +72,13 @@ class LiveController:
         self._mtm_series = []                  # [{t, rupees}] intraday equity curve
         self._last_flatten_try = 0.0           # throttle for the keep-trying flatten
         self.margin_halt = None                # broker message, if funds ran out
+        self.product = product
+        # sym -> the product that symbol's SHORT was opened with. Every exit reads
+        # this, never the config. Zerodha treats MIS and NRML as different
+        # positions: a BUY in the wrong product does NOT close the short, it opens
+        # a fresh long beside it and leaves the short running. Changing the config
+        # must never be able to orphan a position that is already live.
+        self._open_product = {}
         self._last_fill_time = {}              # sym -> broker fill time (HH:MM:SS) of the last fill
         self._trades_allowed = dte in (0, 1)   # strategy trades ONLY DTE 0/1; else chart-only
 
@@ -500,6 +508,44 @@ class LiveController:
     # escalating marketable buffers for retrying a laggard leg (fill harder each try)
     _RETRY_BUFS = (0.30, 0.60, 0.90)
 
+    def _product_for(self, sym: str, side: str) -> str:
+        """Which product this order must use.
+
+        A SELL opens the position, so it takes the configured product and is
+        remembered. A BUY closes one, so it MUST reuse whatever that short was
+        opened with — Zerodha will not net an NRML buy against an MIS short, it
+        will just open a long. Falls back to the config for a position this
+        process did not open (e.g. after a restart mid-day)."""
+        if side == SELL:
+            self._open_product[sym] = self.product
+            return self.product
+        known = self._open_product.get(sym)
+        if known:
+            return known
+        # This process did not open it — a mid-day restart, most likely. Falling
+        # back to the CONFIG here would be the dangerous answer: if the config has
+        # since changed, the buy goes out in the wrong product, fails to close the
+        # short, and quietly opens a long instead. Ask the broker what the position
+        # is actually held in.
+        found = self._broker_product(sym)
+        if found:
+            self._open_product[sym] = found
+            return found
+        return self.product
+
+    def _broker_product(self, sym: str) -> str | None:
+        """The product an open SHORT in `sym` is really held in, per the broker."""
+        ks = (self.kite_syms or {}).get(sym)
+        if not (self.kite and ks):
+            return None
+        try:
+            for p in (self.kite.positions() or {}).get("net", []):
+                if p.get("tradingsymbol") == ks["tradingsymbol"] and (p.get("quantity") or 0) < 0:
+                    return p.get("product")
+        except Exception:
+            return None
+        return None
+
     def _limit_price(self, sym: str, side: str, buf: float = None,
                      cushion_ticks: int = 2) -> float:
         """Marketable limit for one leg, priced off the ACTUAL order book when it
@@ -531,7 +577,8 @@ class LiveController:
         """Place ONE marketable-limit leg immediately (no wait) and record it."""
         ks = self.kite_syms[sym]
         oid = kx.place_limit_verified(self.kite, ks["tradingsymbol"], ks["exchange"],
-                                      side, self.qty, self._limit_price(sym, side, buf))
+                                      side, self.qty, self._limit_price(sym, side, buf),
+                                      self._product_for(sym, side))
         self.ledger.record(Order(oid, sym, side, self.qty, cycle, kind))
         return {"oid": oid, "fill": None}
 
@@ -609,7 +656,8 @@ class LiveController:
         import time
         ks = self.kite_syms[sym]
         price = self._limit_price(sym, side)
-        oid = kx.place_limit_verified(self.kite, ks["tradingsymbol"], ks["exchange"], side, qty, price)
+        oid = kx.place_limit_verified(self.kite, ks["tradingsymbol"], ks["exchange"],
+                                      side, qty, price, self._product_for(sym, side))
         audit.log(self.index, "ORDER_PLACED", cyc=cycle, side=side, sym=ks["tradingsymbol"],
                   qty=qty, limit=round(price, 2), kind=kind, oid=oid)
         o = Order(oid, sym, side, qty, cycle, kind)

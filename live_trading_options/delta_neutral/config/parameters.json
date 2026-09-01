@@ -44,6 +44,9 @@
   "sl_limit_buffer": { "NIFTY": 2, "SENSEX": 4 },
   "_sl_limit_buffer_note": "POINTS between an SL order's trigger and its limit: SL 40 -> trigger 40, limit 42. Zerodha blocks SL-M on options, so the stop is an SL (trigger + limit) and this gap is what makes it actually fill — a limit sitting exactly on the trigger gets jumped by the very move the stop exists for. Too wide only worsens the fill. Sensex premiums run ~4x Nifty's, so it takes a wider gap in points to be the same gap in practice.",
 
+  "product": "NRML",
+  "_product_note": "MIS or NRML. Zerodha keeps these in SEPARATE margin buckets and does NOT net one against the other: an MIS short gets ZERO hedge benefit from an NRML long, and is charged as fully naked. On 2026-09-01 the same 8-lot 24100CE short was REJECTED as MIS (needing Rs37.86L) and FILLED seconds later as NRML against the account's NRML wings. Choose the product the hedges are held in. TRADE-OFF: MIS is auto-squared-off by the broker ~15:20, which is a backstop if the engine dies; NRML is not, so the 15:14 square-off becomes the only thing that closes the position. A leg ALWAYS exits with the product it was opened with, so changing this can never orphan a live position.",
+
   "lots": 1,
   "max_loss": 5000,
   "_max_loss_note": "Rupee MAGNITUDE. Own-book MTM <= -max_loss -> square off everything + stop for the day. There is no profit target by design. IMPORTANT: set this ABOVE the worst case the leg stops themselves allow, or it fires first and the per-leg stops never get to work. At 1 lot: NIFTY 0-DTE both legs stopping = ~Rs3,120 (entry ~16 -> SL 40, x65, x2 legs); NIFTY 1-DTE ~Rs3,250; SENSEX ~Rs1,600. The dashboard shows this figure live next to the field.",
