@@ -42,12 +42,18 @@ print("totp_validate sig:", inspect.signature(NeoAPI.totp_validate))
 mpin_v = (mpin or "").strip()
 print(f"mpin: len={len(mpin_v)} digits={mpin_v.isdigit()}   secret: len={len((secret or '').strip())}")
 
-client = NeoAPI(environment="prod", access_token=None, neo_fin_key=None, consumer_key=ck)
-code = pyotp.TOTP((secret or "").strip().replace(" ", "")).now()
-print(f"\nTOTP code generated (len={len(code)})")
+print("\n----- totp_login SOURCE -----")
+try:
+    print(inspect.getsource(NeoAPI.totp_login)[:2500])
+except Exception as e:
+    print("  (no source)", e)
 
-show("totp_login() ->", client.totp_login(mobile_number=mob, ucc="", totp=code))
-# fresh code for the second step in case it wants its own
-code2 = pyotp.TOTP((secret or "").strip().replace(" ", "")).now()
-show("totp_validate(mpin) ->", client.totp_validate(mpin=mpin_v))
-show("limits() after ->", client.limits())
+def fresh_code():
+    return pyotp.TOTP((secret or "").strip().replace(" ", "")).now()
+
+# Variant A: mobile only, NO ucc kwarg at all
+print("\n===== Variant A: totp_login(mobile_number, totp)  [no ucc] =====")
+cA = NeoAPI(environment="prod", access_token=None, neo_fin_key=None, consumer_key=ck)
+show("A totp_login ->", cA.totp_login(mobile_number=mob, totp=fresh_code()))
+show("A totp_validate ->", cA.totp_validate(mpin=mpin_v))
+show("A limits ->", cA.limits())
