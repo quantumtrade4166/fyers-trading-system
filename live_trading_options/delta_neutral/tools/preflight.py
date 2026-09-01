@@ -88,7 +88,10 @@ def main():
 
     gap = P.get("sl_arm_gap", 10)
     for index in P["live_orders"].get("indices", []):
-        print(f"\n  ══ {index} ══")
+        # ASCII on purpose: box-drawing characters are exactly what renders as
+        # mojibake across Windows console codepages, and this log has to be
+        # readable in a hurry from whatever shell happens to be open.
+        print(f"\n  == {index} ==")
         try:
             tradeable, dte, expiry = is_trade_day(k, index, day)
         except Exception as e:
