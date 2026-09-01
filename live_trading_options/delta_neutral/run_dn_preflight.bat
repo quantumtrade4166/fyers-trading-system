@@ -8,6 +8,9 @@ REM Exists so the morning state is captured automatically — what DTE each inde
 REM is on, the entry target, the stop schedule, and whether the strategy is armed
 REM — without anyone having to run anything by hand.
 
+REM The script writes the log ITSELF, in UTF-8, via --log. Do NOT redirect with
+REM > or >> from a shell: PowerShell 5.1 writes UTF-16 and cmd writes UTF-8, and a
+REM log that receives both becomes unreadable from the first mixed byte on.
+
 cd /d C:\Users\Administrator\Desktop\fyers_data_pipeline_git
-echo ================================================== >> logs\dn_preflight.log
-.venv\Scripts\python.exe -u live_trading_options\delta_neutral\tools\preflight.py >> logs\dn_preflight.log 2>&1
+.venv\Scripts\python.exe -u live_trading_options\delta_neutral\tools\preflight.py --log logs\dn_preflight.log

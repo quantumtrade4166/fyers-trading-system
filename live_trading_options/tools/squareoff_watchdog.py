@@ -54,6 +54,34 @@ ROUND_PAUSE = 4.0          # seconds between rounds
 FILL_WAIT = 6.0            # seconds to wait for a fill before re-pricing
 
 
+class _Tee:
+    """Console + a log file that is ALWAYS UTF-8. Shell redirection is not safe on
+    Windows: PowerShell 5.1 writes UTF-16, cmd writes UTF-8, and a file that gets
+    both is unreadable from the first mixed byte onward."""
+
+    def __init__(self, stream, fh):
+        self._s, self._f = stream, fh
+
+    def write(self, text):
+        self._s.write(text)
+        try:
+            self._f.write(text)
+            self._f.flush()
+        except Exception:
+            pass
+
+    def flush(self):
+        self._s.flush()
+
+
+def _tee(path: str):
+    f = Path(path)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(f, "a", encoding="utf-8", newline="\n")
+    fh.write(f"\n{'=' * 70}\n")
+    sys.stdout = _Tee(sys.stdout, fh)
+
+
 def log(msg: str):
     print(f"  [squareoff] {dt.datetime.now():%H:%M:%S} {msg}", flush=True)
 
@@ -170,7 +198,10 @@ def main():
                     help="report what it WOULD close and place nothing")
     ap.add_argument("--rounds", type=int, default=len(CUSHIONS),
                     help="how many escalating attempts before giving up and shouting")
+    ap.add_argument("--log", help="ALSO append this run to a log file, in UTF-8")
     a = ap.parse_args()
+    if a.log:
+        _tee(a.log)
 
     log(f"start{' (DRY RUN)' if a.dry_run else ''} — tags {', '.join(TAGS)}")
     try:

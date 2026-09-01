@@ -33,12 +33,47 @@ from core.chain import LiveChain, is_trade_day
 P = json.loads((ROOT / "config" / "parameters.json").read_text())
 
 
+class _Tee:
+    """Write to the console AND to a log file that is ALWAYS UTF-8.
+
+    The log used to be produced by shell redirection, and that quietly corrupted
+    it: Windows PowerShell's `>` writes UTF-16, cmd's `>>` appends raw UTF-8, and
+    a file that gets both is unreadable from the first mixed byte onward (7KB of
+    it, 926 NUL bytes, on 2026-09-01). Owning the file here means one encoding,
+    chosen explicitly, no matter which shell launched us."""
+
+    def __init__(self, stream, fh):
+        self._s, self._f = stream, fh
+
+    def write(self, text):
+        self._s.write(text)
+        try:
+            self._f.write(text)
+            self._f.flush()          # survive a crash mid-run
+        except Exception:
+            pass
+
+    def flush(self):
+        self._s.flush()
+
+
+def _tee(path: str):
+    f = Path(path)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(f, "a", encoding="utf-8", newline="\n")
+    fh.write(f"\n{'=' * 70}\n")
+    sys.stdout = _Tee(sys.stdout, fh)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--date", help="check a future trading day instead of today "
                                    "(YYYY-MM-DD) — lets tomorrow's rules be verified "
                                    "tonight, against the real Kite expiry list")
+    ap.add_argument("--log", help="ALSO append this run to a log file, in UTF-8")
     a = ap.parse_args()
+    if a.log:
+        _tee(a.log)
     now = dt.datetime.now()
     day = dt.date.fromisoformat(a.date) if a.date else now.date()
     label = "TODAY" if day == now.date() else f"PROJECTED for {day:%A}"
