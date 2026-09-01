@@ -87,7 +87,7 @@ def resolve(kite, index: str, expiry, strike: int, opt_type: str) -> dict:
 
 
 def place_market(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
-                 product: str = "MIS", tag: str = "vwstrangle") -> str:
+                 product: str = "NRML", tag: str = "vwstrangle") -> str:
     """Place a MARKET order and return its order_id. ⚠️ REAL ORDER.
     NOTE: Zerodha REJECTS market orders for options (NFO/BFO) — use place_limit for
     the strangle legs. Kept only for non-option instruments."""
@@ -194,7 +194,7 @@ def marketable_price(kite, exchange: str, tradingsymbol: str, side: str, qty: in
 
 
 def place_limit(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
-                price: float, product: str = "MIS", tag: str = "vwstrangle") -> str:
+                price: float, product: str = "NRML", tag: str = "vwstrangle") -> str:
     """Place a LIMIT order (the ONLY order type Zerodha allows for options). ⚠️ REAL
     ORDER. Pass a MARKETABLE price (through the touch) so it fills at the best bid/ask
     like a market order — `price` is only the worst-case cap, not the fill price."""
@@ -238,7 +238,7 @@ def _find_recent_order(kite, tradingsymbol: str, side: str, qty: int, since,
 
 
 def place_limit_verified(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
-                         price: float, product: str = "MIS", tag: str = "vwstrangle",
+                         price: float, product: str = "NRML", tag: str = "vwstrangle",
                          retries: int = 2) -> str:
     """place_limit that survives a lost/timed-out HTTP response WITHOUT ever double-
     placing a real order. On a network error the outcome is UNKNOWN — the order may
@@ -285,7 +285,7 @@ def sl_limit_price(trigger: float, side: str = BUY, buffer: float = None) -> flo
 
 
 def place_sl(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
-             trigger: float, product: str = "MIS", tag: str = "dnstrangle",
+             trigger: float, product: str = "NRML", tag: str = "dnstrangle",
              buffer: float = None) -> str:
     """Place a resting SL (stop-loss) order and return its order_id. ⚠️ REAL ORDER.
     It sits at the exchange until the trigger is hit, so it protects the position
@@ -298,7 +298,7 @@ def place_sl(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
 
 
 def place_sl_verified(kite, tradingsymbol: str, exchange: str, side: str, qty: int,
-                      trigger: float, product: str = "MIS", tag: str = "dnstrangle",
+                      trigger: float, product: str = "NRML", tag: str = "dnstrangle",
                       retries: int = 2, buffer: float = None) -> str:
     """place_sl that survives a lost/timed-out HTTP response without ever placing
     two stops on the same leg (which would buy back double on a trigger). Same

@@ -59,7 +59,7 @@ class Fill:
 
 class Executor:
     def __init__(self, index: str, expiry, *, tag: str = TAG,
-                 kite=None, live: bool = False, product: str = "MIS", clock=None,
+                 kite=None, live: bool = False, product: str = "NRML", clock=None,
                  sl_buffer: float = 2.0):
         self.index, self.expiry, self.tag = index, expiry, tag
         self.kite, self.product = kite, product

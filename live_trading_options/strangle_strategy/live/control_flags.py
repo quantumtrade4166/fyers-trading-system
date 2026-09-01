@@ -13,6 +13,7 @@ Deliberately dead simple and file-based so it can never wedge the trading loop.
 """
 
 import json
+import datetime as _dt
 import datetime as dt
 from pathlib import Path
 
@@ -42,12 +43,42 @@ def _control_file(index: str = None, state_dir: Path = None) -> Path:
     return d / CONTROL_FILE.name
 
 
+def _is_stale_kill(d: dict) -> bool:
+    """True when `kill` was pressed on an EARLIER day.
+
+    KILL means "stop trading NOW" — it is an action taken during a session, not a
+    standing setting. It used to persist in the file forever, so a kill pressed in
+    the evening silently disabled the whole of the next day: the engine started,
+    read kill=true, and went straight to done without ever attempting an entry.
+    That is exactly what happened on 2026-09-01 (pressed 08-31 20:16; the 09:30
+    NIFTY 0-DTE entry never fired and it was only noticed at 09:33).
+
+    A kill from today still stands — only yesterday's is cleared."""
+    if not d.get("kill"):
+        return False
+    stamp = str(d.get("updated") or "")[:10]
+    if not stamp:
+        return True                     # no date to trust -> do not let it linger
+    return stamp != _dt.date.today().isoformat()
+
+
 def read_control(index: str = None, state_dir: Path = None) -> dict:
     f = _control_file(index, state_dir)
     if f.exists():
         try:
-            d = json.loads(f.read_text())
-            return {**_DEFAULT, **d}
+            d = {**_DEFAULT, **json.loads(f.read_text())}
+            if _is_stale_kill(d):
+                # clear it in the FILE too, so the dashboard and every other reader
+                # see the same thing and it cannot come back on the next read
+                d["kill"] = False
+                d["kill_cleared_from"] = d.get("updated")
+                try:
+                    f.write_text(json.dumps(d, indent=2))
+                except Exception:
+                    pass
+                print(f"  [control] {index}: stale KILL from {d.get('kill_cleared_from')} "
+                      f"cleared — it was pressed on an earlier day", flush=True)
+            return d
         except Exception:
             pass
     return dict(_DEFAULT)
