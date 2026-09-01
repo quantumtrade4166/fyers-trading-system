@@ -17,7 +17,9 @@ the day. A mid-day engine restart simply logs in again with a fresh TOTP code �
 token file, no cross-process sharing.
 
 CREDENTIALS come only from deployment/.env (never hard-coded, never committed):
-    KOTAK_CONSUMER_KEY, KOTAK_MOBILE, KOTAK_MPIN, KOTAK_TOTP_SECRET
+    KOTAK_CONSUMER_KEY, KOTAK_MOBILE, KOTAK_UCC, KOTAK_MPIN, KOTAK_TOTP_SECRET
+The SDK's totp_login REQUIRES mobile_number AND ucc AND totp together (it returns an
+error dict — not an exception — if any is missing), so all are mandatory.
 
 Standalone check (after the .env is filled on the VPS):
     python live/kotak_auth.py         # logs in, prints OK, places NOTHING
@@ -34,13 +36,19 @@ try:
 except Exception:
     pass
 
-_REQUIRED = ("KOTAK_CONSUMER_KEY", "KOTAK_MOBILE", "KOTAK_MPIN", "KOTAK_TOTP_SECRET")
+_REQUIRED = ("KOTAK_CONSUMER_KEY", "KOTAK_MOBILE", "KOTAK_UCC", "KOTAK_MPIN", "KOTAK_TOTP_SECRET")
 
 
 def _totp_now(secret: str) -> str:
     """Current 6-digit TOTP from the base32 secret seed (spaces stripped)."""
     import pyotp
     return pyotp.TOTP(secret.strip().replace(" ", "")).now()
+
+
+def _ok(resp) -> bool:
+    """The SDK returns an error DICT (never raises) on a failed step. Success = a dict
+    with no 'error' list and no 'Error Message'."""
+    return isinstance(resp, dict) and not resp.get("error") and not resp.get("Error Message")
 
 
 def _mobile_variants(m: str) -> list:
@@ -75,16 +83,27 @@ def login(verbose: bool = True):
         try:
             client = NeoAPI(environment="prod", access_token=None, neo_fin_key=None,
                             consumer_key=creds["KOTAK_CONSUMER_KEY"])
-            client.totp_login(mobile_number=mob, ucc="", totp=_totp_now(creds["KOTAK_TOTP_SECRET"]))
-            client.totp_validate(mpin=creds["KOTAK_MPIN"])
+            r1 = client.totp_login(mobile_number=mob, ucc=creds["KOTAK_UCC"],
+                                   totp=_totp_now(creds["KOTAK_TOTP_SECRET"]))
+            if not _ok(r1):
+                last = f"totp_login: {r1.get('error')}"
+                if verbose:
+                    print(f"  [kotak] totp_login failed (mobile={mob}): {r1.get('error')}", flush=True)
+                continue
+            r2 = client.totp_validate(mpin=creds["KOTAK_MPIN"])
+            if not _ok(r2):
+                last = f"totp_validate: {r2.get('error')}"
+                if verbose:
+                    print(f"  [kotak] totp_validate failed: {r2.get('error')}", flush=True)
+                continue
             if verbose:
                 print(f"  [kotak] login OK (mobile={mob})", flush=True)
             return client
         except Exception as e:
-            last = e
+            last = f"{type(e).__name__}: {e}"
             if verbose:
-                print(f"  [kotak] login failed (mobile={mob}): {type(e).__name__}: {e}", flush=True)
-    raise RuntimeError(f"Kotak login failed for every mobile format: {last}")
+                print(f"  [kotak] login error (mobile={mob}): {last}", flush=True)
+    raise RuntimeError(f"Kotak login failed: {last}")
 
 
 if __name__ == "__main__":

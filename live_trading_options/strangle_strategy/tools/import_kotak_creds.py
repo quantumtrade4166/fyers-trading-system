@@ -23,10 +23,13 @@ sys.stdout.reconfigure(encoding="utf-8")
 DEFAULT_SRC = Path(r"C:\Users\Administrator\Desktop\kotak api credentials.txt")
 ENV = Path(__file__).resolve().parents[3] / "deployment" / ".env"   # G:\...\deployment\.env
 
-# key -> keywords that identify its line (checked lowercased)
+# key -> keywords that identify its line (checked lowercased). Order matters: the more
+# specific keys (UCC) are matched before the looser ones (MOBILE) so a "UCC" line isn't
+# swallowed by the mobile matcher.
 KEYS = {
     "KOTAK_CONSUMER_KEY": ("consumer", "api key", "apikey", "consumer_key", "consumerkey"),
-    "KOTAK_MOBILE":       ("mobile", "phone", "ucc"),
+    "KOTAK_UCC":          ("ucc", "client code", "unique client", "client_code", "clientcode"),
+    "KOTAK_MOBILE":       ("mobile", "phone"),
     "KOTAK_MPIN":         ("mpin", "m-pin", "pin"),
     "KOTAK_TOTP_SECRET":  ("totp", "secret", "seed"),
 }
