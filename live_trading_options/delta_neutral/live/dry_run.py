@@ -722,5 +722,83 @@ c22._cover(c22.position.ce, "test cover")
 check("the cover used the leg's product, not the new config",
       _seen.get("product"), "NRML")
 
+
+# -- the PAPER book survives a restart of the live engine -----------------
+# 2026-09-01: the engine was restarted at 09:38 to clear a latched KILL, and the
+# shadow went down with it. The fresh one had no memory of the 09:30 entry, so it
+# entered at 09:45 instead and the day's -6,058 was a 09:45-entry day, not the
+# strategy as designed. The benchmark has to outlive what it is benchmarking.
+import json as _json
+from live.controller import STATE_DIR as _SD
+
+_pap = new_ctrl(dte=0)
+_pap.shadow = True
+_pap._suffix = "_PAPER"
+_pap.persist = DNController.persist.__get__(_pap)      # let this one really write
+
+_ch = chain_of({1: 30, 2: 22, 3: 16, 4: 11}, {1: 28, 2: 21, 3: 15, 4: 10})
+step(_pap, _ch, "09:30:02")
+step(_pap, chain_of({1: 60, 2: 45, 3: 30, 4: 20}, {1: 28, 2: 20, 3: 12, 4: 8}), "10:00:05")
+_pap.persist()
+check("paper ran a morning", _pap.position.is_complete, True)
+_ce_before = _pap.position.ce.strike
+_pe_before = _pap.position.pe.strike
+_hist_before = len(_pap.position.history)
+_win_before = set(_pap.done_windows)
+_realized_before = _pap.position.realized()
+
+# --- the engine dies and a NEW process builds a fresh shadow ---
+_fresh = new_ctrl(dte=0)
+_fresh.shadow = True
+_fresh._suffix = "_PAPER"
+check("a fresh shadow starts empty", _fresh.position.is_flat, True)
+check("and has not entered", _fresh.entered, False)
+
+_resumed = _fresh.restore_paper()
+check("restore reports it picked up a session", _resumed, True)
+check("the 09:30 entry is remembered", _fresh.entered, True)
+check("CE leg came back", _fresh.position.ce.strike, _ce_before)
+check("PE leg came back", _fresh.position.pe.strike, _pe_before)
+check("entry price survived", _fresh.position.ce.entry_price, 16.0)
+check("the adjustment history came back", len(_fresh.position.history), _hist_before)
+check("realized P&L survived", _fresh.position.realized(), _realized_before)
+check("windows already done are not re-run", _fresh.done_windows, _win_before)
+check("fresh-entry count survived", _fresh.fresh_entries, _pap.fresh_entries)
+check("the restore is logged", len(evs(_fresh, "paper_restored")), 1)
+
+# it must carry on, not re-enter
+_before_entries = _fresh.fresh_entries
+step(_fresh, chain_of({1: 60, 2: 45, 3: 30, 4: 20}, {1: 28, 2: 20, 3: 12, 4: 8}), "10:15:05")
+check("carries on without opening a second strangle",
+      _fresh.fresh_entries, _before_entries)
+check("still exactly two legs", _fresh.position.n_live, 2)
+
+# a stop level part-way through the schedule must survive too
+_pap.sl = 30.0
+_pap.sl_step_i = 1
+_pap.persist()
+_f2 = new_ctrl(dte=0)
+_f2.shadow = True
+_f2._suffix = "_PAPER"
+_f2.restore_paper()
+check("the tightened stop survives", _f2.sl, 30.0)
+check("and the schedule does not re-arm a step already taken", _f2.sl_step_i, 1)
+
+# the LIVE book must refuse this path outright
+_live = new_ctrl(dte=0)
+try:
+    _live.restore_paper()
+    check("live book refuses restore_paper", False, True)
+except RuntimeError:
+    check("live book refuses restore_paper", True, True)
+
+# no snapshot at all -> start fresh, no crash
+for _f in _SD.glob(f"{DATE}_NIFTY_DN_PAPER.json"):
+    _f.unlink()
+_f3 = new_ctrl(dte=0)
+_f3.shadow = True
+_f3._suffix = "_PAPER"
+check("no snapshot -> starts fresh, returns False", _f3.restore_paper(), False)
+
 print(f"\n  {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

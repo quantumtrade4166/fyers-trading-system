@@ -234,6 +234,56 @@ class DNController:
         # is NOT over until the retry loop actually gets us out.
         self.done = self.position.is_flat and not self.stuck
 
+    def restore_paper(self) -> bool:
+        """Bring the PAPER book back exactly where it was, from its own snapshot.
+
+        The paper book exists to answer "what would the strategy have done, left
+        alone all day" — and that answer is worthless if it silently restarts
+        whenever the live engine does. On 2026-09-01 an engine restart at 09:38
+        (to clear a latched KILL) took the shadow with it; the fresh one had no
+        memory of the 09:30 entry, entered at 09:45 instead, and the day's -6,058
+        was a 09:45-entry day rather than the strategy as designed.
+
+        Live NEVER uses this. A real position is whatever the BROKER says it is;
+        trusting a file for that is how a restart opens a second strangle on top
+        of a live one. Paper has no broker, so its own snapshot IS the truth.
+
+        Returns True when a previous session was picked up."""
+        if not self.shadow:
+            raise RuntimeError("restore_paper is for the paper book only")
+        f = STATE_DIR / f"{self.date}_{self.index}_DN{self._suffix}.json"
+        if not f.exists():
+            return False
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"  [dn] {self.index}~paper snapshot unreadable ({e}) — starting fresh")
+            return False
+        if d.get("date") != self.date or d.get("index") != self.index:
+            return False                       # a different day/index — ignore it
+
+        self.position = Position.from_dict(d.get("position") or {})
+        self.events = list(d.get("events") or [])
+        self.mtm_series = list(d.get("mtm_series") or [])
+        self.entered = bool(d.get("entered"))
+        self.fresh_entries = int(d.get("fresh_entries") or 0)
+        self.done_windows = set(d.get("windows_done") or [])
+        self.killed = bool(d.get("killed"))
+        self.kill_reason = d.get("kill_reason")
+        self.done = bool(d.get("done"))
+        self.sl_history = list(d.get("sl_history") or [])
+        # the stop level and how far the schedule has advanced must survive too,
+        # or a restart re-arms steps the day has already taken
+        if d.get("sl") is not None:
+            self.sl = d["sl"]
+        self.sl_step_i = int(d.get("sl_step_i") or 0)
+        # the executor's order counter, so paper order ids stay unique
+        self._log("paper_restored", legs=self.position.n_live,
+                  closed=len(self.position.history), entered=self.entered,
+                  entries=self.fresh_entries, sl=self.sl,
+                  windows=len(self.done_windows), realized=self.position.realized())
+        return True
+
     # ── restart recovery ─────────────────────────────────────────────────
     def reconcile_broker(self):
         """Rebuild today's position from THIS strategy's own broker orders.

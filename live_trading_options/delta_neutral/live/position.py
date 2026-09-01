@@ -154,9 +154,35 @@ class Leg:
             "sl_order_id": self.sl_order_id, "sl_verified": self.sl_verified,
             "sl_at_broker": self.sl_at_broker, "sl_checked": self.sl_checked,
             "exit_price": self.exit_price, "exit_time": self.exit_time,
-            "exit_reason": self.exit_reason,
+            "exit_reason": self.exit_reason, "product": self.product,
             "mark": mark, "pnl": self.pnl(mark),
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Leg":
+        """Rebuild a leg from its own serialised form.
+
+        Only the PAPER book uses this. The live book must never trust a file for
+        what it holds — it reconciles against the broker, which is the only
+        authority on a real position."""
+        leg = cls(d["opt_type"], d["strike"], d.get("tradingsymbol"), d["qty"],
+                  otm_level=d.get("otm_level"), reason=d.get("reason"))
+        # `symbol` is a read-only alias for tradingsymbol — nothing to restore
+        leg.product = d.get("product")
+        leg.status = d.get("status", leg.status)
+        leg.entry_price = d.get("entry_price")
+        leg.entry_time = d.get("entry_time")
+        leg.entry_order_id = d.get("entry_order_id")
+        leg.sl_trigger = d.get("sl_trigger")
+        leg.sl_limit = d.get("sl_limit")
+        leg.sl_order_id = d.get("sl_order_id")
+        leg.sl_verified = bool(d.get("sl_verified"))
+        leg.sl_at_broker = bool(d.get("sl_at_broker"))
+        leg.sl_checked = d.get("sl_checked")
+        leg.exit_price = d.get("exit_price")
+        leg.exit_time = d.get("exit_time")
+        leg.exit_reason = d.get("exit_reason")
+        return leg
 
 
 class Position:
@@ -249,3 +275,14 @@ class Position:
             "realized": self.realized(), "unrealized": self.unrealized(m),
             "mtm": self.mtm(m),
         }
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Position":
+        """Rebuild the whole book — current legs AND the day's history."""
+        pos = cls()
+        if d.get("ce"):
+            pos.ce = Leg.from_dict(d["ce"])
+        if d.get("pe"):
+            pos.pe = Leg.from_dict(d["pe"])
+        pos.history = [Leg.from_dict(h) for h in (d.get("history") or [])]
+        return pos

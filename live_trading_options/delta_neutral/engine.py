@@ -99,6 +99,14 @@ def build(date_str: str, kite):
         shadow = DNController(index, date_str, expiry, dte, params=PARAMS,
                               lot_size=lot, kite=None,
                               symbol_lookup=chain.symbol_for, shadow=True)
+        # The paper book must survive a restart of the LIVE engine — it is the
+        # benchmark, and a benchmark that resets whenever the thing it is measuring
+        # restarts measures nothing.
+        try:
+            if shadow.restore_paper():
+                print(f"  [dn] {index}~paper: resumed from this morning's snapshot")
+        except Exception as e:
+            print(f"  [dn] {index}~paper restore failed ({e}) — starting fresh")
         # A mid-day (re)start must recover the real position BEFORE the first tick
         # reaches the strategy — otherwise the next window sees "flat" and opens a
         # second strangle on top of the live one.
