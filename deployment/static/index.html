@@ -1834,18 +1834,21 @@ let dnLastStatus = null, dnCountdown = null;
 const dnRs = v => (v === null || v === undefined || isNaN(v))
   ? '—' : (v < 0 ? '-₹' : '₹') + Math.abs(Math.round(v)).toLocaleString('en-IN');
 const dnNum = (v, d = 2) => (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toFixed(d);
-const dnToday = () => new Date().toLocaleDateString('en-CA');
+const dnToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });  // IST trading day, not the viewer's tz
 
 async function dnInit() {
   try { dnCfg = Object.assign(dnCfg, await (await fetch('/api/dn/config')).json()); } catch (e) {}
   try {
     const d = await (await fetch('/api/dn/dates')).json();
-    const dates = [...new Set((d.days || []).map(x => x.date))];
-    if (!dates.includes(dnToday())) dates.unshift(dnToday());
+    const dataDates = [...new Set((d.days || []).map(x => x.date))];   // dates WITH data, newest first
+    // Offer today for live viewing, but DEFAULT to the latest session that actually has data —
+    // otherwise a fresh day (today's file not written yet) opens on an empty view and the last
+    // session's trades look "missing".
+    const opts = dataDates.includes(dnToday()) ? dataDates : [dnToday(), ...dataDates];
     const sel = document.getElementById('dn-date');
     const keep = sel.value;
-    sel.innerHTML = dates.map(x => `<option value="${x}">${x}</option>`).join('');
-    sel.value = dates.includes(keep) ? keep : dates[0];
+    sel.innerHTML = opts.map(x => `<option value="${x}">${x}</option>`).join('');
+    sel.value = opts.includes(keep) ? keep : (dataDates[0] || dnToday());
   } catch (e) {}
   dnRender();
 }
