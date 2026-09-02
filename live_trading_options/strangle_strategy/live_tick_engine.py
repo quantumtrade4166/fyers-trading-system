@@ -67,7 +67,8 @@ class IndexBook:
         self.bucket_start_cumvol = 0.0
         self.candles: list[dict] = []  # finalized candles
         self.lock = threading.Lock()
-        self.controller = None         # live/paper-live controller (attached only if enabled)
+        self.controller = None         # Zerodha live/paper-live controller (attached only if enabled)
+        self.controller_kotak = None   # INDEPENDENT Kotak mirror controller (attached only if kotak_orders.enabled)
         # resume support: if the engine restarts mid-day, the bucket that was still
         # forming before the restart is restored here and CONTINUED from live ticks
         # (its true bucket-open / high / low are preserved, never reset to V1).
@@ -121,13 +122,15 @@ class IndexBook:
                 self.h = max(self.h, comb)
                 self.l = min(self.l, comb)
                 self.c = comb
-            # live/paper-live tap — feed each tick; guarded so it can't break capture
-            if self.controller is not None:
-                try:
-                    self.controller.on_tick(comb, self.ltp[self.ce_sym], self.ltp[self.pe_sym],
-                                            now.strftime("%H:%M"))
-                except Exception as e:
-                    print(f"  [live] {self.index} on_tick error: {e}")
+            # live tap — feed BOTH brokers' controllers, each in its OWN try/except so a
+            # Kotak error can NEVER reach the Zerodha controller or the capture loop.
+            _hm = now.strftime("%H:%M")
+            for _ctrl, _bk in ((self.controller, "live"), (self.controller_kotak, "kotak")):
+                if _ctrl is not None:
+                    try:
+                        _ctrl.on_tick(comb, self.ltp[self.ce_sym], self.ltp[self.pe_sym], _hm)
+                    except Exception as e:
+                        print(f"  [{_bk}] {self.index} on_tick error: {e}")
 
     def _open_bucket(self, bucket, comb):
         self.cur_bucket = bucket
@@ -163,12 +166,13 @@ class IndexBook:
                   "open": round(self.o, 2), "high": round(self.h, 2),
                   "low": round(self.l, 2), "close": round(self.c, 2), "volume": int(vol)}
         self.candles.append(candle)
-        # live/paper-live tap — never let it break the V2 capture loop
-        if self.controller is not None:
-            try:
-                self.controller.on_candle(candle)
-            except Exception as e:
-                print(f"  [live] {self.index} on_candle error: {e}")
+        # live tap — feed BOTH brokers' controllers, each isolated; never break capture
+        for _ctrl, _bk in ((self.controller, "live"), (self.controller_kotak, "kotak")):
+            if _ctrl is not None:
+                try:
+                    _ctrl.on_candle(candle)
+                except Exception as e:
+                    print(f"  [{_bk}] {self.index} on_candle error: {e}")
 
     def snapshot_candles(self) -> list[dict]:
         """Finalized candles + the still-forming bucket (so the chart is near-live)."""
@@ -366,6 +370,55 @@ def _maybe_attach_controller(book, idx, date_str, pick, meta):
         print(f"  [live] {idx} controller attach failed: {e}")
 
 
+def _maybe_attach_kotak(book, idx, date_str, pick, meta):
+    """Attach the INDEPENDENT Kotak mirror controller — ONLY when kotak_orders.enabled and
+    this index is configured. Fully gated: if disabled, book.controller_kotak stays None and
+    the tick taps skip it, so the Zerodha path is byte-for-byte unchanged. A login/resolve
+    failure runs it paper-only (a live entry would then safely fail + kill KOTAK ONLY). The
+    whole thing is wrapped so ANY failure here can never affect the Zerodha controller."""
+    ko = _PARAMS.get("kotak_orders", {})
+    indices = ko.get("indices") or ([ko.get("index")] if ko.get("index") else [])
+    if not ko.get("enabled") or idx not in indices:
+        return
+    try:
+        from live.kotak_controller import KotakController
+        kotak, kotak_syms = None, {}
+        try:
+            from live import kotak_auth
+            from live import kotak_executor as ke
+            kotak = kotak_auth.login()
+            for fy, strike, typ in [(pick["ce_symbol"], pick["ce_strike"], "CE"),
+                                    (pick["pe_symbol"], pick["pe_strike"], "PE")]:
+                kotak_syms[fy] = ke.resolve(kotak, idx, pick["expiry"], strike, typ)
+            print(f"  [kotak] {idx}: {[v['trading_symbol'] for v in kotak_syms.values()]}")
+        except Exception as e:
+            kotak, kotak_syms = None, {}
+            print(f"  [kotak] {idx} login/resolve skipped (paper-only): {e}")
+        kot_lot = next((v.get("lot_size") for v in kotak_syms.values() if v.get("lot_size")), None)
+        lot_size = kot_lot or _LOT_SIZES.get(idx, 1)
+        ctrl = KotakController(
+            idx, date_str, pick["ce_symbol"], pick["pe_symbol"], meta.get("dte"),
+            lot_size=lot_size, lots=ko.get("lots", 1),
+            max_cycles=ko.get("max_cycles", 4), mtm_stop=ko.get("mtm_stop", 1000),
+            entry_cutoff=_PARAMS.get("entry_cutoff", "14:30"),
+            square_off=_PARAMS.get("square_off", "15:14"),
+            kotak=kotak, kotak_syms=kotak_syms)
+        if book.candles:                          # seed VWAP + state from the morning
+            ctrl.seed(list(book.candles), lambda comb: (round(comb / 2, 2), round(comb / 2, 2)))
+        book.controller_kotak = ctrl
+        print(f"  [kotak] {idx}: mirror controller attached "
+              f"(lot_size={lot_size}, broker_ready={bool(kotak and kotak_syms)})")
+        try:
+            from live import audit
+            audit.log(idx, "KOTAK_ATTACH", ce=pick["ce_symbol"], pe=pick["pe_symbol"],
+                      dte=meta.get("dte"), lot=lot_size, broker_ready=bool(kotak and kotak_syms),
+                      seeded_candles=len(book.candles))
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"  [kotak] {idx} mirror attach failed (Zerodha unaffected): {e}")
+
+
 def build_books(date_str: str):
     """Resolve the day's strikes (cached) and create a book per index."""
     from core.fyers_client import get_client
@@ -382,6 +435,7 @@ def build_books(date_str: str):
         book = IndexBook(idx, pick["ce_symbol"], pick["pe_symbol"], pick["otm_level"], meta)
         _seed_book(book, idx, date_str)
         _maybe_attach_controller(book, idx, date_str, pick, meta)
+        _maybe_attach_kotak(book, idx, date_str, pick, meta)
         _books[idx] = book
         _sym_to_book[pick["ce_symbol"]] = book
         _sym_to_book[pick["pe_symbol"]] = book
