@@ -1622,7 +1622,10 @@ async function fetchAll() {
 
 // ── WebSocket push ────────────────────────────────────────────────────────────
 function connectWS() {
-  const ws = new WebSocket(`ws://${location.host}/ws`);
+  // Match the page scheme: on the HTTPS public URL a ws:// endpoint is blocked as mixed
+  // content (SecurityError) and would retry-storm every 5s — use wss:// there.
+  const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const ws = new WebSocket(`${wsProto}//${location.host}/ws`);
 
   ws.onmessage = e => {
     try {
