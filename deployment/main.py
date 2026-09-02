@@ -90,8 +90,47 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Pairs Dashboard", lifespan=lifespan)
 
+# gzip JSON/HTML responses — big win over the Tailscale tunnel (payloads shrink 5-10x).
+from fastapi.middleware.gzip import GZipMiddleware
+app.add_middleware(GZipMiddleware, minimum_size=500)
+
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+# ── tiny thread-safe TTL cache ───────────────────────────────────────────────
+# The pair-signal compute is ~0.5-3s. Running it on the event loop froze EVERY request
+# (a 16-byte /api/version took 2.3s). We (a) run it in a thread so it never blocks the loop
+# and (b) cache the result for a couple of seconds so rapid polls/loads reuse it instead of
+# recomputing. Read-only — no trading logic here. Per-key lock prevents a thundering herd.
+import threading as _threading
+import time as _time
+_cache_store: dict = {}                      # key -> (expiry_monotonic, value)
+_cache_glock = _threading.Lock()
+_cache_klocks: dict = {}                     # key -> Lock
+
+
+def _ttl_cached(key: str, ttl: float, producer):
+    now = _time.monotonic()
+    with _cache_glock:
+        hit = _cache_store.get(key)
+        if hit and hit[0] > now:
+            return hit[1]
+        klock = _cache_klocks.setdefault(key, _threading.Lock())
+    with klock:                              # only ONE thread computes a given key at a time
+        now = _time.monotonic()
+        hit = _cache_store.get(key)
+        if hit and hit[0] > now:             # filled while we waited for the lock
+            return hit[1]
+        val = producer()
+        with _cache_glock:
+            _cache_store[key] = (now + ttl, val)
+        return val
+
+
+def _signals_cached():
+    """Pair signals, computed at most once per ~2s and off the event loop."""
+    return _ttl_cached("signals", 2.0,
+                       lambda: signal_engine.get_all_signals(live_feed.get_live_prices() or None))
 
 
 # ── REST endpoints ─────────────────────────────────────────────────────────────
@@ -127,16 +166,20 @@ async def api_status():
 
 @app.get("/api/signals")
 async def api_signals():
-    today_prices = live_feed.get_live_prices() or None
-    return signal_engine.get_all_signals(today_prices)
+    # off the event loop + cached ~2s, so this heavy compute never freezes other requests
+    return await asyncio.to_thread(_signals_cached)
 
 
 @app.get("/api/positions")
 async def api_positions():
+    return await asyncio.to_thread(_positions_computed)
+
+
+def _positions_computed():
     positions = pos_store.get_positions()
     live_prices = live_feed.get_live_prices() or {}
     eod_snap    = live_feed.get_eod_snapshot()
-    signals = signal_engine.get_all_signals(live_prices or None)
+    signals = _signals_cached()
 
     for name, pos in positions.items():
         sig   = signals.get(name, {})
@@ -279,10 +322,10 @@ async def api_ticker(force: bool = False):
 @app.get("/api/strangle/status")
 async def api_strangle_status():
     """L1/L2/L3 signals + verdict + data-collection status for the strangle tab."""
-    import asyncio
     from strangle_system import dashboard_api as strangle_api
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, strangle_api.get_status)
+    # already off the loop; add a 5s cache so repeated polls don't rerun the ~3s compute
+    return await asyncio.to_thread(
+        lambda: _ttl_cached("strangle_status", 5.0, strangle_api.get_status))
 
 
 # ── Strangle combined-premium chart archive (7-day rolling) ──────────────────
