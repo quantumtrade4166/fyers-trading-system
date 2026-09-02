@@ -160,6 +160,124 @@ class KotakController:
         finally:
             self._seeding = False
 
+    # ── restart-safe recovery: make REAL Kotak fills the own-book truth ───────
+    def reconcile_kotak(self):
+        """Recover an open REAL Kotak position after a (re)start — the Kotak twin of
+        controller.reconcile_broker. TAG-SCOPED to THIS mirror's `vwstk_kotak` fills, so it
+        is immune to the user's manual Kotak trades and to broker netting.
+
+        The seed() replay above rebuilds a PAPER approximation of the book. When we are
+        live-armed that paper short is only a guess (wrong fill prices, and it could differ
+        from what actually filled), and it would (a) fake the equity curve and (b) risk a
+        false MTM-stop or a mis-sized cover. So in live mode we DROP the paper book and
+        rebuild ledger + cycles + equity straight from the real fills; in paper mode we just
+        fold in any real fills we didn't know about. No client -> nothing to reconcile.
+
+        Mode is primed from the persisted KOTAK_{index} flag FIRST, so a restart while live
+        takes the live branch at attach (before the first tick) — otherwise the default
+        'paper' would fold the real fills onto the paper seed and double the short."""
+        if not (self.kotak and self.kotak_syms):
+            return
+        try:                                            # prime mode from the persisted flag
+            from live.control_flags import read_control
+            m = read_control(f"KOTAK_{self.index}").get("mode")
+            if m in ("paper", "live"):
+                self.mode = m
+        except Exception:
+            pass
+        ts_to_fy = {v["trading_symbol"]: fy for fy, v in self.kotak_syms.items()}
+        try:
+            fills = ke.strategy_fills(self.kotak, tag=TAG)
+        except Exception as e:
+            audit.log(self.index, "KOTAK_RECONCILE_FAIL", error=str(e))
+            return
+
+        def _f(x):
+            try:
+                return float(x)
+            except (TypeError, ValueError):
+                return None
+        mine = []
+        for f in fills:
+            fy = ts_to_fy.get(f.get("trading_symbol"))
+            if fy not in (self.ce, self.pe):
+                continue
+            mine.append({"order_id": str(f["order_id"]), "fy": fy,
+                         "side": SELL if str(f["side"]).upper().startswith("S") else BUY,
+                         "qty": int(f["qty"] or 0), "avg_price": _f(f["avg_price"]),
+                         "fill_time": f.get("fill_time")})
+        mine.sort(key=lambda f: (f.get("fill_time") or ""))
+
+        if self.is_live_armed():
+            self.ledger = Ledger()                      # real fills are the ONLY truth in live
+            self.guard.L = self.ledger                  # keep the guard's brakes on the live book
+            for f in mine:
+                self.ledger.record(Order(f["order_id"], f["fy"], f["side"], f["qty"], 0, "reconciled"))
+                self.ledger.update_fill(f["order_id"], COMPLETE, f["qty"], f["avg_price"], f["fill_time"])
+            self._rebuild_cycles_from_fills(mine)
+        else:
+            for f in mine:                              # paper: fold in only unknown real fills
+                if f["order_id"] in self.ledger.orders:
+                    continue
+                self.ledger.record(Order(f["order_id"], f["fy"], f["side"], f["qty"], 0, "reconciled"))
+                self.ledger.update_fill(f["order_id"], COMPLETE, f["qty"], f["avg_price"], f["fill_time"])
+
+        ce_s, pe_s = self.ledger.open_short_real(self.ce), self.ledger.open_short_real(self.pe)
+        audit.log(self.index, "KOTAK_RECONCILE", added=len(mine), ce_short=ce_s, pe_short=pe_s,
+                  in_pos=self.trigger.in_pos, mode=self.mode)
+        self.persist()
+
+    def _rebuild_cycles_from_fills(self, fills: list):
+        """Rebuild the displayed cycles + equity curve from REAL Kotak fills (time-ordered),
+        pairing each SELL-pair (entry) with the BUY-pair that covers it (exit). Mirror of the
+        Zerodha controller's method so the Live tab, after a restart, shows the true broker
+        trades, real per-leg prices/times, real P&L, and a clean stepped equity curve."""
+        cycles, cur, n = [], None, 0
+        short = {self.ce: 0, self.pe: 0}
+        for f in fills:
+            sym, side, px, t, q = f["fy"], f["side"], f["avg_price"], f.get("fill_time"), f["qty"]
+            if side == SELL:
+                if short[self.ce] <= 0 and short[self.pe] <= 0:      # flat -> new cycle entry
+                    n += 1
+                    cur = {"cycle": n, "entry_time": t, "entry_ce": None, "entry_pe": None,
+                           "entry_combined": None, "exit_time": None, "exit_ce": None,
+                           "exit_pe": None, "exit_combined": None, "points": None, "pnl": None,
+                           "trigger": None, "live": True, "reconciled": True}
+                    cycles.append(cur)
+                short[sym] += q
+                if cur is not None:
+                    cur["entry_ce" if sym == self.ce else "entry_pe"] = px
+                    cur["entry_ce_time" if sym == self.ce else "entry_pe_time"] = t
+                    if cur["entry_ce"] is not None and cur["entry_pe"] is not None:
+                        cur["entry_combined"] = round(cur["entry_ce"] + cur["entry_pe"], 2)
+            else:                                                     # BUY -> cover / exit
+                short[sym] -= q
+                if cur is not None:
+                    cur["exit_ce" if sym == self.ce else "exit_pe"] = px
+                    cur["exit_ce_time" if sym == self.ce else "exit_pe_time"] = t
+                    cur["exit_time"] = t
+                    if cur["exit_ce"] is not None and cur["exit_pe"] is not None:
+                        cur["exit_combined"] = round(cur["exit_ce"] + cur["exit_pe"], 2)
+                        cur["points"] = round((cur["entry_combined"] or 0) - cur["exit_combined"], 2)
+                        cur["pnl"] = round(cur["points"] * self.qty, 2)
+                        if short[self.ce] <= 0 and short[self.pe] <= 0:
+                            cur = None                                # cycle fully closed
+        self.cycles = cycles
+        if cycles and cycles[-1]["exit_combined"] is None:            # last cycle still open
+            self._open = cycles[-1]
+            self.trigger.in_pos = True
+        else:
+            self._open = None
+            self.trigger.in_pos = False
+        series, cum = [], 0.0                                         # clean stepped equity curve
+        for c in cycles:
+            if c["entry_time"]:
+                series.append({"t": c["entry_time"], "rupees": round(cum, 2)})
+            if c["pnl"] is not None:
+                cum += c["pnl"]
+                series.append({"t": c["exit_time"], "rupees": round(cum, 2)})
+        self._mtm_series = series
+
     # ── trigger callbacks ────────────────────────────────────────────────────
     def _enter(self, combined_trigger, cycle, reason):
         ok, why = self.guard.validate_entry(cycle, f"{self.date}-e{cycle}", self._now())
@@ -270,7 +388,7 @@ class KotakController:
             return self._place_live(sym, side, cycle, kind, qty)
         # paper: simulated fill at the leg's current mark
         self._oid += 1
-        oid = f"kpaper-{kind}-{self._oid}"
+        oid = f"paper-k-{kind}-{self._oid}"      # MUST start 'paper' so open_short_real excludes it
         fill = self.marks.get(sym)
         ft = dt.datetime.now().strftime("%H:%M:%S")
         self.ledger.record(Order(oid, sym, side, qty, cycle, kind))
@@ -338,7 +456,7 @@ class KotakController:
                 "open": self._open, "cycles": self.cycles, "events": self.events,
                 "orders": [o.to_dict() for o in self.ledger.orders.values()],
                 "marks": self.marks, "realized_pnl": round(realized, 2), "mtm_pnl": mtm,
-                "mtm_series": self._mtm_series,
+                "mtm_series": self._mtm_series, "reconcile": self.guard.check_reconcile(),
                 "updated": dt.datetime.now().strftime("%H:%M:%S")}
 
     def persist(self):

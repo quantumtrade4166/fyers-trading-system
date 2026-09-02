@@ -418,6 +418,7 @@ def _maybe_attach_kotak(book, idx, date_str, pick, meta):
             kotak=kotak, kotak_syms=kotak_syms)
         if book.candles:                          # seed VWAP + state from the morning
             ctrl.seed(list(book.candles), lambda comb: (round(comb / 2, 2), round(comb / 2, 2)))
+        ctrl.reconcile_kotak()                     # recover any REAL Kotak position (restart-safe)
         book.controller_kotak = ctrl
         print(f"  [kotak] {idx}: mirror controller attached "
               f"(lot_size={lot_size}, broker_ready={bool(kotak and kotak_syms)})")
@@ -514,6 +515,10 @@ def _backfill_early_history(date_str: str):
                             ctrl.seed(list(book.candles), split_fn)   # VWAP now cumulative from 9:15
                             ctrl.reconcile_broker()
                             reseeded = True
+                        kc = book.controller_kotak                    # same backfill for the Kotak twin
+                        if kc is not None and not kc.cycles and not kc.trigger.in_pos:
+                            kc.seed(list(book.candles), split_fn)
+                            kc.reconcile_kotak()
                         try:
                             from live import audit
                             audit.log(idx, "HISTORY_BACKFILL", added=len(missing),
