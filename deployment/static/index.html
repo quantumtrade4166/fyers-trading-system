@@ -1622,11 +1622,21 @@ async function fetchAll() {
 }
 
 // ── WebSocket push ────────────────────────────────────────────────────────────
+let _wsRetry = 0;
+function _wsReconnect() {
+  // Exponential backoff (5s,10s,20s,40s,60s cap). Without this, when the socket can't
+  // connect — e.g. the Tailscale tunnel doesn't proxy WS on the public URL — it retried
+  // every 5s and the timing-out attempts piled up, starving the browser connection pool
+  // and slowing ordinary API calls. Polling keeps the data flowing meanwhile.
+  _wsRetry = Math.min(_wsRetry + 1, 5);
+  setTimeout(connectWS, Math.min(5000 * 2 ** (_wsRetry - 1), 60000));
+}
 function connectWS() {
-  // Match the page scheme: on the HTTPS public URL a ws:// endpoint is blocked as mixed
-  // content (SecurityError) and would retry-storm every 5s — use wss:// there.
+  // Match the page scheme: on an HTTPS page a ws:// endpoint is blocked as mixed content.
   const wsProto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${wsProto}//${location.host}/ws`);
+  let ws;
+  try { ws = new WebSocket(`${wsProto}//${location.host}/ws`); }
+  catch (e) { _wsReconnect(); return; }
 
   ws.onmessage = e => {
     try {
@@ -1644,9 +1654,9 @@ function connectWS() {
     } catch(err) { console.error(err); }
   };
 
-  ws.onclose = () => { updateFeedStatus(false, null); setTimeout(connectWS, 5000); };
+  ws.onclose = () => { updateFeedStatus(false, null); _wsReconnect(); };
   ws.onerror = () => ws.close();
-  ws.onopen  = () => ws.send('ping');
+  ws.onopen  = () => { _wsRetry = 0; ws.send('ping'); };
 }
 
 // ── Strangle System tab ─────────────────────────────────────────────────────
