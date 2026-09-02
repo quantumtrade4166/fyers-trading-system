@@ -1656,14 +1656,18 @@ async function fetchStrangle() {
 // ── Combined-premium chart archive ──────────────────────────────────────────
 let scaIndex = 'NIFTY';
 let scaVersion = 'V1';
+let scaBroker = 'zerodha';        // 'zerodha' | 'kotak' — each broker arms INDEPENDENTLY
 let scaList = [];
-// per-index live-order sizing. Lot sizes must match parameters.json (the backend
+// live-order sizing per BROKER+INDEX. Lot sizes must match parameters.json (the backend
 // validates against the same values). Pending inputs persist across the 30s re-render
 // so typing isn't wiped; null = "not yet edited, seed from the control flag / default".
 const SCA_LOT = { NIFTY: 65, SENSEX: 20 };
 const SCA_MAX_LOTS = 15;
-let scaQtyInput = { NIFTY: null, SENSEX: null };
-let scaMtmInput = { NIFTY: null, SENSEX: null };
+let scaQtyInput = {};             // keyed by `${broker}:${index}`
+let scaMtmInput = {};
+function scaKey() { return scaBroker + ':' + scaIndex; }
+// append the current broker to a strangle live/control/tick URL
+function scaBk() { return '&broker=' + scaBroker; }
 let scaChart = null, scaCandle = null, scaVwap = null;
 let scaMtmChart = null, scaMtm = null;
 
@@ -1673,6 +1677,17 @@ function scaSetIndex(idx) {
     document.getElementById('sca-btn-' + i).classList.toggle('active', i === idx));
   scaPopulateDates();
   scaRender();
+}
+
+// Zerodha / Kotak toggle — each broker has its own arm switch, size, kill and P&L.
+function scaSetBroker(b) {
+  scaBroker = b;
+  ['zerodha', 'kotak'].forEach(x => {
+    const el = document.getElementById('sca-bk-' + x);
+    if (el) el.classList.toggle('active', x === b);
+  });
+  scaTkLast = null; scaTkLastDate = null;   // drop the other broker's last tick
+  scaRenderLive();
 }
 
 function scaSetVersion(v) {
@@ -2470,24 +2485,27 @@ function scaTime(date, hm) {
   return Math.floor(Date.UTC(Y, M - 1, D, h, m) / 1000);
 }
 
+function scaBkName() { return scaBroker === 'kotak' ? 'KOTAK' : 'ZERODHA'; }
 async function scaSetMode(m) {
+  const who = scaBkName() + ' ' + scaIndex;
   if (m === 'live' && !confirm(
-    '⚠ GO LIVE — REAL ORDERS · ' + scaIndex + '\n\nThe strategy will place REAL Kite orders on ' +
+    '⚠ GO LIVE — REAL ORDERS · ' + who + '\n\nThe strategy will place REAL orders on ' +
     'the next ' + scaIndex + ' signal, up to the configured cycles. Only DTE 0/1 days trade. The MTM ' +
-    'stop and the KILL button still apply. This arms ' + scaIndex + ' ONLY.\n\nArm live ' +
-    scaIndex + ' orders now?')) return;
-  await fetch('/api/strangle/live_control?index=' + scaIndex + '&mode=' + m, { method: 'POST' });
+    'stop and the KILL button still apply. This arms ' + who + ' ONLY.\n\nArm live ' +
+    who + ' orders now?')) return;
+  await fetch('/api/strangle/live_control?index=' + scaIndex + scaBk() + '&mode=' + m, { method: 'POST' });
   setTimeout(scaRenderLive, 600);
 }
 async function scaKill() {
-  if (!confirm('KILL SWITCH · ' + scaIndex + '\n\nImmediately stop all new ' + scaIndex + ' entries ' +
-    'and flatten any open ' + scaIndex + ' position. This ends ' + scaIndex + ' trading for the day. Confirm?')) return;
-  await fetch('/api/strangle/live_control?index=' + scaIndex + '&kill=true', { method: 'POST' });
+  const who = scaBkName() + ' ' + scaIndex;
+  if (!confirm('KILL SWITCH · ' + who + '\n\nImmediately stop all new ' + who + ' entries ' +
+    'and flatten any open ' + who + ' position. This ends ' + who + ' trading for the day (this broker only). Confirm?')) return;
+  await fetch('/api/strangle/live_control?index=' + scaIndex + scaBk() + '&kill=true', { method: 'POST' });
   setTimeout(scaRenderLive, 400);
 }
 async function scaResume() {
-  if (!confirm('Clear the ' + scaIndex + ' kill flag and allow trading again?')) return;
-  await fetch('/api/strangle/live_control?index=' + scaIndex + '&kill=false', { method: 'POST' });
+  if (!confirm('Clear the ' + scaBkName() + ' ' + scaIndex + ' kill flag and allow trading again?')) return;
+  await fetch('/api/strangle/live_control?index=' + scaIndex + scaBk() + '&kill=false', { method: 'POST' });
   setTimeout(scaRenderLive, 400);
 }
 
@@ -2506,8 +2524,8 @@ function scaSizeChanged() {
   const qty = parseInt(qEl.value, 10);
   const mtm = Math.abs(parseFloat(mEl.value));           // stop-loss is a magnitude (−loss)
   if (!qEl.disabled) {                                  // persist edits (only while editable)
-    scaQtyInput[scaIndex] = Number.isFinite(qty) && qty > 0 ? qty : null;
-    scaMtmInput[scaIndex] = Number.isFinite(mtm) && mtm > 0 ? mtm : null;
+    scaQtyInput[scaKey()] = Number.isFinite(qty) && qty > 0 ? qty : null;
+    scaMtmInput[scaKey()] = Number.isFinite(mtm) && mtm > 0 ? mtm : null;
   }
   const lots = qty / lot;
   const qtyOk = Number.isInteger(qty) && qty > 0 && qty % lot === 0 && lots <= SCA_MAX_LOTS;
@@ -2545,18 +2563,20 @@ async function scaArmConfirm() {
   }
   let strikes = 'selected at ~9:20 on the trade day';
   try {
-    const dd = await (await fetch(`/api/strangle/live?date=${document.getElementById('sca-date').value}&index=${scaIndex}`)).json();
+    const dd = await (await fetch(`/api/strangle/live?date=${document.getElementById('sca-date').value}&index=${scaIndex}&broker=${scaBroker}`)).json();
     if (dd && dd.ce_symbol && dd.pe_symbol) strikes = dd.ce_symbol + '  /  ' + dd.pe_symbol;
   } catch (e) { /* strikes stay as the pending note */ }
+  const who = scaBkName() + ' ' + scaIndex;
   if (!confirm(
-      '⚠ GO LIVE — REAL ORDERS · ' + scaIndex + '\n\n' +
+      '⚠ GO LIVE — REAL ORDERS · ' + who + '\n\n' +
+      'Broker:     ' + scaBkName() + (scaBroker === 'kotak' ? '  (NRML)' : '') + '\n' +
       'Qty:        ' + v.qty + '   (' + v.lots + ' lot' + (v.lots > 1 ? 's' : '') + ' × ' + v.lot + ')\n' +
       'Max loss:   −₹' + v.mtm + '   (auto square-off + stop for the day at this loss)\n' +
       'Strikes:    ' + strikes + '\n\n' +
-      'The strategy will place REAL Kite orders on the next ' + scaIndex + ' signal, up to the ' +
+      'The strategy will place REAL orders on ' + scaBkName() + ' on the next ' + scaIndex + ' signal, up to the ' +
       'configured cycles. Only DTE 0/1 days trade. The KILL button still applies. This arms ' +
-      scaIndex + ' ONLY.\n\nArm live ' + scaIndex + ' orders now?')) return;
-  const r = await (await fetch('/api/strangle/live_control?index=' + scaIndex +
+      who + ' ONLY.\n\nArm live ' + who + ' orders now?')) return;
+  const r = await (await fetch('/api/strangle/live_control?index=' + scaIndex + scaBk() +
       '&mode=live&qty=' + v.qty + '&mtm_stop=' + v.mtm, { method: 'POST' })).json();
   if (r && r.error) { alert('Not armed — ' + r.error); return; }
   setTimeout(scaRenderLive, 600);
@@ -2608,7 +2628,7 @@ async function scaTickPoll() {
   // / throttled tab), which is what kept making the live MTM+CE/PE "disappear" mid-day. Now
   // visibility depends only on whether the SERVER has tick data for today.
   let t = null;
-  try { t = await (await fetch(`/api/strangle/live_tick?date=${today}&index=${scaIndex}`)).json(); }
+  try { t = await (await fetch(`/api/strangle/live_tick?date=${today}&index=${scaIndex}&broker=${scaBroker}`)).json(); }
   catch (e) { t = null; }
   if (t && !t.error) { scaTkLast = t; scaTkLastDate = today; }
   let s = (t && !t.error) ? t : scaTkLast;          // fall back to last good on a transient miss
@@ -2616,7 +2636,7 @@ async function scaTickPoll() {
     // No tick yet (e.g. before 9:20 engine start, or an engine-restart gap). Fall back to
     // TODAY's snapshot so MTM + CE/PE still show instead of the row vanishing.
     try {
-      const ds = await (await fetch(`/api/strangle/live?date=${today}&index=${scaIndex}`)).json();
+      const ds = await (await fetch(`/api/strangle/live?date=${today}&index=${scaIndex}&broker=${scaBroker}`)).json();
       if (ds && !ds.error) s = { combined: null, ce: (ds.marks || {})[ds.ce_symbol],
         pe: (ds.marks || {})[ds.pe_symbol], mtm: ds.mtm_pnl, updated: ds.updated || null, armed: ds.mode === 'live' };
     } catch (e) { /* leave s null */ }
@@ -2751,7 +2771,7 @@ async function scaRenderLive(keepView = false) {
   const upd = document.getElementById('sca-updated');
   if (!date) { el.innerHTML = '<p class="text-xs text-slate-600 text-center py-10">Select a date.</p>'; return; }
   let d;
-  try { d = await (await fetch(`/api/strangle/live?date=${date}&index=${scaIndex}`)).json(); }
+  try { d = await (await fetch(`/api/strangle/live?date=${date}&index=${scaIndex}&broker=${scaBroker}`)).json(); }
   catch (e) { el.innerHTML = '<p class="text-xs text-rose-400 text-center py-10">Live state unavailable.</p>'; return; }
 
   scaRenderMargin(d);
@@ -2814,7 +2834,7 @@ async function scaRenderLive(keepView = false) {
   // engine runs at 9:20. The snapshot can also be stale after market close, so the arm
   // state must never be read from it.
   let cf = {};
-  try { cf = await (await fetch('/api/strangle/live_control?index=' + scaIndex)).json(); } catch (e) {}
+  try { cf = await (await fetch('/api/strangle/live_control?index=' + scaIndex + scaBk())).json(); } catch (e) {}
   const cfArmed = (cf.mode === 'live');
   const cfKill = !!cf.kill;
   const todayStr = new Date().toLocaleDateString('en-CA'); // yyyy-mm-dd, local (viewer tz = IST)
@@ -2836,12 +2856,18 @@ async function scaRenderLive(keepView = false) {
   const locked = cfArmed || !!(d && d.open);               // no size changes mid-trade
   const posNum = (v, def) => (Number.isFinite(v) && v > 0 ? v : def);
   const qtyVal = locked ? posNum(cf.qty, posNum(d && d.qty, lot))
-                        : posNum(scaQtyInput[scaIndex], posNum(cf.qty, lot));
+                        : posNum(scaQtyInput[scaKey()], posNum(cf.qty, lot));
   const mtmVal = locked ? posNum(cf.mtm_stop, 1000)
-                        : posNum(scaMtmInput[scaIndex], posNum(cf.mtm_stop, 1000));
+                        : posNum(scaMtmInput[scaKey()], posNum(cf.mtm_stop, 1000));
   const inpCss = `width:92px;background:#0b0f18;border:1px solid #2d3748;border-radius:5px;padding:3px 6px;color:#e2e8f0;font-family:ui-monospace,monospace`;
   const armBox = `
     <div class="mb-3" style="padding:10px 12px;background:#0f1420;border:1px solid #1e2636;border-radius:8px">
+      <div class="flex items-center gap-2 flex-wrap mb-2" style="border-bottom:1px solid #1e2636;padding-bottom:8px">
+        <span class="text-[10px] text-slate-500 uppercase">broker</span>
+        <button id="sca-bk-zerodha" onclick="scaSetBroker('zerodha')" class="sca-idx-btn ${scaBroker === 'zerodha' ? 'active' : ''}">Zerodha</button>
+        <button id="sca-bk-kotak" onclick="scaSetBroker('kotak')" class="sca-idx-btn ${scaBroker === 'kotak' ? 'active' : ''}">Kotak</button>
+        <span class="text-[10px] text-slate-600">${scaBroker === 'kotak' ? 'independent mirror · NRML · own arm/kill' : 'primary'}</span>
+      </div>
       <div class="flex items-center gap-3 flex-wrap mb-2">
         <span class="text-[10px] text-slate-500 uppercase">size · ${scaIndex}</span>
         <label class="text-xs text-slate-400 flex items-center gap-1">Qty

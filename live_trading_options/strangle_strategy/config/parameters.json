@@ -52,8 +52,8 @@
     "square_off": "15:14"
   },
   "kotak_orders": {
-    "_comment": "Kotak Neo MIRROR leg — INDEPENDENT of Zerodha: same signal, its OWN engine + own guard/kill, so a failure on either broker never stops the other. Fires 1 lot NRML alongside each Zerodha order. Credentials live ONLY in deployment/.env (KOTAK_CONSUMER_KEY / KOTAK_MOBILE / KOTAK_UCC / KOTAK_MPIN / KOTAK_TOTP_SECRET — the SDK's totp_login needs mobile+ucc+totp together). enabled=false until login+symbol tested and the engine is wired.",
-    "enabled": false,
+    "_comment": "Kotak Neo MIRROR leg — INDEPENDENT of Zerodha: same signal, its OWN engine + own guard/kill, so a failure on either broker never stops the other. Fires 1 lot NRML alongside each Zerodha order. Credentials live ONLY in deployment/.env (KOTAK_CONSUMER_KEY / KOTAK_MOBILE / KOTAK_UCC / KOTAK_MPIN / KOTAK_TOTP_SECRET — the SDK's totp_login needs mobile+ucc+totp together). enabled=true: the Kotak engine attaches + watches at 9:20; REAL orders still require arming KOTAK live via the dashboard toggle (per-broker).",
+    "enabled": true,
     "indices": ["NIFTY", "SENSEX"],
     "lots": 1,
     "product": "NRML",

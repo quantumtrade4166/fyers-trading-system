@@ -370,6 +370,20 @@ def _maybe_attach_controller(book, idx, date_str, pick, meta):
         print(f"  [live] {idx} controller attach failed: {e}")
 
 
+_kotak_client = None            # ONE Kotak session for the whole process (both indices share it)
+
+
+def _get_kotak_client():
+    """Log into Kotak ONCE and reuse the session for every index — Kotak allows a single
+    active session per account, so a per-index login would fight itself. Cached for the
+    process (a restart re-logs-in fresh)."""
+    global _kotak_client
+    if _kotak_client is None:
+        from live import kotak_auth
+        _kotak_client = kotak_auth.login()
+    return _kotak_client
+
+
 def _maybe_attach_kotak(book, idx, date_str, pick, meta):
     """Attach the INDEPENDENT Kotak mirror controller — ONLY when kotak_orders.enabled and
     this index is configured. Fully gated: if disabled, book.controller_kotak stays None and
@@ -384,9 +398,8 @@ def _maybe_attach_kotak(book, idx, date_str, pick, meta):
         from live.kotak_controller import KotakController
         kotak, kotak_syms = None, {}
         try:
-            from live import kotak_auth
             from live import kotak_executor as ke
-            kotak = kotak_auth.login()
+            kotak = _get_kotak_client()           # shared session across indices
             for fy, strike, typ in [(pick["ce_symbol"], pick["ce_strike"], "CE"),
                                     (pick["pe_symbol"], pick["pe_strike"], "PE")]:
                 kotak_syms[fy] = ke.resolve(kotak, idx, pick["expiry"], strike, typ)

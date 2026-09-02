@@ -378,25 +378,39 @@ def _strangle_lot_sizes() -> dict:
         return {"NIFTY": 65, "SENSEX": 20}
 
 
+def _flag_index(index: str, broker: str) -> str:
+    """Control-flag key for a broker+index. Kotak arms INDEPENDENTLY of Zerodha via a
+    KOTAK_{INDEX} flag; Zerodha (default) uses the plain {INDEX}."""
+    idx = index.upper()
+    return f"KOTAK_{idx}" if str(broker).lower() == "kotak" else idx
+
+
+def _snap_file(date: str, index: str, broker: str, kind: str):
+    """State/tick file for a broker. kind='LIVE' or 'TICK'. Kotak files carry a KOTAK infix,
+    so the two brokers never overwrite each other's snapshots."""
+    idx = index.upper()
+    if str(broker).lower() == "kotak":
+        return _LIVE_DIR / (f"{date}_{idx}_KOTAK.json" if kind == "LIVE" else f"{date}_{idx}_KOTAK_TICK.json")
+    return _LIVE_DIR / f"{date}_{idx}_{kind}.json"
+
+
 @app.get("/api/strangle/live_control")
-async def api_strangle_get_control(index: str = "NIFTY"):
-    """Current control flags (mode + kill) for one index — NIFTY and SENSEX arm
-    independently."""
-    return _live_control_mod().read_control(index)
+async def api_strangle_get_control(index: str = "NIFTY", broker: str = "zerodha"):
+    """Current control flags (mode + kill + qty + mtm_stop) for one index+broker — NIFTY,
+    SENSEX, and each broker (Zerodha vs Kotak) arm independently."""
+    return _live_control_mod().read_control(_flag_index(index, broker))
 
 
 @app.post("/api/strangle/live_control")
-async def api_strangle_set_control(index: str = "NIFTY", mode: str = None, kill: bool = None,
+async def api_strangle_set_control(index: str = "NIFTY", broker: str = "zerodha",
+                                   mode: str = None, kill: bool = None,
                                    qty: int = None, mtm_stop: float = None):
-    """KILL switch / Paper-Live toggle + size/MTM override for ONE index. Writes the
-    per-index flag file the matching live controller reads. Note: flipping mode='live'
-    still does NOT place real orders unless the hard config gate live_orders.allow_live
-    is also set.
+    """KILL switch / Paper-Live toggle + size/MTM override for ONE index+broker. Writes the
+    flag file the matching controller reads (Zerodha: {INDEX}; Kotak: KOTAK_{INDEX}).
 
-    qty (if given) must be a positive multiple of the index lot size, 1..15 lots — this
-    is the server-side guard behind the browser validation, so a bad size can never reach
-    the controller. mtm_stop (if given) must be > 0. Rejected values return {"error": ...}
-    and NOTHING is written."""
+    qty (if given) must be a positive multiple of the index lot size, 1..15 lots — the
+    server-side guard behind the browser validation. mtm_stop (if given) must be > 0.
+    Rejected values return {"error": ...} and NOTHING is written."""
     idx = index.upper()
     if qty is not None:
         lot = _strangle_lot_sizes().get(idx)
@@ -405,16 +419,16 @@ async def api_strangle_set_control(index: str = "NIFTY", mode: str = None, kill:
                              f"(1–{_MAX_LOTS} lots) for {idx} — got {qty}"}
     if mtm_stop is not None and mtm_stop <= 0:
         return {"error": f"mtm_stop must be > 0 — got {mtm_stop}"}
-    return _live_control_mod().write_control(index=idx, mode=mode, kill=kill,
-                                             qty=qty, mtm_stop=mtm_stop)
+    return _live_control_mod().write_control(index=_flag_index(index, broker), mode=mode,
+                                             kill=kill, qty=qty, mtm_stop=mtm_stop)
 
 
 @app.get("/api/strangle/live_tick")
-async def api_strangle_live_tick(date: str, index: str):
+async def api_strangle_live_tick(date: str, index: str, broker: str = "zerodha"):
     """Tiny real-time tick snapshot (combined premium, live MTM, per-leg LTP) the engine
-    publishes every ~0.4s while running — polled fast by the Live tab for a broker-terminal
-    feel. Read-only."""
-    f = _LIVE_DIR / f"{date}_{index.upper()}_TICK.json"
+    publishes every ~0.4s while running — polled fast by the Live tab. broker=kotak reads
+    the Kotak mirror's tick. Read-only."""
+    f = _snap_file(date, index, broker, "TICK")
     if not f.exists():
         return {"error": "no tick"}
     try:
@@ -424,12 +438,12 @@ async def api_strangle_live_tick(date: str, index: str):
 
 
 @app.get("/api/strangle/live")
-async def api_strangle_live(date: str, index: str):
-    """The live/paper-live snapshot for one index/day (cycles, order ids, P&L,
-    status). Written by the LiveController; read-only here."""
-    f = _LIVE_DIR / f"{date}_{index.upper()}_LIVE.json"
+async def api_strangle_live(date: str, index: str, broker: str = "zerodha"):
+    """The live snapshot for one index/day/broker (cycles, order ids, P&L, status).
+    broker=kotak returns the independent Kotak mirror's snapshot. Read-only."""
+    f = _snap_file(date, index, broker, "LIVE")
     if not f.exists():
-        return {"error": "not found", "date": date, "index": index}
+        return {"error": "not found", "date": date, "index": index, "broker": broker}
     return _json.loads(f.read_text())
 
 
