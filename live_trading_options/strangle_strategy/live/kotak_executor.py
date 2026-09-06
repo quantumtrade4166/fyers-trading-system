@@ -39,6 +39,19 @@ def _round_tick(price: float, tick: float = _TICK) -> float:
     return round(round(price / tick) * tick, 2)
 
 
+def _txn_code(side: str) -> str:
+    """Map any side spelling to Kotak's transaction_type code. Kotak's client-side validator
+    (neo_api_client.req_data_validation) accepts ONLY {'B','S','Buy','Sell'} — the ledger's
+    'SELL'/'BUY' words are rejected with 'Invalid transaction type', which is what killed the
+    first live mirror order on 2026-09-03. Normalise here, in the one module that sends orders."""
+    s = str(side).strip().upper()
+    if s in ("B", "BUY"):
+        return BUY          # "B"
+    if s in ("S", "SELL"):
+        return SELL         # "S"
+    raise RuntimeError(f"Kotak: unrecognised order side {side!r} (expected BUY/SELL or B/S)")
+
+
 def _expiry_str(expiry) -> str:
     """Our expiry (date / datetime / 'YYYY-MM-DD') -> Kotak's 'DDMonYYYY' (e.g. 08Sep2026)."""
     if isinstance(expiry, str):
@@ -131,7 +144,7 @@ def place_limit(client, trading_symbol: str, exchange_segment: str, side: str, q
         exchange_segment=exchange_segment, product=product,
         price=str(_round_tick(price)), order_type=ORDER_TYPE_LIMIT,
         quantity=str(int(qty)), validity=VALIDITY_DAY, trading_symbol=trading_symbol,
-        transaction_type=side, tag=tag)
+        transaction_type=_txn_code(side), tag=tag)
     if isinstance(resp, dict) and resp.get("error"):
         raise RuntimeError(f"Kotak place_order error: {resp.get('error')}")
     oid = _extract_oid(resp)
