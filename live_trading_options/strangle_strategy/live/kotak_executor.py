@@ -29,6 +29,19 @@ PRODUCT_NRML = "NRML"
 ORDER_TYPE_LIMIT = "L"
 VALIDITY_DAY = "DAY"
 _TICK = 0.05
+TAG_PREFIX = "vwsk"                                   # our order-tag prefix (identifies + groups ours)
+_tag_seq = 0
+
+
+def _unique_tag(prefix: str = TAG_PREFIX) -> str:
+    """A DISTINCT tag for every order. Kotak uses the order tag (the `ig` field) as the order's
+    client id and rejects a REPEAT with 'Client OrderID already exists' — so a constant tag lets
+    only the first order of the day through (Kotak-Neo issue #150; it's what killed the PE leg on
+    2026-09-07). Time + a rolling counter make each tag unique; the shared prefix keeps our orders
+    findable in order_report for reconciliation. 12 chars, well inside Kotak's tag field."""
+    global _tag_seq
+    _tag_seq = (_tag_seq + 1) % 1000
+    return f"{prefix}{dt.datetime.now():%H%M%S}{_tag_seq:03d}"
 
 
 def _opt(t: str) -> str:
@@ -136,17 +149,38 @@ def _extract_oid(resp) -> str | None:
     return None
 
 
+def _resp_error(resp) -> str | None:
+    """A readable reason if a place response is a Kotak FAILURE, else None. Kotak signals failure
+    via stat/stCode/errMsg/Error — NOT a lowercase 'error' (the old check missed the real shape) —
+    and a success carries an order id. Checked here so a rejection raises its actual reason (e.g.
+    'Client OrderID already exists') instead of a bare 'no id'."""
+    if not isinstance(resp, dict):
+        return None
+    for k in ("error", "Error"):
+        if resp.get(k):
+            return str(resp[k])
+    if _extract_oid(resp):
+        return None                                  # has an order id -> success
+    stat = str(resp.get("stat", "")).strip().lower()
+    if resp.get("errMsg") or (stat and stat not in ("ok", "success")):
+        return str(resp.get("stat") or resp.get("errMsg") or f"stCode={resp.get('stCode')}")
+    return None
+
+
 def place_limit(client, trading_symbol: str, exchange_segment: str, side: str, qty: int,
-                price: float, product: str = PRODUCT_NRML, tag: str = "vwstk_kotak") -> str:
+                price: float, product: str = PRODUCT_NRML, tag: str = TAG_PREFIX) -> str:
     """Place a marketable LIMIT order and return its order id. ⚠️ REAL ORDER.
-    Logs the raw response the first time so the success shape is captured."""
+    Every order gets a UNIQUE tag (`tag` is the prefix) — Kotak rejects a repeated tag as a
+    duplicate client id, which lets only the first order of the day through."""
+    otag = _unique_tag(tag)
     resp = client.place_order(
         exchange_segment=exchange_segment, product=product,
         price=str(_round_tick(price)), order_type=ORDER_TYPE_LIMIT,
         quantity=str(int(qty)), validity=VALIDITY_DAY, trading_symbol=trading_symbol,
-        transaction_type=_txn_code(side), tag=tag)
-    if isinstance(resp, dict) and resp.get("error"):
-        raise RuntimeError(f"Kotak place_order error: {resp.get('error')}")
+        transaction_type=_txn_code(side), tag=otag)
+    err = _resp_error(resp)
+    if err:
+        raise RuntimeError(f"Kotak place_order rejected [{otag}]: {err}")
     oid = _extract_oid(resp)
     if not oid:
         raise RuntimeError(f"Kotak place_order: no order id in response: {resp}")
@@ -194,14 +228,16 @@ def cancel(client, order_id: str):
         return {"error": str(e)}
 
 
-def strategy_fills(client, tag: str = "vwstk_kotak") -> list:
-    """Today's COMPLETE orders THIS mirror placed, by our tag — the own-book source for
-    reconciliation after a restart. Never uses positions() (netted, mixes manual trades)."""
+def strategy_fills(client, tag_prefix: str = TAG_PREFIX) -> list:
+    """Today's COMPLETE orders THIS mirror placed, matched by our tag PREFIX (each order now
+    carries a unique tag, all sharing this prefix) — the own-book source for reconciliation after
+    a restart. Never uses positions() (netted, mixes manual trades)."""
     out = []
     for o in _order_rows(client):
         st = str(_dig(o, *_STATUS_KEYS) or "").lower()
         otag = _dig(o, "tag", "orderTag")
-        if otag != tag or ("complete" not in st and "traded" not in st and st != "filled"):
+        if not (otag and str(otag).startswith(tag_prefix)) \
+                or ("complete" not in st and "traded" not in st and st != "filled"):
             continue
         out.append({"trading_symbol": _dig(o, *_SYM_KEYS), "side": _dig(o, *_SIDE_KEYS),
                     "qty": int(_dig(o, *_FILLED_KEYS) or _dig(o, *_QTY_KEYS) or 0),

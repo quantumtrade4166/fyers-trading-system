@@ -34,7 +34,7 @@ def ctrl():
 
 
 def stub(fills, mode="live"):
-    ke.strategy_fills = lambda client, tag="vwstk_kotak": fills
+    ke.strategy_fills = lambda client, tag_prefix=ke.TAG_PREFIX: fills
     cf.read_control = lambda name: {"mode": mode}
 
 

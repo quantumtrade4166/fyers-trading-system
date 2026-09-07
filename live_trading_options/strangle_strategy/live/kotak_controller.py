@@ -27,7 +27,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from live.ledger import Ledger, Order, SELL, BUY, COMPLETE
+from live.ledger import Ledger, Order, SELL, BUY, COMPLETE, CANCELLED
 from live.risk_guard import RiskGuard
 from live.trigger_engine import LiveTrigger
 from live import audit
@@ -35,7 +35,7 @@ from live import kotak_executor as ke
 
 STATE_DIR = ROOT / "data" / "live_state"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
-TAG = "vwstk_kotak"
+TAG = ke.TAG_PREFIX                                   # unique-per-order tags share this prefix
 
 
 class KotakController:
@@ -66,6 +66,7 @@ class KotakController:
         self._last_fill_time = {}
         self._last_ctrl = 0.0
         self._last_tick_write = 0.0
+        self._last_flatten_try = 0.0            # throttle for the keep-trying-flat safety loop
         self._trades_allowed = dte in (0, 1)
 
     # ── arm switch: KOTAK-prefixed control flag (independent of Zerodha) ──────
@@ -120,6 +121,12 @@ class KotakController:
             breached, _ = self.guard.check_mtm(self.marks)
             if breached:
                 self._flatten("MTM stop")
+            elif self.guard.killed:
+                # Killed yet still short: a cover/flatten did not fill. Keep retrying so a leg is
+                # never left naked and unattended until the 15:14 square-off (mirrors Zerodha).
+                if _time.monotonic() - self._last_flatten_try >= 2.0:
+                    self._last_flatten_try = _time.monotonic()
+                    self._flatten("still short after kill — retrying")
             elif self.guard.must_square_off(self._now()):
                 self._flatten("time square-off")
         if self._trades_allowed:
@@ -163,7 +170,7 @@ class KotakController:
     # ── restart-safe recovery: make REAL Kotak fills the own-book truth ───────
     def reconcile_kotak(self):
         """Recover an open REAL Kotak position after a (re)start — the Kotak twin of
-        controller.reconcile_broker. TAG-SCOPED to THIS mirror's `vwstk_kotak` fills, so it
+        controller.reconcile_broker. TAG-SCOPED to THIS mirror's `vwsk*` tagged fills, so it
         is immune to the user's manual Kotak trades and to broker netting.
 
         The seed() replay above rebuilds a PAPER approximation of the book. When we are
@@ -187,7 +194,7 @@ class KotakController:
             pass
         ts_to_fy = {v["trading_symbol"]: fy for fy, v in self.kotak_syms.items()}
         try:
-            fills = ke.strategy_fills(self.kotak, tag=TAG)
+            fills = ke.strategy_fills(self.kotak, tag_prefix=TAG)
         except Exception as e:
             audit.log(self.index, "KOTAK_RECONCILE_FAIL", error=str(e))
             return
@@ -286,8 +293,12 @@ class KotakController:
             return
         live = self.is_live_armed() and not self._seeding
         try:
-            ce_fill = self._sell(self.ce, cycle)
-            pe_fill = self._sell(self.pe, cycle)
+            if live:
+                # fire BOTH shorts together + retry a laggard (smallest naked window), like Zerodha
+                ce_fill, pe_fill = self._sell_pair_live(cycle)
+            else:
+                ce_fill = self._sell(self.ce, cycle)
+                pe_fill = self._sell(self.pe, cycle)
         except Exception as e:
             msg = f"{type(e).__name__}: {e}"
             print(f"  [kotak] {self.index} ENTRY FAILED cyc{cycle}: {msg}", flush=True)
@@ -396,7 +407,24 @@ class KotakController:
         self._last_fill_time[sym] = ft
         return fill
 
+    # marketable buffers: initial fire + escalating retries for a laggard leg (fill harder each try)
+    _RETRY_BUFS = (0.30, 0.60, 0.90)
+
+    @staticmethod
+    def _k_filled(status) -> bool:
+        s = str(status or "").lower()
+        return "complete" in s or "traded" in s or s == "filled"
+
+    @staticmethod
+    def _k_dead(status) -> bool:
+        s = str(status or "").lower()
+        return "reject" in s or "cancel" in s
+
     def _place_live(self, sym, side, cycle, kind, qty):
+        """Fire ONE real marketable-LIMIT order (BUYs: exits / covers / square-off), poll the
+        fill, and — like Zerodha — CANCEL a resting remainder if it does not fill, so a Kotak
+        order is never left working in the book (the bug that left a naked CE resting on
+        2026-09-07). Handles the cancel race (a fill that lands as we cancel is booked)."""
         ks = self.kotak_syms.get(sym)
         if not (self.kotak and ks):
             raise RuntimeError(f"no Kotak client/contract for {sym}")
@@ -414,20 +442,103 @@ class KotakController:
             audit.log(self.index, "KOTAK_ORDER_COMPLETE", cyc=cycle, side=side,
                       sym=ks["trading_symbol"], avg=fill, oid=oid)
             return fill
-        audit.log(self.index, "KOTAK_ORDER_NOFILL", cyc=cycle, side=side, sym=ks["trading_symbol"], oid=oid)
+        raced = self._settle_unfilled(oid, sym, qty)          # cancel; book a cancel-race fill
+        if raced is not None:
+            audit.log(self.index, "KOTAK_ORDER_COMPLETE", cyc=cycle, side=side,
+                      sym=ks["trading_symbol"], avg=raced, oid=oid, note="filled in cancel race")
+            return raced
+        audit.log(self.index, "KOTAK_ORDER_NOFILL", cyc=cycle, side=side,
+                  sym=ks["trading_symbol"], oid=oid, note="cancelled after 5s")
+        return None
+
+    def _settle_unfilled(self, oid, sym, qty):
+        """Cancel a still-open order so nothing rests in the book. If the cancel raced a fill,
+        BOOK it and return the fill price; otherwise mark it CANCELLED and return None."""
+        try:
+            ke.cancel(self.kotak, oid)
+        except Exception:
+            pass
+        st = ke.order_status(self.kotak, oid)
+        if st.get("filled_qty") and self._k_filled(st.get("status")):
+            ft = st.get("fill_time") or dt.datetime.now().strftime("%H:%M:%S")
+            self.ledger.update_fill(oid, COMPLETE, filled_qty=int(st.get("filled_qty") or qty),
+                                    avg_price=st.get("avg_price"), fill_time=ft)
+            self._last_fill_time[sym] = ft
+            return st.get("avg_price")
+        try:
+            self.ledger.update_fill(oid, CANCELLED)
+        except Exception:
+            pass
         return None
 
     def _poll_fill(self, oid, seconds=5.0):
         deadline = _time.monotonic() + seconds
         while _time.monotonic() < deadline:
             st = ke.order_status(self.kotak, oid)
-            s = str(st.get("status") or "").lower()
-            if st.get("filled_qty") and ("complete" in s or "traded" in s or s == "filled"):
+            if st.get("filled_qty") and self._k_filled(st.get("status")):
                 return st.get("avg_price"), st.get("fill_time")
-            if "reject" in s or "cancel" in s:
+            if self._k_dead(st.get("status")):
                 return None, None
             _time.sleep(0.7)
         return None, None
+
+    # ── two-leg live entry: fire BOTH shorts together, retry a laggard, cancel unfilled ──
+    def _fire_leg(self, sym, side, cycle, kind, buf):
+        """Place ONE marketable-limit entry leg immediately (no wait) and record it."""
+        ks = self.kotak_syms[sym]
+        price = ke.marketable_limit(self.marks.get(sym), side, buf)
+        oid = ke.place_limit(self.kotak, ks["trading_symbol"], ks["exchange_segment"],
+                             side, self.qty, price, tag=TAG)
+        self.ledger.record(Order(oid, sym, side, self.qty, cycle, kind))
+        audit.log(self.index, "KOTAK_ORDER_PLACED", cyc=cycle, side=side,
+                  sym=ks["trading_symbol"], qty=self.qty, oid=oid)
+        return {"oid": oid, "fill": None}
+
+    def _poll_legs(self, legs, seconds):
+        """Poll each still-open leg for up to `seconds`; book + set leg['fill'] on a COMPLETE."""
+        deadline = _time.monotonic() + seconds
+        while _time.monotonic() < deadline:
+            if all(legs[s]["fill"] is not None for s in legs):
+                return
+            for s in legs:
+                if legs[s]["fill"] is not None:
+                    continue
+                st = ke.order_status(self.kotak, legs[s]["oid"])
+                if st.get("filled_qty") and self._k_filled(st.get("status")):
+                    legs[s]["fill"] = st.get("avg_price")
+                    self._last_fill_time[s] = st.get("fill_time")
+                    self.ledger.update_fill(legs[s]["oid"], COMPLETE,
+                                            filled_qty=int(st.get("filled_qty") or self.qty),
+                                            avg_price=st.get("avg_price"), fill_time=st.get("fill_time"))
+            _time.sleep(0.5)
+
+    def _sell_pair_live(self, cycle):
+        """Fire BOTH short legs at once (smallest naked window), poll both, and retry a laggard
+        at a MORE aggressive price up to twice. Returns (ce_fill, pe_fill); a leg that still won't
+        fill is CANCELLED and returned as None — the caller then covers the other leg and stops,
+        so we are never left with a resting order or a naked short."""
+        legs = {sym: self._fire_leg(sym, SELL, cycle, "entry", self._RETRY_BUFS[0])
+                for sym in (self.ce, self.pe)}
+        for attempt in range(len(self._RETRY_BUFS)):
+            self._poll_legs(legs, seconds=4 if attempt == 0 else 2)
+            stuck = [s for s in legs if legs[s]["fill"] is None]
+            if not stuck:
+                break
+            if attempt < len(self._RETRY_BUFS) - 1:
+                for sym in stuck:
+                    raced = self._settle_unfilled(legs[sym]["oid"], sym, self.qty)
+                    if raced is not None:                      # filled during the cancel race
+                        legs[sym]["fill"] = raced
+                        continue
+                    self.events.append({"t": self._hm, "type": "leg_retry",
+                                        "symbol": sym, "attempt": attempt + 1})
+                    legs[sym] = self._fire_leg(sym, SELL, cycle, "entry", self._RETRY_BUFS[attempt + 1])
+        for sym in legs:                                       # never leave a leg resting
+            if legs[sym]["fill"] is None:
+                raced = self._settle_unfilled(legs[sym]["oid"], sym, self.qty)
+                if raced is not None:
+                    legs[sym]["fill"] = raced
+        return legs[self.ce]["fill"], legs[self.pe]["fill"]
 
     # ── real-time tick snapshot + persisted state (own KOTAK files) ──────────
     def _write_tick(self, combined):
