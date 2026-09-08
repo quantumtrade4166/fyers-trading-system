@@ -115,11 +115,17 @@ _MKT_BUF = 0.30
 
 def marketable_limit(mark: float, side: str, buf: float = _MKT_BUF) -> float:
     """A limit priced THROUGH the touch off the strategy's own mark (from Fyers), so it
-    fills like a market order. Only a worst-case cap. SELL below, BUY above."""
+    fills like a market order. Only a worst-case cap. SELL below, BUY above.
+
+    `side` is normalised via _txn_code so it accepts BOTH the ledger words the controller
+    passes ('SELL'/'BUY') and Kotak's codes ('S'/'B'). The old `side == SELL` compared
+    against 'S' only, so a 'SELL' fell through to the BUY branch and priced the short
+    ABOVE the market — it rested unfillable (the 2026-09-08 first-entry miss)."""
+    is_sell = _txn_code(side) == SELL
     ref = float(mark or 0)
     if ref <= 0:
-        return 0.05 if side == SELL else 100000.0
-    return _round_tick(ref * (1 - buf) if side == SELL else ref * (1 + buf))
+        return 0.05 if is_sell else 100000.0
+    return _round_tick(ref * (1 - buf) if is_sell else ref * (1 + buf))
 
 
 # ── order id / status parsing (defensive across Kotak's key spellings) ──

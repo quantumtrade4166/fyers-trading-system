@@ -85,5 +85,13 @@ chk("guard killed", b.guard.killed)
 chk("emitted naked_cover", any(e["type"] == "naked_cover" for e in b.events))
 chk("emitted entry_incomplete", any(e["type"] == "entry_incomplete" for e in b.events))
 
+print("\n[C] marketable_limit direction (the 2026-09-08 unfilled-sell fix):")
+s = [ke.marketable_limit(10.45, "SELL", b) for b in (0.30, 0.60, 0.90)]
+b = [ke.marketable_limit(10.45, "BUY", b) for b in (0.30, 0.60, 0.90)]
+chk("SELL priced BELOW mark, more aggressive = lower", all(p < 10.45 for p in s) and s[0] > s[-1])
+chk("BUY priced ABOVE mark, more aggressive = higher", all(p > 10.45 for p in b) and b[0] < b[-1])
+chk("ledger word 'SELL' == Kotak code 'S'",
+    ke.marketable_limit(10.45, "SELL", 0.3) == ke.marketable_limit(10.45, "S", 0.3))
+
 print(f"\n{_pass} passed, {_fail} failed")
 sys.exit(1 if _fail else 0)
