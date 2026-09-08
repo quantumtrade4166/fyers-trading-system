@@ -66,3 +66,11 @@ live_trading_options/strangle_strategy/data/intraday_state/
 
 # Strangle live/paper-live state (generated)
 live_trading_options/strangle_strategy/data/live_state/
+
+# BTC delta-neutral strangle (Delta Exchange India). Everything under data/ and
+# logs/ is runtime state: the option-chain archive (~100MB/day and unrecoverable
+# if lost), paper cycle records, equity samples, restart-resume files and audit
+# logs. The VPS is the source of truth once deployed — committing these would let
+# a local test run overwrite a real paper month's record.
+live_trading_options/delta_btc/data/
+live_trading_options/delta_btc/logs/
