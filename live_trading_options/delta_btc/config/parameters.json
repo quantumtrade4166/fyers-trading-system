@@ -22,7 +22,7 @@
       "sl_premium": 140,
       "prefer_min": null,
       "prefer_max": null,
-      "contracts": 100,
+      "contracts": 1000,
       "ends_on_both_stopped": true,
       "ends_on_max_loss": true,
       "max_fresh_entries": 3,
@@ -38,7 +38,7 @@
       "sl_premium": 300,
       "prefer_min": null,
       "prefer_max": null,
-      "contracts": 100,
+      "contracts": 1000,
       "ends_on_both_stopped": true,
       "ends_on_max_loss": true,
       "max_fresh_entries": 3,
@@ -54,7 +54,7 @@
       "sl_premium": 300,
       "prefer_min": null,
       "prefer_max": null,
-      "contracts": 100,
+      "contracts": 1000,
       "ends_on_both_stopped": false,
       "ends_on_max_loss": false,
       "max_fresh_entries": 8,
@@ -64,7 +64,9 @@
 
   "_calibration_note": "The per-profile target premiums are NOT guesses and are NOT arbitrary — they are set so all three profiles enter at the SAME MONEYNESS, measured as option delta ~0.14, which is where the NSE 0-DTE book sells. Measured live on 2026-09-04 12:31 IST, BTC 80,819: today's expiry paid $65 CE / $59 PE at delta 0.14, and tomorrow's paid $169 CE / $142 PE. Hence A=70 and B/C=150. Matching PREMIUM instead of delta would have put A three strikes from the money (under 0.5% OTM on an asset that moves 1-2% in five hours) while B/C sat 3% out — the comparison would then have been measuring moneyness, not session length. Stop is 2x target throughout, exactly as NIFTY 20/40 and SENSEX 40/80. RE-MEASURE these if BTC implied vol moves materially: tools/calibrate.py reprints the table.",
 
-  "_sizing_note": "All three profiles trade the SAME 100 contracts at the SAME delta, so session length is the only variable. That means they do NOT collect the same credit per cycle (A ~$14, B/C ~$30) because A sells a contract with 8h of life and B/C one with 24h. That is a real property of the choice being tested, not an imbalance to correct — the comparison tool reports return per unit of margin and per hour of exposure alongside absolute P&L so the two can be read fairly against each other.",
+  "_sizing_note": "All three profiles trade the SAME 1000 contracts at the SAME delta, so session length stays the only variable. 1000 contracts = 1.0 BTC per leg, about $79k notional per leg at BTC 79k. They do NOT collect the same credit per cycle (A ~$140, B/C ~$300) because A sells a contract with 8h of life and B/C one with 24h — that is a real property of the choice being tested, not an imbalance to correct, and the comparison tool reports return per unit of risk and per hour of exposure alongside absolute P&L so the two read fairly against each other.",
+
+  "_size_change_note": "Raised 100 -> 1000 on 2026-09-09, and the depth was CHECKED before doing it rather than assumed: the top bid held ~10,000 contracts on every strike then in play (81000CE, 76400PE, 80000CE), so 1000 fills entirely at level 1 with zero slippage. That matters because the paper fill model takes the whole order at the touch and does NOT walk the book — at a size the top level cannot absorb, paper would quietly report fills nobody could get. Re-check depth before raising again, and be aware it is thinner on far-OTM strikes than on the ones sampled. Changing this mid-cycle is safe: the controller refuses to adopt a saved position whose legs are the old size, closing and recording that cycle instead of running a strangle with mismatched legs.",
 
   "_shared_note": "Everything below applies to all three profiles. Only the session shape and its target/stop are allowed to differ, so that a difference in the month's results can be attributed to the session and not to the parameters.",
 
@@ -78,11 +80,11 @@
   "_windows_note": "Adjustments are evaluated ONLY inside a 60-second window every 15 minutes, starting 15 minutes after entry and stopping 10 minutes before square-off. Outside a window nothing is ever adjusted — that rule is what stops the strategy reacting to every wiggle.",
 
   "max_loss_usd": {
-    "ist_day": 45,
-    "full_cycle": 90,
-    "continuous": 90
+    "ist_day": 450,
+    "full_cycle": 900,
+    "continuous": 900
   },
-  "_max_loss_note": "USD MAGNITUDE. Own-book MTM <= -max_loss ends the cycle (A and B) or pauses it (C). MUST sit ABOVE the worst case the leg stops themselves allow, or it fires first and the per-leg stops never get to work — the trap that cost the NSE book a day. At 100 contracts: A both legs stopping = (140-70)*0.001*100*2 = $14, so $45 is 3.2x clear; B/C = (300-150)*0.001*100*2 = $30, so $90 is 3x clear. The engine recomputes this at start and REFUSES TO RUN a profile whose limit sits below its own worst case, rather than leaving it to be discovered on a bad day.",
+  "_max_loss_note": "USD MAGNITUDE. Own-book MTM <= -max_loss ends the cycle (A and B) or pauses it (C). MUST sit ABOVE the worst case the leg stops themselves allow, or it fires first and the per-leg stops never get to work — the trap that cost the NSE book a day. At 1000 contracts: A both legs stopping = (140-70)*0.001*1000*2 = $140, so $450 is 3.2x clear; B/C = (300-150)*0.001*1000*2 = $300, so $900 is 3x clear. THESE SCALE WITH `contracts` — raising size without raising these would make the loss limit fire before the leg stops could work, and the engine refuses to run a profile in that state. The engine recomputes this at start and REFUSES TO RUN a profile whose limit sits below its own worst case, rather than leaving it to be discovered on a bad day.",
 
   "fees": {
     "taker_rate_notional": 0.0001,
@@ -111,5 +113,5 @@
     "_comment": "PAPER ONLY. There is no live order path in v1 — no API key is even required to run this. When live is built it goes through a signed REST client with its own client_order_id prefix as the own-book scope, rehearsed on testnet (cdn-ind.testnet.deltaex.org) first."
   },
 
-  "last_saved": "2026-09-04"
+  "last_saved": "2026-09-09"
 }

@@ -153,10 +153,10 @@ check("seconds to next window", A.seconds_to_next_window(T("2026-09-04 09:50")),
 check("no next window after the last one", A.next_window(T("2026-09-04 17:05")), None)
 
 # ── economics: the max-loss trap ──────────────────────────────────────────
-check("A worst case both stopped is $14", A.worst_case_both_stopped(), 14.0)
-check("B worst case both stopped is $30", B.worst_case_both_stopped(), 30.0)
-check("A credit at target is $14", A.credit_at_target(), 14.0)
-check("B credit at target is $30", B.credit_at_target(), 30.0)
+check("A worst case both stopped is $140", A.worst_case_both_stopped(), 140.0)
+check("B worst case both stopped is $300", B.worst_case_both_stopped(), 300.0)
+check("A credit at target is $140", A.credit_at_target(), 140.0)
+check("B credit at target is $300", B.credit_at_target(), 300.0)
 for name, p in PROFILES.items():
     limit = PARAMS["max_loss_usd"][name]
     check(f"{name}: max loss ${limit} sits above the worst case "
@@ -168,6 +168,20 @@ bad = SessionProfile("bad", {"entry_time": "09:30", "square_off": "17:10",
                              "contracts": 100})
 check("a tight stop shrinks the worst case as expected",
       bad.worst_case_both_stopped(), 4.0)
+# the risk numbers must SCALE with size — this is what the max-loss limits are
+# checked against, and a size change that did not move them would let the loss
+# limit fire before the leg stops could work
+ten_x = SessionProfile("tenx", {"entry_time": "09:30", "square_off": "17:10",
+                                "target_premium": 150, "sl_premium": 300,
+                                "contracts": 1000})
+one_x = SessionProfile("onex", {"entry_time": "09:30", "square_off": "17:10",
+                                "target_premium": 150, "sl_premium": 300,
+                                "contracts": 100})
+check("worst case scales linearly with contracts",
+      ten_x.worst_case_both_stopped(), one_x.worst_case_both_stopped() * 10)
+check("credit scales linearly with contracts",
+      ten_x.credit_at_target(), one_x.credit_at_target() * 10)
+check("1000 contracts is 1.0 BTC per leg", ten_x.contracts * 0.001, 1.0)
 
 print(f"\n  {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

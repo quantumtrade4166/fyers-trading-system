@@ -772,7 +772,8 @@ class BTCController:
         except Exception:
             pass
 
-    def _record_interrupted(self, d: dict, now: dt.datetime):
+    def _record_interrupted(self, d: dict, now: dt.datetime,
+                            reason: str = "engine was not running when this cycle ended"):
         """Write a cycle that ended while the engine was not running.
 
         What can be known is written; what cannot is NOT invented. Legs already
@@ -805,7 +806,7 @@ class BTCController:
             "stopped_legs": sum(1 for l in pos.history if l.status == "STOPPED"),
             "fresh_entries": int(d.get("fresh_entries") or 0),
             "ended_early": True,
-            "kill_reason": "engine was not running when this cycle ended",
+            "kill_reason": reason,
             "left_stuck": None,
             "exit_reasons": [l.exit_reason for l in pos.history],
             "late_start": bool(d.get("late_start")),
@@ -860,6 +861,25 @@ class BTCController:
             # cycle every time the process is interrupted.
             self._record_interrupted(d, now)
             return False
+        # SIZE CHANGE MID-CYCLE. If `contracts` was changed in config while a
+        # cycle was live, the saved legs are the OLD size. Adopting them would
+        # leave a strangle whose CE and PE are different sizes the moment one is
+        # replaced — not a strangle at all, and its P&L would mean nothing. So the
+        # old cycle is closed out and recorded, and the new size starts on a clean
+        # cycle. Deliberately explicit rather than silently mixing.
+        saved = Position.from_dict(d.get("position") or {})
+        wrong = [l for l in saved.live_legs() if l.contracts != self.contracts]
+        if wrong:
+            self._log("size_changed", configured=self.contracts,
+                      held=sorted({l.contracts for l in wrong}),
+                      note="position size changed mid-cycle — closing the old "
+                           "cycle rather than running mismatched legs")
+            self._record_interrupted(
+                d, now,
+                reason=(f"position size changed {wrong[0].contracts} -> "
+                        f"{self.contracts} contracts mid-cycle"))
+            return False
+
         self._now = now
         self.cycle = key
         self.expiry = d.get("expiry")
