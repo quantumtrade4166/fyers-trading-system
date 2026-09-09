@@ -116,6 +116,8 @@ class BTCController:
         # numbers while still showing it happened.
         self.first_entry_at = None
         self.late_start = False
+        # Set by the engine when the push feed is up. Optional by design — see _mark.
+        self.feed = None
 
         # ── across the month ─────────────────────────────────────────────
         self.cycles_done: list = []
@@ -146,7 +148,23 @@ class BTCController:
             pass
 
     def _mark(self, leg) -> float | None:
-        if leg is None or self.chain_obj is None:
+        """This leg's current premium.
+
+        The PUSH feed wins when it has a fresh price for this exact contract: the
+        REST chain is up to `poll_seconds` old, and a stop noticed five seconds
+        late is real money on BTC. The feed returns None the moment its price goes
+        stale (or if the socket never connected at all), and then this falls back
+        to the chain — so the strategy is correct with the socket permanently
+        down, just slower to react.
+        """
+        if leg is None:
+            return None
+        feed = getattr(self, "feed", None)
+        if feed is not None:
+            m = feed.mark(leg.symbol)
+            if m is not None:
+                return m
+        if self.chain_obj is None:
             return None
         return self.chain_obj.mark.get((leg.strike, leg.opt_type))
 

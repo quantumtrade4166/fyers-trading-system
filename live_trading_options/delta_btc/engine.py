@@ -159,6 +159,20 @@ def main():
                     f"realized ${c.position.realized():+.2f}")
         except Exception as e:
             log(f"  {name}: resume failed ({e}) — starting this cycle fresh")
+    # The push feed is an ACCELERATOR, never a dependency. It gives sub-second
+    # stop detection and a live ticker; with it down the engine keeps working off
+    # the REST chain exactly as before, just noticing a stop up to POLL seconds
+    # later. Nothing below is allowed to raise if the socket never connects.
+    feed = None
+    try:
+        from live.ws_feed import WSFeed
+        feed = WSFeed(on_tick=lambda: write_tick(ctrls, feed)).start()
+        for c in ctrls.values():
+            c.feed = feed
+        log("  push feed started (spot + held legs)")
+    except Exception as e:
+        log(f"  push feed unavailable ({type(e).__name__}: {e}) — REST only")
+
     last_good = time.monotonic()
     polls = fails = 0
 
@@ -193,6 +207,13 @@ def main():
                     log(f"  !! {name} step error: {type(e).__name__}: {e}")
                     log(traceback.format_exc(limit=6))
 
+            # follow exactly the legs that are live right now — cheap when
+            # unchanged, which is every poll except an entry, adjust or stop-out
+            if feed is not None:
+                feed.track([leg.symbol for c in ctrls.values()
+                            for leg in (c.position.ce, c.position.pe)
+                            if leg is not None and leg.is_live])
+
             drop_settled(now)
             last_good = time.monotonic()
             polls += 1
@@ -203,7 +224,7 @@ def main():
                     f"{c.position.n_live}L mtm${c.mtm:+.2f}"
                     for n, c in ctrls.items())
                 log(f"  poll {polls}  spot {ch.spot}  atm {ch.atm}  exp {front}  {bits}")
-            write_combined(ctrls, front)
+            write_combined(ctrls, front, feed)
         except Exception as e:
             fails += 1
             log(f"  poll failed ({fails}): {type(e).__name__}: {e}")
@@ -215,17 +236,65 @@ def main():
         time.sleep(max(0.0, POLL - (time.monotonic() - started)))
 
 
-def write_combined(ctrls: dict, front: str):
-    """One file the comparison tool and any future dashboard tab can read."""
+def write_combined(ctrls: dict, front: str, feed=None):
+    """The single file the dashboard tab reads.
+
+    Carries the whole picture in one request: every profile's book, the option
+    chain around ATM with our own sold strikes flagged, and the live feed's
+    health. One file rather than five endpoints, because the tab refreshes on a
+    timer and five round trips per refresh is how a dashboard gets slow.
+    """
     try:
         snaps = {n: c.snapshot() for n, c in ctrls.items()}
+        chain = chain_for(front)
+        # which strikes WE are short, so the chain table can mark them
+        sold = {}
+        for n, c in ctrls.items():
+            for leg in (c.position.ce, c.position.pe):
+                if leg is not None and leg.is_live:
+                    sold.setdefault(f"{leg.strike:.0f}{leg.opt_type}", []).append(n)
         (STATE_DIR / "ALL_STATE.json").write_text(json.dumps({
             "updated": now_ist().strftime("%Y-%m-%d %H:%M:%S"),
             "front_expiry": front, "paper": True,
             "usd_inr": PARAMS.get("usd_inr"),
+            "spot": chain.spot, "atm": chain.atm,
+            "seconds_to_settlement": chain.seconds_to_settlement(now_ist()),
+            "chain": chain.rows(span=10),
+            "sold": sold,
+            "feed": feed.status() if feed else {"live": False},
             "profiles": snaps,
             "totals": {n: s["total"] for n, s in snaps.items()},
         }, indent=1, default=str), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def write_tick(ctrls: dict, feed):
+    """A TINY file, rewritten on every push tick.
+
+    Separate from ALL_STATE on purpose. The tab polls this at ~1s for the ticker
+    and the live P&L, and ALL_STATE far less often for the chain and the tables.
+    Rewriting the big file at tick rate would be pointless I/O; making the tab
+    wait for the big file to see a price move is what makes a screen feel dead.
+    """
+    try:
+        legs = []
+        for n, c in ctrls.items():
+            for leg in (c.position.ce, c.position.pe):
+                if leg is None or not leg.is_live:
+                    continue
+                q = feed.quote(leg.symbol) or {}
+                legs.append({"profile": n, "side": leg.opt_type, "strike": leg.strike,
+                             "symbol": leg.symbol, "entry": leg.entry_price,
+                             "mark": q.get("mark"), "bid": q.get("bid"),
+                             "ask": q.get("ask"), "sl": leg.sl_trigger})
+        (STATE_DIR / "TICK.json").write_text(json.dumps({
+            "ts": now_ist().strftime("%H:%M:%S"),
+            "spot": feed.spot(),
+            "live": feed.status().get("live"),
+            "mtm": {n: c.mtm for n, c in ctrls.items()},
+            "legs": legs,
+        }, default=str), encoding="utf-8")
     except Exception:
         pass
 
