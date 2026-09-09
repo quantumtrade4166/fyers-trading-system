@@ -838,6 +838,11 @@ class BTCController:
         trust a file for what it holds — it reconciles against the exchange, which
         is the only authority on a real position.
         """
+        # Stamp the clock FIRST. Everything below can log — a size change, an
+        # interrupted cycle — and _log reads self._now. Setting it only after the
+        # cycle-key match left those entries with an empty timestamp, which is
+        # exactly the wrong thing on the records that explain why a cycle ended.
+        self._now = now
         key = self.profile.cycle_key(now)
         if key is None:
             return False
