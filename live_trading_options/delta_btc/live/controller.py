@@ -739,6 +739,59 @@ class BTCController:
         except Exception:
             pass
 
+    def _record_interrupted(self, d: dict, now: dt.datetime):
+        """Write a cycle that ended while the engine was not running.
+
+        What can be known is written; what cannot is NOT invented. Legs already
+        closed have real fills, so their P&L is real and goes in `realized`. Legs
+        still open when the process died have no square-off price — we were not
+        there to take one — so they are COUNTED in `unresolved_legs` and their
+        value is left out rather than marked at a guess.
+
+        The record is flagged `interrupted`, and the comparison excludes it from
+        the headline exactly like a late start. A partial cycle is evidence about
+        the plumbing, not about the strategy, and averaging it in would quietly
+        drag whichever profile happened to be interrupted.
+        """
+        try:
+            pos = Position.from_dict(d.get("position") or {})
+        except Exception:
+            return
+        if not (d.get("entered") or pos.history):
+            return                       # nothing ever happened in it
+        fe = d.get("first_entry_at")
+        rec = {
+            "profile": self.name, "cycle": d.get("cycle"), "expiry": d.get("expiry"),
+            "ended": now.strftime("%Y-%m-%d %H:%M:%S"),
+            "realized": pos.realized(),
+            "gross": round(sum(l.gross_pnl() or 0 for l in pos.history), 4),
+            "fees": pos.fees_paid(),
+            "legs": len(pos.history),
+            "adjustments": sum(1 for l in pos.history
+                               if (l.exit_reason or "").startswith("adjustment")),
+            "stopped_legs": sum(1 for l in pos.history if l.status == "STOPPED"),
+            "fresh_entries": int(d.get("fresh_entries") or 0),
+            "ended_early": True,
+            "kill_reason": "engine was not running when this cycle ended",
+            "left_stuck": None,
+            "exit_reasons": [l.exit_reason for l in pos.history],
+            "late_start": bool(d.get("late_start")),
+            "interrupted": True,
+            "unresolved_legs": pos.n_live,
+            "first_entry": (fe[:16].replace("T", " ") if fe else None),
+            "hours_held": None,
+            "exposure_hours": self.profile.exposure_hours,
+            "target": self.target, "sl": self.sl, "contracts": self.contracts,
+        }
+        self.cycles_done.append(rec)
+        self._log("cycle_interrupted", **{k: rec[k] for k in
+                  ("cycle", "realized", "legs", "unresolved_legs", "adjustments")})
+        try:
+            with open(self.results_dir / "cycles.jsonl", "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, default=str) + "\n")
+        except Exception:
+            pass
+
     def restore(self, now: dt.datetime) -> bool:
         """Reload an interrupted cycle. True if anything was restored.
 
@@ -763,6 +816,16 @@ class BTCController:
             return False
         self.cycles_done = d.get("cycles_done") or []
         if d.get("cycle") != key:
+            # That cycle ENDED while we were down. It must still be RECORDED.
+            #
+            # This used to just `return False`, which threw the whole cycle away.
+            # On 2026-09-09 that silently lost the first real cycle of the run:
+            # full_cycle@2026-09-08T17:35 had made four adjustments worth ~$25.65
+            # realized when the engine was killed at 09:09; it came back at 18:20
+            # to a new cycle key, dropped the old book on the floor, and
+            # cycles.jsonl stayed empty. A month-long experiment cannot lose a
+            # cycle every time the process is interrupted.
+            self._record_interrupted(d, now)
             return False
         self._now = now
         self.cycle = key

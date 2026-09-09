@@ -123,9 +123,79 @@ def equity(profile: str = Query(None), day: str = Query(None)):
     return {"ok": True, "day": day, "equity": out}
 
 
+@router.get("/dates")
+def dates():
+    """Every day that has data, newest first, with a one-line summary each.
+
+    A month-long experiment is only reviewable if you can open any day of it. The
+    files were already append-only, so the history was there — this just makes it
+    addressable, and reports per-day what is actually in it so the picker can show
+    an empty day as empty instead of looking broken.
+    """
+    days: dict = {}
+
+    def touch(d: str):
+        return days.setdefault(d, {"date": d, "cycles": 0, "pnl": 0.0,
+                                   "samples": 0, "events": 0, "profiles": []})
+
+    for f in RESULTS.glob("*_equity.jsonl"):
+        name = f.name.replace("_equity.jsonl", "")
+        try:
+            for line in f.read_text(encoding="utf-8").splitlines():
+                i = line.find('"ts": "')
+                if i < 0:
+                    continue
+                d = line[i + 7:i + 17]
+                if len(d) == 10:
+                    rec = touch(d)
+                    rec["samples"] += 1
+                    if name not in rec["profiles"]:
+                        rec["profiles"].append(name)
+        except Exception:
+            continue
+
+    cf = RESULTS / "cycles.jsonl"
+    if cf.exists():
+        try:
+            for line in cf.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                d = (r.get("first_entry") or r.get("ended") or "")[:10]
+                if len(d) == 10:
+                    rec = touch(d)
+                    rec["cycles"] += 1
+                    if not r.get("late_start"):
+                        rec["pnl"] = round(rec["pnl"] + r.get("realized", 0), 4)
+        except Exception:
+            pass
+
+    for f in LOGS.glob("*_btc_audit.log"):
+        d = f.name[:10]
+        if len(d) == 10:
+            try:
+                touch(d)["events"] = sum(1 for _ in f.open(encoding="utf-8"))
+            except Exception:
+                pass
+
+    out = sorted(days.values(), key=lambda x: x["date"], reverse=True)
+    for r in out:
+        r["profiles"].sort()
+    return {"ok": True, "days": out, "today": _now_ist().date().isoformat()}
+
+
 @router.get("/cycles")
-def cycles(limit: int = Query(60, ge=1, le=1000)):
-    """Completed cycles, newest first — the month's actual dataset."""
+def cycles(limit: int = Query(60, ge=1, le=1000), day: str = Query(None)):
+    """Completed cycles, newest first — the month's actual dataset.
+
+    `day` filters to cycles that STARTED that day. A B/C cycle runs 17:35 to 17:10
+    the next day, so filtering on the end date would file most of them under the
+    day after the one you were watching.
+    """
     f = RESULTS / "cycles.jsonl"
     rows = []
     if f.exists():
@@ -141,22 +211,31 @@ def cycles(limit: int = Query(60, ge=1, le=1000)):
         except Exception:
             pass
     rows.reverse()
+    if day:
+        rows = [r for r in rows
+                if (r.get("first_entry") or r.get("ended") or "").startswith(day)]
 
-    # per-profile totals across EVERY cycle, so the tab's header does not have to
-    # re-derive them and cannot disagree with the comparison tool
+    # Per-profile totals over WHATEVER IS BEING SHOWN — the whole run by default,
+    # or one day when `day` is set. Computed here rather than in the browser so the
+    # header can never disagree with the table under it, or with compare.py.
     totals = {}
     for name in PROFILES:
         mine = [r for r in rows if r.get("profile") == name]
-        clean = [r for r in mine if not r.get("late_start")]
+        # A late-start or interrupted cycle is evidence about the plumbing, not
+        # about the strategy. Both are shown, neither is averaged in.
+        clean = [r for r in mine
+                 if not r.get("late_start") and not r.get("interrupted")]
         totals[name] = {
             "cycles": len(clean),
             "total": round(sum(r.get("realized", 0) for r in clean), 4),
             "fees": round(sum(r.get("fees", 0) for r in clean), 4),
             "wins": sum(1 for r in clean if r.get("realized", 0) > 0),
-            "late_start": len(mine) - len(clean),
+            "excluded": len(mine) - len(clean),
+            "late_start": sum(1 for r in mine if r.get("late_start")),
+            "interrupted": sum(1 for r in mine if r.get("interrupted")),
         }
     return {"ok": True, "cycles": rows[:limit], "totals": totals,
-            "counted": "excludes late-start cycles"}
+            "counted": "excludes late-start and interrupted cycles"}
 
 
 @router.get("/audit")

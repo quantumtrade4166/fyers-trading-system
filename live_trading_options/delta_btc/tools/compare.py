@@ -23,9 +23,11 @@ A profile can win one of these and lose another; that is information, not noise.
 
 PARTIAL CYCLES ARE EXCLUDED FROM THE HEADLINE
 A cycle flagged `late_start` began because the engine was started or restarted
-mid-cycle, so a 23.6h profile may have held for 4 hours. Those are shown
-separately and left out of the averages — including them would quietly turn B
-into a second copy of A on exactly the days the engine was touched.
+mid-cycle, so a 23.6h profile may have held for 4 hours. One flagged `interrupted`
+ended while the engine was DOWN, so its open legs never got a square-off price and
+only its already-closed legs carry real P&L. Both are shown separately and left out
+of the averages — including them would quietly turn B into a second copy of A on
+exactly the days the engine was touched.
 
 Run:  .venv/Scripts/python.exe live_trading_options/delta_btc/tools/compare.py
       ... --all         include late-start cycles in the headline
@@ -136,7 +138,7 @@ def bar(v: float, lo: float, hi: float, width: int = 22) -> str:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--all", action="store_true",
-                    help="include late-start (partial) cycles in the headline")
+                    help="include late-start and interrupted cycles in the headline")
     ap.add_argument("--csv", help="write the per-cycle table to this path")
     args = ap.parse_args()
 
@@ -150,15 +152,22 @@ def main():
               "live_trading_options/delta_btc/engine.py\n")
         return
 
-    partial = [r for r in rows if r.get("late_start")]
-    usable = rows if args.all else [r for r in rows if not r.get("late_start")]
+    # Two ways a cycle is not a fair sample of its profile: it STARTED LATE (the
+    # engine came up mid-cycle, so a 23.6h profile may have held for 4 hours) or it
+    # was INTERRUPTED (the engine went down before the cycle ended, so its open
+    # legs never got a square-off price and only the already-closed legs have real
+    # P&L). Both are reported, neither is averaged in — a partial cycle is evidence
+    # about the plumbing, not about the strategy.
+    partial = [r for r in rows if r.get("late_start") or r.get("interrupted")]
+    usable = rows if args.all else [r for r in rows
+                                    if not r.get("late_start") and not r.get("interrupted")]
 
     days = sorted({(r.get("first_entry") or r["ended"])[:10] for r in rows})
     print(f"\n  BTC delta-neutral strangle — paper comparison")
     print(f"  Delta Exchange India · {len(rows)} cycles over {len(days)} days "
           f"({days[0]} to {days[-1]}) · USD, ₹{usd_inr:g}/$")
     if partial and not args.all:
-        print(f"  {len(partial)} late-start cycle(s) excluded from the headline "
+        print(f"  {len(partial)} partial cycle(s) excluded from the headline "
               f"(engine started mid-cycle) — pass --all to include")
 
     per = {}
@@ -249,10 +258,15 @@ def main():
             print("    Treat this as 'no clear winner', not as a narrow win.")
 
     if partial:
-        print(f"\n  Late-start cycles ({len(partial)}), excluded above:")
+        print(f"\n  Excluded cycles ({len(partial)}) — shown, never counted:")
         for r in partial:
-            print(f"    {r['profile']:<12} {r.get('first_entry', '?')}  "
-                  f"held {r.get('hours_held', 0):.1f}h  ${r['realized']:+.2f}")
+            why = "interrupted" if r.get("interrupted") else "late start"
+            un = r.get("unresolved_legs") or 0
+            held = r.get("hours_held")
+            held_s = f"{held:.1f}h" if held is not None else "?"
+            print(f"    {r['profile']:<12} {str(r.get('first_entry') or '?'):<17} "
+                  f"{held_s:>6}  ${r['realized']:+8.2f}  {why}"
+                  + (f" — {un} leg(s) never squared off" if un else ""))
 
     if args.csv:
         import csv

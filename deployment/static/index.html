@@ -806,12 +806,16 @@
         </div>
       </div>
       <div class="flex items-center gap-3">
+        <select id="btc-date" onchange="btcOnDateChange()"
+                class="bg-[#151a26] text-slate-300 text-xs rounded px-2 py-1 border border-[#2d3748]"></select>
         <span id="btc-feed" class="px-2 py-1 rounded text-[10px] font-semibold bg-slate-800 text-slate-400">FEED —</span>
         <span class="px-2 py-1 rounded text-[10px] font-semibold bg-amber-900/40 text-amber-300 border border-amber-700/40">
           PAPER — no account, no orders
         </span>
       </div>
     </div>
+
+    <div id="btc-hist-banner" class="mb-4 px-3 py-2 rounded text-xs bg-slate-800/60 border border-slate-700/60 text-slate-300" style="display:none"></div>
 
     <!-- the three books -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5" id="btc-cards"></div>
@@ -834,8 +838,8 @@
     </div>
 
     <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
-      <!-- option chain -->
-      <div class="card p-4">
+      <!-- option chain (live only — no per-minute chain snapshots are served) -->
+      <div class="card p-4" id="btc-chain-card">
         <div class="flex items-center justify-between mb-2">
           <div class="text-sm font-semibold text-slate-200">Option chain</div>
           <div class="text-[10px] text-slate-500">
@@ -3572,6 +3576,13 @@ const BTC_META = {
   continuous: { label: 'C · continuous', sub: '17:35→17:10 · re-enters',            color: '#34d399' },
 };
 
+/* The day being viewed. A month-long experiment is only reviewable if any day of
+   it can be opened, so every date-dependent panel reads this rather than assuming
+   "now". Today is the live view; any earlier day is a frozen historical one. */
+let btcDate = null;
+const btcToday = () => new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+const btcIsToday = () => !btcDate || btcDate === btcToday();
+
 function btcMoney(v, dp) {
   if (v === null || v === undefined || isNaN(v)) return '—';
   const d = (dp === undefined) ? 2 : dp;
@@ -3612,6 +3623,41 @@ function btcInit() {
   new ResizeObserver(() => {
     try { btcEqChart.applyOptions({ width: el.clientWidth }); } catch (e) {}
   }).observe(el);
+  btcLoadDates();
+}
+
+/* Offer today for live viewing, but DEFAULT to the newest day that actually HAS
+   data — same rule as the DN tab. On a fresh morning today's files may not exist
+   yet, and opening on an empty view makes the previous session look lost. */
+async function btcLoadDates() {
+  try {
+    const d = await (await fetch('/api/btc/dates', { cache: 'no-store' })).json();
+    const withData = (d.days || []).map(x => x.date);
+    const meta = {};
+    (d.days || []).forEach(x => { meta[x.date] = x; });
+    const today = d.today || btcToday();
+    const opts = withData.includes(today) ? withData : [today, ...withData];
+    const sel = document.getElementById('btc-date');
+    if (!sel) return;
+    const keep = sel.value;
+    sel.innerHTML = opts.map(x => {
+      const m = meta[x];
+      const tag = (x === today) ? ' · live'
+        : (m ? ` · ${m.cycles} cyc ${m.pnl >= 0 ? '+' : ''}$${Number(m.pnl).toFixed(2)}` : ' · no data');
+      return `<option value="${x}">${x}${tag}</option>`;
+    }).join('');
+    sel.value = opts.includes(keep) ? keep : (withData[0] || today);
+    btcDate = sel.value;
+  } catch (e) { btcDate = btcDate || btcToday(); }
+}
+
+function btcOnDateChange() {
+  const sel = document.getElementById('btc-date');
+  btcDate = sel ? sel.value : btcToday();
+  // A past day is frozen: stop the 1s ticker so it cannot overwrite the
+  // historical numbers with live ones, and restart it when today is selected.
+  btcStopPoll();
+  btcStartPoll();
 }
 
 /* ── fast path ─────────────────────────────────────────────────────────── */
@@ -3671,31 +3717,106 @@ async function btcFetchTick() {
 
 /* ── slower path ───────────────────────────────────────────────────────── */
 async function btcFetchState() {
+  const day = btcDate || btcToday();
+  const live = btcIsToday();
   try {
-    const [sr, cr, ar, er] = await Promise.all([
-      fetch('/api/btc/state', { cache: 'no-store' }),
-      fetch('/api/btc/cycles?limit=40', { cache: 'no-store' }),
-      fetch('/api/btc/audit?limit=60', { cache: 'no-store' }),
-      fetch('/api/btc/equity', { cache: 'no-store' }),
+    const [sr, cr, ar, er, dr] = await Promise.all([
+      live ? fetch('/api/btc/state', { cache: 'no-store' }) : Promise.resolve(null),
+      fetch('/api/btc/cycles?limit=60&day=' + day, { cache: 'no-store' }),
+      fetch('/api/btc/audit?limit=200&day=' + day, { cache: 'no-store' }),
+      fetch('/api/btc/equity?day=' + day, { cache: 'no-store' }),
+      fetch('/api/btc/cycles?limit=1000', { cache: 'no-store' }),   // run-to-date totals
     ]);
-    const st = await sr.json(), cy = await cr.json(), au = await ar.json(), eq = await er.json();
+    const cy = await cr.json(), au = await ar.json(), eq = await er.json(), all = await dr.json();
 
-    if (!st.ok) {
-      document.getElementById('btc-cards').innerHTML =
-        '<div class="col-span-3 card p-6 text-center text-slate-500 text-sm">' +
-        'Engine has not published state yet. If this persists, the DeltaBTCEngine task is not running.</div>';
-      return;
+    const banner = document.getElementById('btc-hist-banner');
+    const chainCard = document.getElementById('btc-chain-card');
+    const ticker = document.getElementById('btc-spot');
+
+    if (live) {
+      const st = await sr.json();
+      if (banner) banner.style.display = 'none';
+      if (chainCard) chainCard.style.display = '';
+      if (ticker) ticker.parentElement.style.display = '';
+      if (!st.ok) {
+        document.getElementById('btc-cards').innerHTML =
+          '<div class="col-span-3 card p-6 text-center text-slate-500 text-sm">' +
+          'Engine has not published state yet. If this persists, the DeltaBTCEngine task is not running.</div>';
+      } else {
+        document.getElementById('btc-expiry').textContent = st.front_expiry || '—';
+        document.getElementById('btc-tosettle').textContent = btcHHMM(st.seconds_to_settlement);
+        btcRenderCards(st, all.totals || {});
+        btcRenderChain(st);
+      }
+    } else {
+      // Historical: the live panels are HIDDEN, not greyed. A stale spot price or
+      // an option chain from today sitting on a page headed by a past date is the
+      // kind of thing that gets misread as that day's data.
+      if (ticker) ticker.parentElement.style.display = 'none';
+      if (chainCard) chainCard.style.display = 'none';
+      document.getElementById('btc-expiry').textContent = '—';
+      document.getElementById('btc-tosettle').textContent = '—';
+      const feedEl = document.getElementById('btc-feed');
+      if (feedEl) {
+        feedEl.textContent = 'HISTORICAL';
+        feedEl.className = 'px-2 py-1 rounded text-[10px] font-semibold bg-slate-800 text-slate-400';
+      }
+      const dl = document.getElementById('btc-spot-delta');
+      if (dl) dl.textContent = '';
+      if (banner) {
+        banner.style.display = '';
+        banner.innerHTML = 'Viewing <span class="text-slate-100 font-semibold">' + day +
+          '</span> — a completed day. Live ticker and option chain are hidden; ' +
+          'the equity curve, events and cycles below are that day\'s.';
+      }
+      btcRenderHistCards(cy.cycles || [], cy.totals || {}, all.totals || {});
     }
 
-    document.getElementById('btc-expiry').textContent = st.front_expiry || '—';
-    document.getElementById('btc-tosettle').textContent = btcHHMM(st.seconds_to_settlement);
-
-    btcRenderCards(st, cy.totals || {});
-    btcRenderChain(st);
     btcRenderLog(au.events || []);
     btcRenderCycles(cy.cycles || []);
     btcRenderEquity(eq.equity || {});
-  } catch (e) { /* ignore */ }
+  } catch (e) { /* a failed refresh is the next refresh's problem */ }
+}
+
+/* One card per profile for a past day, built from that day's completed cycles.
+   Deliberately shows the DAY's result next to the RUN's total, because a single
+   day means very little on its own and putting them side by side is what stops a
+   good or bad day being read as the answer. */
+function btcRenderHistCards(cycles, dayTotals, runTotals) {
+  const wrap = document.getElementById('btc-cards');
+  if (!wrap) return;
+  wrap.innerHTML = Object.keys(BTC_META).map(k => {
+    const m = BTC_META[k];
+    const mine = cycles.filter(c => c.profile === k);
+    const d = dayTotals[k] || { cycles: 0, total: 0, fees: 0, wins: 0, late_start: 0 };
+    const r = runTotals[k] || { cycles: 0, total: 0 };
+    const legs = mine.reduce((a, c) => a + (c.legs || 0), 0);
+    const adj = mine.reduce((a, c) => a + (c.adjustments || 0), 0);
+    const stop = mine.reduce((a, c) => a + (c.stopped_legs || 0), 0);
+    const rows = mine.length
+      ? mine.map(c => '<div class="flex items-center justify-between py-1 border-t border-slate-800/60 text-[11px]">' +
+          '<span class="text-slate-500">' + (c.first_entry ? c.first_entry.slice(11) : '—') +
+          ' · ' + (c.hours_held != null ? c.hours_held.toFixed(1) + 'h' : '—') + '</span>' +
+          '<span class="' + btcCls(c.realized) + ' tabular-nums">' + btcMoney(c.realized) +
+          (c.late_start ? ' <span class="text-amber-500 text-[9px]">late</span>' : '') + '</span></div>').join('')
+      : '<div class="text-[11px] text-slate-600 py-1 border-t border-slate-800/60">no cycle started this day</div>';
+    return '<div class="card p-4" style="border-top:2px solid ' + m.color + '">' +
+      '<div class="flex items-start justify-between mb-2">' +
+        '<div><div class="text-sm font-semibold text-slate-200">' + m.label + '</div>' +
+        '<div class="text-[10px] text-slate-500">' + m.sub + '</div></div>' +
+        '<span class="px-2 py-0.5 rounded text-[9px] font-semibold bg-slate-800 text-slate-400">CLOSED</span>' +
+      '</div>' +
+      '<div class="flex items-end justify-between mb-2">' +
+        '<div><div class="text-[10px] uppercase text-slate-500">this day</div>' +
+        '<div class="text-xl font-bold tabular-nums ' + btcCls(d.total) + '">' + btcMoney(d.total) + '</div></div>' +
+        '<div class="text-right"><div class="text-[10px] uppercase text-slate-500">run to date · ' + (r.cycles || 0) + ' cyc</div>' +
+        '<div class="text-sm font-semibold tabular-nums ' + btcCls(r.total) + '">' + btcMoney(r.total) + '</div></div>' +
+      '</div>' + rows +
+      '<div class="flex justify-between text-[10px] text-slate-600 mt-2 pt-2 border-t border-slate-800/60">' +
+        '<span>' + legs + ' legs · ' + adj + ' adj · ' + stop + ' stopped</span>' +
+        '<span>fees $' + Number(d.fees || 0).toFixed(2) + '</span>' +
+      '</div></div>';
+  }).join('');
 }
 
 function btcRenderCards(st, totals) {
@@ -3891,9 +4012,17 @@ function btcRenderEquity(eq) {
 
 function btcStartPoll() {
   btcStopPoll();
-  btcFetchTick(); btcFetchState();
-  btcTickTimer = setInterval(btcFetchTick, 1000);
-  btcStateTimer = setInterval(btcFetchState, 5000);
+  btcFetchState();
+  // The 1s ticker exists to move a live price. On a past day there is nothing to
+  // move, and letting it run would paint today's spot and MTM over a historical
+  // page — so it simply does not start.
+  if (btcIsToday()) {
+    btcFetchTick();
+    btcTickTimer = setInterval(btcFetchTick, 1000);
+    btcStateTimer = setInterval(btcFetchState, 5000);
+  } else {
+    btcStateTimer = setInterval(btcFetchState, 30000);
+  }
 }
 function btcStopPoll() {
   if (btcTickTimer) { clearInterval(btcTickTimer); btcTickTimer = null; }
