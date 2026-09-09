@@ -97,6 +97,15 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+# BTC delta-neutral (Delta Exchange India, PAPER). Read-only: it serves files a
+# separate engine process publishes, so a failure here cannot touch the paper run,
+# and a failure in the paper run cannot stop the dashboard from starting.
+try:
+    from deployment.btc_api import router as _btc_router
+    app.include_router(_btc_router)
+except Exception as _e:                                    # pragma: no cover
+    print(f"[btc] router NOT loaded: {type(_e).__name__}: {_e}", flush=True)
+
 # ── tiny thread-safe TTL cache ───────────────────────────────────────────────
 # The pair-signal compute is ~0.5-3s. Running it on the event loop froze EVERY request
 # (a 16-byte /api/version took 2.3s). We (a) run it in a thread so it never blocks the loop

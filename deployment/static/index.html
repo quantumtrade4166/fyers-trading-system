@@ -176,6 +176,9 @@
     <button class="tab-btn" id="tab-deltaneutral" onclick="switchTab('deltaneutral')">
       ⚖️ Delta Neutral
     </button>
+    <button class="tab-btn" id="tab-btc" onclick="switchTab('btc')">
+      ₿ BTC Delta Neutral
+    </button>
     <button class="tab-btn" id="tab-terminal" onclick="switchTab('terminal')">
       💼 Terminal
     </button>
@@ -780,6 +783,118 @@
     </div><!-- /dn-termview -->
   </div>
 
+  <!-- ══════════════════════════════════════════════════════════
+       TAB 7 — BTC Delta Neutral (Delta Exchange India, PAPER)
+
+       Three session profiles racing on one chain feed. BTC never closes, so
+       "when is a trading day" is a choice rather than something the exchange
+       decides — this tab is how that month-long experiment is watched.
+  ══════════════════════════════════════════════════════════ -->
+  <div id="page-btc" style="display:none">
+
+    <!-- header: spot ticker + feed health + paper banner -->
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+      <div class="flex items-baseline gap-4">
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-slate-500">BTC spot</div>
+          <div id="btc-spot" class="text-3xl font-bold tabular-nums text-slate-100">—</div>
+        </div>
+        <div id="btc-spot-delta" class="text-sm tabular-nums text-slate-500"></div>
+        <div class="text-xs text-slate-500">
+          <div>expiry <span id="btc-expiry" class="text-slate-300">—</span></div>
+          <div>settles in <span id="btc-tosettle" class="text-slate-300">—</span></div>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="btc-feed" class="px-2 py-1 rounded text-[10px] font-semibold bg-slate-800 text-slate-400">FEED —</span>
+        <span class="px-2 py-1 rounded text-[10px] font-semibold bg-amber-900/40 text-amber-300 border border-amber-700/40">
+          PAPER — no account, no orders
+        </span>
+      </div>
+    </div>
+
+    <!-- the three books -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-5" id="btc-cards"></div>
+
+    <!-- equity curve -->
+    <div class="card p-4 mb-5">
+      <div class="flex items-center justify-between mb-2">
+        <div>
+          <div class="text-sm font-semibold text-slate-200">Today's equity — all three</div>
+          <div class="text-[10px] text-slate-500">mark-to-market, net of fees, sampled once a minute</div>
+        </div>
+        <div class="flex gap-3 text-[10px]">
+          <span class="flex items-center gap-1"><span style="width:10px;height:2px;background:#38bdf8;display:inline-block"></span>A ist_day</span>
+          <span class="flex items-center gap-1"><span style="width:10px;height:2px;background:#a78bfa;display:inline-block"></span>B full_cycle</span>
+          <span class="flex items-center gap-1"><span style="width:10px;height:2px;background:#34d399;display:inline-block"></span>C continuous</span>
+        </div>
+      </div>
+      <div id="btc-equity-chart" style="height:260px"></div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+      <!-- option chain -->
+      <div class="card p-4">
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-sm font-semibold text-slate-200">Option chain</div>
+          <div class="text-[10px] text-slate-500">
+            ATM highlighted · <span class="text-amber-400">amber = we are short</span>
+          </div>
+        </div>
+        <div style="max-height:420px;overflow-y:auto" class="dn-scroll">
+          <table class="w-full text-xs tabular-nums">
+            <thead class="sticky top-0 bg-slate-900/95 text-[10px] uppercase text-slate-500">
+              <tr>
+                <th class="text-right py-1 px-2">CE bid</th>
+                <th class="text-right py-1 px-2">CE mark</th>
+                <th class="text-center py-1 px-2">Strike</th>
+                <th class="text-right py-1 px-2">PE mark</th>
+                <th class="text-right py-1 px-2">PE bid</th>
+              </tr>
+            </thead>
+            <tbody id="btc-chain-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- event log -->
+      <div class="card p-4">
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-sm font-semibold text-slate-200">Today's events</div>
+          <span class="text-[10px] text-slate-600">every decision, with timestamp</span>
+        </div>
+        <div id="btc-log" style="max-height:420px;overflow-y:auto"
+             class="dn-scroll text-xs space-y-1"></div>
+      </div>
+    </div>
+
+    <!-- completed cycles -->
+    <div class="card p-4 mt-5">
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-sm font-semibold text-slate-200">Completed cycles</div>
+        <span class="text-[10px] text-slate-600">late-start cycles excluded from the totals above</span>
+      </div>
+      <div style="max-height:300px;overflow-y:auto" class="dn-scroll">
+        <table class="w-full text-xs tabular-nums">
+          <thead class="sticky top-0 bg-slate-900/95 text-[10px] uppercase text-slate-500">
+            <tr>
+              <th class="text-left py-1 px-2">Profile</th>
+              <th class="text-left py-1 px-2">Entered</th>
+              <th class="text-right py-1 px-2">Held</th>
+              <th class="text-right py-1 px-2">Legs</th>
+              <th class="text-right py-1 px-2">Adj</th>
+              <th class="text-right py-1 px-2">Stopped</th>
+              <th class="text-right py-1 px-2">Fees</th>
+              <th class="text-right py-1 px-2">P&amp;L</th>
+              <th class="text-left py-1 px-2">Note</th>
+            </tr>
+          </thead>
+          <tbody id="btc-cycles-body"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
   <div id="page-terminal" style="display:none">
 
     <!-- top action row -->
@@ -875,7 +990,8 @@ let _activeTab = 'statarb';
 function switchTab(tab) {
   _activeTab = tab;
   if (tab === 'deltaneutral') { dnInit(); dnStartPoll(); } else { dnStopPoll(); }
-  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'terminal'].forEach(t => {
+  if (tab === 'btc') { btcInit(); btcStartPoll(); } else { btcStopPoll(); }
+  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'terminal'].forEach(t => {
     const pg = document.getElementById('page-' + t);
     if (pg) pg.style.display = (t === tab) ? '' : 'none';
     const btn = document.getElementById('tab-' + t);
@@ -3432,6 +3548,310 @@ function renderTerminal(d) {
 initCharts();
 fetchAll();
 connectWS();
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BTC Delta Neutral (Delta Exchange India) — PAPER
+
+   Two poll rates on purpose:
+     tick   ~1s   spot + live P&L. Small file, so this can be fast.
+     state  ~5s   books, chain, session. Bigger, and none of it moves per tick.
+
+   Re-sending the option chain once a second to move a price would be waste on
+   every refresh; making the ticker wait for the chain is what makes a screen
+   feel dead. Everything degrades to a visible "stale" rather than silently
+   showing an old number as though it were current.
+   ══════════════════════════════════════════════════════════════════════════ */
+let btcTickTimer = null, btcStateTimer = null;
+let btcEqChart = null, btcEqSeries = {};
+let btcLastSpot = null, btcDayOpen = null;
+
+const BTC_META = {
+  ist_day:    { label: 'A · ist_day',    sub: '09:30→17:10 IST · same-day expiry',  color: '#38bdf8' },
+  full_cycle: { label: 'B · full_cycle', sub: '17:35→17:10 · one per expiry',       color: '#a78bfa' },
+  continuous: { label: 'C · continuous', sub: '17:35→17:10 · re-enters',            color: '#34d399' },
+};
+
+function btcMoney(v, dp) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  const d = (dp === undefined) ? 2 : dp;
+  return (v >= 0 ? '+' : '') + '$' + Number(v).toFixed(d);
+}
+function btcCls(v) {
+  if (v === null || v === undefined || isNaN(v) || Math.abs(v) < 1e-9) return 'text-slate-400';
+  return v > 0 ? 'text-emerald-400' : 'text-rose-400';
+}
+function btcHHMM(sec) {
+  if (sec === null || sec === undefined) return '—';
+  if (sec < 0) return 'settled';
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  return h > 0 ? (h + 'h ' + m + 'm') : (m + 'm');
+}
+
+function btcInit() {
+  if (btcEqChart) return;
+  const el = document.getElementById('btc-equity-chart');
+  if (!el || !window.LightweightCharts) return;
+  btcEqChart = LightweightCharts.createChart(el, {
+    layout: { background: { color: 'transparent' }, textColor: '#64748b', fontSize: 10 },
+    grid: { vertLines: { color: 'rgba(148,163,184,0.06)' }, horzLines: { color: 'rgba(148,163,184,0.06)' } },
+    rightPriceScale: { borderColor: 'rgba(148,163,184,0.15)' },
+    timeScale: { borderColor: 'rgba(148,163,184,0.15)', timeVisible: true, secondsVisible: false },
+    crosshair: { mode: 0 },
+    height: 260,
+  });
+  Object.keys(BTC_META).forEach(k => {
+    btcEqSeries[k] = btcEqChart.addLineSeries({
+      color: BTC_META[k].color, lineWidth: 2, priceLineVisible: false,
+      // No last-value label: three flat series all sitting on $0.00 stack their
+      // labels on top of each other and the chart reads as broken. The coloured
+      // legend above the chart already says which line is which.
+      lastValueVisible: false,
+    });
+  });
+  new ResizeObserver(() => {
+    try { btcEqChart.applyOptions({ width: el.clientWidth }); } catch (e) {}
+  }).observe(el);
+}
+
+/* ── fast path ─────────────────────────────────────────────────────────── */
+async function btcFetchTick() {
+  try {
+    const r = await fetch('/api/btc/tick', { cache: 'no-store' });
+    const d = await r.json();
+    const spotEl = document.getElementById('btc-spot');
+    const feedEl = document.getElementById('btc-feed');
+
+    if (!d.ok || d.stale) {
+      if (feedEl) {
+        feedEl.textContent = 'FEED DOWN';
+        feedEl.className = 'px-2 py-1 rounded text-[10px] font-semibold bg-rose-900/40 text-rose-300 border border-rose-700/40';
+      }
+      if (spotEl) spotEl.classList.add('opacity-40');
+      return;
+    }
+    if (spotEl) spotEl.classList.remove('opacity-40');
+    if (feedEl) {
+      const live = d.live;
+      feedEl.textContent = live ? 'FEED LIVE' : 'FEED REST';
+      feedEl.className = 'px-2 py-1 rounded text-[10px] font-semibold ' + (live
+        ? 'bg-emerald-900/40 text-emerald-300 border border-emerald-700/40'
+        : 'bg-amber-900/40 text-amber-300 border border-amber-700/40');
+    }
+
+    if (d.spot != null && spotEl) {
+      if (btcDayOpen === null) btcDayOpen = d.spot;
+      spotEl.textContent = Number(d.spot).toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+      if (btcLastSpot !== null && d.spot !== btcLastSpot) {
+        spotEl.style.color = d.spot > btcLastSpot ? '#34d399' : '#fb7185';
+        setTimeout(() => { spotEl.style.color = ''; }, 350);
+      }
+      btcLastSpot = d.spot;
+      const dl = document.getElementById('btc-spot-delta');
+      if (dl && btcDayOpen) {
+        const ch = d.spot - btcDayOpen, pc = (ch / btcDayOpen) * 100;
+        dl.textContent = (ch >= 0 ? '+' : '') + ch.toFixed(1) + '  (' + (ch >= 0 ? '+' : '') + pc.toFixed(2) + '%)';
+        dl.className = 'text-sm tabular-nums ' + btcCls(ch);
+      }
+    }
+
+    // live MTM straight onto the cards, without waiting for /state
+    if (d.mtm) {
+      Object.keys(d.mtm).forEach(k => {
+        const el = document.getElementById('btc-mtm-' + k);
+        if (el) { el.textContent = btcMoney(d.mtm[k]); el.className = 'text-xl font-bold tabular-nums ' + btcCls(d.mtm[k]); }
+      });
+    }
+    (d.legs || []).forEach(leg => {
+      const el = document.getElementById('btc-legmark-' + leg.profile + '-' + leg.side);
+      if (el && leg.mark != null) el.textContent = Number(leg.mark).toFixed(1);
+    });
+  } catch (e) { /* a failed poll is the next poll's problem */ }
+}
+
+/* ── slower path ───────────────────────────────────────────────────────── */
+async function btcFetchState() {
+  try {
+    const [sr, cr, ar, er] = await Promise.all([
+      fetch('/api/btc/state', { cache: 'no-store' }),
+      fetch('/api/btc/cycles?limit=40', { cache: 'no-store' }),
+      fetch('/api/btc/audit?limit=60', { cache: 'no-store' }),
+      fetch('/api/btc/equity', { cache: 'no-store' }),
+    ]);
+    const st = await sr.json(), cy = await cr.json(), au = await ar.json(), eq = await er.json();
+
+    if (!st.ok) {
+      document.getElementById('btc-cards').innerHTML =
+        '<div class="col-span-3 card p-6 text-center text-slate-500 text-sm">' +
+        'Engine has not published state yet. If this persists, the DeltaBTCEngine task is not running.</div>';
+      return;
+    }
+
+    document.getElementById('btc-expiry').textContent = st.front_expiry || '—';
+    document.getElementById('btc-tosettle').textContent = btcHHMM(st.seconds_to_settlement);
+
+    btcRenderCards(st, cy.totals || {});
+    btcRenderChain(st);
+    btcRenderLog(au.events || []);
+    btcRenderCycles(cy.cycles || []);
+    btcRenderEquity(eq.equity || {});
+  } catch (e) { /* ignore */ }
+}
+
+function btcRenderCards(st, totals) {
+  const wrap = document.getElementById('btc-cards');
+  if (!wrap) return;
+  wrap.innerHTML = Object.keys(BTC_META).map(k => {
+    const p = (st.profiles || {})[k] || {};
+    const m = BTC_META[k];
+    const tot = totals[k] || {};
+    const pos = p.position || {};
+    const legRow = (leg, side) => {
+      if (!leg) return '<div class="text-[11px] text-slate-600 py-1">' + side + ' — flat</div>';
+      const pnl = leg.pnl;
+      return '<div class="flex items-center justify-between py-1 border-t border-slate-800/60">' +
+        '<div class="text-[11px]"><span class="text-slate-400">' + side + '</span> ' +
+        '<span class="text-slate-200 font-semibold">' + Number(leg.strike).toFixed(0) + '</span>' +
+        '<span class="text-slate-600"> @' + (leg.entry_price != null ? Number(leg.entry_price).toFixed(1) : '—') + '</span></div>' +
+        '<div class="text-[11px] tabular-nums flex items-center gap-2">' +
+        '<span class="text-slate-500">mark <span id="btc-legmark-' + k + '-' + side + '" class="text-slate-300">' +
+        (leg.mark != null ? Number(leg.mark).toFixed(1) : '—') + '</span></span>' +
+        '<span class="text-slate-600">sl ' + (leg.sl_trigger != null ? Number(leg.sl_trigger).toFixed(0) : '—') + '</span>' +
+        '<span class="' + btcCls(pnl) + '">' + btcMoney(pnl) + '</span></div></div>';
+    };
+    let status, statusCls;
+    if (!p.in_session)      { status = 'OUT OF SESSION'; statusCls = 'bg-slate-800 text-slate-500'; }
+    else if (p.killed)      { status = 'ENDED — ' + (p.kill_reason || ''); statusCls = 'bg-rose-900/40 text-rose-300'; }
+    else if (pos.is_single) { status = 'SINGLE-LEGGED'; statusCls = 'bg-amber-900/40 text-amber-300'; }
+    else if (pos.is_complete) { status = 'SHORT STRANGLE'; statusCls = 'bg-emerald-900/40 text-emerald-300'; }
+    else                    { status = 'FLAT — waiting'; statusCls = 'bg-slate-800 text-slate-400'; }
+
+    const unprot = (pos.unprotected || []).length;
+    return '<div class="card p-4" style="border-top:2px solid ' + m.color + '">' +
+      '<div class="flex items-start justify-between mb-2">' +
+        '<div><div class="text-sm font-semibold text-slate-200">' + m.label + '</div>' +
+        '<div class="text-[10px] text-slate-500">' + m.sub + '</div></div>' +
+        '<span class="px-2 py-0.5 rounded text-[9px] font-semibold ' + statusCls + '">' + status + '</span>' +
+      '</div>' +
+      (unprot ? '<div class="text-[10px] text-rose-300 mb-1">⚠ ' + unprot + ' leg without a stop</div>' : '') +
+      '<div class="flex items-end justify-between mb-2">' +
+        '<div><div class="text-[10px] uppercase text-slate-500">live MTM</div>' +
+        '<div id="btc-mtm-' + k + '" class="text-xl font-bold tabular-nums ' + btcCls(p.mtm) + '">' + btcMoney(p.mtm) + '</div></div>' +
+        '<div class="text-right"><div class="text-[10px] uppercase text-slate-500">' + (tot.cycles || 0) + ' cycles</div>' +
+        '<div class="text-sm font-semibold tabular-nums ' + btcCls(tot.total) + '">' + btcMoney(tot.total) + '</div></div>' +
+      '</div>' +
+      legRow(pos.ce, 'CE') + legRow(pos.pe, 'PE') +
+      '<div class="flex justify-between text-[10px] text-slate-600 mt-2 pt-2 border-t border-slate-800/60">' +
+        '<span>target $' + p.target + ' · sl $' + p.sl + ' · ' + p.contracts + 'c</span>' +
+        '<span>next window ' + (p.next_window || '—') + '</span>' +
+      '</div></div>';
+  }).join('');
+}
+
+function btcRenderChain(st) {
+  const body = document.getElementById('btc-chain-body');
+  if (!body) return;
+  const sold = st.sold || {};
+  const rows = st.chain || [];
+  if (!rows.length) { body.innerHTML = '<tr><td colspan="5" class="text-center text-slate-600 py-3 text-[11px]">chain not loaded</td></tr>'; return; }
+  body.innerHTML = rows.map(r => {
+    const ceSold = sold[Number(r.strike).toFixed(0) + 'CE'];
+    const peSold = sold[Number(r.strike).toFixed(0) + 'PE'];
+    const n = v => (v == null ? '—' : Number(v).toFixed(1));
+    const cell = (v, isSold) =>
+      '<td class="text-right py-1 px-2 ' + (isSold ? 'text-amber-400 font-semibold' : 'text-slate-300') + '">' +
+      n(v) + (isSold ? ' <span class="text-[8px]">' + isSold.map(x => x[0].toUpperCase()).join('') + '</span>' : '') + '</td>';
+    return '<tr class="' + (r.is_atm ? 'bg-slate-800/50' : '') + ' border-b border-slate-800/30">' +
+      '<td class="text-right py-1 px-2 text-slate-500">' + n(r.ce_bid) + '</td>' +
+      cell(r.ce, ceSold) +
+      '<td class="text-center py-1 px-2 ' + (r.is_atm ? 'text-sky-300 font-bold' : 'text-slate-400') + '">' +
+        Number(r.strike).toFixed(0) + (r.is_atm ? ' <span class="text-[8px]">ATM</span>' : '') + '</td>' +
+      cell(r.pe, peSold) +
+      '<td class="text-right py-1 px-2 text-slate-500">' + n(r.pe_bid) + '</td></tr>';
+  }).join('');
+}
+
+const BTC_EVENT_STYLE = {
+  entry_complete:  ['●', 'text-emerald-400'],
+  leg_open:        ['↑', 'text-emerald-300'],
+  leg_closed:      ['↓', 'text-slate-300'],
+  stop_hit:        ['✕', 'text-rose-400'],
+  adjust_triggered:['⇄', 'text-sky-400'],
+  reentry:         ['↻', 'text-sky-300'],
+  window_skipped:  ['·', 'text-slate-600'],
+  window_checked:  ['·', 'text-slate-700'],
+  max_loss_hit:    ['!', 'text-rose-400'],
+  cycle_ended_early:['■', 'text-rose-300'],
+  flatten:         ['□', 'text-amber-300'],
+  cycle_closed:    ['✓', 'text-emerald-300'],
+  cycle_open:      ['◆', 'text-slate-400'],
+  entry_blocked:   ['⊘', 'text-amber-400'],
+};
+
+function btcRenderLog(events) {
+  const el = document.getElementById('btc-log');
+  if (!el) return;
+  if (!events.length) { el.innerHTML = '<div class="text-slate-600 text-[11px]">no events yet today</div>'; return; }
+  el.innerHTML = events.slice().reverse().map(e => {
+    const st = BTC_EVENT_STYLE[e.event] || ['·', 'text-slate-500'];
+    const bits = Object.keys(e).filter(k => !['ts', 'profile', 'cycle', 'event'].includes(k))
+      .map(k => k + '=' + e[k]).join(' ').slice(0, 150);
+    return '<div class="flex gap-2 items-baseline">' +
+      '<span class="text-slate-600 tabular-nums text-[10px]">' + String(e.ts || '').slice(-8) + '</span>' +
+      '<span class="' + st[1] + '">' + st[0] + '</span>' +
+      '<span class="text-slate-500 text-[10px] w-16 shrink-0">' + (e.profile || '') + '</span>' +
+      '<span class="' + st[1] + ' text-[11px]">' + e.event + '</span>' +
+      '<span class="text-slate-600 text-[10px] truncate">' + bits + '</span></div>';
+  }).join('');
+}
+
+function btcRenderCycles(rows) {
+  const body = document.getElementById('btc-cycles-body');
+  if (!body) return;
+  if (!rows.length) { body.innerHTML = '<tr><td colspan="9" class="text-center text-slate-600 py-3 text-[11px]">no completed cycles yet</td></tr>'; return; }
+  body.innerHTML = rows.map(r => {
+    const note = r.late_start ? '<span class="text-amber-500">late start — excluded</span>'
+      : (r.ended_early ? '<span class="text-rose-400">' + (r.kill_reason || 'ended early') + '</span>' : '');
+    return '<tr class="border-b border-slate-800/30">' +
+      '<td class="py-1 px-2 text-slate-300">' + r.profile + '</td>' +
+      '<td class="py-1 px-2 text-slate-500 text-[10px]">' + (r.first_entry || '—') + '</td>' +
+      '<td class="text-right py-1 px-2 text-slate-400">' + (r.hours_held != null ? r.hours_held.toFixed(1) + 'h' : '—') + '</td>' +
+      '<td class="text-right py-1 px-2 text-slate-400">' + (r.legs != null ? r.legs : '—') + '</td>' +
+      '<td class="text-right py-1 px-2 text-sky-400">' + (r.adjustments || 0) + '</td>' +
+      '<td class="text-right py-1 px-2 text-rose-400">' + (r.stopped_legs || 0) + '</td>' +
+      '<td class="text-right py-1 px-2 text-slate-500">' + (r.fees != null ? '$' + r.fees.toFixed(2) : '—') + '</td>' +
+      '<td class="text-right py-1 px-2 font-semibold ' + btcCls(r.realized) + '">' + btcMoney(r.realized) + '</td>' +
+      '<td class="py-1 px-2 text-[10px]">' + note + '</td></tr>';
+  }).join('');
+}
+
+function btcRenderEquity(eq) {
+  if (!btcEqChart) return;
+  Object.keys(BTC_META).forEach(k => {
+    const rows = eq[k] || [];
+    const seen = new Set();
+    const pts = [];
+    rows.forEach(r => {
+      // "YYYY-MM-DD HH:MM" IST -> epoch seconds. Lightweight-charts needs
+      // strictly increasing unique times, so same-minute duplicates are dropped.
+      const t = Math.floor(new Date(String(r.ts).replace(' ', 'T') + '+05:30').getTime() / 1000);
+      if (!t || seen.has(t) || isNaN(t)) return;
+      seen.add(t);
+      pts.push({ time: t, value: Number(r.mtm) + Number(r.closed_total || 0) });
+    });
+    pts.sort((a, b) => a.time - b.time);
+    try { btcEqSeries[k].setData(pts); } catch (e) {}
+  });
+}
+
+function btcStartPoll() {
+  btcStopPoll();
+  btcFetchTick(); btcFetchState();
+  btcTickTimer = setInterval(btcFetchTick, 1000);
+  btcStateTimer = setInterval(btcFetchState, 5000);
+}
+function btcStopPoll() {
+  if (btcTickTimer) { clearInterval(btcTickTimer); btcTickTimer = null; }
+  if (btcStateTimer) { clearInterval(btcStateTimer); btcStateTimer = null; }
 </script>
 </body>
 </html>
