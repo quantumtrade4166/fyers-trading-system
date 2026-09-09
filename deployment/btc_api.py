@@ -238,6 +238,69 @@ def cycles(limit: int = Query(60, ge=1, le=1000), day: str = Query(None)):
             "counted": "excludes late-start and interrupted cycles"}
 
 
+@router.get("/windows")
+def windows(day: str = Query(None), profile: str = Query(None)):
+    """The 15-minute status log: one row per adjustment window, per profile.
+
+    The audit log answers "what did it DO"; this answers "where WAS it every 15
+    minutes", which is the question you actually ask about a day you were asleep
+    for. Quiet windows are included on purpose — "nothing happened, ratio 1.3,
+    MTM +$4" is the answer most windows have, and a log that only records
+    exceptions cannot show you the strategy was watching.
+    """
+    day = day or _now_ist().date().isoformat()
+    f = LOGS / f"{day}_btc_audit.log"
+    rows, legacy = [], []
+    if f.exists():
+        try:
+            for line in f.read_text(encoding="utf-8", errors="replace").splitlines():
+                line = line.strip()
+                if not line.startswith("{"):
+                    continue
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if profile and r.get("profile") != profile:
+                    continue
+                ev = r.get("event")
+                if ev == "window_status":
+                    rows.append(r)
+                elif ev in ("window_checked", "adjust_triggered", "window_skipped"):
+                    # Days logged BEFORE window_status existed. Those events carry
+                    # the two premiums and the action but not spot, strikes or MTM,
+                    # so the row is rendered with the unknown columns blank rather
+                    # than back-filled with a guess. Marked `legacy` so the tab can
+                    # say why half the row is empty.
+                    ce, pe = r.get("ce"), r.get("pe")
+                    ratio = None
+                    if isinstance(ce, (int, float)) and isinstance(pe, (int, float)) \
+                            and min(ce, pe) > 0:
+                        ratio = round(max(ce, pe) / min(ce, pe), 2)
+                    legacy.append({
+                        "ts": r.get("ts"), "profile": r.get("profile"),
+                        "cycle": r.get("cycle"), "window": r.get("window"),
+                        "action": r.get("action") or (
+                            f"2x rule — replacing {r.get('replace')}"
+                            if ev == "adjust_triggered" else
+                            (r.get("reason") or ev)),
+                        "spot": None, "atm": None,
+                        "ce": {"strike": r.get("from_strike") if ev == "adjust_triggered" else None,
+                               "mark": ce if isinstance(ce, (int, float)) else None},
+                        "pe": {"strike": None,
+                               "mark": pe if isinstance(pe, (int, float)) else None},
+                        "ratio": ratio, "mtm": None, "legacy": True,
+                    })
+        except Exception:
+            pass
+    # Real status rows win; legacy only fills windows that have none.
+    have = {(r.get("profile"), r.get("window")) for r in rows}
+    rows += [r for r in legacy if (r.get("profile"), r.get("window")) not in have]
+    rows.sort(key=lambda r: (r.get("window") or "", r.get("profile") or ""))
+    return {"ok": True, "day": day, "windows": rows,
+            "legacy_rows": sum(1 for r in rows if r.get("legacy"))}
+
+
 @router.get("/audit")
 def audit(limit: int = Query(80, ge=1, le=500), day: str = Query(None)):
     """Today's event log, newest last — entries, adjustments, stops, square-offs.

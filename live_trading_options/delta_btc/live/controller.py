@@ -494,19 +494,52 @@ class BTCController:
                 self._log("stuck_cleared", side=side, reason=reason)
 
     # ── windows ──────────────────────────────────────────────────────────
+    def _window_status(self, key: str, action: str):
+        """One STATUS line per 15-minute window — what the book looked like, not
+        just what changed.
+
+        The event log answers "what did it do"; this answers "where was it every
+        15 minutes", which is the question you actually ask when reviewing a day
+        you were asleep for. Written for EVERY window including the quiet ones,
+        because "nothing happened and here is why" is the answer most windows
+        have, and a log that only records exceptions cannot tell you the strategy
+        was watching.
+        """
+        pos = self.position
+        def leg_bit(leg):
+            if leg is None or not leg.is_live:
+                return None
+            m = self._mark(leg)
+            return {"strike": leg.strike, "entry": leg.entry_price,
+                    "mark": round(m, 2) if m is not None else None,
+                    "sl": leg.sl_trigger,
+                    "pnl": leg.pnl(m)}
+        ce_m, pe_m = self._mark(pos.ce), self._mark(pos.pe)
+        ratio = None
+        if ce_m and pe_m and min(ce_m, pe_m) > 0:
+            ratio = round(max(ce_m, pe_m) / min(ce_m, pe_m), 2)
+        self._log("window_status", window=key, action=action,
+                  spot=getattr(self.chain_obj, "spot", None),
+                  atm=getattr(self.chain_obj, "atm", None),
+                  ce=leg_bit(pos.ce), pe=leg_bit(pos.pe),
+                  ratio=ratio, mtm=self.mtm, realized=pos.realized(),
+                  n_live=pos.n_live)
+
     def _run_window(self, key: str):
         pos = self.position
         if pos.is_complete:
             ce_m, pe_m = self._mark(pos.ce), self._mark(pos.pe)
             trig, small = needs_adjustment(ce_m, pe_m, self.ratio)
             if not trig:
-                self._log("window_checked", window=key, ce=ce_m, pe=pe_m,
-                          action="balanced — no adjustment")
+                self._window_status(key, "balanced — no adjustment")
                 return
+            self._window_status(key, f"2x rule — replacing {small}")
             self._adjust(key, small)
         elif pos.is_single:
+            self._window_status(key, f"single-legged — re-entering {pos.missing_side()}")
             self._reenter_missing(key)
         else:
+            self._window_status(key, "flat — opening a fresh strangle")
             self._fresh_entry(f"window {key} — re-open after flat")
 
     def _adjust(self, key: str, small_side: str):

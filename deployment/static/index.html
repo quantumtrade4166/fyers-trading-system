@@ -873,6 +873,42 @@
       </div>
     </div>
 
+    <!-- 15-minute status log -->
+    <div class="card p-4 mt-5">
+      <div class="flex items-center justify-between mb-2">
+        <div>
+          <div class="text-sm font-semibold text-slate-200">15-minute status log</div>
+          <div class="text-[10px] text-slate-500">
+            where the book stood at every adjustment window — quiet windows included
+          </div>
+          <div id="btc-win-note" class="text-[10px] text-amber-400 mt-0.5"></div>
+        </div>
+        <div class="flex gap-1" id="btc-win-profile-btns">
+          <button class="sca-idx-btn active" onclick="btcSetWinProfile('full_cycle')" id="btc-winp-full_cycle">B full_cycle</button>
+          <button class="sca-idx-btn" onclick="btcSetWinProfile('continuous')" id="btc-winp-continuous">C continuous</button>
+          <button class="sca-idx-btn" onclick="btcSetWinProfile('ist_day')" id="btc-winp-ist_day">A ist_day</button>
+        </div>
+      </div>
+      <div style="max-height:420px;overflow-y:auto" class="dn-scroll">
+        <table class="w-full text-xs tabular-nums">
+          <thead class="sticky top-0 bg-slate-900/95 text-[10px] uppercase text-slate-500">
+            <tr>
+              <th class="text-left py-1 px-2">Window</th>
+              <th class="text-right py-1 px-2">Spot</th>
+              <th class="text-right py-1 px-2">CE strike</th>
+              <th class="text-right py-1 px-2">CE mark</th>
+              <th class="text-right py-1 px-2">PE strike</th>
+              <th class="text-right py-1 px-2">PE mark</th>
+              <th class="text-right py-1 px-2">Ratio</th>
+              <th class="text-right py-1 px-2">MTM</th>
+              <th class="text-left py-1 px-2">Action</th>
+            </tr>
+          </thead>
+          <tbody id="btc-windows-body"></tbody>
+        </table>
+      </div>
+    </div>
+
     <!-- completed cycles -->
     <div class="card p-4 mt-5">
       <div class="flex items-center justify-between mb-2">
@@ -3720,14 +3756,16 @@ async function btcFetchState() {
   const day = btcDate || btcToday();
   const live = btcIsToday();
   try {
-    const [sr, cr, ar, er, dr] = await Promise.all([
+    const [sr, cr, ar, er, dr, wr] = await Promise.all([
       live ? fetch('/api/btc/state', { cache: 'no-store' }) : Promise.resolve(null),
       fetch('/api/btc/cycles?limit=60&day=' + day, { cache: 'no-store' }),
       fetch('/api/btc/audit?limit=200&day=' + day, { cache: 'no-store' }),
       fetch('/api/btc/equity?day=' + day, { cache: 'no-store' }),
       fetch('/api/btc/cycles?limit=1000', { cache: 'no-store' }),   // run-to-date totals
+      fetch('/api/btc/windows?day=' + day, { cache: 'no-store' }),
     ]);
-    const cy = await cr.json(), au = await ar.json(), eq = await er.json(), all = await dr.json();
+    const cy = await cr.json(), au = await ar.json(), eq = await er.json(),
+          all = await dr.json(), wi = await wr.json();
 
     const banner = document.getElementById('btc-hist-banner');
     const chainCard = document.getElementById('btc-chain-card');
@@ -3773,6 +3811,7 @@ async function btcFetchState() {
     }
 
     btcRenderLog(au.events || []);
+    btcRenderWindows(wi.windows || [], wi.legacy_rows || 0);
     btcRenderCycles(cy.cycles || []);
     btcRenderEquity(eq.equity || {});
   } catch (e) { /* a failed refresh is the next refresh's problem */ }
@@ -3923,6 +3962,59 @@ function btcRenderLog(events) {
       '<span class="text-slate-500 text-[10px] w-16 shrink-0">' + (e.profile || '') + '</span>' +
       '<span class="' + st[1] + ' text-[11px]">' + e.event + '</span>' +
       '<span class="text-slate-600 text-[10px] truncate">' + bits + '</span></div>';
+  }).join('');
+}
+
+let btcWinProfile = 'full_cycle';
+function btcSetWinProfile(p) {
+  btcWinProfile = p;
+  ['ist_day', 'full_cycle', 'continuous'].forEach(x => {
+    const b = document.getElementById('btc-winp-' + x);
+    if (b) b.classList.toggle('active', x === p);
+  });
+  btcFetchState();
+}
+
+function btcRenderWindows(rows, legacyCount) {
+  const body = document.getElementById('btc-windows-body');
+  if (!body) return;
+  const mine = rows.filter(r => r.profile === btcWinProfile);
+  const note = document.getElementById('btc-win-note');
+  if (note) {
+    const legacy = mine.filter(r => r.legacy).length;
+    // Blank cells must be explained, or they read as the strategy not knowing
+    // where it was. These days were logged before the status line existed.
+    note.textContent = legacy
+      ? `${legacy} of ${mine.length} rows predate the status log — premiums and ratio are real, spot/strikes/MTM were never recorded for them`
+      : '';
+  }
+  if (!mine.length) {
+    body.innerHTML = '<tr><td colspan="9" class="text-center text-slate-600 py-3 text-[11px]">'
+      + 'no windows recorded for this profile on this day</td></tr>';
+    return;
+  }
+  const n = (v, d = 1) => (v === null || v === undefined) ? '—' : Number(v).toFixed(d);
+  body.innerHTML = mine.slice().reverse().map(r => {
+    const ce = r.ce || {}, pe = r.pe || {};
+    // The ratio is the whole decision: >= 2.0 is what fires the rule, and the
+    // colour is there so a day can be scanned for the moments that mattered.
+    const rc = (r.ratio == null) ? 'text-slate-600'
+      : (r.ratio >= 2 ? 'text-sky-400 font-semibold'
+        : (r.ratio >= 1.6 ? 'text-amber-400' : 'text-slate-400'));
+    const act = String(r.action || '');
+    const ac = act.startsWith('balanced') ? 'text-slate-500'
+      : (act.includes('2x') ? 'text-sky-400'
+        : (act.includes('single') ? 'text-amber-400' : 'text-emerald-400'));
+    return '<tr class="border-b border-slate-800/30">' +
+      '<td class="py-1 px-2 text-slate-400">' + String(r.window || '').slice(11) + '</td>' +
+      '<td class="text-right py-1 px-2 text-slate-400">' + n(r.spot, 0) + '</td>' +
+      '<td class="text-right py-1 px-2 text-slate-300">' + n(ce.strike, 0) + '</td>' +
+      '<td class="text-right py-1 px-2 text-slate-400">' + n(ce.mark) + '</td>' +
+      '<td class="text-right py-1 px-2 text-slate-300">' + n(pe.strike, 0) + '</td>' +
+      '<td class="text-right py-1 px-2 text-slate-400">' + n(pe.mark) + '</td>' +
+      '<td class="text-right py-1 px-2 ' + rc + '">' + n(r.ratio, 2) + '</td>' +
+      '<td class="text-right py-1 px-2 ' + btcCls(r.mtm) + '">' + btcMoney(r.mtm) + '</td>' +
+      '<td class="py-1 px-2 ' + ac + ' text-[10px]">' + act + '</td></tr>';
   }).join('');
 }
 
