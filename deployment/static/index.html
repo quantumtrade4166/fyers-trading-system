@@ -822,6 +822,7 @@
         <div>
           <div class="text-sm font-semibold text-slate-200">Today's equity — all three</div>
           <div class="text-[10px] text-slate-500">mark-to-market, net of fees, sampled once a minute</div>
+          <div id="btc-gaps" class="text-[10px] text-amber-400 mt-0.5"></div>
         </div>
         <div class="flex gap-3 text-[10px]">
           <span class="flex items-center gap-1"><span style="width:10px;height:2px;background:#38bdf8;display:inline-block"></span>A ist_day</span>
@@ -3826,21 +3827,66 @@ function btcRenderCycles(rows) {
 
 function btcRenderEquity(eq) {
   if (!btcEqChart) return;
+  // Gaps are DATA INTEGRITY, not cosmetics: a hole means the engine was not
+  // running, so the curve either side of it is not one continuous session. Say so
+  // in words as well as drawing the break, because a reader looking at a shape
+  // should not have to notice a missing segment to know the run stopped.
+  let gapMins = 0, gapList = [];
   Object.keys(BTC_META).forEach(k => {
     const rows = eq[k] || [];
     const seen = new Set();
     const pts = [];
     rows.forEach(r => {
-      // "YYYY-MM-DD HH:MM" IST -> epoch seconds. Lightweight-charts needs
-      // strictly increasing unique times, so same-minute duplicates are dropped.
-      const t = Math.floor(new Date(String(r.ts).replace(' ', 'T') + '+05:30').getTime() / 1000);
+      // "YYYY-MM-DD HH:MM" IST -> epoch seconds, then SHIFTED +5:30.
+      // lightweight-charts renders its axis in UTC with no timezone option, so
+      // true epochs label the 05:33 IST peak as 00:03 — every other time on this
+      // tab is IST, and an axis quietly 5.5h off is worse than no axis. Adding the
+      // offset makes the UTC-rendered labels read as IST. The value is only ever
+      // used for display and ordering, never for arithmetic against real time.
+      const t = Math.floor(new Date(String(r.ts).replace(' ', 'T') + '+05:30').getTime() / 1000) + 19800;
       if (!t || seen.has(t) || isNaN(t)) return;
       seen.add(t);
       pts.push({ time: t, value: Number(r.mtm) + Number(r.closed_total || 0) });
     });
     pts.sort((a, b) => a.time - b.time);
-    try { btcEqSeries[k].setData(pts); } catch (e) {}
+    // BREAK THE LINE ACROSS GAPS. The engine samples once a minute, so a jump of
+    // more than a few minutes means it was NOT RUNNING, not that P&L moved in a
+    // straight line. On 2026-09-09 a 9.2h hole (09:09-18:20, the taskkill) was
+    // drawn as one diagonal segment: it compressed the axis and slid the 05:33
+    // peak of +$20.68 to where 15:00 appeared to be, so the curve showed a
+    // profit at a time with no data behind it. A whitespace point ({time} with
+    // no value) splits the series so a hole looks like a hole.
+    const withGaps = [];
+    for (let i = 0; i < pts.length; i++) {
+      if (i > 0 && (pts[i].time - pts[i - 1].time) > 240) {
+        withGaps.push({ time: pts[i - 1].time + 60 });
+      }
+      withGaps.push(pts[i]);
+    }
+    try { btcEqSeries[k].setData(withGaps); } catch (e) {}
+
+    if (k === 'full_cycle') {                 // one profile is enough to measure
+      for (let i = 1; i < pts.length; i++) {
+        const d = pts[i].time - pts[i - 1].time;
+        if (d > 240) {
+          gapMins += Math.round(d / 60);
+          // undo the +5:30 display shift, then format in IST
+          const f = t => new Date((t - 19800) * 1000).toLocaleTimeString('en-GB',
+            { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
+          gapList.push(f(pts[i - 1].time) + '–' + f(pts[i].time));
+        }
+      }
+    }
   });
+  const gEl = document.getElementById('btc-gaps');
+  if (gEl) {
+    gEl.textContent = gapMins
+      ? ('⚠ engine not running for ' + (gapMins >= 60
+          ? (gapMins / 60).toFixed(1) + 'h' : gapMins + 'm')
+         + ' today (' + gapList.join(', ') + ') — the curve is broken across it, '
+         + 'no P&L existed in that window')
+      : '';
+  }
 }
 
 function btcStartPoll() {

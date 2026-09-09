@@ -654,9 +654,19 @@ class BTCController:
     # ── output ───────────────────────────────────────────────────────────
     def _record_equity(self, now: dt.datetime):
         """Sample MTM once a minute — enough to draw a month-long curve without
-        writing a line every five seconds."""
+        writing a line every five seconds.
+
+        A sample is SKIPPED while we hold legs we cannot price. This runs before
+        the chain-ready check, so on a restart the first sample would otherwise be
+        written with no marks — booking a live position at 0.00 and putting a
+        false vertical drop on the equity curve at exactly the moment the engine
+        came back. Better a one-minute hole than a fabricated number.
+        """
         stamp = now.strftime("%Y-%m-%d %H:%M")
         if stamp == self._last_equity_min:
+            return
+        live = self.position.live_legs()
+        if live and any(self._mark(l) is None for l in live):
             return
         self._last_equity_min = stamp
         if self.cycle is None and self.position.is_flat and not self.cycles_done:
