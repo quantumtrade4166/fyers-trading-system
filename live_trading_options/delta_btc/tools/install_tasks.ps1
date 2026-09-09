@@ -87,6 +87,25 @@ foreach ($t in $tasks) {
     $atBoot = New-ScheduledTaskTrigger -AtStartup
     $atLogon = New-ScheduledTaskTrigger -AtLogOn
 
+    # THE KEEP-ALIVE TRIGGER — the one that actually matters.
+    #
+    # On 2026-09-09 both processes were killed at 09:09 after running cleanly for
+    # 11 hours. Not a crash and not a reboot: exit code 0xC000013A
+    # (STATUS_CONTROL_C_EXIT). `restart_server.bat` runs
+    # `taskkill /F /IM python.exe /T` — every python process on the box — and
+    # DashboardWatchdog calls it whenever the dashboard looks unhealthy.
+    #
+    # `-RestartCount` did NOT bring them back, because that setting covers a task
+    # that fails to START, not a process that is killed after starting. So the
+    # tasks sat Ready and the run was dead for nine hours.
+    #
+    # A repeating trigger is the fix. Every 5 minutes Task Scheduler tries to run
+    # the task; `-MultipleInstances IgnoreNew` means that is a no-op while the
+    # process is alive, and a restart within 5 minutes when it is not. It costs
+    # nothing when healthy and needs no cooperation from whatever did the killing.
+    $keepAlive = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) `
+        -RepetitionInterval (New-TimeSpan -Minutes 5)
+
     # ExecutionTimeLimit 0 = run forever. The default is 3 days, which would have
     # killed a 30-day paper run three-quarters of the way through with no error.
     $settings = New-ScheduledTaskSettingsSet `
@@ -96,7 +115,7 @@ foreach ($t in $tasks) {
         -MultipleInstances IgnoreNew
 
     Register-ScheduledTask -TaskName $t.Name -Action $action `
-        -Trigger @($atBoot, $atLogon) -Settings $settings `
+        -Trigger @($atBoot, $atLogon, $keepAlive) -Settings $settings `
         -Description $t.Desc -RunLevel Highest -Force | Out-Null
 
     Start-ScheduledTask -TaskName $t.Name
