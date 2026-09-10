@@ -128,6 +128,86 @@ def marketable_limit(mark: float, side: str, buf: float = _MKT_BUF) -> float:
     return _round_tick(ref * (1 - buf) if is_sell else ref * (1 + buf))
 
 
+# ── depth-derived marketable price (reads the real book, like kite_executor) ──
+# The blind mark*(1±buf) above walked past the exchange LPP band on aggressive retries and
+# got rejected (2026-09-10 SENSEX PE: price 5.35 < LOW LPP 35.80). Pricing off the actual
+# order book instead lands the order at bid/ask ± a tick — always fillable, always in-band.
+def _f(x):
+    try:
+        return float(x)
+    except (TypeError, ValueError):
+        return None
+
+
+def quote_book(client, token, exchange_segment: str) -> dict | None:
+    """Top-of-book + 5-level depth + LPP band for one contract, or None if unreadable.
+    Uses Kotak quotes(quote_type='all'): rows carry depth.{buy,sell}=[{price,quantity}] and
+    low_price_range/high_price_range (the circuit band). Never raises — caller must fall back."""
+    if not token:
+        return None
+    inst = [{"instrument_token": str(token), "exchange_segment": exchange_segment}]
+    try:
+        r = client.quotes(instrument_tokens=inst, quote_type="all")
+    except Exception:
+        return None
+    if not isinstance(r, list) or not r or not isinstance(r[0], dict):
+        return None
+    row = r[0]
+    d = row.get("depth") or {}
+    buy = [{"price": _f(l.get("price")), "quantity": int(_f(l.get("quantity")) or 0)}
+           for l in (d.get("buy") or []) if _f(l.get("price"))]
+    sell = [{"price": _f(l.get("price")), "quantity": int(_f(l.get("quantity")) or 0)}
+            for l in (d.get("sell") or []) if _f(l.get("price"))]
+    if not buy and not sell and _f(row.get("ltp")) is None:
+        return None
+    return {"bid": buy[0]["price"] if buy else None, "ask": sell[0]["price"] if sell else None,
+            "ltp": _f(row.get("ltp")), "low_lpp": _f(row.get("low_price_range")),
+            "high_lpp": _f(row.get("high_price_range")), "buy": buy, "sell": sell}
+
+
+def sweep_price(levels: list, qty: int, side: str, cushion_ticks: int = 2,
+                tick: float = _TICK):
+    """The price that actually clears `qty` against `levels`, plus a cushion. Walks the real
+    book instead of guessing. For a BUY pass the SELL levels (lift offers); for a SELL pass the
+    BUY levels (hit bids). Beyond the 5 visible levels the deepest price is used. None if empty."""
+    if not levels:
+        return None
+    need, last = qty, None
+    for lvl in levels:
+        px = lvl.get("price")
+        if not px:
+            continue
+        last = px
+        need -= (lvl.get("quantity") or 0)
+        if need <= 0:
+            break
+    if last is None:
+        return None
+    cushion = max(0, cushion_ticks) * tick
+    return _round_tick(last + cushion if _txn_code(side) == BUY else last - cushion)
+
+
+def marketable_price(client, token, exchange_segment: str, side: str, qty: int,
+                     fallback: float = None, cushion_ticks: int = 2):
+    """Depth-derived marketable limit for `qty`, clamped INSIDE the LPP band, falling back to
+    `fallback` (the mark-based estimate) when the book can't be read. Mirrors
+    kite_executor.marketable_price. This is what a (re)try should send: it clears the visible
+    size at a real level, so it fills without ever breaching the exchange price band."""
+    book = quote_book(client, token, exchange_segment)
+    if not book:
+        return fallback
+    is_sell = _txn_code(side) == SELL
+    px = sweep_price(book["buy"] if is_sell else book["sell"], qty, side, cushion_ticks)
+    if not (px and px > 0):
+        return fallback
+    lo, hi = book.get("low_lpp"), book.get("high_lpp")     # never send a price outside the band
+    if is_sell and lo:
+        px = max(px, lo)
+    if (not is_sell) and hi:
+        px = min(px, hi)
+    return _round_tick(px)
+
+
 # ── order id / status parsing (defensive across Kotak's key spellings) ──
 _OID_KEYS = ("nOrdNo", "orderId", "order_id", "OrderNumber", "orderNumber", "ordNo")
 

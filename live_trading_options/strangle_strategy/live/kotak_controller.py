@@ -428,12 +428,12 @@ class KotakController:
         ks = self.kotak_syms.get(sym)
         if not (self.kotak and ks):
             raise RuntimeError(f"no Kotak client/contract for {sym}")
-        price = ke.marketable_limit(self.marks.get(sym), side)
+        price = self._leg_price(sym, side, qty, self._RETRY_BUFS[0])
         oid = ke.place_limit(self.kotak, ks["trading_symbol"], ks["exchange_segment"],
                              side, qty, price, tag=TAG)
         self.ledger.record(Order(oid, sym, side, qty, cycle, kind))
         audit.log(self.index, "KOTAK_ORDER_PLACED", cyc=cycle, side=side,
-                  sym=ks["trading_symbol"], qty=qty, oid=oid)
+                  sym=ks["trading_symbol"], qty=qty, oid=oid, limit=price)
         fill, ft = self._poll_fill(oid, seconds=5.0)
         if fill is not None:
             ft = ft or dt.datetime.now().strftime("%H:%M:%S")
@@ -483,15 +483,26 @@ class KotakController:
         return None, None
 
     # ── two-leg live entry: fire BOTH shorts together, retry a laggard, cancel unfilled ──
+    def _leg_price(self, sym, side, qty, buf):
+        """Marketable price for one leg, read FRESH off Kotak's live order book (depth) each call
+        and clamped inside the LPP band — so a retry re-prices off the current market instead of
+        blindly walking past the exchange band (the 2026-09-10 SENSEX PE rejections). Falls back
+        to the mark-based estimate only if the quote can't be read."""
+        ks = self.kotak_syms.get(sym) or {}
+        fb = ke.marketable_limit(self.marks.get(sym), side, buf)
+        return ke.marketable_price(self.kotak, ks.get("token"), ks.get("exchange_segment"),
+                                   side, qty, fallback=fb)
+
     def _fire_leg(self, sym, side, cycle, kind, buf):
-        """Place ONE marketable-limit entry leg immediately (no wait) and record it."""
+        """Place ONE marketable leg immediately (no wait) and record it. Price is depth-derived
+        off the live book each call — see _leg_price."""
         ks = self.kotak_syms[sym]
-        price = ke.marketable_limit(self.marks.get(sym), side, buf)
+        price = self._leg_price(sym, side, self.qty, buf)
         oid = ke.place_limit(self.kotak, ks["trading_symbol"], ks["exchange_segment"],
                              side, self.qty, price, tag=TAG)
         self.ledger.record(Order(oid, sym, side, self.qty, cycle, kind))
         audit.log(self.index, "KOTAK_ORDER_PLACED", cyc=cycle, side=side,
-                  sym=ks["trading_symbol"], qty=self.qty, oid=oid)
+                  sym=ks["trading_symbol"], qty=self.qty, oid=oid, limit=price)
         return {"oid": oid, "fill": None}
 
     def _poll_legs(self, legs, seconds):

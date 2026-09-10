@@ -93,5 +93,22 @@ chk("BUY priced ABOVE mark, more aggressive = higher", all(p > 10.45 for p in b)
 chk("ledger word 'SELL' == Kotak code 'S'",
     ke.marketable_limit(10.45, "SELL", 0.3) == ke.marketable_limit(10.45, "S", 0.3))
 
+print("\n[D] depth-based marketable_price (the 2026-09-10 LPP-breach fix):")
+class _FakeQuote:
+    def __init__(self, resp): self._r = resp
+    def quotes(self, instrument_tokens=None, quote_type=None): return self._r
+_BOOK = [{"ltp": "18.25", "low_price_range": "0.05", "high_price_range": "477.35", "depth": {
+    "buy": [{"price": "18.15", "quantity": "1640"}], "sell": [{"price": "18.25", "quantity": "4920"}]}}]
+_fc = _FakeQuote(_BOOK)
+chk("SELL prices at bid - cushion (18.05), in-band", ke.marketable_price(_fc, "t", "bse_fo", "SELL", 20, fallback=9) == 18.05)
+chk("BUY  prices at ask + cushion (18.35)", ke.marketable_price(_fc, "t", "bse_fo", "BUY", 20, fallback=9) == 18.35)
+_LPP = [{"ltp": "54", "low_price_range": "35.80", "high_price_range": "90",
+         "depth": {"buy": [{"price": "35.85", "quantity": "10"}], "sell": []}}]
+chk("SELL never priced below the LOW LPP", ke.marketable_price(_FakeQuote(_LPP), "t", "bse_fo", "SELL", 20, fallback=9) >= 35.80)
+class _BadQuote:
+    def quotes(self, **k): raise Exception("unreadable")
+chk("falls back to mark estimate when book unreadable",
+    ke.marketable_price(_BadQuote(), "t", "bse_fo", "SELL", 20, fallback=7.77) == 7.77)
+
 print(f"\n{_pass} passed, {_fail} failed")
 sys.exit(1 if _fail else 0)
