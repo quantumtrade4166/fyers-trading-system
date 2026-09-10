@@ -302,7 +302,8 @@ def windows(day: str = Query(None), profile: str = Query(None)):
 
 
 @router.get("/audit")
-def audit(limit: int = Query(80, ge=1, le=500), day: str = Query(None)):
+def audit(limit: int = Query(400, ge=1, le=5000), day: str = Query(None),
+          profile: str = Query(None)):
     """Today's event log, newest last — entries, adjustments, stops, square-offs.
 
     This is the 'why did it do that' view. Reading it beats reconstructing intent
@@ -314,9 +315,14 @@ def audit(limit: int = Query(80, ge=1, le=500), day: str = Query(None)):
     rows = []
     if f.exists():
         try:
-            for line in f.read_text(encoding="utf-8").splitlines()[-limit:]:
+            # Filter BEFORE truncating. Three profiles share one file, so taking
+            # the last N lines and then filtering would hand back a fraction of
+            # one profile's events and silently look like a quiet day.
+            for line in f.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if not line.startswith("{"):
+                    continue
+                if profile and f'"profile": "{profile}"' not in line:
                     continue
                 try:
                     rows.append(json.loads(line))
@@ -324,4 +330,7 @@ def audit(limit: int = Query(80, ge=1, le=500), day: str = Query(None)):
                     continue
         except Exception:
             pass
-    return {"ok": True, "day": day, "events": rows}
+    total = len(rows)
+    rows = rows[-limit:]
+    return {"ok": True, "day": day, "events": rows,
+            "total": total, "truncated": total > len(rows)}
