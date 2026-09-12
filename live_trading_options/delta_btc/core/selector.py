@@ -123,29 +123,42 @@ def select_entry_leg(chain: dict, atm: float, opt_type: str, *,
 def select_reentry_leg(chain: dict, atm: float, opt_type: str, *,
                        below_premium: float, ratio: float = 2.0, sl: float = None,
                        max_levels: int = 40) -> dict | None:
-    """The re-entry strike: the HIGHEST premium strictly below the open leg's
-    current premium, while still being a genuine match for it.
+    """The re-entry strike: the FIRST strike priced below the leg that is still
+    alive. Walk out from the money and take the highest premium under it.
 
-    Three bounds, all of which must hold:
-      upper  premium <  below_premium        "just below", never equal, never above
-      lower  premium >  below_premium/ratio  else the new leg is ALREADY 2x-imbalanced
-                                             and the next window would want to
-                                             replace what we just sold
-      stop   premium <  sl                   else it is born past its own stop
+    TWO bounds, not three:
+      upper  premium <  below_premium   cheaper than the alive leg, so replacing the
+                                        small leg cannot flip the imbalance instead
+                                        of fixing it
+      stop   premium <  sl              else the leg is born past its own stop and
+                                        the broker kills it on placement
 
-    Returns None when nothing qualifies, which the caller MUST treat as "skip this
-    window entirely" — never as "sell something close enough".
+    WHAT WAS REMOVED, AND WHY IT MATTERED
+    There used to be a third bound: `premium > below_premium / ratio`. The idea was
+    that a replacement worth less than half the alive leg is ALREADY 2x-imbalanced,
+    so the next window would just want to replace it again — better to wait.
+
+    In practice it refused to re-enter 64 times in four days of live paper. It only
+    ever bites when the alive leg has run a long way, which is exactly when the
+    other side is deep out-of-the-money and cheap — precisely the moment you most
+    want both legs back on. The strategy sat single-legged instead, and a
+    single-legged short strangle is a directional bet nobody chose to make.
+
+    The churn it was guarding against is handled where it belongs, in the caller:
+    if the replacement lands on the strike just closed, the position is left alone.
+
+    Returns None only when the side is genuinely empty or everything is above the
+    stop.
     """
     ladder = otm_ladder(chain, atm, opt_type, max_levels)
-    floor = below_premium / ratio if ratio else 0.0
-    valid = [c for c in ladder if floor < c[2] < below_premium]
+    valid = [c for c in ladder if c[2] < below_premium]
     if not valid:
         return None
-    valid.sort(key=lambda c: -c[2])            # highest premium first = "just below"
+    valid.sort(key=lambda c: -c[2])            # highest premium first = first below
 
     if sl is None:
         lvl, strike, prem = valid[0]
-        return _result(lvl, strike, prem, f"just below open leg {below_premium}")
+        return _result(lvl, strike, prem, f"first below open leg {below_premium}")
 
     ok = [c for c in valid if c[2] < sl]
     if not ok:
@@ -153,10 +166,10 @@ def select_reentry_leg(chain: dict, atm: float, opt_type: str, *,
     lvl, strike, prem = ok[0]
     if valid[0][2] >= sl:
         return _result(lvl, strike, prem,
-                       f"just below open leg {below_premium}, stepped out past SL {sl}",
+                       f"first below open leg {below_premium}, stepped out past SL {sl}",
                        sl_gated=True, sl_gated_from=valid[0][1],
                        sl_gated_skipped=len(valid) - len(ok))
-    return _result(lvl, strike, prem, f"just below open leg {below_premium}")
+    return _result(lvl, strike, prem, f"first below open leg {below_premium}")
 
 
 def needs_adjustment(ce_premium: float, pe_premium: float,

@@ -142,11 +142,12 @@ class FakeChain:
 
 PROFILE_CFG = {
     "entry_time": "09:30", "square_off": "17:10",
-    "target_premium": 70, "sl_premium": 140, "contracts": 100,
+    "target_premium": 50, "sl_premium": 100, "contracts": 100,
     "ends_on_both_stopped": True, "ends_on_max_loss": True,
     "max_fresh_entries": 3,
 }
-PARAMS = {"adjust_trigger_ratio": 2.0, "max_loss_usd": {"t": 45},
+PARAMS = {"adjust_trigger_ratio": 2.0, "sl_combined_multiple": 1.2,
+          "max_loss_usd": {"t": 45},
           "fees": {"taker_rate_notional": 0.0001, "premium_cap_rate": 0.035},
           "slippage": {"cross_the_spread": True}}
 
@@ -204,9 +205,16 @@ check("CE leg is above ATM", c.position.ce.strike > ch.atm, True)
 check("PE leg is below ATM", c.position.pe.strike < ch.atm, True)
 check("neither leg is ATM",
       ch.atm not in (c.position.ce.strike, c.position.pe.strike), True)
-check("CE stop is the profile SL", c.position.ce.sl_trigger, 140.0)
-ok("entry premium is near the $70 target",
-   all(40 <= l.entry_price <= 110 for l in (c.position.ce, c.position.pe)))
+# The stop is 1.2x the pair's COMBINED premium, not a fixed level.
+comb = c._mark(c.position.ce) + c._mark(c.position.pe)
+check("both legs share one stop", c.position.ce.sl_trigger, c.position.pe.sl_trigger)
+check("stop is 1.2x the combined premium",
+      c.position.ce.sl_trigger, round(comb * 1.2, 2))
+ok("stop sits ABOVE both legs — cannot fire on placement",
+   c.position.ce.sl_trigger > c._mark(c.position.ce)
+   and c.position.pe.sl_trigger > c._mark(c.position.pe))
+ok("entry premium is near the $50 target",
+   all(25 <= l.entry_price <= 80 for l in (c.position.ce, c.position.pe)))
 ok("a paper stop is never claimed as resting at the exchange",
    not c.position.ce.sl_at_broker)
 
@@ -252,18 +260,18 @@ c3 = make()
 ch3 = FakeChain(spot=80000.0)
 run(c3, ch3, [f"{D} 09:30:00"])
 ce_strike = c3.position.ce.strike
-# Leave the CE 600 points OTM: premium ~147, just through the 140 stop. A far
-# larger move would breach max loss as well, and then this would be testing the
-# loss limit rather than the stop — the two paths close the position by different
-# mechanisms and are tested separately on purpose.
-ch3.set_spot(ce_strike - 600)
+# Leave the CE 620 points OTM: premium ~141, just through the ~130 stop that 1.2x
+# the combined premium puts in force. A far larger move would breach max loss too,
+# and then this would be testing the loss limit rather than the stop — the two
+# close the position by different mechanisms and are tested separately on purpose.
+ch3.set_spot(ce_strike - 620)
 run(c3, ch3, [f"{D} 09:40:00"])
 ok("CE was stopped out", c3.position.ce is None)
 ok("position is single-legged", c3.position.is_single)
 check("the stopped leg is recorded as STOPPED", c3.position.history[-1].status, "STOPPED")
 ok("single-legged running is allowed between windows", not c3.killed)
 ok("stop fill is at or beyond the trigger",
-   c3.position.history[-1].exit_price >= 140.0)
+   c3.position.history[-1].exit_price >= c3.position.history[-1].sl_trigger)
 ok("one stop-out alone does not breach max loss", abs(c3.mtm) < 45)
 run(c3, ch3, [f"{D} 09:45:00"])
 ok("the missing side was re-entered at the next window", c3.position.is_complete)
@@ -276,9 +284,9 @@ def both_stopped(ctrl):
     ctrl.on_tick(ch, T(f"{D} 09:30:00"))
     ce_s = ctrl.position.ce.strike
     pe_s = ctrl.position.pe.strike
-    ch.set_spot(ce_s - 600)                 # CE ~147 -> through its 140 stop
+    ch.set_spot(ce_s - 620)                 # CE ~141 -> through the ~130 combined stop
     ctrl.on_tick(ch, T(f"{D} 09:40:00"))
-    ch.set_spot(pe_s + 600)                 # PE ~147 -> through its 140 stop
+    ch.set_spot(pe_s + 620)                 # PE ~141 -> through the stop in force
     ctrl.on_tick(ch, T(f"{D} 09:41:00"))
     return ch
 
@@ -406,8 +414,10 @@ run(cF, chF, [f"{D} 09:30:00"])
 leg = cF.position.ce
 gross = leg.gross_pnl(leg.entry_price)
 check("gross P&L at the entry price is zero", gross, 0.0)
+# pnl() rounds to 4dp, so the tolerance has to allow half of the last place —
+# a fee of 0.18585 cannot land exactly on a 4dp result.
 ok("net P&L is worse than gross by exactly the fees",
-   abs(leg.pnl(leg.entry_price) - (gross - leg.fees)) < 1e-9)
+   abs(leg.pnl(leg.entry_price) - (gross - leg.fees)) < 1e-4)
 # multiplier: 100 contracts x 0.001 BTC = 0.1 per point of premium
 check("leg multiplier is contracts x contract value", leg.multiplier, 0.1)
 check("a 10-point fall in premium is $1.00 gross",
@@ -510,6 +520,38 @@ print(f"  [full-day walk] {recD['legs']} legs, realized ${recD['realized']:.2f},
       f"stopped {recD['stopped_legs']}")
 
 # ── report ────────────────────────────────────────────────────────────────
+# ══ 12. the dynamic stop tracks the pair as it decays ═════════════════════
+cS2 = make()
+chS2 = FakeChain(spot=80000.0)
+run(cS2, chS2, [f"{D} 09:30:00"])
+sl_at_entry = cS2.position.ce.sl_trigger
+# decay the whole surface: the pair is now worth a fraction of what it was
+chS2.atm_prem = 40.0
+chS2.set_spot(80000.0)
+run(cS2, chS2, [f"{D} 10:00:00"])
+if cS2.position.is_complete:
+    comb = cS2._mark(cS2.position.ce) + cS2._mark(cS2.position.pe)
+    ok("stop FELL as the pair decayed", cS2.position.ce.sl_trigger < sl_at_entry)
+    ok("stop is still 1.2x the (now smaller) combined",
+       abs(cS2.position.ce.sl_trigger - round(comb * 1.2, 2)) < 0.05)
+    ok("stop still sits above both legs",
+       cS2.position.ce.sl_trigger > cS2._mark(cS2.position.ce))
+
+# ══ 13. churn guard: same strike is HELD, not round-tripped ═══════════════
+cG = make()
+chG = FakeChain(spot=80000.0)
+run(cG, chG, [f"{D} 09:30:00"])
+n_before = len(cG.position.history)
+pe_strike_before = cG.position.pe.strike
+# push spot far up: CE becomes huge, and the best PE below it is the one we hold
+chG.set_spot(81400.0)
+run(cG, chG, [f"{D} 10:00:00"])
+if cG.position.is_complete and cG.position.pe is not None:
+    same = cG.position.pe.strike == pe_strike_before
+    if same:
+        check("holding the same strike costs no round trip",
+              len(cG.position.history), n_before)
+
 print(f"\n  {PASS} passed, {FAIL} failed")
 for f in FAILURES:
     print(f"   FAIL {f}")

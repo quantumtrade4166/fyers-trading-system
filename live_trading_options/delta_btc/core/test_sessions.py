@@ -58,6 +58,7 @@ C = PROFILES["continuous"]
 # ── shape ─────────────────────────────────────────────────────────────────
 check("A does not span midnight", A.spans_midnight, False)
 check("B spans midnight", B.spans_midnight, True)
+check("all three now share one target", {p.target for p in PROFILES.values()}, {50.0})
 check("A exposure is 7.67h", A.exposure_hours, 7.67)
 check("B exposure is 23.58h", B.exposure_hours, 23.58)
 check("C has the same clock as B", (C.entry_time, C.square_off), (B.entry_time, B.square_off))
@@ -153,10 +154,10 @@ check("seconds to next window", A.seconds_to_next_window(T("2026-09-04 09:50")),
 check("no next window after the last one", A.next_window(T("2026-09-04 17:05")), None)
 
 # ── economics: the max-loss trap ──────────────────────────────────────────
-check("A worst case both stopped is $140", A.worst_case_both_stopped(), 140.0)
-check("B worst case both stopped is $300", B.worst_case_both_stopped(), 300.0)
-check("A credit at target is $140", A.credit_at_target(), 140.0)
-check("B credit at target is $300", B.credit_at_target(), 300.0)
+check("A worst case both stopped is $100", A.worst_case_both_stopped(), 100.0)
+check("B worst case both stopped is $100", B.worst_case_both_stopped(), 100.0)
+check("A credit at target is $100", A.credit_at_target(), 100.0)
+check("B credit at target is $100", B.credit_at_target(), 100.0)
 for name, p in PROFILES.items():
     limit = PARAMS["max_loss_usd"][name]
     check(f"{name}: max loss ${limit} sits above the worst case "

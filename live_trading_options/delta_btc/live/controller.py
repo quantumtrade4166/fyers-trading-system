@@ -92,7 +92,11 @@ class BTCController:
                                   .get(profile.name, 100)))
         self.contracts = profile.contracts
         self.target = profile.target
-        self.sl = profile.sl
+        # `sl` is the level in force RIGHT NOW, not a constant. It starts at
+        # sl_mult x (2 x target) — the pair's expected combined premium at entry —
+        # and is retargeted off the live combined premium at every window.
+        self.sl_mult = float(params.get("sl_combined_multiple", 1.2))
+        self.sl = round(self.sl_mult * 2 * self.target, 2)
 
         self.fees_cfg = params.get("fees", {})
         self.cross = bool((params.get("slippage") or {}).get("cross_the_spread", True))
@@ -494,6 +498,50 @@ class BTCController:
                 self._log("stuck_cleared", side=side, reason=reason)
 
     # ── windows ──────────────────────────────────────────────────────────
+    # ── the stop, recomputed from the pair's combined premium ────────────
+    def combined_premium(self):
+        """CE mark + PE mark, or None unless BOTH legs are alive and priced."""
+        ce, pe = self.position.ce, self.position.pe
+        if not (ce is not None and ce.is_live and pe is not None and pe.is_live):
+            return None
+        a, b = self._mark(ce), self._mark(pe)
+        if a is None or b is None:
+            return None
+        return a + b
+
+    def _recompute_sl(self, why: str):
+        """Set every live leg's stop to `sl_combined_multiple` x the pair's
+        CURRENT combined premium.
+
+        A FIXED stop is wrong for a decaying strangle. Sell two legs at 50 each and
+        a 100 stop is a doubling — reasonable. Six hours later the same legs are
+        worth 8 and 9, and that same 100 stop is more than five times what the pair
+        is now worth: it can never protect anything, so the leg runs unbounded until
+        the square-off. That is how a single bad hour wiped out a day of
+        adjustments. Recomputing off the live pair keeps the stop proportional to
+        what is actually at risk right now.
+
+        It cannot fire instantly: 1.2 x (a + b) always exceeds a and b individually
+        while both are positive, so a freshly set stop is always above the market.
+
+        Only recomputed while BOTH legs are alive. Single-legged, "combined" would
+        mean one leg's own premium and the stop would clamp 20% above the market —
+        an arbitrary tightening at the worst possible moment. The existing stop is
+        left in force until the pair is restored.
+        """
+        comb = self.combined_premium()
+        if comb is None:
+            return
+        new = round(comb * self.sl_mult, 2)
+        if self.sl is not None and abs(new - self.sl) < 0.05:
+            return
+        old, self.sl = self.sl, new
+        for leg in self.position.live_legs():
+            leg.sl_trigger = new
+            leg.sl_checked = self._hm()
+        self._log("sl_retargeted", why=why, combined=round(comb, 2),
+                  multiple=self.sl_mult, old_sl=old, new_sl=new)
+
     def _window_status(self, key: str, action: str):
         """One STATUS line per 15-minute window — what the book looked like, not
         just what changed.
@@ -532,15 +580,20 @@ class BTCController:
             trig, small = needs_adjustment(ce_m, pe_m, self.ratio)
             if not trig:
                 self._window_status(key, "balanced — no adjustment")
-                return
-            self._window_status(key, f"2x rule — replacing {small}")
-            self._adjust(key, small)
+            else:
+                self._window_status(key, f"2x rule — replacing {small}")
+                self._adjust(key, small)
         elif pos.is_single:
             self._window_status(key, f"single-legged — re-entering {pos.missing_side()}")
             self._reenter_missing(key)
         else:
             self._window_status(key, "flat — opening a fresh strangle")
             self._fresh_entry(f"window {key} — re-open after flat")
+        # EVERY window ends by retargeting the stop off the live pair, whether or
+        # not anything was traded. A quiet window still decays the premium, and a
+        # stop that only moves when a leg moves would drift just as far out of
+        # proportion as the fixed one it replaced.
+        self._recompute_sl(f"window {key}")
 
     def _adjust(self, key: str, small_side: str):
         """Replace the smaller leg with one just below the open leg's premium.
@@ -566,6 +619,19 @@ class BTCController:
             self._log("window_skipped", window=key, side=small_side,
                       open_leg=f"{open_leg.strike}{open_side}@{open_prem}",
                       reason="no strike just below the open leg — waiting for next window")
+            return
+
+        # CHURN GUARD. When the alive leg has run far away, the best replacement is
+        # often the very strike we are about to close. Closing and re-selling it is
+        # a round trip that pays the spread and two fees to end up exactly where it
+        # started. Leave the position alone and look again next window.
+        if float(cand["strike"]) == float(small_leg.strike):
+            self._window_status(key, "same strike — held, no round trip")
+            self._log("adjust_held", window=key, side=small_side,
+                      strike=small_leg.strike, premium=cand["premium"],
+                      open_leg=f"{open_leg.strike}{open_side}@{round(open_prem, 2)}",
+                      note="best replacement is the strike already held — not "
+                           "paying a round trip to stand still")
             return
 
         new_leg = self._build_leg(small_side, cand)
@@ -658,6 +724,9 @@ class BTCController:
 
         for side, leg in legs.items():
             self.position.set_leg(leg)
+        # Both legs are on: retarget off what they are ACTUALLY worth rather than
+        # the provisional 2x-target estimate used while opening them.
+        self._recompute_sl("entry")
         self._log("entry_complete",
                   ce=f"{legs[CE].strike:.0f}@{legs[CE].entry_price}",
                   pe=f"{legs[PE].strike:.0f}@{legs[PE].entry_price}",

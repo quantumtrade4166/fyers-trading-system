@@ -110,16 +110,24 @@ r = select_reentry_leg(CH, 80_800, CE, below_premium=200.0)
 check("re-entry takes the HIGHEST premium strictly below the open leg",
       r["premium"], 190.0)
 check("re-entry rejects the strike ABOVE the open leg", r["strike"], 81_000)
+check("an empty side still returns None",
+      select_reentry_leg({}, 80_800, CE, below_premium=200.0), None)
 
 eq = chain_at(80_800, [(80_900, 190.0), (81_000, 148.0)], [])
 check("equal premium is not 'just below' → takes the next one down",
       select_reentry_leg(eq, 80_800, CE, below_premium=190.0)["premium"], 148.0)
 
-# the skip condition: everything below is ALSO below open/ratio
-check("open leg 210 with nothing above 105 → skip the window",
+# THE RULE THAT CHANGED. There used to be a lower bound rejecting anything below
+# open/ratio, which refused to re-enter 64 times in four days of live paper and
+# left the book single-legged — a directional bet nobody chose. Now the first
+# strike below the alive leg is taken, however cheap.
+check("cheap side is taken, NOT skipped (this used to return None)",
       select_reentry_leg(chain_at(80_800, [(80_900, 90.0), (81_000, 40.0)], []),
-                         80_800, CE, below_premium=210.0), None)
-check("same chain, smaller open leg → 90 is a genuine match",
+                         80_800, CE, below_premium=210.0)["premium"], 90.0)
+check("very cheap side is still taken",
+      select_reentry_leg(chain_at(80_800, [(80_900, 9.0), (81_000, 4.0)], []),
+                         80_800, CE, below_premium=210.0)["premium"], 9.0)
+check("same chain, smaller open leg → 90 is still the pick",
       select_reentry_leg(chain_at(80_800, [(80_900, 90.0), (81_000, 40.0)], []),
                          80_800, CE, below_premium=150.0)["premium"], 90.0)
 check("nothing below the open leg at all → skip",
@@ -134,8 +142,9 @@ check("SL gate is reported, not silent", g.get("sl_gated"), True)
 check("SL gate records what it stepped from", g.get("sl_gated_from"), 80_900)
 check("without an SL the same chain takes 290",
       select_reentry_leg(gate, 80_800, CE, below_premium=300.0)["premium"], 290.0)
-check("floor above the stop → impossible → skip",
-      select_reentry_leg(gate, 80_800, CE, below_premium=600.0, sl=200), None)
+check("everything is above the stop → nothing placeable → skip",
+      select_reentry_leg(chain_at(80_800, [(80_900, 500.0), (81_000, 400.0)], []),
+                         80_800, CE, below_premium=600.0, sl=200), None)
 
 # ── the 2x adjustment trigger (unchanged from NSE) ────────────────────────
 check("210 vs 90 triggers, replace PE", needs_adjustment(210, 90), (True, PE))
