@@ -16,6 +16,7 @@
     "ist_day": {
       "enabled": true,
       "label": "A - IST day session (0 DTE, awake hours)",
+      "sl_combined_multiple": 1.5,
       "entry_time": "09:30",
       "square_off": "17:10",
       "target_premium": 50,
@@ -32,6 +33,7 @@
     "full_cycle": {
       "enabled": true,
       "label": "B - full expiry cycle (one strangle per expiry)",
+      "sl_combined_multiple": 2.0,
       "entry_time": "17:35",
       "square_off": "17:10",
       "target_premium": 50,
@@ -48,6 +50,7 @@
     "continuous": {
       "enabled": true,
       "label": "C - continuous (always short, rolls every expiry)",
+      "sl_combined_multiple": 1.2,
       "entry_time": "17:35",
       "square_off": "17:10",
       "target_premium": 50,
@@ -71,6 +74,7 @@
   "_shared_note": "Everything below applies to all three profiles. Only the session shape and its target/stop are allowed to differ, so that a difference in the month's results can be attributed to the session and not to the parameters.",
 
   "sl_combined_multiple": 1.2,
+  "_sl_per_profile_note": "Default multiple. Each profile may override it with its own sl_combined_multiple, and as of 2026-09-13 they do: ist_day 1.5x, full_cycle 2.0x, continuous 1.2x. Set after a four-day replay of the archived chain showed 1.2x was the weakest setting (-$10, 10 stop-outs, worst single day -$109) while 1.5x made +$128 with 5 and 2.0x +$414 with none. That replay contained no day larger than a 4.5% range, so it CANNOT show how a wide stop behaves in a real crash — which is why the live paper run carries three different multiples at once rather than betting everything on 2.0x.",
   "_sl_note": "The stop is NOT a fixed level. Every leg's stop sits at this multiple of the pair's CURRENT COMBINED premium (CE mark + PE mark), recomputed at entry and at every 15-minute window. Sell two legs at 50 and the stop is 1.2 x 100 = 120, a doubling — reasonable. Six hours later the same pair is worth 8 + 9 and the stop is 1.2 x 17 = 20.4, still proportional; a FIXED 100 there could never protect anything and the leg would run unbounded to the square-off. It cannot fire on placement either: 1.2 x (a+b) always exceeds a and b individually. Recomputed only while BOTH legs are alive — single-legged, 'combined' would mean one leg's own premium and the stop would clamp 20% above the market at the worst possible moment.",
 
   "adjust_trigger_ratio": 2.0,

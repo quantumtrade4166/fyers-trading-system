@@ -124,7 +124,8 @@ def validate(profiles: dict) -> dict:
     ok = {}
     for name, p in profiles.items():
         limit = abs(float((PARAMS.get("max_loss_usd") or {}).get(name, 0)))
-        worst = p.worst_case_both_stopped()
+        worst = p.worst_case_both_stopped(
+            default_mult=float(PARAMS.get("sl_combined_multiple", 1.2)))
         if limit <= worst:
             log(f"  !! {name} DISABLED: max_loss ${limit} <= worst case ${worst}. "
                 f"The loss limit would fire before the leg stops could work.")

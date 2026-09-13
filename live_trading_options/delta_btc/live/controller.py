@@ -95,7 +95,8 @@ class BTCController:
         # `sl` is the level in force RIGHT NOW, not a constant. It starts at
         # sl_mult x (2 x target) — the pair's expected combined premium at entry —
         # and is retargeted off the live combined premium at every window.
-        self.sl_mult = float(params.get("sl_combined_multiple", 1.2))
+        self.sl_mult = (profile.sl_mult if profile.sl_mult is not None
+                        else float(params.get("sl_combined_multiple", 1.2)))
         self.sl = round(self.sl_mult * 2 * self.target, 2)
 
         self.fees_cfg = params.get("fees", {})
@@ -799,6 +800,7 @@ class BTCController:
             "kill_reason": self.kill_reason, "fresh_entries": self.fresh_entries,
             "windows_run": len(self.done_windows), "stuck": sorted(self.stuck) or None,
             "target": self.target, "sl": self.sl, "contracts": self.contracts,
+            "sl_mult": self.sl_mult,
             "max_loss": self.max_loss,
             "worst_case_both_stopped": self.profile.worst_case_both_stopped(),
             "spot": getattr(self.chain_obj, "spot", None),

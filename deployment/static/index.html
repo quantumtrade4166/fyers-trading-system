@@ -824,14 +824,13 @@
     <div class="card p-4 mb-5">
       <div class="flex items-center justify-between mb-2">
         <div>
-          <div class="text-sm font-semibold text-slate-200">Today's equity — all three</div>
+          <div class="text-sm font-semibold text-slate-200">Equity — <span id="btc-eq-title">A · ist_day</span></div>
           <div class="text-[10px] text-slate-500">mark-to-market, net of fees, sampled once a minute</div>
           <div id="btc-gaps" class="text-[10px] text-amber-400 mt-0.5"></div>
         </div>
-        <div class="flex gap-3 text-[10px]">
-          <span class="flex items-center gap-1"><span style="width:10px;height:2px;background:#38bdf8;display:inline-block"></span>A ist_day</span>
-          <span class="flex items-center gap-1"><span style="width:10px;height:2px;background:#a78bfa;display:inline-block"></span>B full_cycle</span>
-          <span class="flex items-center gap-1"><span style="width:10px;height:2px;background:#34d399;display:inline-block"></span>C continuous</span>
+        <div class="text-[10px] text-slate-500 text-right">
+          click a card above to switch profile
+          <div id="btc-eq-stop" class="text-slate-400"></div>
         </div>
       </div>
       <div id="btc-equity-chart" style="height:260px"></div>
@@ -869,11 +868,7 @@
             <div class="text-sm font-semibold text-slate-200">Event log</div>
             <div id="btc-log-meta" class="text-[10px] text-slate-600">—</div>
           </div>
-          <div class="flex gap-1" id="btc-log-profile-btns">
-            <button class="sca-idx-btn active" onclick="btcSetWinProfile('ist_day')" id="btc-logp-ist_day">A ist_day</button>
-            <button class="sca-idx-btn" onclick="btcSetWinProfile('full_cycle')" id="btc-logp-full_cycle">B full_cycle</button>
-            <button class="sca-idx-btn" onclick="btcSetWinProfile('continuous')" id="btc-logp-continuous">C continuous</button>
-          </div>
+          <span class="btc-sel-label text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300">A · ist_day</span>
         </div>
         <div id="btc-log" style="max-height:520px;overflow-y:auto"
              class="dn-scroll text-xs"></div>
@@ -890,11 +885,7 @@
           </div>
           <div id="btc-win-note" class="text-[10px] text-amber-400 mt-0.5"></div>
         </div>
-        <div class="flex gap-1" id="btc-win-profile-btns">
-          <button class="sca-idx-btn active" onclick="btcSetWinProfile('ist_day')" id="btc-winp-ist_day">A ist_day</button>
-          <button class="sca-idx-btn" onclick="btcSetWinProfile('full_cycle')" id="btc-winp-full_cycle">B full_cycle</button>
-          <button class="sca-idx-btn" onclick="btcSetWinProfile('continuous')" id="btc-winp-continuous">C continuous</button>
-        </div>
+        <span class="btc-sel-label text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-300">A · ist_day</span>
       </div>
       <div style="max-height:420px;overflow-y:auto" class="dn-scroll">
         <table class="w-full text-xs tabular-nums">
@@ -3846,7 +3837,8 @@ function btcRenderHistCards(cycles, dayTotals, runTotals) {
           '<span class="' + btcCls(c.realized) + ' tabular-nums">' + btcMoney(c.realized) +
           (c.late_start ? ' <span class="text-amber-500 text-[9px]">late</span>' : '') + '</span></div>').join('')
       : '<div class="text-[11px] text-slate-600 py-1 border-t border-slate-800/60">no cycle started this day</div>';
-    return '<div class="card p-4" style="border-top:2px solid ' + m.color + '">' +
+    return '<div class="card p-4" data-btc-card="' + k + '" onclick="btcSetWinProfile(\'' + k + '\')"' +
+        ' style="border-top:2px solid ' + m.color + ';cursor:pointer;transition:opacity .15s">' +
       '<div class="flex items-start justify-between mb-2">' +
         '<div><div class="text-sm font-semibold text-slate-200">' + m.label + '</div>' +
         '<div class="text-[10px] text-slate-500">' + m.sub + '</div></div>' +
@@ -3863,6 +3855,7 @@ function btcRenderHistCards(cycles, dayTotals, runTotals) {
         '<span>fees $' + Number(d.fees || 0).toFixed(2) + '</span>' +
       '</div></div>';
   }).join('');
+  btcSyncSelection();
 }
 
 function btcRenderCards(st, totals) {
@@ -3894,7 +3887,8 @@ function btcRenderCards(st, totals) {
     else                    { status = 'FLAT — waiting'; statusCls = 'bg-slate-800 text-slate-400'; }
 
     const unprot = (pos.unprotected || []).length;
-    return '<div class="card p-4" style="border-top:2px solid ' + m.color + '">' +
+    return '<div class="card p-4" data-btc-card="' + k + '" onclick="btcSetWinProfile(\'' + k + '\')"' +
+        ' style="border-top:2px solid ' + m.color + ';cursor:pointer;transition:opacity .15s">' +
       '<div class="flex items-start justify-between mb-2">' +
         '<div><div class="text-sm font-semibold text-slate-200">' + m.label + '</div>' +
         '<div class="text-[10px] text-slate-500">' + m.sub + '</div></div>' +
@@ -3909,10 +3903,16 @@ function btcRenderCards(st, totals) {
       '</div>' +
       legRow(pos.ce, 'CE') + legRow(pos.pe, 'PE') +
       '<div class="flex justify-between text-[10px] text-slate-600 mt-2 pt-2 border-t border-slate-800/60">' +
-        '<span>target $' + p.target + ' · sl $' + p.sl + ' · ' + p.contracts + 'c</span>' +
+        '<span>target $' + p.target + ' · stop <b class="text-slate-300">' + (p.sl_mult != null ? Number(p.sl_mult).toFixed(1) + '×' : '—') + '</b> = $' + (p.sl != null ? Number(p.sl).toFixed(1) : '—') + ' · ' + p.contracts + 'c</span>' +
         '<span>next window ' + (p.next_window || '—') + '</span>' +
       '</div></div>';
   }).join('');
+  btcSyncSelection();
+  // the equity card states the stop the selected profile is actually running
+  const sp = (st.profiles || {})[btcWinProfile] || {};
+  const es = document.getElementById('btc-eq-stop');
+  if (es) es.textContent = sp.sl_mult != null
+    ? 'stop ' + Number(sp.sl_mult).toFixed(1) + '× combined · now $' + Number(sp.sl).toFixed(1) : '';
 }
 
 function btcRenderChain(st) {
@@ -3993,6 +3993,29 @@ function btcRenderLog(events, meta) {
   el.innerHTML = events.slice().reverse().map(e => {
     const st = BTC_LOG_STYLE[e.event] || ['#94a3b8', '·'];
     const col = st[0], icon = st[1];
+    if (e.event === 'window_status') {
+      // The 15-minute line is read constantly, so it is laid out for reading, not
+      // dumped as key=value: both premiums and the MTM in bold, the rest quiet.
+      const B = v => (v === null || v === undefined) ? '—' : Number(v).toFixed(2);
+      const leg = (x, lbl) => x
+        ? `${lbl} ${Number(x.strike).toFixed(0)} <b style="color:#f8fafc">${B(x.mark)}</b>` +
+          `<span style="color:#64748b"> (in ${B(x.entry)})</span>`
+        : `${lbl} <span style="color:#64748b">flat</span>`;
+      const mc = (e.mtm || 0) >= 0 ? '#34d399' : '#fb7185';
+      const t = String(e.ts || '').slice(-8);
+      return `<div style="padding:3px 6px;border-left:2px solid ${col};background:#0f1420;border-radius:3px;margin-bottom:2px">
+      <span style="color:#64748b;font-family:ui-monospace,monospace">${t}</span>
+      <span style="color:#94a3b8;font-weight:700"> ${icon} ${e.event}</span>
+      <div style="font-size:11px;font-family:ui-monospace,monospace;color:#cbd5e1;margin-top:1px">
+        ${leg(e.ce, 'CE')} &nbsp;·&nbsp; ${leg(e.pe, 'PE')}
+        &nbsp;·&nbsp; ratio ${e.ratio != null ? Number(e.ratio).toFixed(2) : '—'}
+        &nbsp;·&nbsp; MTM <b style="color:${mc}">${btcMoney(e.mtm)}</b>
+      </div>
+      <div style="font-size:10px;font-family:ui-monospace,monospace;color:#64748b">
+        spot ${e.spot != null ? Number(e.spot).toFixed(1) : '—'} · ${e.action || ''}
+      </div>
+    </div>`;
+    }
     const detail = Object.entries(e)
       .filter(([k]) => k !== 'ts' && k !== 'event' && k !== 'profile' && k !== 'cycle')
       .flatMap(([k, v]) => btcFlat(k, v))
@@ -4009,16 +4032,34 @@ function btcRenderLog(events, meta) {
 /* ONE profile selection drives both the 15-minute table and the event log.
    Two independent selectors showing different profiles side by side is how you
    end up reading one strategy's log against another's status. */
-let btcWinProfile = 'ist_day';
+/* THE SELECTED PROFILE. Clicking a card sets it, and it drives the equity curve,
+   the event log and the 15-minute table together, so the three profiles stay
+   fully separate — you are never reading one profile's log beside another's
+   curve. Remembered across refreshes so a reload does not snap back to A. */
+let btcWinProfile = (() => {
+  try { return localStorage.getItem('btcProfile') || 'ist_day'; } catch (e) { return 'ist_day'; }
+})();
 function btcSetWinProfile(p) {
+  if (!BTC_META[p]) return;
   btcWinProfile = p;
-  ['ist_day', 'full_cycle', 'continuous'].forEach(x => {
-    ['btc-winp-', 'btc-logp-'].forEach(pre => {
-      const b = document.getElementById(pre + x);
-      if (b) b.classList.toggle('active', x === p);
-    });
-  });
+  try { localStorage.setItem('btcProfile', p); } catch (e) {}
+  btcSyncSelection();
   btcFetchState();
+}
+function btcSyncSelection() {
+  const m = BTC_META[btcWinProfile] || {};
+  document.querySelectorAll('.btc-sel-label').forEach(el => {
+    el.textContent = m.label || btcWinProfile;
+    el.style.borderLeft = '2px solid ' + (m.color || '#64748b');
+  });
+  const t = document.getElementById('btc-eq-title');
+  if (t) { t.textContent = m.label || btcWinProfile; t.style.color = m.color || ''; }
+  document.querySelectorAll('[data-btc-card]').forEach(el => {
+    const on = el.getAttribute('data-btc-card') === btcWinProfile;
+    el.style.outline = on ? ('2px solid ' + (BTC_META[el.getAttribute('data-btc-card')] || {}).color) : 'none';
+    el.style.outlineOffset = on ? '2px' : '0';
+    el.style.opacity = on ? '1' : '0.72';
+  });
 }
 
 function btcRenderWindows(rows, legacyCount) {
@@ -4055,11 +4096,11 @@ function btcRenderWindows(rows, legacyCount) {
       '<td class="py-1 px-2 text-slate-400">' + String(r.window || '').slice(11) + '</td>' +
       '<td class="text-right py-1 px-2 text-slate-400">' + n(r.spot, 0) + '</td>' +
       '<td class="text-right py-1 px-2 text-slate-300">' + n(ce.strike, 0) + '</td>' +
-      '<td class="text-right py-1 px-2 text-slate-400">' + n(ce.mark) + '</td>' +
+      '<td class="text-right py-1 px-2 text-slate-100 font-bold">' + n(ce.mark) + '</td>' +
       '<td class="text-right py-1 px-2 text-slate-300">' + n(pe.strike, 0) + '</td>' +
-      '<td class="text-right py-1 px-2 text-slate-400">' + n(pe.mark) + '</td>' +
+      '<td class="text-right py-1 px-2 text-slate-100 font-bold">' + n(pe.mark) + '</td>' +
       '<td class="text-right py-1 px-2 ' + rc + '">' + n(r.ratio, 2) + '</td>' +
-      '<td class="text-right py-1 px-2 ' + btcCls(r.mtm) + '">' + btcMoney(r.mtm) + '</td>' +
+      '<td class="text-right py-1 px-2 font-bold ' + btcCls(r.mtm) + '">' + btcMoney(r.mtm) + '</td>' +
       '<td class="py-1 px-2 ' + ac + ' text-[10px]">' + act + '</td></tr>';
   }).join('');
 }
@@ -4092,6 +4133,13 @@ function btcRenderEquity(eq) {
   // should not have to notice a missing segment to know the run stopped.
   let gapMins = 0, gapList = [];
   Object.keys(BTC_META).forEach(k => {
+    // Only the selected profile is drawn. Three curves on one axis made each
+    // profile's shape unreadable and invited comparing a 7.7h session against a
+    // 23.6h one point by point; the cards above carry the side-by-side numbers.
+    if (k !== btcWinProfile) {
+      try { btcEqSeries[k].setData([]); } catch (e) {}
+      return;
+    }
     const rows = eq[k] || [];
     const seen = new Set();
     const pts = [];
@@ -4124,7 +4172,7 @@ function btcRenderEquity(eq) {
     }
     try { btcEqSeries[k].setData(withGaps); } catch (e) {}
 
-    if (k === 'full_cycle') {                 // one profile is enough to measure
+    {                                          // gaps of the profile being shown
       for (let i = 1; i < pts.length; i++) {
         const d = pts[i].time - pts[i - 1].time;
         if (d > 240) {
@@ -4150,6 +4198,7 @@ function btcRenderEquity(eq) {
 
 function btcStartPoll() {
   btcStopPoll();
+  btcSyncSelection();
   btcFetchState();
   // The 1s ticker exists to move a live price. On a past day there is nothing to
   // move, and letting it run would paint today's spot and MTM over a historical

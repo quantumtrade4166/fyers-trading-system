@@ -76,6 +76,11 @@ class SessionProfile:
         self.prefer_min = cfg.get("prefer_min")
         self.prefer_max = cfg.get("prefer_max")
         self.contracts = int(cfg.get("contracts", 100))
+        # Optional per-profile stop multiple. None means "use the global
+        # sl_combined_multiple". Lets profiles run DIFFERENT stops side by side on
+        # the same market — which is exactly how a stop setting gets tested live.
+        _m = cfg.get("sl_combined_multiple")
+        self.sl_mult = float(_m) if _m is not None else None
 
     # ── shape ────────────────────────────────────────────────────────────
     @property
@@ -203,14 +208,24 @@ class SessionProfile:
         return True if b is None else now >= b[1]
 
     # ── economics ────────────────────────────────────────────────────────
-    def worst_case_both_stopped(self, contract_value: float = 0.001) -> float:
+    def worst_case_both_stopped(self, contract_value: float = 0.001,
+                                default_mult: float = None) -> float:
         """USD lost if BOTH legs enter at target and stop out.
 
         The max-loss limit MUST sit above this or it fires first and the per-leg
         stops never get to work — the trap documented on the NSE side, put here in
         the one place every profile is forced to look at it.
+
+        The stop is no longer the fixed `sl_premium`: it sits at the multiple x the
+        pair's combined premium. At entry both legs are at target, so the stop in
+        force is mult x (2 x target). Using `sl_premium` here would understate the
+        worst case badly for a wide stop — a 2.0x profile has a 200 stop against a
+        50 entry, not the 100 the old field says — and the loss-limit check would
+        pass a limit that the stops can in fact exceed.
         """
-        return round((self.sl - self.target) * contract_value * self.contracts * 2, 2)
+        mult = self.sl_mult if self.sl_mult is not None else default_mult
+        stop = (mult * 2 * self.target) if mult is not None else self.sl
+        return round((stop - self.target) * contract_value * self.contracts * 2, 2)
 
     def credit_at_target(self, contract_value: float = 0.001) -> float:
         """USD collected if both legs fill exactly at the target premium."""
