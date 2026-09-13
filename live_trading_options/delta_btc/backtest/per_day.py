@@ -55,7 +55,9 @@ def main():
 
     totals = {m: 0.0 for m in mults}
     stops = {m: 0 for m in mults}
-    worst = {m: 0.0 for m in mults}
+    # None, not 0.0: starting the minimum at zero reports a worst day of $0.00 when
+    # every day was profitable, which reads as "no losing day" for the wrong reason.
+    worst = {m: None for m in mults}
     for day in days:
         df = load_days([day])
         if df.empty:
@@ -75,7 +77,7 @@ def main():
             s = summarise(run_one(args.profile, cfg, prm, df))
             totals[m] += s["total"]
             stops[m] += s.get("stops", 0)
-            worst[m] = min(worst[m], s["total"])
+            worst[m] = s["total"] if worst[m] is None else min(worst[m], s["total"])
             row += f"{s['total']:>+11.2f} /{s.get('stops', 0):<3}"
         print(row)
 
@@ -86,7 +88,7 @@ def main():
     print(row)
     row = f"  {'worst single day':<31}"
     for m in mults:
-        row += f"{worst[m]:>+11.2f}    "
+        row += (f"{worst[m]:>+11.2f}    " if worst[m] is not None else f"{'—':>11}    ")
     print(row)
     print("\n  cell = P&L / stop-outs.  Read the WORST DAY row before the total.\n")
 
