@@ -552,6 +552,59 @@ if cG.position.is_complete and cG.position.pe is not None:
         check("holding the same strike costs no round trip",
               len(cG.position.history), n_before)
 
+# ══ 14. a RESUMED position has its stale stops brought into line ═══════════
+# On 2026-09-13 the engine restarted onto legs opened under the OLD fixed stops:
+# worth 14 and 17, still carrying stops of 140 and 300 — unreachable, so the legs
+# were effectively unprotected until the next window.
+import json as _json
+cR = make({"sl_combined_multiple": 1.5}, name="resume")
+chR = FakeChain(spot=80000.0)
+run(cR, chR, [f"{D} 09:30:00"])
+for leg in cR.position.live_legs():
+    leg.sl_trigger = 300.0                      # simulate the stale fixed stop
+cR._resume_file().write_text(_json.dumps({
+    "cycle": cR.cycle, "expiry": cR.expiry, "entered": True, "done": False,
+    "killed": False, "fresh_entries": cR.fresh_entries,
+    "done_windows": sorted(cR.done_windows), "late_start": False,
+    "first_entry_at": cR.first_entry_at.isoformat() if cR.first_entry_at else None,
+    "cycles_done": [], "position": cR.position.to_dict(cR.marks())}), encoding="utf-8")
+
+cR2 = make({"sl_combined_multiple": 1.5}, name="resume")
+ok("a stale position is restored", cR2.restore(T(f"{D} 09:35:00")))
+check("restored legs still carry the stale 300 stop before the first tick",
+      [l.sl_trigger for l in cR2.position.live_legs()], [300.0, 300.0])
+run(cR2, chR, [f"{D} 09:36:00"])              # NOT a window
+comb = cR2.combined_premium()
+ok("first tick after resume resyncs the stops (no window needed)",
+   all(abs(l.sl_trigger - round(comb * 1.5, 2)) < 0.05 for l in cR2.position.live_legs()))
+ok("resynced stop is far below the stale 300",
+   all(l.sl_trigger < 300.0 for l in cR2.position.live_legs()))
+ok("resynced stop still sits above both legs",
+   all(l.sl_trigger > cR2._mark(l) for l in cR2.position.live_legs()))
+ok("the resync runs once, not every tick", cR2._sl_sync_pending is False)
+
+# ══ 15. a SINGLE-LEGGED resume must never end up with no stop ═════════════
+cS1 = make({"sl_combined_multiple": 1.5}, name="single")
+chS1 = FakeChain(spot=80000.0)
+run(cS1, chS1, [f"{D} 09:30:00"])
+cS1.position.retire("PE")                    # leave only the CE alive
+cS1._resume_file().write_text(_json.dumps({
+    "cycle": cS1.cycle, "expiry": cS1.expiry, "entered": True, "done": False,
+    "killed": False, "fresh_entries": cS1.fresh_entries,
+    "done_windows": sorted(cS1.done_windows), "late_start": False,
+    "first_entry_at": cS1.first_entry_at.isoformat() if cS1.first_entry_at else None,
+    "cycles_done": [], "position": cS1.position.to_dict(cS1.marks())}), encoding="utf-8")
+cS2 = make({"sl_combined_multiple": 1.5}, name="single")
+ok("single-legged position restores", cS2.restore(T(f"{D} 09:35:00")))
+run(cS2, chS1, [f"{D} 09:36:00"])
+ok("engine stop level is NEVER None after a single-legged resume", cS2.sl is not None)
+ok("the surviving leg keeps a real stop", all(l.sl_trigger is not None
+                                              for l in cS2.position.live_legs()))
+run(cS2, chS1, [f"{D} 09:45:00"])            # a window: re-enter the missing side
+ok("a re-entry after a single-legged resume is opened WITH a stop",
+   not cS2.position.unprotected_legs()
+   and all(l.sl_trigger is not None for l in cS2.position.live_legs()))
+
 print(f"\n  {PASS} passed, {FAIL} failed")
 for f in FAILURES:
     print(f"   FAIL {f}")

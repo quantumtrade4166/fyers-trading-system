@@ -123,6 +123,7 @@ class BTCController:
         self.late_start = False
         # Set by the engine when the push feed is up. Optional by design — see _mark.
         self.feed = None
+        self._sl_sync_pending = False
 
         # ── across the month ─────────────────────────────────────────────
         self.cycles_done: list = []
@@ -305,6 +306,27 @@ class BTCController:
         if self.chain_obj is None or not self.chain_obj.is_ready():
             self._write_state()
             return
+
+        # A RESUMED position is resynced before anything reads its stop.
+        #
+        # On 2026-09-13 the engine restarted onto cycles opened under the old fixed
+        # stops: legs worth 14 and 17 still carried stops of 140 (ist_day) and 300
+        # (full_cycle) — levels the premium could never reach, so the legs were
+        # effectively unprotected. Left alone they would have stayed that way until
+        # the next 15-minute window. Recomputing here closes that gap to one tick.
+        # It cannot fire a stop by itself: mult x (a + b) exceeds each leg alone.
+        if self._sl_sync_pending:
+            self._sl_sync_pending = False
+            before = {l.opt_type: l.sl_trigger for l in self.position.live_legs()}
+            # NEVER null self.sl to force this. If the profile resumed single-legged,
+            # the retarget declines (it needs both legs) and a None would survive
+            # into the next re-entry — which would then be opened with NO stop.
+            self._recompute_sl("resume — stops brought into line with current rules",
+                               force=True)
+            after = {l.opt_type: l.sl_trigger for l in self.position.live_legs()}
+            if before != after:
+                self._log("sl_resynced", before=before, after=after,
+                          multiple=self.sl_mult)
 
         self._detect_stops()
         self._enforce_protection()
@@ -510,7 +532,7 @@ class BTCController:
             return None
         return a + b
 
-    def _recompute_sl(self, why: str):
+    def _recompute_sl(self, why: str, force: bool = False):
         """Set every live leg's stop to `sl_combined_multiple` x the pair's
         CURRENT combined premium.
 
@@ -534,7 +556,10 @@ class BTCController:
         if comb is None:
             return
         new = round(comb * self.sl_mult, 2)
-        if self.sl is not None and abs(new - self.sl) < 0.05:
+        # `force` re-applies even when the level is unchanged: after a resume the
+        # engine's own `sl` can already equal the target while the LEGS still carry
+        # stale stops, and the short-circuit would skip exactly the fix needed.
+        if not force and self.sl is not None and abs(new - self.sl) < 0.05:
             return
         old, self.sl = self.sl, new
         for leg in self.position.live_legs():
@@ -970,6 +995,10 @@ class BTCController:
         fe = d.get("first_entry_at")
         self.first_entry_at = dt.datetime.fromisoformat(fe) if fe else None
         self.position = Position.from_dict(d.get("position") or {})
+        # The restored legs carry whatever stop they were given when they were
+        # opened — possibly under different rules or a different multiple. Bring
+        # them into line on the FIRST tick that has marks, not at the next window.
+        self._sl_sync_pending = True
         self._log("resumed", legs=self.position.n_live,
                   realized=self.position.realized(),
                   windows_done=len(self.done_windows),
