@@ -58,12 +58,13 @@ C = PROFILES["continuous"]
 # ── shape ─────────────────────────────────────────────────────────────────
 check("A does not span midnight", A.spans_midnight, False)
 check("B spans midnight", B.spans_midnight, True)
-check("all three now share one target", {p.target for p in PROFILES.values()}, {50.0})
+check("A targets 50, B and C target 100", (A.target, B.target, C.target), (50.0, 100.0, 100.0))
 check("A exposure is 7.67h", A.exposure_hours, 7.67)
 check("B exposure is 23.58h", B.exposure_hours, 23.58)
 check("C has the same clock as B", (C.entry_time, C.square_off), (B.entry_time, B.square_off))
-check("C differs from B only in temperament",
-      (C.ends_on_both_stopped, B.ends_on_both_stopped), (False, True))
+check("B and C run the IST rules (end on double stop / max loss, 3 entries)",
+      [(p.ends_on_both_stopped, p.ends_on_max_loss, p.max_fresh_entries) for p in (A, B, C)],
+      [(True, True, 3)] * 3)
 
 # ── A: a same-day session ─────────────────────────────────────────────────
 check("A in session at 09:30", A.in_session(T("2026-09-04 09:30")), True)
@@ -159,21 +160,21 @@ check("no next window after the last one", A.next_window(T("2026-09-04 17:05")),
 # against a 50 entry; reading the old field would say 100 and let the loss-limit
 # check pass a limit that the leg stops can in fact blow through.
 check("A runs a 1.5x stop", A.sl_mult, 1.5)
-check("B runs a 2.0x stop", B.sl_mult, 2.0)
+check("B runs a 1.2x stop", B.sl_mult, 1.2)
 check("C runs a 1.2x stop", C.sl_mult, 1.2)
 check("A worst case both stopped is $200 (1.5x: stop 150 vs entry 50)",
       A.worst_case_both_stopped(), 200.0)
-check("B worst case both stopped is $300 (2.0x: stop 200 vs entry 50)",
-      B.worst_case_both_stopped(), 300.0)
-check("C worst case both stopped is $140 (1.2x: stop 120 vs entry 50)",
-      C.worst_case_both_stopped(), 140.0)
+check("B worst case both stopped is $280 (1.2x: stop 240 vs entry 100)",
+      B.worst_case_both_stopped(), 280.0)
+check("C worst case both stopped is $280 (1.2x: stop 240 vs entry 100)",
+      C.worst_case_both_stopped(), 280.0)
 check("a profile without its own multiple falls back to the default",
       SessionProfile("nodef", {"entry_time": "09:30", "square_off": "17:10",
                                "target_premium": 50, "sl_premium": 100,
                                "contracts": 1000}).worst_case_both_stopped(default_mult=1.2),
       140.0)
 check("A credit at target is $100", A.credit_at_target(), 100.0)
-check("B credit at target is $100", B.credit_at_target(), 100.0)
+check("B credit at target is $200", B.credit_at_target(), 200.0)
 for name, p in PROFILES.items():
     limit = PARAMS["max_loss_usd"][name]
     check(f"{name}: max loss ${limit} sits above the worst case "

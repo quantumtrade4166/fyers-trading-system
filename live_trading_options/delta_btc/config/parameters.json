@@ -32,36 +32,36 @@
 
     "full_cycle": {
       "enabled": true,
-      "label": "B - full expiry cycle (one strangle per expiry)",
-      "sl_combined_multiple": 2.0,
+      "label": "B - full expiry cycle (IST rules, 100 premium, 1.2x)",
+      "sl_combined_multiple": 1.2,
       "entry_time": "17:35",
       "square_off": "17:10",
-      "target_premium": 50,
-      "sl_premium": 100,
+      "target_premium": 100,
+      "sl_premium": 200,
       "prefer_min": null,
       "prefer_max": null,
       "contracts": 1000,
       "ends_on_both_stopped": true,
       "ends_on_max_loss": true,
       "max_fresh_entries": 3,
-      "_note": "Enters 5 minutes after the new chain lists and holds the whole ~23.6h cycle through US and Asian hours. Higher target premium than A because the contract has ~24h of life at entry rather than ~8h."
+      "_note": "Reset 2026-09-14: runs EXACTLY the ist_day rules (same adjustment, re-entry, churn guard, ends-on-double-stop, ends-on-max-loss, 3 fresh entries) with only the premium (100) and stop (1.2x combined) different, on its own 17:35 -> 17:10 clock. Past trades and equity were archived, not deleted."
     },
 
     "continuous": {
       "enabled": true,
-      "label": "C - continuous (always short, rolls every expiry)",
+      "label": "C - continuous (IST rules, 100 premium, 1.2x)",
       "sl_combined_multiple": 1.2,
       "entry_time": "17:35",
       "square_off": "17:10",
-      "target_premium": 50,
-      "sl_premium": 100,
+      "target_premium": 100,
+      "sl_premium": 200,
       "prefer_min": null,
       "prefer_max": null,
       "contracts": 1000,
-      "ends_on_both_stopped": false,
-      "ends_on_max_loss": false,
-      "max_fresh_entries": 8,
-      "_note": "Same clock as B, opposite temperament. Neither a double stop-out nor the max-loss ends the cycle — it re-enters at the next adjustment window, subject to max_fresh_entries. B measures one strangle per expiry; C measures always being short."
+      "ends_on_both_stopped": true,
+      "ends_on_max_loss": true,
+      "max_fresh_entries": 3,
+      "_note": "Reset 2026-09-14: runs EXACTLY the ist_day rules (same adjustment, re-entry, churn guard, ends-on-double-stop, ends-on-max-loss, 3 fresh entries) with only the premium (100) and stop (1.2x combined) different, on its own 17:35 -> 17:10 clock. Past trades and equity were archived, not deleted."
     }
   },
 
@@ -120,5 +120,5 @@
     "_comment": "PAPER ONLY. There is no live order path in v1 — no API key is even required to run this. When live is built it goes through a signed REST client with its own client_order_id prefix as the own-book scope, rehearsed on testnet (cdn-ind.testnet.deltaex.org) first."
   },
 
-  "last_saved": "2026-09-13"
+  "last_saved": "2026-09-14"
 }
