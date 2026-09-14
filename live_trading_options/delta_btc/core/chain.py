@@ -38,7 +38,8 @@ sys.stderr.reconfigure(encoding="utf-8")
 
 import datetime as dt
 
-from core.api import btc_option_tickers, btc_options
+from core.api import btc_option_tickers, btc_options, orderbook
+from core.fills import walk_book
 from core.selector import atm_strike, CE, PE
 
 CONTRACT_VALUE = 0.001          # BTC per contract; overridden from the product master
@@ -210,6 +211,35 @@ class LiveChain:
         if p is not None:
             return p, True
         return self.mark.get(key), False
+
+    def book_fill(self, strike: float, opt_type: str, side: str, qty: int) -> dict:
+        """What a real MARKET order of `qty` contracts would have been filled at,
+        right now: fetch this contract's live L2 book and walk it level by level.
+
+        Fetched at the moment of the fill rather than taken from the last poll —
+        a real market order hits the book as it is when the order arrives, and a
+        stop-loss in particular fires in exactly the moments the book is moving.
+
+        If the book cannot be fetched, falls back to the polled best bid/ask
+        (`source: top`), and if that side is empty too, to the mark
+        (`source: mark`). Every fallback is named in the result so it is visible in
+        the trade log instead of passing as a real depth fill.
+        """
+        c = self.contract(strike, opt_type)
+        if c is not None:
+            try:
+                book = orderbook(c["symbol"])
+                levels = book.get("buy") if side == "SELL" else book.get("sell")
+                w = walk_book(levels, qty)
+                if w["price"] is not None:
+                    return {**w, "source": "l2"}
+            except Exception:
+                pass
+        top, crossed = self.fill_price(strike, opt_type, side)
+        if top is None:
+            return {"price": None, "source": "none"}
+        return {"price": top, "top": top, "worst": top, "levels_used": 1,
+                "filled": None, "short": None, "source": "top" if crossed else "mark"}
 
     def spread(self, strike: float, opt_type: str) -> float | None:
         key = (float(strike), opt_type)

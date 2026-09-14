@@ -13,17 +13,21 @@ live path that could be switched on by a config typo is exactly how the NSE book
 lost a morning. When live is built it goes here, behind a signed REST client,
 rehearsed on testnet first.
 
-HOW A PAPER FILL IS PRICED
-A SELL fills at the best BID and a BUY lifts the best ASK — never at the mark.
-Filling at the mark hands the book half the spread on every single leg, and this
-strategy re-legs every time the 2x rule fires; across a month that alone could
-decide which session profile "wins". Where a side of the book is empty the mark
-is used and the fill is FLAGGED (`crossed=False`) so it is visible in the trade
-log rather than silently counted as real.
+HOW A PAPER FILL IS PRICED — like a real market order
+Every entry, exit and stop-loss fills at what a REAL market order of the full size
+would have got: the contract's live L2 book is fetched at the moment of the fill
+and walked level by level (core/fills.py). A SELL eats down through the bids, a BUY
+up through the asks, and the booked price is the size-weighted average of every
+level used — not the best price alone, and never the mark.
 
-Depth is deliberately NOT walked. At 100 contracts against the 7,000-contract
-top-of-book seen on these strikes, the whole order rests inside level one; adding
-a depth model would be inventing precision the size does not need.
+Stop-losses TRIGGER on the mark (what Delta's stop order watches) and then FILL as
+a stop-market: a market buy through the asks at that instant, with no floor at the
+trigger.
+
+The log records how each fill was priced (`fill_src`): `l2` a real depth walk,
+`top` the polled best bid/ask because the book could not be fetched, `mark` when
+that side of the book was empty. Anything other than `l2` is a fallback and is
+named as one.
 
 FEES
 Delta charges the LOWER of 0.01% of notional and 3.5% of premium, per side.
@@ -41,8 +45,11 @@ BUY, SELL = "BUY", "SELL"
 
 class Fill:
     def __init__(self, order_id, price, time_str, status="COMPLETE",
-                 message=None, crossed=None, fee=0.0):
+                 message=None, crossed=None, fee=0.0, book=None):
         self.order_id, self.price, self.time = order_id, price, time_str
+        # how the price was reached: l2 depth walk / top of book / mark fallback,
+        # the best level, the worst level reached, levels used, contracts short
+        self.book = book or {}
         self.status = status
         # why it failed, verbatim. A rejection has to travel back to the strategy
         # as DATA — raising unwinds the tick and the strategy never learns its own
@@ -116,10 +123,18 @@ class Executor:
     def _paper_order(self, leg, side: str, kind: str) -> Fill:
         if self._live:
             return self.place_live_order(leg, side, kind)
-        price, crossed = self.chain.fill_price(leg.strike, leg.opt_type, side)
         if not self.cross:
             price = self.chain.mark.get((leg.strike, leg.opt_type))
-            crossed = False
+            crossed, book = False, {"source": "mark"}
+        elif hasattr(self.chain, "book_fill"):
+            # The price a real market order of this size would have got: the book
+            # walked level by level, not the best price alone.
+            book = self.chain.book_fill(leg.strike, leg.opt_type, side, leg.contracts)
+            price = book.get("price")
+            crossed = book.get("source") in ("l2", "top")
+        else:
+            price, crossed = self.chain.fill_price(leg.strike, leg.opt_type, side)
+            book = {"source": "top" if crossed else "mark"}
         if price is None:
             # No price at all is a REFUSAL, not a zero. Returning a Fill rather
             # than raising is what lets the controller see its own failure and
@@ -128,7 +143,18 @@ class Executor:
                         message=f"no book and no mark for {leg.symbol}")
         fee = self.fee_for(price, leg.contracts, leg.contract_value, self.chain.spot)
         return Fill(self._next_id(kind), float(price), self._clock(),
-                    crossed=crossed, fee=fee)
+                    crossed=crossed, fee=fee, book=book)
+
+    def stop_fill(self, leg) -> Fill:
+        """A stop-MARKET order firing: a market BUY of the whole leg, through the
+        asks, at the instant it triggers.
+
+        It deliberately has NO floor at the trigger. A real stop-market buy is just
+        a market order once it fires; it fills wherever the asks are, which is
+        usually above the trigger in a fast move and occasionally below it. The old
+        paper rule booked max(mark, trigger), which never paid the spread a real
+        stop pays."""
+        return self._paper_order(leg, BUY, "stop")
 
     def place_live_order(self, leg, side: str, kind: str) -> Fill:
         """The live path. NOT BUILT — and raising is the point.

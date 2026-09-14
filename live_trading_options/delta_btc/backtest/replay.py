@@ -71,6 +71,7 @@ class ReplayChain:
     def load_snapshot(self, rows) -> int:
         """Absorb one minute of the archive: rows for THIS expiry only."""
         self.mark, self.bid, self.ask = {}, {}, {}
+        self.bid_size, self.ask_size = {}, {}
         strikes = set()
         spot = None
         for r in rows:
@@ -84,6 +85,10 @@ class ReplayChain:
                 self.bid[key] = float(r["best_bid"])
             if r["best_ask"] is not None and r["best_ask"] == r["best_ask"]:
                 self.ask[key] = float(r["best_ask"])
+            for src, dst in (("bid_size", self.bid_size), ("ask_size", self.ask_size)):
+                v = r.get(src)
+                if v is not None and v == v:
+                    dst[key] = float(v)
             if r["spot"] is not None and r["spot"] == r["spot"]:
                 spot = float(r["spot"])
             if r.get("contract_value"):
@@ -129,6 +134,25 @@ class ReplayChain:
             return p, True
         return self.mark.get(key), False
 
+    def book_fill(self, strike, opt_type, side, qty) -> dict:
+        """The archive keeps only the BEST bid/ask and their sizes, not the full
+        book, so a replay cannot walk depth. It fills at the top price and flags
+        `short` when the top level was smaller than the order — so a backtest fill
+        that real money could not have got at that price is marked, not hidden."""
+        key = (float(strike), opt_type)
+        book = self.bid if side == "SELL" else self.ask
+        sizes = self.bid_size if side == "SELL" else self.ask_size
+        p = book.get(key)
+        if p is None:
+            p = self.mark.get(key)
+            return {"price": p, "top": p, "worst": p, "levels_used": 1,
+                    "filled": None, "short": None, "source": "mark" if p is not None else "none"}
+        sz = sizes.get(key)
+        short = max(0, int(qty) - int(sz)) if sz is not None else None
+        return {"price": p, "top": p, "worst": p, "levels_used": 1,
+                "filled": (int(qty) - short) if short is not None else None,
+                "short": short, "source": "top"}
+
     def is_ready(self) -> bool:
         if self.spot is None or self.atm is None:
             return False
@@ -144,7 +168,7 @@ class ReplayChain:
 
 # ── loading the archive ──────────────────────────────────────────────────
 _COLS = ["captured", "symbol", "opt_type", "strike", "expiry", "spot", "mark",
-         "best_bid", "best_ask", "contract_value"]
+         "best_bid", "best_ask", "bid_size", "ask_size", "contract_value"]
 
 
 def load_days(days, archive: Path = None) -> pd.DataFrame:

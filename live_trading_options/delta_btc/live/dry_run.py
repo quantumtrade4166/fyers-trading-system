@@ -133,6 +133,11 @@ class FakeChain:
             return p, True
         return self.mark.get(key), False
 
+    def book_fill(self, strike, opt_type, side, qty):
+        p, crossed = self.fill_price(strike, opt_type, side)
+        return {"price": p, "top": p, "worst": p, "levels_used": 1,
+                "filled": qty, "short": 0, "source": "top" if crossed else "mark"}
+
     def is_ready(self):
         return self.spot is not None and self.atm is not None
 

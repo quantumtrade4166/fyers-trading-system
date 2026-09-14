@@ -383,13 +383,23 @@ class BTCController:
             m = self._mark(leg)
             if m is None or not self.executor.stop_triggered(leg, m):
                 continue
-            fill = max(m, leg.sl_trigger)
-            fee = self.executor.fee_for(fill, leg.contracts, leg.contract_value,
-                                        self.chain_obj.spot)
+            # TRIGGER on the mark (what Delta's stop order watches); FILL like a real
+            # stop-market order: a market buy through the asks at that instant.
+            sf = self.executor.stop_fill(leg)
+            if sf.ok:
+                fill, fee, book = sf.price, sf.fee, sf.book
+            else:
+                # nothing on the book and no mark: the leg must still be closed, so
+                # book it at the trigger and say so loudly
+                fill = leg.sl_trigger
+                fee = self.executor.fee_for(fill, leg.contracts, leg.contract_value,
+                                            self.chain_obj.spot)
+                book = {"source": "trigger — no book"}
             leg.mark_stopped(fill, self._hm(), fee=fee)
             self._log("stop_hit", side=side, strike=leg.strike,
-                      trigger=leg.sl_trigger, fill=fill, gapped=round(m - leg.sl_trigger, 2),
-                      pnl=leg.pnl())
+                      trigger=leg.sl_trigger, mark=round(m, 2), fill=fill,
+                      slippage=round(fill - leg.sl_trigger, 2),
+                      **_book_fields(book), pnl=leg.pnl())
             self._retire(side)
             if self.position.is_flat:
                 self._stopped_flat()
@@ -464,7 +474,7 @@ class BTCController:
         leg.mark_protected(oid, self.sl, at_broker, self._hm())
         self._log("leg_open", side=leg.opt_type, strike=leg.strike,
                   entry=leg.entry_price, sl=self.sl, otm=leg.otm_level,
-                  contracts=leg.contracts, crossed=fill.crossed,
+                  contracts=leg.contracts, **_book_fields(fill.book),
                   fee=round(fill.fee, 4), why=leg.reason)
         return True
 
@@ -490,7 +500,7 @@ class BTCController:
                         fee=fill.fee, crossed=fill.crossed)
         self._log("leg_closed", side=leg.opt_type, strike=leg.strike,
                   exit=fill.price, reason=reason, pnl=leg.pnl(),
-                  crossed=fill.crossed, fee=round(fill.fee, 4))
+                  **_book_fields(fill.book), fee=round(fill.fee, 4))
         return fill.price
 
     def _cover_and_retire(self, leg, reason: str) -> bool:
@@ -1012,6 +1022,22 @@ class BTCController:
                 json.dumps(self.snapshot(), indent=1, default=str), encoding="utf-8")
         except Exception:
             pass
+
+
+def _book_fields(book: dict) -> dict:
+    """How a fill was priced, for the log: where the price came from, the best
+    level versus what was actually paid, how deep it went, and any shortfall."""
+    b = book or {}
+    out = {"fill_src": b.get("source")}
+    if b.get("top") is not None:
+        out["top"] = b["top"]
+    if b.get("levels_used"):
+        out["levels"] = b["levels_used"]
+    if b.get("worst") is not None and b.get("worst") != b.get("top"):
+        out["worst"] = b["worst"]
+    if b.get("short"):
+        out["book_short"] = b["short"]
+    return out
 
 
 def fee_of(fill) -> float:
