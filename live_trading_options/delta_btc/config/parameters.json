@@ -49,7 +49,7 @@
 
     "continuous": {
       "enabled": true,
-      "label": "C - continuous (IST rules, 100 premium, 1.2x)",
+      "label": "C - continuous (re-enters after stop-out, 100 premium, 1.2x)",
       "sl_combined_multiple": 1.2,
       "entry_time": "17:35",
       "square_off": "17:10",
@@ -58,10 +58,10 @@
       "prefer_min": null,
       "prefer_max": null,
       "contracts": 1000,
-      "ends_on_both_stopped": true,
-      "ends_on_max_loss": true,
-      "max_fresh_entries": 3,
-      "_note": "Reset 2026-09-14: runs EXACTLY the ist_day rules (same adjustment, re-entry, churn guard, ends-on-double-stop, ends-on-max-loss, 3 fresh entries) with only the premium (100) and stop (1.2x combined) different, on its own 17:35 -> 17:10 clock. Past trades and equity were archived, not deleted."
+      "ends_on_both_stopped": false,
+      "ends_on_max_loss": false,
+      "max_fresh_entries": 8,
+      "_note": "Same rules, premium (100), stop (1.2x combined) and clock as full_cycle, with ONE difference restored 2026-09-14: neither a double stop-out nor the max loss ends the cycle — it re-sells a fresh strangle at the next 15-minute window, up to 8 fresh entries. full_cycle stops for the cycle; continuous stays short."
     }
   },
 

@@ -62,9 +62,14 @@ check("A targets 50, B and C target 100", (A.target, B.target, C.target), (50.0,
 check("A exposure is 7.67h", A.exposure_hours, 7.67)
 check("B exposure is 23.58h", B.exposure_hours, 23.58)
 check("C has the same clock as B", (C.entry_time, C.square_off), (B.entry_time, B.square_off))
-check("B and C run the IST rules (end on double stop / max loss, 3 entries)",
-      [(p.ends_on_both_stopped, p.ends_on_max_loss, p.max_fresh_entries) for p in (A, B, C)],
-      [(True, True, 3)] * 3)
+check("A and B end the cycle on a double stop-out / max loss, 3 entries",
+      [(p.ends_on_both_stopped, p.ends_on_max_loss, p.max_fresh_entries) for p in (A, B)],
+      [(True, True, 3)] * 2)
+check("C re-enters after a double stop-out / max loss, up to 8 entries",
+      (C.ends_on_both_stopped, C.ends_on_max_loss, C.max_fresh_entries), (False, False, 8))
+check("C otherwise matches B: clock, premium, stop",
+      (C.entry_time, C.square_off, C.target, C.sl_mult),
+      (B.entry_time, B.square_off, B.target, B.sl_mult))
 
 # ── A: a same-day session ─────────────────────────────────────────────────
 check("A in session at 09:30", A.in_session(T("2026-09-04 09:30")), True)
