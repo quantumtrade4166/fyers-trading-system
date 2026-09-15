@@ -325,11 +325,18 @@ class BTCController:
             # into the next re-entry — which would then be opened with NO stop.
             self._recompute_sl("resume — stops brought into line with current rules",
                                force=True)
+            # Under stop-only-lowers a restart must not raise the stop either.
+            saved = [v for v in before.values() if v is not None]
+            if self.sl_only_lowers and saved and self.sl is not None and self.sl > min(saved):
+                self.sl = min(saved)
+                for leg in self.position.live_legs():
+                    leg.sl_trigger = self.sl
             after = {l.opt_type: l.sl_trigger for l in self.position.live_legs()}
             if before != after:
                 self._log("sl_resynced", before=before, after=after,
                           multiple=self.sl_mult)
 
+        self._apply_sl_override()
         self._detect_stops()
         self._enforce_protection()
 
@@ -860,6 +867,34 @@ class BTCController:
                             if self._now and self.profile.next_window(self._now) else None),
             "updated": self._stamp(),
         }
+
+    def _apply_sl_override(self):
+        """One-shot manual stop: drop `<profile>_SL_OVERRIDE.json` ({"sl": 426}) in
+        the state dir and the live legs take that stop on the next tick. The file is
+        deleted once applied; the normal rules carry on from the new level. Refused
+        if a live leg's mark is already at or above it (it would fire instantly)."""
+        f = self.state_dir / f"{self.name}_SL_OVERRIDE.json"
+        if not f.exists():
+            return
+        try:
+            new = float(json.loads(f.read_text(encoding="utf-8"))["sl"])
+        except Exception as e:
+            self._log("sl_override_rejected", reason=f"unreadable: {e}")
+            f.unlink(missing_ok=True)
+            return
+        legs = self.position.live_legs()
+        marks = [self._mark(l) for l in legs]
+        if not legs or any(m is None or m >= new for m in marks):
+            self._log("sl_override_rejected", sl=new, marks=marks,
+                      reason="no live legs, unpriced, or a mark already at the level")
+            f.unlink(missing_ok=True)
+            return
+        old, self.sl = self.sl, round(new, 2)
+        for leg in legs:
+            leg.sl_trigger = self.sl
+            leg.sl_checked = self._hm()
+        self._log("sl_override", old_sl=old, new_sl=self.sl, marks=marks)
+        f.unlink(missing_ok=True)
 
     # ── surviving a restart ──────────────────────────────────────────────
     def _resume_file(self) -> Path:

@@ -635,6 +635,21 @@ run(cO, chO, [f"{D} 09:30:00"])
 s0 = cO.sl; chO.set_spot(79700.0); cO._recompute_sl("window test")
 ok("switch off: old behaviour, stop follows the pair up", cO.sl > s0)
 
+# ══ 17. one-shot manual stop override ═════════════════════════════════════
+cV = make({"sl_combined_multiple": 1.5}, params_over={"sl_only_lowers": True}, name="override")
+chV = FakeChain(spot=80000.0)
+run(cV, chV, [f"{D} 09:30:00"])
+target = round(max(cV._mark(l) for l in cV.position.live_legs()) + 5, 1)
+ovf = cV.state_dir / "override_SL_OVERRIDE.json"
+ovf.write_text(_json.dumps({"sl": target}), encoding="utf-8")
+run(cV, chV, [f"{D} 09:31:00"])
+check("override sets the engine stop", cV.sl, target)
+ok("override sets every live leg", all(l.sl_trigger == target for l in cV.position.live_legs()))
+ok("override file is consumed", not ovf.exists())
+ovf.write_text(_json.dumps({"sl": 1.0}), encoding="utf-8")
+run(cV, chV, [f"{D} 09:32:00"])
+check("override below a live mark is refused", cV.sl, target)
+
 print(f"\n  {PASS} passed, {FAIL} failed")
 for f in FAILURES:
     print(f"   FAIL {f}")
