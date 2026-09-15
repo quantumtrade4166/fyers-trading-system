@@ -97,6 +97,54 @@ app.add_middleware(GZipMiddleware, minimum_size=500)
 STATIC_DIR = Path(__file__).parent / "static"
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+# ── DualMom LIVE — PROXY to its own service ──────────────────────────────────
+#
+# DualMom used to be imported straight into this process. That meant every
+# DualMom code change required restarting THIS app — which also runs the live
+# Vwap Strangle (feed, per-minute signal check, V2 supervisor, order routing).
+# Mid-session that leaves the strangle blind for the ~60-90s this app takes to
+# reload 500 stocks, long enough to miss an entry trigger or the MTM stop.
+#
+# So DualMom now runs as its own process on :8010 and this is a dumb pass-through.
+# The proxy has no DualMom logic in it, so it should never need editing again:
+# restart the DualMom service as often as you like, even while the market is
+# open, and this app never notices.
+import requests as _requests
+from fastapi import Request as _Request
+from fastapi.responses import JSONResponse as _JSONResponse
+
+_DM_BASE = os.getenv("DUALMOM_URL", "http://127.0.0.1:8010")
+
+
+@app.api_route("/api/dualmom/live/{path:path}", methods=["GET", "POST"])
+async def _dualmom_live_proxy(path: str, request: _Request):
+    url = f"{_DM_BASE}/api/dualmom/live/{path}"
+    body = await request.body()
+
+    def _call():
+        if request.method == "POST":
+            return _requests.post(url, data=body, timeout=600,
+                                  headers={"Content-Type": "application/json"})
+        return _requests.get(url, timeout=600)
+
+    try:
+        r = await asyncio.to_thread(_call)
+    except _requests.exceptions.ConnectionError:
+        # Say WHICH service is down. "unknown error" once sent someone hunting a
+        # broker problem that did not exist.
+        return _JSONResponse(status_code=503, content={
+            "ok": False,
+            "error": f"DualMom service is not running at {_DM_BASE}. "
+                     f"Start it: python -m deployment.dualmom_service"})
+    except Exception as _e:
+        return _JSONResponse(status_code=502, content={
+            "ok": False, "error": f"DualMom proxy: {type(_e).__name__}: {_e}"})
+    try:
+        return _JSONResponse(status_code=r.status_code, content=r.json())
+    except ValueError:
+        return _JSONResponse(status_code=502, content={
+            "ok": False, "error": f"DualMom service returned non-JSON: {r.text[:200]}"})
+
 # BTC delta-neutral (Delta Exchange India, PAPER). Read-only: it serves files a
 # separate engine process publishes, so a failure here cannot touch the paper run,
 # and a failure in the paper run cannot stop the dashboard from starting.
@@ -105,6 +153,14 @@ try:
     app.include_router(_btc_router)
 except Exception as _e:                                    # pragma: no cover
     print(f"[btc] router NOT loaded: {type(_e).__name__}: {_e}", flush=True)
+
+# Nifty Directional Pivot (PAPER). Same isolation as BTC: a separate engine process
+# publishes files, this router only reads them.
+try:
+    from deployment.pivot_api import router as _ndp_router
+    app.include_router(_ndp_router)
+except Exception as _e:                                    # pragma: no cover
+    print(f"[ndp] router NOT loaded: {type(_e).__name__}: {_e}", flush=True)
 
 # ── tiny thread-safe TTL cache ───────────────────────────────────────────────
 # The pair-signal compute is ~0.5-3s. Running it on the event loop froze EVERY request

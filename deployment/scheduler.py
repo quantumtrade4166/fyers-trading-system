@@ -12,6 +12,7 @@ sys.stderr.reconfigure(encoding="utf-8")
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+from apscheduler.triggers.interval import IntervalTrigger
 import pytz
 import numpy as np
 from datetime import date
@@ -217,6 +218,11 @@ def _strangle_intraday():
         _ensure_dn_running()
     except Exception as e:
         print(f"  [scheduler] ensure_dn failed: {e}")
+    # Nifty Directional Pivot (paper) — independent of both engines above
+    try:
+        _ensure_ndp_running()
+    except Exception as e:
+        print(f"  [scheduler] ensure_ndp failed: {e}")
 
 
 _V2_PS_FILTER = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' "
@@ -331,6 +337,48 @@ def _ensure_dn_running():
               f"(running={running}, tick_gap={gap})")
 
 
+_NDP_PS_FILTER = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' "
+                  "-and $_.CommandLine -like '*nifty_pivot*engine*' }")
+
+
+def _ensure_ndp_running():
+    """Keep the Nifty Directional Pivot paper engine alive 09:10-15:20 IST.
+
+    Its first decision is the 09:20 bar, so it must be up and seeded before then
+    (the scheduled task starts it at 09:10). Staleness is judged from TICK.json,
+    which the engine rewrites every second from its writer thread whether or not
+    the market is ticking — so a quiet market or a holiday never looks dead, but a
+    hung process does.
+    """
+    import datetime, subprocess
+    from pathlib import Path
+    import pytz
+    now = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
+    if not (now.weekday() < 5 and (9, 10) <= (now.hour, now.minute) <= (15, 20)):
+        return
+
+    tick = (Path(__file__).parent.parent / "live_trading_options" / "nifty_pivot"
+            / "data" / "live_state" / "TICK.json")
+
+    r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                        f"({_NDP_PS_FILTER} | Measure-Object).Count"],
+                       capture_output=True, text=True, timeout=20)
+    running = (r.stdout.strip() or "0") != "0"
+
+    gap = (datetime.datetime.now().timestamp() - tick.stat().st_mtime) if tick.exists() else None
+    # grace until 09:14 so a just-started engine can finish seeding before its first write
+    stalled = running and now.time() >= datetime.time(9, 14) and (gap is None or gap > 120)
+
+    if (not running) or stalled:
+        if stalled:
+            subprocess.run(["powershell", "-NoProfile", "-Command",
+                            f"{_NDP_PS_FILTER} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"],
+                           capture_output=True, timeout=20)
+        subprocess.run(["schtasks", "/Run", "/TN", "NiftyPivotEngine"],
+                       capture_output=True, timeout=20)
+        print(f"  [scheduler] NDP {'restart' if stalled else 'start'} (running={running}, tick_gap={gap})")
+
+
 def _start_feed():
     print("  [scheduler] Market open — starting live feed...")
     from deployment import live_feed
@@ -343,8 +391,43 @@ def _stop_feed():
     live_feed.stop_feed()
 
 
+_hb = {"wall": None, "mono": None}
+
+
+def _heartbeat():
+    """Every 60s. Keeps the scheduler from going blind after a VM pause.
+
+    APScheduler sleeps on a MONOTONIC timer until its next job, and that timer does
+    not advance while the host has the VM frozen. On 14-Sep-2026 the host paused
+    the VPS 01:22-09:19 IST; afterwards this scheduler slept on until 16:47 and then
+    logged EVERY job as "missed" - 08:50 Zerodha login, 09:15 feed, the per-minute
+    signal check and the 2-minute strangle capture/V2 supervisor. (It was an NSE
+    holiday, so nothing was lost that day. On a trading day it would have been.)
+
+    A job every 60s forces the loop to wake within a minute of resuming and
+    re-check the wall clock. It also logs the pause itself: wall time jumping far
+    ahead of monotonic time is the signature of a frozen VM.
+
+    Limit: a job whose time falls INSIDE the pause (e.g. 08:50 login during an
+    overnight freeze) is still missed - this only stops the blindness AFTER resume.
+    """
+    import time as _t
+    wall, mono = _t.time(), _t.monotonic()
+    if _hb["wall"] is not None:
+        gap = (wall - _hb["wall"]) - (mono - _hb["mono"])
+        if gap > 120:
+            print(f"  [scheduler] VM PAUSE DETECTED: wall clock jumped {gap/60:.1f} min "
+                  f"more than this process ran - the host froze the machine", flush=True)
+    _hb["wall"], _hb["mono"] = wall, mono
+
+
 def create_scheduler() -> BackgroundScheduler:
     sched = BackgroundScheduler(timezone=IST)
+
+    # 60s heartbeat - see _heartbeat(). Must stay first and must stay cheap.
+    sched.add_job(_heartbeat, IntervalTrigger(seconds=60, timezone=IST),
+                  id="heartbeat", coalesce=True, max_instances=1)
+    print("  [scheduler] 60s heartbeat armed (VM-pause guard)", flush=True)
 
     # Zerodha headless auto-login at 08:50 (token ready before market open)
     sched.add_job(_zerodha_login, CronTrigger(

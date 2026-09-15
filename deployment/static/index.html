@@ -179,6 +179,9 @@
     <button class="tab-btn" id="tab-btc" onclick="switchTab('btc')">
       ₿ BTC Delta Neutral
     </button>
+    <button class="tab-btn" id="tab-ndp" onclick="switchTab('ndp')">
+      📐 Nifty Directional Pivot
+    </button>
     <button class="tab-btn" id="tab-terminal" onclick="switchTab('terminal')">
       💼 Terminal
     </button>
@@ -257,10 +260,20 @@
     <div class="flex items-center justify-between mb-5">
       <div>
         <h2 class="text-lg font-semibold text-white">DualMom.Liq.Nifty50</h2>
-        <p class="text-xs text-slate-500">Nifty 500 · Monthly · Top-50 Momentum Weighted · Nifty 100MA Filter</p>
+        <p id="dm-subtitle" class="text-xs text-slate-500">Nifty 500 · Monthly · Top-50 Momentum Weighted · Nifty 100MA Filter</p>
       </div>
-      <span id="dm-signal-badge" class="badge-unk text-xs font-medium px-3 py-1 rounded-full">— —</span>
+      <div class="flex items-center gap-3">
+        <div class="flex items-center gap-1 bg-slate-900 border border-slate-800 rounded p-1">
+          <button id="dm-mode-paper" onclick="dmSetMode(false)"
+                  class="px-3 py-1 rounded text-xs font-medium bg-slate-600 text-white">Paper</button>
+          <button id="dm-mode-live" onclick="dmSetMode(true)"
+                  class="px-3 py-1 rounded text-xs font-medium text-slate-400 hover:text-slate-200">Live</button>
+        </div>
+        <span id="dm-signal-badge" class="badge-unk text-xs font-medium px-3 py-1 rounded-full">— —</span>
+      </div>
     </div>
+
+    <div id="dm-paper-section">
 
     <!-- ── SECTION 1: Paper Trading ── -->
     <div class="mb-2 flex items-center gap-3">
@@ -487,6 +500,308 @@
       </div>
       <div id="dm-equity-chart" style="height:200px;"></div>
     </div>
+
+    </div><!-- /dm-paper-section -->
+
+    <!-- ══════════ LIVE (Kotak, separate account) ══════════ -->
+    <div id="dm-live-section" style="display:none">
+
+      <!-- gate banner -->
+      <div id="dm-live-gate" class="card p-4 mb-4" style="border-left:3px solid #f59e0b">
+        <div class="flex items-start gap-3">
+          <span class="text-lg">🔒</span>
+          <div class="flex-1">
+            <p class="text-sm font-semibold text-amber-300">Deploy is locked</p>
+            <p id="dm-live-gate-why" class="text-xs text-slate-400 mt-1">checking…</p>
+            <p class="text-xs text-slate-600 mt-1">
+              Preview always works and never sends an order. Unlock by setting
+              <code class="text-slate-400">ENABLED=True</code> and
+              <code class="text-slate-400">DRY_RUN=False</code> in
+              <code class="text-slate-400">deployment/dualmom_live/config.py</code>
+              — only after go-live step 6 (the order-tag round-trip) passes.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══ CLIENT PORTFOLIO — live from Kotak, checked against the ledger ══ -->
+      <div id="dm-port" class="mb-6">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+          <div>
+            <h3 class="text-sm font-semibold text-slate-200 uppercase tracking-wide">Client portfolio</h3>
+            <p class="text-xs text-slate-500">
+              <span id="dm-port-acct">Kotak Rohit · UCC 15P56</span> · since
+              <span id="dm-port-incep">—</span> · capital <span id="dm-port-cap">—</span> ·
+              as of <span id="dm-port-asof" class="font-mono">—</span>
+            </p>
+          </div>
+          <div class="flex items-center gap-2">
+            <span id="dm-port-recon" class="text-xs px-2 py-1 rounded bg-slate-800 text-slate-400"
+                  title="Every position's broker quantity vs the quantity rebuilt from exchange fills">recon —</span>
+            <span id="dm-port-chain" class="text-xs px-2 py-1 rounded bg-slate-800 text-slate-400"
+                  title="Hash-chain check: proves no ledger record was edited or removed">ledger —</span>
+            <button onclick="dmPortLoad(true); dmEquityLoad();"
+                    class="px-3 py-1 rounded text-xs bg-slate-800 hover:bg-slate-700 text-slate-300">↻ Refresh</button>
+          </div>
+        </div>
+        <div id="dm-port-err" class="text-xs text-amber-400 mb-2" style="display:none"></div>
+
+        <!-- KPIs -->
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          <div class="card p-4">
+            <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">NAV</p>
+            <p id="dm-k-nav" class="text-xl font-semibold text-white font-mono">—</p>
+            <p id="dm-k-nav-sub" class="text-xs text-slate-600 mt-1">—</p>
+          </div>
+          <div class="card p-4">
+            <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Total P&amp;L</p>
+            <p id="dm-k-tot" class="text-xl font-semibold font-mono">—</p>
+            <p id="dm-k-tot-sub" class="text-xs text-slate-600 mt-1">vs capital</p>
+          </div>
+          <div class="card p-4">
+            <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Day P&amp;L</p>
+            <p id="dm-k-day" class="text-xl font-semibold font-mono">—</p>
+            <p id="dm-k-day-sub" class="text-xs text-slate-600 mt-1">today</p>
+          </div>
+          <div class="card p-4">
+            <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Unrealised MTM</p>
+            <p id="dm-k-mtm" class="text-xl font-semibold font-mono">—</p>
+            <p id="dm-k-mtm-sub" class="text-xs text-slate-600 mt-1">on cost</p>
+          </div>
+          <div class="card p-4">
+            <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Capital deployed</p>
+            <p id="dm-k-dep" class="text-xl font-semibold text-white font-mono">—</p>
+            <p id="dm-k-dep-sub" class="text-xs text-slate-600 mt-1">market value</p>
+          </div>
+          <div class="card p-4">
+            <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Cash</p>
+            <p id="dm-k-cash" class="text-xl font-semibold text-white font-mono">—</p>
+            <p id="dm-k-cash-sub" class="text-xs text-slate-600 mt-1">free, broker</p>
+          </div>
+          <div class="card p-4">
+            <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Max drawdown</p>
+            <p id="dm-k-dd" class="text-xl font-semibold font-mono">—</p>
+            <p id="dm-k-dd-sub" class="text-xs text-slate-600 mt-1">since inception</p>
+          </div>
+          <div class="card p-4">
+            <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Positions</p>
+            <p id="dm-k-pos" class="text-xl font-semibold text-white font-mono">—</p>
+            <p id="dm-k-pos-sub" class="text-xs text-slate-600 mt-1">—</p>
+          </div>
+        </div>
+
+        <!-- curves -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 mb-4">
+          <div class="card p-4">
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-sm font-medium text-slate-300">Equity curve <span class="text-xs text-slate-600 font-normal">— NAV, IST</span></h3>
+              <span id="dm-eq-note" class="text-xs text-slate-600">—</span>
+            </div>
+            <div id="dm-live-eq-chart" style="height:230px;"></div>
+          </div>
+          <div class="card p-4">
+            <div class="flex items-center justify-between mb-2">
+              <h3 class="text-sm font-medium text-slate-300">Drawdown <span class="text-xs text-slate-600 font-normal">— from running peak</span></h3>
+              <span id="dm-dd-note" class="text-xs text-slate-600">—</span>
+            </div>
+            <div id="dm-live-dd-chart" style="height:230px;"></div>
+          </div>
+        </div>
+
+        <!-- positions -->
+        <div class="card p-4 mb-4">
+          <div class="flex items-center justify-between mb-3">
+            <h3 class="text-sm font-medium text-slate-300">Positions
+              <span class="text-xs text-slate-600 font-normal">— quantities &amp; prices from Kotak · click a heading to sort</span></h3>
+            <span id="dm-port-count" class="text-xs text-slate-600">—</span>
+          </div>
+          <div style="overflow-x:auto">
+            <table class="w-full text-xs dm-table">
+              <thead>
+                <tr class="text-slate-500 border-b border-slate-800 select-none">
+                  <th class="text-left py-2 cursor-pointer" onclick="dmSortPort('symbol')">Symbol</th>
+                  <th class="text-right cursor-pointer" onclick="dmSortPort('qty')">Qty</th>
+                  <th class="text-right cursor-pointer" onclick="dmSortPort('avg_price')">Avg price</th>
+                  <th class="text-right cursor-pointer" onclick="dmSortPort('ltp')">LTP</th>
+                  <th class="text-right cursor-pointer" onclick="dmSortPort('day_change_pct')">Day %</th>
+                  <th class="text-right cursor-pointer" onclick="dmSortPort('cost')">Invested</th>
+                  <th class="text-right cursor-pointer" onclick="dmSortPort('value')">Value</th>
+                  <th class="text-right cursor-pointer" onclick="dmSortPort('weight_pct')">Weight</th>
+                  <th class="text-right cursor-pointer" onclick="dmSortPort('mtm')">MTM ₹</th>
+                  <th class="text-right cursor-pointer" onclick="dmSortPort('mtm_pct')">MTM %</th>
+                  <th class="text-right cursor-pointer" onclick="dmSortPort('day_pnl')">Day P&amp;L</th>
+                  <th class="text-right cursor-pointer" onclick="dmSortPort('stop_price')" title="-35% from average price">Stop</th>
+                  <th class="text-right cursor-pointer" onclick="dmSortPort('to_stop_pct')" title="How far above the stop the price is">To stop</th>
+                  <th class="text-right" title="settled (in holdings) / unsettled (bought, not yet settled)">Settled</th>
+                  <th class="text-center" title="broker quantity == quantity rebuilt from exchange fills">Recon</th>
+                </tr>
+              </thead>
+              <tbody id="dm-port-body"></tbody>
+              <tfoot id="dm-port-foot"></tfoot>
+            </table>
+          </div>
+        </div>
+
+        <!-- ledger -->
+        <div class="card p-4 mb-2">
+          <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+            <h3 class="text-sm font-medium text-slate-300">Client ledger
+              <span class="text-xs text-slate-600 font-normal">— append-only, hash-chained, raw broker payload kept</span></h3>
+            <div class="flex items-center gap-1">
+              <button id="dm-lg-fills" onclick="dmLedgerLoad('fills')" class="px-2 py-1 rounded text-xs">Fills</button>
+              <button id="dm-lg-orders" onclick="dmLedgerLoad('orders')" class="px-2 py-1 rounded text-xs">Orders</button>
+              <button id="dm-lg-attempts" onclick="dmLedgerLoad('attempts')" class="px-2 py-1 rounded text-xs">Attempts</button>
+              <button id="dm-lg-events" onclick="dmLedgerLoad('events')" class="px-2 py-1 rounded text-xs">Events</button>
+              <button onclick="dmLedgerVerify(true)" class="ml-2 px-2 py-1 rounded text-xs bg-slate-800 hover:bg-slate-700 text-slate-300">Verify chain</button>
+            </div>
+          </div>
+          <p id="dm-lg-note" class="text-xs text-slate-600 mb-2">—</p>
+          <div style="overflow-x:auto; max-height:420px; overflow-y:auto">
+            <table class="w-full text-xs dm-table"><thead id="dm-lg-head"></thead><tbody id="dm-lg-body"></tbody></table>
+          </div>
+        </div>
+      </div><!-- /dm-port -->
+
+      <!-- account cards -->
+      <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+        <div class="card p-4">
+          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Broker</p>
+          <p id="dm-live-broker" class="text-lg font-semibold text-slate-400">—</p>
+          <p class="text-xs text-slate-600 mt-1">Kotak Neo · dedicated a/c</p>
+        </div>
+        <div class="card p-4">
+          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Free Cash</p>
+          <p id="dm-live-cash" class="text-lg font-semibold text-white">—</p>
+          <p class="text-xs text-slate-600 mt-1">settled, for CNC buys</p>
+        </div>
+        <div class="card p-4">
+          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Holdings</p>
+          <p id="dm-live-holdcount" class="text-lg font-semibold text-white">—</p>
+          <p class="text-xs text-slate-600 mt-1">positions in demat</p>
+        </div>
+        <div class="card p-4">
+          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Signal</p>
+          <p id="dm-live-signal" class="text-lg font-semibold text-slate-400">—</p>
+          <p id="dm-live-signal-sub" class="text-xs text-slate-600 mt-1">—</p>
+        </div>
+        <div class="card p-4">
+          <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Universe</p>
+          <p id="dm-live-universe" class="text-lg font-semibold text-white">—</p>
+          <p class="text-xs text-slate-600 mt-1">valid symbols</p>
+        </div>
+      </div>
+
+      <!-- controls -->
+      <div class="card p-5 mb-4">
+        <h3 class="text-sm font-medium text-slate-300 mb-3">Rebalance</h3>
+        <div class="flex flex-wrap items-end gap-3">
+          <div>
+            <label class="block text-xs text-slate-500 uppercase tracking-wide mb-1">Capital (₹)</label>
+            <input id="dm-live-capital" type="number" min="1" step="1000"
+                   placeholder="use broker NAV"
+                   class="bg-slate-900 border border-slate-700 rounded px-3 py-2 text-sm text-white font-mono w-44
+                          focus:outline-none focus:border-slate-500">
+            <p class="text-xs text-slate-600 mt-1">blank = size against real NAV</p>
+          </div>
+          <button id="dm-live-preview-btn" onclick="dmLivePreview()"
+                  class="px-4 py-2 rounded text-sm font-medium bg-slate-700 hover:bg-slate-600 text-white">
+            Preview plan
+          </button>
+          <button id="dm-live-deploy-btn" onclick="dmLiveDeploy()" disabled
+                  class="px-4 py-2 rounded text-sm font-medium bg-slate-800 text-slate-600 cursor-not-allowed">
+            Deploy
+          </button>
+          <button onclick="dmLiveLoad(true)"
+                  class="px-3 py-2 rounded text-sm bg-slate-800 hover:bg-slate-700 text-slate-400">
+            ↻ Reconnect
+          </button>
+          <span id="dm-live-msg" class="text-xs text-slate-500"></span>
+        </div>
+      </div>
+
+      <!-- plan summary -->
+      <div id="dm-live-plan-wrap" class="card p-5 mb-4" style="display:none">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-medium text-slate-300">Planned orders
+            <span class="text-xs text-slate-600 font-normal">— exactly what would be sent</span>
+          </h3>
+          <span id="dm-live-plan-badge" class="text-xs px-2 py-1 rounded bg-slate-800 text-slate-400">—</span>
+        </div>
+        <div id="dm-live-plan-blocked" class="text-xs mb-3" style="display:none"></div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-center">
+          <div><p class="text-xs text-slate-500">Buys</p><p id="dm-live-nbuys" class="text-xl font-semibold text-emerald-400">—</p></div>
+          <div><p class="text-xs text-slate-500">Sells</p><p id="dm-live-nsells" class="text-xl font-semibold text-rose-400">—</p></div>
+          <div><p class="text-xs text-slate-500">Deployed</p><p id="dm-live-deployed" class="text-xl font-semibold text-white">—</p></div>
+          <div><p class="text-xs text-slate-500">Cash left</p><p id="dm-live-left" class="text-xl font-semibold text-white">—</p></div>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="w-full text-xs dm-table">
+            <thead>
+              <tr class="text-slate-500 border-b border-slate-800">
+                <th class="text-left py-2">Side</th>
+                <th class="text-left">Symbol</th>
+                <th class="text-left">Trading symbol</th>
+                <th class="text-right">Qty</th>
+                <th class="text-right">Mark</th>
+                <th class="text-right">Limit</th>
+                <th class="text-right">Tick</th>
+                <th class="text-right">Value</th>
+                <th class="text-left">Note</th>
+              </tr>
+            </thead>
+            <tbody id="dm-live-plan-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- current holdings — SUPERSEDED by the Client portfolio block above. It read
+           settled holdings only, so on a purchase day it said "the account is empty"
+           while 40 stocks sat in unsettled positions. Kept hidden: dmLiveLoad writes to it. -->
+      <div class="card p-5 mb-4" style="display:none">
+        <h3 class="text-sm font-medium text-slate-300 mb-3">Current holdings
+          <span class="text-xs text-slate-600 font-normal">— read from the broker</span>
+        </h3>
+        <div style="overflow-x:auto">
+          <table class="w-full text-xs dm-table">
+            <thead>
+              <tr class="text-slate-500 border-b border-slate-800">
+                <th class="text-left py-2">Symbol</th>
+                <th class="text-right">Qty</th>
+                <th class="text-right">Avg price</th>
+              </tr>
+            </thead>
+            <tbody id="dm-live-hold-body"></tbody>
+          </table>
+        </div>
+        <p id="dm-live-hold-empty" class="text-center py-6 text-slate-600 text-xs" style="display:none">
+          No holdings — the account is empty.
+        </p>
+      </div>
+
+      <!-- target basket -->
+      <div class="card p-5 mb-6">
+        <div class="flex items-center justify-between mb-3">
+          <h3 class="text-sm font-medium text-slate-300">Target basket</h3>
+          <span class="text-xs text-slate-600">Top <span id="dm-live-topn">40</span> ·
+            capped at <span id="dm-live-cap">10</span>% · from the parity-tested signal</span>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="w-full text-xs dm-table">
+            <thead>
+              <tr class="text-slate-500 border-b border-slate-800">
+                <th class="text-left py-2">#</th>
+                <th class="text-left">Symbol</th>
+                <th class="text-right">12m return</th>
+                <th class="text-right">Weight</th>
+                <th class="text-right">Price</th>
+              </tr>
+            </thead>
+            <tbody id="dm-live-basket-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div><!-- /dm-live-section -->
 
   </div><!-- /page-dualmom -->
 
@@ -934,6 +1249,161 @@
     </div>
   </div>
 
+  <!-- ══════════════════════════════════════════════════════════
+       Nifty Directional Pivot — PAPER
+       engine: live_trading_options/nifty_pivot/engine.py (separate process)
+       api:    deployment/pivot_api.py (read-only)
+  ══════════════════════════════════════════════════════════ -->
+  <div id="page-ndp" style="display:none">
+
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+      <div class="flex items-baseline gap-5 flex-wrap">
+        <div>
+          <div class="text-[10px] uppercase tracking-wider text-slate-500">NIFTY 50</div>
+          <div id="ndp-spot" class="text-3xl font-bold tabular-nums text-slate-100">—</div>
+        </div>
+        <div id="ndp-spot-chg" class="text-sm tabular-nums text-slate-500"></div>
+        <div class="text-xs text-slate-500 leading-5">
+          <div>expiry <span id="ndp-expiry" class="text-slate-300">—</span></div>
+          <div>size <span id="ndp-size" class="text-slate-300">—</span></div>
+        </div>
+        <div class="text-xs text-slate-500 leading-5">
+          <div>Supertrend <span class="text-slate-300">14, 2.5</span> · 5-min</div>
+          <div>stop <span class="text-slate-300">2× premium</span> · square-off <span class="text-slate-300">15:15</span></div>
+        </div>
+      </div>
+      <div class="flex items-center gap-3">
+        <select id="ndp-date" onchange="ndpOnDateChange()"
+                class="bg-[#151a26] text-slate-300 text-xs rounded px-2 py-1 border border-[#2d3748]"></select>
+        <span id="ndp-status" class="px-2 py-1 rounded text-[10px] font-semibold bg-slate-800 text-slate-400">—</span>
+        <span class="px-2 py-1 rounded text-[10px] font-semibold bg-amber-900/40 text-amber-300 border border-amber-700/40">
+          PAPER — no orders
+        </span>
+      </div>
+    </div>
+
+    <div id="ndp-banner" class="mb-4 px-3 py-2 rounded text-xs border" style="display:none"></div>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
+      <div class="card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">Day P&amp;L <span class="normal-case">(net of costs)</span></div>
+        <div id="ndp-day-net" class="text-2xl font-bold tabular-nums mt-1">—</div>
+        <div class="text-xs text-slate-500 mt-2 tabular-nums leading-5">
+          <div>gross <span id="ndp-day-gross" class="text-slate-300">—</span></div>
+          <div>realized <span id="ndp-day-real" class="text-slate-300">—</span> · open <span id="ndp-day-open" class="text-slate-300">—</span></div>
+          <div>trades <span id="ndp-day-trades" class="text-slate-300">—</span></div>
+        </div>
+      </div>
+      <div class="card p-4" id="ndp-pos-card">
+        <div class="flex items-center justify-between">
+          <div class="text-[10px] uppercase tracking-wider text-slate-500">Position · live MTM</div>
+          <div id="ndp-pos-age" class="text-[10px] text-slate-600 tabular-nums"></div>
+        </div>
+        <div id="ndp-pos" class="mt-1 text-sm text-slate-400">—</div>
+      </div>
+      <div class="card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">Equity <span class="normal-case">(paper, ₹20L start)</span></div>
+        <div id="ndp-equity" class="text-2xl font-bold tabular-nums mt-1 text-slate-100">—</div>
+        <div class="text-xs text-slate-500 mt-2 tabular-nums leading-5">
+          <div>since start <span id="ndp-ret" class="text-slate-300">—</span></div>
+          <div>days traded <span id="ndp-days" class="text-slate-300">—</span> · max DD <span id="ndp-maxdd" class="text-slate-300">—</span></div>
+          <div>costs paid <span id="ndp-costs" class="text-slate-300">—</span></div>
+        </div>
+      </div>
+      <div class="card p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">Today's levels</div>
+        <div class="mt-1 text-xs tabular-nums leading-6">
+          <div class="flex justify-between"><span class="text-emerald-400">R1</span><span id="ndp-r1" class="text-slate-200">—</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">PP</span><span id="ndp-pp" class="text-slate-200">—</span></div>
+          <div class="flex justify-between"><span class="text-rose-400">S1</span><span id="ndp-s1" class="text-slate-200">—</span></div>
+        </div>
+        <div id="ndp-prev" class="text-[10px] text-slate-500 mt-1 tabular-nums"></div>
+      </div>
+    </div>
+
+    <div class="card p-4 mb-5">
+      <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div>
+          <div class="text-sm font-semibold text-slate-200">NIFTY 5-min · pivots · Supertrend · trades — <span id="ndp-chart-date">—</span></div>
+          <div class="text-[10px] text-slate-500">
+            <span class="text-emerald-400">▲ sell PE</span> (bullish: close &gt; ST &amp; &gt; R1) ·
+            <span class="text-rose-400">▼ sell CE</span> (bearish: close &lt; ST &amp; &lt; S1) ·
+            <span class="text-amber-300">● exit</span> ·
+            dashed lines = R1 / PP / S1
+          </div>
+        </div>
+        <div id="ndp-tip" class="text-[11px] tabular-nums text-slate-400 font-mono" style="min-height:16px"></div>
+      </div>
+      <div id="ndp-chart" style="height:460px"></div>
+      <div class="text-[10px] text-slate-500 mt-3 mb-1">Intraday MTM (net of costs, sampled every 30s)</div>
+      <div id="ndp-mtm-chart" style="height:130px"></div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-5 mb-5">
+      <div class="card p-4">
+        <div class="flex items-center justify-between mb-2">
+          <div>
+            <div class="text-sm font-semibold text-slate-200">Equity curve</div>
+            <div class="text-[10px] text-slate-500">end-of-day paper equity, net of brokerage, charges and modelled slippage</div>
+          </div>
+          <div id="ndp-eq-summary" class="text-[10px] text-slate-400 text-right tabular-nums"></div>
+        </div>
+        <div id="ndp-eq-chart" style="height:240px"></div>
+      </div>
+      <div class="card p-4">
+        <div class="flex items-center justify-between mb-2">
+          <div class="text-sm font-semibold text-slate-200">Days traded</div>
+          <div class="text-[10px] text-slate-500">click a day to load its chart</div>
+        </div>
+        <div style="max-height:260px;overflow-y:auto" class="dn-scroll">
+          <table class="w-full text-xs tabular-nums">
+            <thead class="sticky top-0 bg-slate-900/95 text-[10px] uppercase text-slate-500">
+              <tr>
+                <th class="text-left py-1 px-2">Date</th>
+                <th class="text-right py-1 px-2">Trades</th>
+                <th class="text-right py-1 px-2">Gross</th>
+                <th class="text-right py-1 px-2">Costs</th>
+                <th class="text-right py-1 px-2">Net</th>
+                <th class="text-right py-1 px-2">Equity</th>
+                <th class="text-right py-1 px-2">DD</th>
+              </tr>
+            </thead>
+            <tbody id="ndp-days-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+      <div class="card p-4">
+        <div class="text-sm font-semibold text-slate-200 mb-2">Trades — <span id="ndp-trades-date">—</span></div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs tabular-nums">
+            <thead class="text-[10px] uppercase text-slate-500">
+              <tr>
+                <th class="text-left py-1 px-2">#</th>
+                <th class="text-left py-1 px-2">Entry</th>
+                <th class="text-left py-1 px-2">Contract</th>
+                <th class="text-right py-1 px-2">Sold</th>
+                <th class="text-left py-1 px-2">Exit</th>
+                <th class="text-right py-1 px-2">Bought</th>
+                <th class="text-left py-1 px-2">Reason</th>
+                <th class="text-right py-1 px-2">Gross</th>
+                <th class="text-right py-1 px-2">Costs</th>
+                <th class="text-right py-1 px-2">Net</th>
+              </tr>
+            </thead>
+            <tbody id="ndp-trades-body"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card p-4">
+        <div class="text-sm font-semibold text-slate-200 mb-2">Engine log</div>
+        <div id="ndp-log" style="max-height:300px;overflow-y:auto" class="dn-scroll font-mono text-[11px] leading-5"></div>
+      </div>
+    </div>
+  </div>
+
   <div id="page-terminal" style="display:none">
 
     <!-- top action row -->
@@ -1030,7 +1500,8 @@ function switchTab(tab) {
   _activeTab = tab;
   if (tab === 'deltaneutral') { dnInit(); dnStartPoll(); } else { dnStopPoll(); }
   if (tab === 'btc') { btcInit(); btcStartPoll(); } else { btcStopPoll(); }
-  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'terminal'].forEach(t => {
+  if (tab === 'ndp') { ndpInit(); ndpStartPoll(); } else { ndpStopPoll(); }
+  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'ndp', 'terminal'].forEach(t => {
     const pg = document.getElementById('page-' + t);
     if (pg) pg.style.display = (t === tab) ? '' : 'none';
     const btn = document.getElementById('tab-' + t);
@@ -3588,6 +4059,536 @@ initCharts();
 fetchAll();
 connectWS();
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  DualMom LIVE (Kotak, dedicated account)
+//
+//  Preview NEVER sends an order. Deploy is disabled unless the server says every
+//  gate is open, and even then it asks for typed confirmation. The button state
+//  is driven by the SERVER's can_deploy, never by anything decided in the browser
+//  — a client-side flag would be trivially bypassable on a page that can spend
+//  real money.
+// ─────────────────────────────────────────────────────────────────────────────
+
+let dmLiveMode = false;
+let dmLiveCanDeploy = false;
+
+function dmFmtR(v, dp = 0) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  return '₹' + Number(v).toLocaleString('en-IN', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+function dmFmtL(v) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  const a = Math.abs(v);
+  if (a >= 1e7) return '₹' + (v / 1e7).toFixed(2) + 'Cr';
+  if (a >= 1e5) return '₹' + (v / 1e5).toFixed(2) + 'L';
+  return dmFmtR(v);
+}
+
+function dmSetMode(live) {
+  dmLiveMode = live;
+  document.getElementById('dm-paper-section').style.display = live ? 'none' : '';
+  document.getElementById('dm-live-section').style.display = live ? '' : 'none';
+  const bp = document.getElementById('dm-mode-paper'), bl = document.getElementById('dm-mode-live');
+  const on = 'px-3 py-1 rounded text-xs font-medium bg-slate-600 text-white';
+  const off = 'px-3 py-1 rounded text-xs font-medium text-slate-400 hover:text-slate-200';
+  bp.className = live ? off : on;
+  bl.className = live ? on : off;
+  // the two engines are NOT the same strategy — paper is the old Top-50 yfinance
+  // engine, live is the validated Top-40 capped one. Say which you're looking at.
+  const sub = document.getElementById('dm-subtitle');
+  if (sub) sub.textContent = live
+    ? 'Nifty 500 · Monthly · Top-40 · 10% cap · −35% stop · Fyers data · Kotak (dedicated a/c)'
+    : 'Nifty 500 · Monthly · Top-50 Momentum Weighted · Nifty 100MA Filter';
+  try { localStorage.setItem('dm-mode', live ? 'live' : 'paper'); } catch (e) {}
+  if (live) { dmLiveLoad(); dmPortStart(); } else { dmPortStop(); }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  CLIENT PORTFOLIO — Kotak Rohit. Every number is read from the broker by the
+//  DualMom service (/book) and cross-checked there against the client ledger
+//  (quantities rebuilt from exchange fills). The page only displays.
+// ─────────────────────────────────────────────────────────────────────────────
+const DM_IST = 19800;               // chart times are UTC; shift so the axis reads IST
+let dmPortTimer = null, dmEqTimer = null, dmPortRows = [], dmPortSort = { key: 'value', dir: -1 };
+let dmLEq = null, dmLEqSer = null, dmLEqBase = null, dmLDd = null, dmLDdSer = null;
+let dmLedgerKind = 'fills';
+
+function dmEsc(v) {
+  return String(v == null ? '' : v).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function dmClsV(v) { return v > 0 ? 'text-emerald-400' : v < 0 ? 'text-rose-400' : 'text-slate-300'; }
+function dmPctS(v, dp = 2) { return (v == null || isNaN(v)) ? '—' : (v > 0 ? '+' : '') + Number(v).toFixed(dp) + '%'; }
+function dmRS(v, dp = 0) {
+  if (v == null || isNaN(v)) return '—';
+  const s = v > 0 ? '+' : v < 0 ? '−' : '';
+  return s + '₹' + Math.abs(v).toLocaleString('en-IN', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+function dmSet(id, text, cls) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.textContent = text;
+  if (cls !== undefined) el.className = el.className.replace(/text-(emerald|rose|slate|white|amber)-\d+|text-white/g, '').trim() + ' ' + cls;
+}
+
+function dmPortStart() {
+  dmPortStop();
+  dmPortLoad(); dmEquityLoad(); dmLedgerLoad(dmLedgerKind); dmLedgerVerify();
+  dmPortTimer = setInterval(() => { if (dmLiveMode && !document.hidden) dmPortLoad(); }, 30000);
+  dmEqTimer = setInterval(() => { if (dmLiveMode && !document.hidden) dmEquityLoad(); }, 300000);
+}
+function dmPortStop() { clearInterval(dmPortTimer); clearInterval(dmEqTimer); dmPortTimer = dmEqTimer = null; }
+
+async function dmApi(path) {
+  const r = await fetch(path);
+  if (r.status === 404) throw new Error('portfolio API not loaded yet — the DualMom service needs the update');
+  let j = null;
+  try { j = await r.json(); } catch (e) {}
+  if (!r.ok || !j || j.ok === false) throw new Error((j && (j.error || j.detail)) || `HTTP ${r.status}`);
+  return j;
+}
+
+async function dmPortLoad(fresh) {
+  const err = document.getElementById('dm-port-err');
+  try {
+    const bk = await dmApi('/api/dualmom/live/book' + (fresh ? '?fresh=1' : ''));
+    err.style.display = 'none';
+    dmRenderBook(bk);
+  } catch (e) {
+    err.textContent = 'Portfolio: ' + e.message;
+    err.style.display = '';
+  }
+}
+
+function dmRenderBook(bk) {
+  dmSet('dm-port-acct', `${bk.account} · UCC ${bk.ucc}`);
+  dmSet('dm-port-incep', bk.inception);
+  dmSet('dm-port-cap', dmFmtL(bk.capital_base));
+  dmSet('dm-port-asof', bk.as_of + (bk.cached ? ' (cached)' : ''));
+
+  dmSet('dm-k-nav', dmFmtR(bk.nav));
+  dmSet('dm-k-nav-sub', bk.charges_pending_est > 0
+    ? `after est. charges not yet debited: ${dmFmtR(bk.nav_after_pending_charges)}`
+    : `market value + cash`);
+  dmSet('dm-k-tot', dmRS(bk.total_pnl), dmClsV(bk.total_pnl));
+  dmSet('dm-k-tot-sub', `${dmPctS(bk.total_return_pct)} vs ${dmFmtL(bk.capital_base)} capital`);
+  dmSet('dm-k-day', dmRS(bk.day_pnl), dmClsV(bk.day_pnl));
+  dmSet('dm-k-day-sub', dmPctS(bk.day_pnl_pct) + ' today');
+  dmSet('dm-k-mtm', dmRS(bk.unrealized), dmClsV(bk.unrealized));
+  dmSet('dm-k-mtm-sub', `${dmPctS(bk.unrealized_pct)} on ${dmFmtL(bk.cost_basis)} invested`);
+  dmSet('dm-k-dep', dmFmtR(bk.market_value));
+  dmSet('dm-k-dep-sub', `${Number(bk.deployed_pct).toFixed(2)}% of NAV`);
+  dmSet('dm-k-cash', dmFmtR(bk.cash));
+  dmSet('dm-k-cash-sub', `${Number(bk.cash_pct).toFixed(2)}% of NAV`);
+  dmSet('dm-k-pos', String(bk.positions));
+  dmSet('dm-k-pos-sub', `est. charges ${dmFmtR(bk.charges_est_total)}` +
+    (bk.unpriced && bk.unpriced.length ? ` · UNPRICED: ${bk.unpriced.join(', ')}` : ''));
+
+  const rc = bk.reconciliation || {};
+  const recon = document.getElementById('dm-port-recon');
+  recon.textContent = rc.ok ? `recon ✓ ${bk.positions}/${bk.positions}` : `RECON BREAK ×${(rc.breaks || []).length}`;
+  recon.className = 'text-xs px-2 py-1 rounded ' + (rc.ok ? 'bg-emerald-900 text-emerald-300' : 'bg-rose-900 text-rose-200');
+  recon.title = rc.ok ? `broker qty matches ${rc.ledger_fills} exchange fills for every position`
+                      : 'BREAKS: ' + JSON.stringify(rc.breaks);
+
+  dmPortRows = bk.rows || [];
+  dmDrawPort(bk);
+}
+
+function dmSortPort(key) {
+  dmPortSort = dmPortSort.key === key ? { key, dir: -dmPortSort.dir } : { key, dir: key === 'symbol' ? 1 : -1 };
+  dmDrawPort();
+}
+
+function dmDrawPort(bk) {
+  const k = dmPortSort.key, d = dmPortSort.dir;
+  const rows = [...dmPortRows].sort((a, b) =>
+    (typeof a[k] === 'string' ? a[k].localeCompare(b[k]) : ((a[k] ?? -1e18) - (b[k] ?? -1e18))) * d);
+  const f2 = v => v == null ? '—' : Number(v).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  document.getElementById('dm-port-body').innerHTML = rows.map(r => `
+    <tr class="border-b border-slate-900 ${r.recon_ok ? '' : 'bg-rose-950'}">
+      <td class="py-1.5 text-slate-200">${dmEsc(r.symbol)}${r.series === 'BE' ? ' <span class="text-amber-400" title="trade-for-trade">BE</span>' : ''}</td>
+      <td class="text-right font-mono text-slate-300">${r.qty}</td>
+      <td class="text-right font-mono text-slate-400">${f2(r.avg_price)}</td>
+      <td class="text-right font-mono text-slate-200">${f2(r.ltp)}${r.priced ? '' : ' <span class="text-amber-400" title="no live price">?</span>'}</td>
+      <td class="text-right font-mono ${dmClsV(r.day_change_pct)}">${dmPctS(r.day_change_pct)}</td>
+      <td class="text-right font-mono text-slate-400">${dmFmtR(r.cost)}</td>
+      <td class="text-right font-mono text-slate-300">${dmFmtR(r.value)}</td>
+      <td class="text-right font-mono text-slate-400">${Number(r.weight_pct).toFixed(2)}%</td>
+      <td class="text-right font-mono ${dmClsV(r.mtm)}">${dmRS(r.mtm)}</td>
+      <td class="text-right font-mono ${dmClsV(r.mtm_pct)}">${dmPctS(r.mtm_pct)}</td>
+      <td class="text-right font-mono ${dmClsV(r.day_pnl)}">${dmRS(r.day_pnl)}</td>
+      <td class="text-right font-mono text-slate-500">${f2(r.stop_price)}</td>
+      <td class="text-right font-mono ${r.to_stop_pct < 10 ? 'text-rose-400' : 'text-slate-500'}">${dmPctS(r.to_stop_pct, 1)}</td>
+      <td class="text-right font-mono text-slate-600" title="settled / unsettled">${r.settled_qty}/${r.unsettled_qty}</td>
+      <td class="text-center">${r.recon_ok ? '<span class="text-emerald-400">✓</span>'
+        : `<span class="text-rose-400" title="ledger qty ${r.ledger_qty}">✗</span>`}</td>
+    </tr>`).join('');
+  const tot = (key) => dmPortRows.reduce((s, r) => s + (Number(r[key]) || 0), 0);
+  const cost = tot('cost'), val = tot('value'), mtm = tot('mtm'), day = tot('day_pnl');
+  document.getElementById('dm-port-foot').innerHTML = dmPortRows.length ? `
+    <tr class="border-t border-slate-700 font-medium">
+      <td class="py-2 text-slate-300">Total</td><td></td><td></td><td></td><td></td>
+      <td class="text-right font-mono text-slate-300">${dmFmtR(cost)}</td>
+      <td class="text-right font-mono text-slate-200">${dmFmtR(val)}</td>
+      <td class="text-right font-mono text-slate-400">${dmPortRows.reduce((s, r) => s + r.weight_pct, 0).toFixed(2)}%</td>
+      <td class="text-right font-mono ${dmClsV(mtm)}">${dmRS(mtm)}</td>
+      <td class="text-right font-mono ${dmClsV(mtm)}">${dmPctS(cost ? mtm / cost * 100 : 0)}</td>
+      <td class="text-right font-mono ${dmClsV(day)}">${dmRS(day)}</td>
+      <td colspan="4"></td></tr>` : '';
+  dmSet('dm-port-count', `${dmPortRows.length} positions · sorted by ${k} ${d > 0 ? '↑' : '↓'}`);
+}
+
+function dmEnsureCurves() {
+  const base = {
+    autoSize: true,
+    layout: { background: { color: 'transparent' }, textColor: '#64748b' },
+    grid: { vertLines: { color: '#1e2533' }, horzLines: { color: '#1e2533' } },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Magnet },
+    rightPriceScale: { borderColor: '#2d3748' },
+    timeScale: { borderColor: '#2d3748', timeVisible: true, secondsVisible: false },
+  };
+  if (!dmLEq) {
+    dmLEq = LightweightCharts.createChart(document.getElementById('dm-live-eq-chart'), base);
+    dmLEqSer = dmLEq.addAreaSeries({ lineColor: '#10b981', topColor: 'rgba(16,185,129,0.25)',
+      bottomColor: 'rgba(16,185,129,0.0)', lineWidth: 2,
+      priceFormat: { type: 'price', precision: 0, minMove: 1 } });
+  }
+  if (!dmLDd) {
+    dmLDd = LightweightCharts.createChart(document.getElementById('dm-live-dd-chart'), base);
+    dmLDdSer = dmLDd.addAreaSeries({ lineColor: '#f43f5e', topColor: 'rgba(244,63,94,0.0)',
+      bottomColor: 'rgba(244,63,94,0.30)', lineWidth: 2, invertFilledArea: true,
+      priceFormat: { type: 'custom', formatter: v => v.toFixed(2) + '%' } });
+  }
+}
+
+async function dmEquityLoad() {
+  try {
+    const s = await dmApi('/api/dualmom/live/equity');
+    dmEnsureCurves();
+    const eq = (s.equity || []).map(p => ({ time: p.t + DM_IST, value: p.nav }));
+    const dd = (s.drawdown || []).map(p => ({ time: p.t + DM_IST, value: p.dd_pct }));
+    dmLEqSer.setData(eq);
+    dmLDdSer.setData(dd);
+    if (dmLEqBase) dmLEqSer.removePriceLine(dmLEqBase);
+    const cap = s.equity && s.equity.length ? s.equity[0].nav : null;
+    if (cap) dmLEqBase = dmLEqSer.createPriceLine({ price: cap, color: '#64748b', lineWidth: 1,
+      lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'capital' });
+    dmLEq.timeScale().fitContent(); dmLDd.timeScale().fitContent();
+    const last = eq.length ? eq[eq.length - 1].value : null;
+    dmSet('dm-eq-note', `${s.points} points · peak ${dmFmtR(s.peak_nav)}` + (last ? ` · now ${dmFmtR(last)}` : ''));
+    dmSet('dm-dd-note', `max ${Number(s.max_drawdown_pct).toFixed(2)}%`);
+    dmSet('dm-k-dd', Number(s.max_drawdown_pct).toFixed(2) + '%', dmClsV(s.max_drawdown_pct));
+    dmSet('dm-k-dd-sub', `peak NAV ${dmFmtR(s.peak_nav)}`);
+  } catch (e) {
+    dmSet('dm-eq-note', 'curve: ' + e.message);
+  }
+}
+
+const DM_LEDGER_COLS = {
+  fills: [['exchange_time', 'Exch time'], ['symbol', 'Symbol'], ['side', 'Side'], ['qty', 'Qty'],
+          ['price', 'Price'], ['notional', 'Notional'], ['decision_mark', 'Decision'],
+          ['slippage_bps_vs_decision', 'Slip bps'], ['exchange_fill_id', 'Fill id'],
+          ['exchange_order_id', 'Exch order'], ['broker_order_id', 'Broker order'],
+          ['client_tag', 'Tag'], ['strategy', 'Strategy'], ['charges_est.total', 'Chg est'], ['seq', '#']],
+  orders: [['order_entry_time', 'Entered'], ['symbol', 'Symbol'], ['side', 'Side'], ['order_qty', 'Qty'],
+           ['filled_qty', 'Filled'], ['limit_price', 'Limit'], ['avg_price', 'Avg'], ['status', 'Status'],
+           ['reject_reason', 'Reject'], ['broker_order_id', 'Broker order'], ['exchange_order_id', 'Exch order'],
+           ['client_tag', 'Tag'], ['strategy', 'Strategy'], ['seq', '#']],
+  attempts: [['run_id', 'Run'], ['symbol', 'Symbol'], ['side', 'Side'], ['qty', 'Qty'],
+             ['decision_mark', 'Decision'], ['limit_price', 'Limit'], ['status', 'Status'],
+             ['reject_reason', 'Reason'], ['reached_broker', 'Reached broker'], ['broker_order_id', 'Broker order'],
+             ['client_tag', 'Tag'], ['seq', '#']],
+  events: [['at', 'At'], ['kind', 'Event'], ['_detail', 'Detail'], ['seq', '#']],
+};
+
+async function dmLedgerLoad(kind) {
+  dmLedgerKind = kind;
+  for (const k of Object.keys(DM_LEDGER_COLS)) {
+    const b = document.getElementById('dm-lg-' + k);
+    if (b) b.className = 'px-2 py-1 rounded text-xs ' + (k === kind ? 'bg-slate-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200');
+  }
+  try {
+    const j = await dmApi(`/api/dualmom/live/ledger?kind=${kind}&limit=1000`);
+    const cols = DM_LEDGER_COLS[kind];
+    const get = (r, path) => path === '_detail'
+      ? JSON.stringify(Object.fromEntries(Object.entries(r).filter(([x]) => !['type', 'key', 'kind', 'at', 'seq', 'prev_hash', 'hash', 'account'].includes(x)))).slice(0, 180)
+      : path.split('.').reduce((o, p) => (o == null ? o : o[p]), r);
+    document.getElementById('dm-lg-head').innerHTML =
+      `<tr class="text-slate-500 border-b border-slate-800">${cols.map(c => `<th class="text-left py-2 pr-3 whitespace-nowrap">${c[1]}</th>`).join('')}</tr>`;
+    document.getElementById('dm-lg-body').innerHTML = [...j.records].reverse().map(r =>
+      `<tr class="border-b border-slate-900" title="hash ${dmEsc((r.hash || '').slice(0, 16))}…">${cols.map(c => {
+        const v = get(r, c[0]);
+        const cls = c[0] === 'side' ? (v === 'BUY' ? 'text-emerald-400' : 'text-rose-400')
+          : (c[0] === 'status' && /reject/i.test(v || '')) ? 'text-rose-400' : 'text-slate-400';
+        return `<td class="py-1 pr-3 font-mono whitespace-nowrap ${cls}">${dmEsc(v == null ? '—' : v)}</td>`;
+      }).join('')}</tr>`).join('');
+    dmSet('dm-lg-note', `${kind}: ${j.total} record(s)` + (j.total > j.records.length ? ` · showing latest ${j.records.length}` : '') + ' · newest first');
+  } catch (e) {
+    dmSet('dm-lg-note', 'ledger: ' + e.message);
+  }
+}
+
+async function dmLedgerVerify(show) {
+  const el = document.getElementById('dm-port-chain');
+  try {
+    const j = await dmApi('/api/dualmom/live/ledger/verify');
+    const n = Object.values(j.chains).reduce((s, c) => s + c.records, 0);
+    el.textContent = j.ok ? `ledger ✓ ${n} records` : 'LEDGER TAMPERED';
+    el.className = 'text-xs px-2 py-1 rounded ' + (j.ok ? 'bg-emerald-900 text-emerald-300' : 'bg-rose-900 text-rose-200');
+    el.title = Object.entries(j.chains).map(([k, c]) => `${k}: ${c.ok ? 'ok' : 'BROKEN at #' + c.broken_at_seq + ' — ' + c.reason} (${c.records})`).join('\n');
+    if (show) alert(el.title);
+  } catch (e) {
+    el.textContent = 'ledger ?';
+    el.title = e.message;
+  }
+}
+
+async function dmLiveLoad(reconnect) {
+  const msg = document.getElementById('dm-live-msg');
+  msg.textContent = reconnect ? 'reconnecting…' : 'loading…';
+  msg.className = 'text-xs text-slate-500';
+  try {
+    if (reconnect) await fetch('/api/dualmom/live/reconnect', { method: 'POST' });
+
+    const resp = await fetch('/api/dualmom/live/status');
+    if (resp.status === 404) {
+      // The HTML ships from disk, the router only exists after a process restart.
+      // Saying 'unknown' here sent someone hunting for a broker problem that did
+      // not exist — name the actual cause.
+      msg.innerHTML = '<span class="text-amber-400">Live API not loaded — ' +
+        'the dashboard process needs a restart to pick up the DualMom live router.</span>';
+      return;
+    }
+    if (!resp.ok) {
+      // 503 = the DualMom service is down. Its body carries the exact command to
+      // start it, so show that instead of a bare status code.
+      let detail = '';
+      try { detail = (await resp.json()).error || ''; } catch (e) {}
+      msg.textContent = detail || `status failed: HTTP ${resp.status}`;
+      msg.className = 'text-xs text-amber-400';
+      document.getElementById('dm-live-broker').textContent = 'service down';
+      document.getElementById('dm-live-broker').className = 'text-lg font-semibold text-amber-400';
+      return;
+    }
+    const st = await resp.json();
+    if (!st.ok) {
+      msg.textContent = 'status failed: ' + (st.error || st.detail || `no detail (stage: ${st.stage || '?'})`);
+      msg.className = 'text-xs text-rose-400';
+      return;
+    }
+
+    // ---- deploy gate: server decides, always ----
+    dmLiveCanDeploy = !!st.can_deploy;
+    const gate = document.getElementById('dm-live-gate');
+    const why = document.getElementById('dm-live-gate-why');
+    const btn = document.getElementById('dm-live-deploy-btn');
+    if (dmLiveCanDeploy) {
+      gate.style.display = 'none';
+      btn.disabled = false;
+      btn.className = 'px-4 py-2 rounded text-sm font-medium bg-rose-600 hover:bg-rose-500 text-white';
+      btn.textContent = 'Deploy — places REAL orders';
+    } else {
+      gate.style.display = '';
+      why.textContent = (st.deploy_blocked_by || []).join('  ·  ') || 'blocked';
+      btn.disabled = true;
+      btn.className = 'px-4 py-2 rounded text-sm font-medium bg-slate-800 text-slate-600 cursor-not-allowed';
+      btn.textContent = 'Deploy (locked)';
+    }
+
+    const b = st.broker || {};
+    const be = document.getElementById('dm-live-broker');
+    be.textContent = b.connected ? 'connected' : 'offline';
+    be.className = 'text-lg font-semibold ' + (b.connected ? 'text-emerald-400' : 'text-rose-400');
+
+    document.getElementById('dm-live-cash').textContent =
+      st.cash === null || st.cash === undefined ? (st.cash_error ? 'error' : '—') : dmFmtL(st.cash);
+    const hold = st.holdings || [];
+    document.getElementById('dm-live-holdcount').textContent = hold.length;
+
+    const hb = document.getElementById('dm-live-hold-body');
+    hb.innerHTML = hold.map(h =>
+      `<tr class="border-b border-slate-900">
+         <td class="py-1.5 text-slate-200">${h.symbol}</td>
+         <td class="text-right font-mono text-slate-300">${h.qty}</td>
+         <td class="text-right font-mono text-slate-400">${dmFmtR(h.avg_price, 2)}</td>
+       </tr>`).join('');
+    document.getElementById('dm-live-hold-empty').style.display = hold.length ? 'none' : '';
+
+    if (st.config) {
+      document.getElementById('dm-live-topn').textContent = st.config.top_n;
+      document.getElementById('dm-live-cap').textContent =
+        st.config.max_weight ? (st.config.max_weight * 100).toFixed(0) : '—';
+    }
+
+    // ---- signal + basket ----
+    const sg = await (await fetch('/api/dualmom/live/signal')).json();
+    const se = document.getElementById('dm-live-signal');
+    if (!sg.ok) {
+      se.textContent = 'error';
+      se.className = 'text-lg font-semibold text-rose-400';
+      document.getElementById('dm-live-signal-sub').textContent = (sg.error || '').slice(0, 60);
+    } else {
+      se.textContent = sg.signal;
+      se.className = 'text-lg font-semibold ' + (sg.signal === 'IN' ? 'text-emerald-400' : 'text-amber-400');
+      document.getElementById('dm-live-signal-sub').textContent =
+        sg.nifty_close
+          ? `Nifty ${Number(sg.nifty_close).toLocaleString('en-IN')} vs MA ${Number(sg.nifty_ma).toLocaleString('en-IN')} (${sg.gap_pct > 0 ? '+' : ''}${sg.gap_pct}%)`
+          : '—';
+      // universe_valid against the floor the RELATIVE guard computed — the pair
+      // matters: 484 alone says nothing about whether the download half-failed
+      document.getElementById('dm-live-universe').textContent =
+        sg.universe_valid !== undefined ? `${sg.universe_valid}` : '—';
+      const uEl = document.getElementById('dm-live-universe');
+      uEl.className = 'text-lg font-semibold ' +
+        (sg.universe_valid >= sg.universe_floor ? 'text-white' : 'text-rose-400');
+      const uSub = uEl.parentElement.querySelector('p:last-child');
+      if (uSub) uSub.textContent = `valid · floor ${sg.universe_floor ?? '—'}`;
+      const bb = document.getElementById('dm-live-basket-body');
+      bb.innerHTML = (sg.holdings || []).map(h =>
+        `<tr class="border-b border-slate-900">
+           <td class="py-1.5 text-slate-500">${h.rank}</td>
+           <td class="text-slate-200">${h.symbol}</td>
+           <td class="text-right font-mono text-slate-400">${h.return_12m_pct !== undefined ? h.return_12m_pct.toFixed(1) + '%' : '—'}</td>
+           <td class="text-right font-mono text-slate-300">${(h.weight * 100).toFixed(2)}%${h.weight_pct >= (sg.max_weight_cap * 100) - 0.01 ? ' <span class="text-amber-400" title="at the concentration cap">▲</span>' : ''}</td>
+           <td class="text-right font-mono text-slate-400">${dmFmtR(h.price, 2)}</td>
+         </tr>`).join('');
+    }
+    msg.textContent = '';
+  } catch (e) {
+    msg.textContent = 'load failed: ' + e.message;
+    msg.className = 'text-xs text-rose-400';
+  }
+}
+
+async function dmLivePreview() {
+  const msg = document.getElementById('dm-live-msg');
+  const btn = document.getElementById('dm-live-preview-btn');
+  const raw = document.getElementById('dm-live-capital').value.trim();
+  btn.disabled = true;
+  msg.textContent = 'building plan (resolving every symbol against the broker)…';
+  msg.className = 'text-xs text-slate-500';
+  try {
+    const pr = await fetch('/api/dualmom/live/plan', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ capital: raw === '' ? null : Number(raw) })
+    });
+    if (pr.status === 404) {
+      msg.textContent = 'Live API not loaded — restart the dashboard process.';
+      msg.className = 'text-xs text-amber-400';
+      return;
+    }
+    const r = await pr.json();
+    if (!r.ok) {
+      msg.textContent = 'plan failed: ' + r.error;
+      msg.className = 'text-xs text-rose-400';
+      return;
+    }
+    dmRenderPlan(r.run);
+    msg.textContent = 'preview only — nothing was sent';
+    msg.className = 'text-xs text-emerald-400';
+  } catch (e) {
+    msg.textContent = 'plan failed: ' + e.message;
+    msg.className = 'text-xs text-rose-400';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function dmRenderPlan(run) {
+  const p = (run && run.plan) || {};
+  document.getElementById('dm-live-plan-wrap').style.display = '';
+  const buys = p.buys || [], sells = p.sells || [];
+  document.getElementById('dm-live-nbuys').textContent = buys.length;
+  document.getElementById('dm-live-nsells').textContent = sells.length;
+
+  const deployed = buys.reduce((a, o) => a + (o.qty * o.mark), 0);
+  document.getElementById('dm-live-deployed').textContent = dmFmtL(deployed);
+  document.getElementById('dm-live-left').textContent =
+    p.nav !== undefined ? dmFmtL(p.nav - deployed) : '—';
+
+  const badge = document.getElementById('dm-live-plan-badge');
+  badge.textContent = p.safe ? 'safety checks passed' : 'BLOCKED';
+  badge.className = 'text-xs px-2 py-1 rounded ' +
+    (p.safe ? 'bg-emerald-900 text-emerald-300' : 'bg-rose-900 text-rose-300');
+
+  const bl = document.getElementById('dm-live-plan-blocked');
+  const reasons = (p.blocked || []).concat(run.dropped_buys || []);
+  if (reasons.length) {
+    bl.style.display = '';
+    bl.className = 'text-xs mb-3 text-amber-300';
+    bl.innerHTML = reasons.map(x => '⚠️ ' + x).join('<br>');
+  } else {
+    bl.style.display = 'none';
+  }
+
+  const rows = sells.concat(buys).map(o => {
+    const sell = (o.side || '').toUpperCase() === 'SELL';
+    const note = o.resolve_error ? `<span class="text-rose-400">${o.resolve_error}</span>`
+      : o.trade_for_trade ? '<span class="text-amber-400">BE · compulsory delivery</span>' : '';
+    return `<tr class="border-b border-slate-900">
+      <td class="py-1.5 ${sell ? 'text-rose-400' : 'text-emerald-400'} font-medium">${sell ? 'SELL' : 'BUY'}</td>
+      <td class="text-slate-200">${o.symbol}</td>
+      <td class="font-mono text-slate-500">${o.trading_symbol || '—'}</td>
+      <td class="text-right font-mono text-slate-300">${o.qty}</td>
+      <td class="text-right font-mono text-slate-400">${dmFmtR(o.mark, 2)}</td>
+      <td class="text-right font-mono text-slate-300">${o.limit_preview !== undefined ? dmFmtR(o.limit_preview, 2) : '—'}</td>
+      <td class="text-right font-mono text-slate-600">${o.tick_size ?? '—'}</td>
+      <td class="text-right font-mono text-slate-400">${dmFmtL(o.qty * o.mark)}</td>
+      <td>${note}</td></tr>`;
+  }).join('');
+  document.getElementById('dm-live-plan-body').innerHTML =
+    rows || '<tr><td colspan="9" class="py-4 text-center text-slate-600">nothing to do — already at target</td></tr>';
+}
+
+async function dmLiveDeploy() {
+  if (!dmLiveCanDeploy) return;
+  const typed = prompt(
+    'This places REAL orders on the DualMom Kotak account.\n\n' +
+    'Type DEPLOY to confirm:');
+  if (typed !== 'DEPLOY') {
+    document.getElementById('dm-live-msg').textContent = 'cancelled — nothing sent';
+    return;
+  }
+  const msg = document.getElementById('dm-live-msg');
+  const btn = document.getElementById('dm-live-deploy-btn');
+  btn.disabled = true;
+  msg.textContent = 'placing orders…';
+  msg.className = 'text-xs text-amber-400';
+  try {
+    const r = await (await fetch('/api/dualmom/live/deploy', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: 'DEPLOY' })
+    })).json();
+    if (!r.ok) {
+      msg.textContent = 'refused: ' + (r.error || 'unknown');
+      msg.className = 'text-xs text-rose-400';
+    } else {
+      const halted = r.run && r.run.halted;
+      msg.textContent = halted ? ('halted: ' + halted) : 'orders placed — see the log';
+      msg.className = 'text-xs ' + (halted ? 'text-amber-400' : 'text-emerald-400');
+      dmRenderPlan(r.run);
+      dmLiveLoad();
+    }
+  } catch (e) {
+    msg.textContent = 'deploy failed: ' + e.message;
+    msg.className = 'text-xs text-rose-400';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+
+// restore the Paper/Live choice. Defaults to Paper: switching to Live triggers a
+// Kotak login, which should be a deliberate act, not a side effect of page load.
+(function dmInitMode() {
+  try {
+    if (localStorage.getItem('dm-mode') === 'live') {
+      document.addEventListener('DOMContentLoaded', () => dmSetMode(true));
+    }
+  } catch (e) {}
+})();
+
 /* ══════════════════════════════════════════════════════════════════════════
    BTC Delta Neutral (Delta Exchange India) — PAPER
 
@@ -4215,6 +5216,466 @@ function btcStopPoll() {
   if (btcTickTimer) { clearInterval(btcTickTimer); btcTickTimer = null; }
   if (btcStateTimer) { clearInterval(btcStateTimer); btcStateTimer = null; }
 }
+
+// ════════════════════════════════════════════════════════════════════════════
+// Nifty Directional Pivot — PAPER
+// Reads /api/ndp/* only. "Today" always comes from the SERVER (IST): the browser
+// may be in another timezone, and a local-clock "today" would show the wrong day.
+// ════════════════════════════════════════════════════════════════════════════
+let ndpChart = null, ndpCandle = null, ndpStUp = null, ndpStDn = null, ndpLines = [];
+let ndpMtmChart = null, ndpMtm = null, ndpEqChart = null, ndpEq = null, ndpEqBase = null;
+let ndpTickTimer = null, ndpStateTimer = null, ndpDailyTimer = null;
+let ndpInited = false, ndpServerToday = null, ndpDate = null, ndpFitKey = null;
+let ndpLastState = null;
+
+function ndpMoney(v, dp = 0) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  const s = v < 0 ? '−' : (v > 0 ? '+' : '');
+  return s + '₹' + Math.abs(v).toLocaleString('en-IN', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+function ndpRupee(v) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  return '₹' + Number(v).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+}
+function ndpNum(v, dp = 2) { return (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toFixed(dp); }
+function ndpCls(v) { return v > 0 ? 'pnl-pos' : (v < 0 ? 'pnl-neg' : 'text-slate-300'); }
+function ndpSetMoney(id, v, dp = 0) {
+  const el = document.getElementById(id); if (!el) return;
+  el.textContent = ndpMoney(v, dp);
+  el.classList.remove('pnl-pos', 'pnl-neg', 'text-slate-300');
+  el.classList.add(ndpCls(v));
+}
+function ndpIsToday() { return ndpDate && ndpDate === ndpServerToday; }
+function ndpReasonShort(r) {
+  return ({ supertrend_flip: 'ST flip', squareoff_1515: '15:15', premium_stop: '2× stop',
+            squareoff_safety: 'safety', eod_last_bar: 'EOD' })[r] || r;
+}
+function ndpContract(t) { return `${t.strike} ${t.option_type === 'PUT' ? 'PE' : 'CE'}`; }
+function ndpFmtEpoch(t) {
+  const d = new Date(t * 1000);
+  return String(d.getUTCHours()).padStart(2, '0') + ':' + String(d.getUTCMinutes()).padStart(2, '0');
+}
+
+function ndpInit() {
+  if (ndpInited) return;
+  ndpInited = true;
+  const base = {
+    layout:    { background: { color: 'transparent' }, textColor: '#64748b' },
+    grid:      { vertLines: { color: '#1e2533' }, horzLines: { color: '#1e2533' } },
+    rightPriceScale: { borderColor: '#2d3748' },
+  };
+  const el = document.getElementById('ndp-chart');
+  ndpChart = LightweightCharts.createChart(el, {
+    ...base, autoSize: true,
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    timeScale: { borderColor: '#2d3748', timeVisible: true, secondsVisible: false },
+  });
+  ndpCandle = ndpChart.addCandlestickSeries({
+    upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
+    wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+    // keep R1 / PP / S1 on screen: the entry rule is price vs these levels, so a
+    // chart that auto-scales them out of view hides the very thing it exists to show
+    autoscaleInfoProvider: original => {
+      const res = original();
+      const lv = (ndpLastState && ndpLastState.levels) || {};
+      const lvls = [lv.r1, lv.pp, lv.s1].filter(v => v);
+      if (!res || !lvls.length) return res;
+      const lo = Math.min(res.priceRange.minValue, ...lvls), hi = Math.max(res.priceRange.maxValue, ...lvls);
+      const pad = (hi - lo) * 0.04;
+      return { ...res, priceRange: { minValue: lo - pad, maxValue: hi + pad } };
+    },
+  });
+  const stOpts = { lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+  ndpStUp = ndpChart.addLineSeries({ ...stOpts, color: '#22c55e', title: 'ST' });
+  ndpStDn = ndpChart.addLineSeries({ ...stOpts, color: '#f43f5e' });
+  ndpChart.subscribeCrosshairMove(param => {
+    const tip = document.getElementById('ndp-tip');
+    if (!param.time || !param.point || param.point.x < 0) { tip.textContent = ''; return; }
+    const c = param.seriesData.get(ndpCandle);
+    if (!c) { tip.textContent = ''; return; }
+    const su = param.seriesData.get(ndpStUp), sd = param.seriesData.get(ndpStDn);
+    const st = (su && su.value !== undefined) ? su.value : ((sd && sd.value !== undefined) ? sd.value : null);
+    const col = c.close >= c.open ? '#26a69a' : '#ef5350';
+    tip.innerHTML = `<b style="color:#94a3b8">${ndpFmtEpoch(param.time)}</b>  ` +
+      `O <span style="color:${col}">${c.open.toFixed(2)}</span>  H <span style="color:${col}">${c.high.toFixed(2)}</span>  ` +
+      `L <span style="color:${col}">${c.low.toFixed(2)}</span>  C <span style="color:${col}">${c.close.toFixed(2)}</span>  ` +
+      `ST <span style="color:${su && su.value !== undefined ? '#22c55e' : '#f43f5e'}">${st !== null ? st.toFixed(2) : '—'}</span>`;
+  });
+
+  const mel = document.getElementById('ndp-mtm-chart');
+  ndpMtmChart = LightweightCharts.createChart(mel, {
+    ...base, autoSize: true,
+    timeScale: { borderColor: '#2d3748', timeVisible: true, secondsVisible: false },
+  });
+  ndpMtm = ndpMtmChart.addBaselineSeries({
+    baseValue: { type: 'price', price: 0 },
+    topLineColor: '#26a69a', topFillColor1: 'rgba(38,166,154,.28)', topFillColor2: 'rgba(38,166,154,.04)',
+    bottomLineColor: '#ef5350', bottomFillColor1: 'rgba(239,83,80,.04)', bottomFillColor2: 'rgba(239,83,80,.28)',
+    lineWidth: 2, priceLineVisible: false,
+  });
+
+  const eel = document.getElementById('ndp-eq-chart');
+  ndpEqChart = LightweightCharts.createChart(eel, {
+    ...base, autoSize: true,
+    timeScale: { borderColor: '#2d3748' },
+  });
+  ndpEq = ndpEqChart.addBaselineSeries({
+    baseValue: { type: 'price', price: 2000000 },
+    topLineColor: '#26a69a', topFillColor1: 'rgba(38,166,154,.25)', topFillColor2: 'rgba(38,166,154,.03)',
+    bottomLineColor: '#ef5350', bottomFillColor1: 'rgba(239,83,80,.03)', bottomFillColor2: 'rgba(239,83,80,.25)',
+    lineWidth: 2, pointMarkersVisible: true,
+  });
+
+  // autoSize: the tab is hidden when these are created, so a fixed width would be 0.
+  // autoSize follows the container (ResizeObserver) — visible, resized, or rotated.
+}
+
+async function ndpLoadDates() {
+  try {
+    const r = await (await fetch('/api/ndp/dates')).json();
+    ndpServerToday = r.today;
+    const sel = document.getElementById('ndp-date');
+    const dates = r.dates.includes(r.today) ? r.dates : [r.today, ...r.dates];
+    const keep = ndpDate && dates.includes(ndpDate) ? ndpDate : r.today;
+    sel.innerHTML = dates.map(d => `<option value="${d}">${d}${d === r.today ? ' (today)' : ''}</option>`).join('');
+    sel.value = keep;
+    ndpDate = keep;
+  } catch (e) { /* keep previous */ }
+}
+
+function ndpOnDateChange() {
+  ndpDate = document.getElementById('ndp-date').value;
+  ndpFitKey = null;
+  ndpStartPoll(false);
+}
+
+function ndpSelectDay(d) {
+  const sel = document.getElementById('ndp-date');
+  if (![...sel.options].some(o => o.value === d)) {
+    sel.insertAdjacentHTML('beforeend', `<option value="${d}">${d}</option>`);
+  }
+  sel.value = d;
+  ndpOnDateChange();
+  document.getElementById('ndp-chart').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function ndpStatusBadge(kind, text) {
+  const el = document.getElementById('ndp-status');
+  const cls = {
+    live:   'bg-emerald-900/50 text-emerald-300 border border-emerald-700/50',
+    warn:   'bg-amber-900/40 text-amber-300 border border-amber-700/40',
+    bad:    'bg-rose-900/40 text-rose-300 border border-rose-700/40',
+    idle:   'bg-slate-800 text-slate-400',
+  }[kind];
+  el.className = 'px-2 py-1 rounded text-[10px] font-semibold ' + cls;
+  el.textContent = text;
+}
+
+function ndpBanner(kind, html) {
+  const el = document.getElementById('ndp-banner');
+  if (!html) { el.style.display = 'none'; return; }
+  const cls = {
+    info: 'bg-slate-800/60 border-slate-700/60 text-slate-300',
+    warn: 'bg-amber-900/30 border-amber-700/40 text-amber-200',
+    bad:  'bg-rose-900/30 border-rose-700/40 text-rose-200',
+  }[kind];
+  el.className = 'mb-4 px-3 py-2 rounded text-xs border ' + cls;
+  el.innerHTML = html;
+  el.style.display = '';
+}
+
+function ndpRenderPosition(pos, entriesUsed, maxEntries, lastBar) {
+  const box = document.getElementById('ndp-pos');
+  const age = document.getElementById('ndp-pos-age');
+  if (!pos) {
+    box.innerHTML = `<div class="text-2xl font-bold text-slate-300 mt-0">Flat</div>
+      <div class="text-xs text-slate-500 mt-2 leading-5">entries used <span class="text-slate-300">${entriesUsed ?? 0}/${maxEntries ?? 2}</span>
+      <br>last bar processed <span class="text-slate-300">${lastBar || '—'}</span></div>`;
+    age.textContent = '';
+    return;
+  }
+  const isPut = pos.option_type === 'PUT';
+  const tag = isPut ? '<span class="text-emerald-400">SHORT PE</span>' : '<span class="text-rose-400">SHORT CE</span>';
+  const stopPct = pos.to_stop_pct;
+  box.innerHTML = `
+    <div class="flex items-baseline justify-between">
+      <div class="text-sm font-semibold text-slate-200">${pos.strike} ${tag}</div>
+      <div class="text-xs text-slate-500">qty ${pos.qty} · in ${pos.entry_time}</div>
+    </div>
+    <div class="text-2xl font-bold tabular-nums mt-1 ${ndpCls(pos.mtm_net)}">${ndpMoney(pos.mtm_net)}</div>
+    <div class="text-xs text-slate-500 mt-1 tabular-nums leading-5">
+      <div>sold <span class="text-slate-300">${ndpNum(pos.entry)}</span> · LTP <span class="text-slate-100 font-semibold">${ndpNum(pos.ltp)}</span>
+        · gross <span class="${ndpCls(pos.mtm_gross)}">${ndpMoney(pos.mtm_gross)}</span></div>
+      <div>stop <span class="text-amber-300">${ndpNum(pos.stop)}</span>
+        ${stopPct !== null && stopPct !== undefined ? `· <span class="${stopPct < 25 ? 'text-rose-300' : 'text-slate-400'}">${stopPct}% to stop</span>` : ''}
+        · ${entriesUsed}/${maxEntries} entries</div>
+    </div>`;
+  age.textContent = pos.ltp_age !== null && pos.ltp_age !== undefined ? `ltp ${pos.ltp_age}s ago` : '';
+}
+
+async function ndpFetchTick() {
+  if (!ndpIsToday()) return;
+  let t;
+  try { t = await (await fetch('/api/ndp/tick')).json(); } catch (e) { return; }
+  if (!t || !t.ok) {
+    ndpStatusBadge('bad', 'ENGINE OFF');
+    return;
+  }
+  const spotEl = document.getElementById('ndp-spot');
+  spotEl.textContent = t.spot !== null && t.spot !== undefined ? Number(t.spot).toFixed(2) : '—';
+  const lv = (ndpLastState && ndpLastState.levels) || {};
+  if (t.spot && lv.prev_close) {
+    const ch = t.spot - lv.prev_close, pc = ch / lv.prev_close * 100;
+    const el = document.getElementById('ndp-spot-chg');
+    el.textContent = `${ch >= 0 ? '+' : '−'}${Math.abs(ch).toFixed(2)} (${pc >= 0 ? '+' : '−'}${Math.abs(pc).toFixed(2)}%)`;
+    el.className = 'text-sm tabular-nums ' + (ch >= 0 ? 'pnl-pos' : 'pnl-neg');
+  }
+  if (t.stale) ndpStatusBadge('bad', t.age === null ? 'STALE' : `STALE ${Math.round(t.age)}s`);
+  else if (t.blocked) ndpStatusBadge('bad', 'BLOCKED');
+  else if (t.status === 'live') ndpStatusBadge('live', '● LIVE');
+  else if (t.status === 'pre-open') ndpStatusBadge('warn', 'PRE-OPEN');
+  else if (t.status === 'closed') ndpStatusBadge('idle', 'CLOSED');
+  else ndpStatusBadge('warn', (t.status || '—').toUpperCase());
+
+  const d = t.day || {};
+  ndpSetMoney('ndp-day-net', d.day_net);
+  document.getElementById('ndp-day-gross').textContent = ndpMoney(d.day_gross);
+  document.getElementById('ndp-day-real').textContent = ndpMoney(d.realized_net);
+  document.getElementById('ndp-day-open').textContent = ndpMoney(d.open_net);
+  document.getElementById('ndp-equity').textContent = ndpRupee(t.equity);
+  ndpRenderPosition(t.position, t.entries_used, t.max_entries, t.last_bar);
+}
+
+function ndpRenderChart(st) {
+  const candles = (st.candles || []).map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close }));
+  if (st.live_day && st.forming && (!candles.length || st.forming.time > candles[candles.length - 1].time)) {
+    candles.push({ time: st.forming.time, open: st.forming.open, high: st.forming.high,
+                   low: st.forming.low, close: st.forming.close });
+  }
+  ndpCandle.setData(candles);
+  const up = [], dn = [];
+  (st.candles || []).forEach(c => {
+    if (c.st === null || c.st === undefined) return;
+    if (c.dir === 1) { up.push({ time: c.time, value: c.st }); dn.push({ time: c.time }); }
+    else { dn.push({ time: c.time, value: c.st }); up.push({ time: c.time }); }
+  });
+  ndpStUp.setData(up);
+  ndpStDn.setData(dn);
+
+  ndpLines.forEach(l => { try { ndpCandle.removePriceLine(l); } catch (e) {} });
+  ndpLines = [];
+  const lv = st.levels || {};
+  const mk = (price, color, title, style) => price ? ndpLines.push(ndpCandle.createPriceLine({
+    price, color, lineWidth: 1, lineStyle: style, axisLabelVisible: true, title })) : null;
+  mk(lv.r1, '#34d399', 'R1', LightweightCharts.LineStyle.Dashed);
+  mk(lv.pp, '#94a3b8', 'PP', LightweightCharts.LineStyle.Dotted);
+  mk(lv.s1, '#fb7185', 'S1', LightweightCharts.LineStyle.Dashed);
+
+  const lastT = candles.length ? candles[candles.length - 1].time : 0;
+  const snap = t => Math.min(Math.ceil(t / 300) * 300, lastT || t);
+  const markers = (st.markers || []).map(m => {
+    if (m.kind === 'entry') {
+      const put = m.side === 'short_put';
+      return { time: snap(m.time), position: put ? 'belowBar' : 'aboveBar',
+               color: put ? '#22c55e' : '#f43f5e', shape: put ? 'arrowUp' : 'arrowDown',
+               text: `SELL ${m.strike}${put ? 'PE' : 'CE'} ${Number(m.price).toFixed(1)}` };
+    }
+    return { time: snap(m.time), position: m.side === 'short_put' ? 'aboveBar' : 'belowBar',
+             color: '#fbbf24', shape: 'circle',
+             text: `EXIT ${Number(m.price).toFixed(1)} ${ndpReasonShort(m.reason)} ${ndpMoney(m.net)}` };
+  }).sort((a, b) => a.time - b.time);
+  ndpCandle.setMarkers(markers);
+
+  // Fit once per day loaded — but only after the chart has its real size. With autoSize
+  // the width lands a frame after the tab becomes visible, and a fit done before that
+  // crams every candle against the right edge.
+  const key = st.date + ':' + (candles.length > 0);
+  if (ndpFitKey !== key && document.getElementById('ndp-chart').clientWidth > 0) {
+    ndpFitKey = key;
+    const fit = () => { try { ndpChart.timeScale().fitContent(); } catch (e) {} };
+    requestAnimationFrame(() => requestAnimationFrame(fit));
+    setTimeout(fit, 250);
+  }
+}
+
+function ndpRenderTrades(st) {
+  const body = document.getElementById('ndp-trades-body');
+  const rows = [...(st.trades || [])];
+  if (st.position) rows.push({ ...st.position, _open: true });
+  if (!rows.length) {
+    body.innerHTML = `<tr><td colspan="10" class="py-3 text-center text-slate-500">no trades${st.live_day ? ' yet' : ''}</td></tr>`;
+    return;
+  }
+  body.innerHTML = rows.map((t, i) => {
+    if (t._open) {
+      return `<tr class="border-t border-slate-800 bg-amber-900/10">
+        <td class="py-1 px-2 text-slate-500">${i + 1}</td>
+        <td class="py-1 px-2">${t.entry_time}</td>
+        <td class="py-1 px-2 ${t.option_type === 'PUT' ? 'text-emerald-400' : 'text-rose-400'}">${ndpContract(t)}</td>
+        <td class="py-1 px-2 text-right">${ndpNum(t.entry)}</td>
+        <td class="py-1 px-2 text-amber-300">OPEN</td>
+        <td class="py-1 px-2 text-right">${ndpNum(t.ltp)}</td>
+        <td class="py-1 px-2 text-slate-500">stop ${ndpNum(t.stop)}</td>
+        <td class="py-1 px-2 text-right ${ndpCls(t.mtm_gross)}">${ndpMoney(t.mtm_gross)}</td>
+        <td class="py-1 px-2 text-right text-slate-500">—</td>
+        <td class="py-1 px-2 text-right ${ndpCls(t.mtm_net)}">${ndpMoney(t.mtm_net)}</td></tr>`;
+    }
+    const costs = (t.pnl_charges || 0) + (t.pnl_slippage || 0);
+    return `<tr class="border-t border-slate-800">
+      <td class="py-1 px-2 text-slate-500">${i + 1}</td>
+      <td class="py-1 px-2">${String(t.entry_time).slice(11, 16)}</td>
+      <td class="py-1 px-2 ${t.option_type === 'PUT' ? 'text-emerald-400' : 'text-rose-400'}">${ndpContract(t)}</td>
+      <td class="py-1 px-2 text-right">${ndpNum(t.entry_price)}</td>
+      <td class="py-1 px-2">${String(t.exit_time).slice(11, 16)}</td>
+      <td class="py-1 px-2 text-right">${ndpNum(t.exit_price)}</td>
+      <td class="py-1 px-2 text-slate-400">${ndpReasonShort(t.exit_reason)}</td>
+      <td class="py-1 px-2 text-right ${ndpCls(t.pnl_gross)}">${ndpMoney(t.pnl_gross)}</td>
+      <td class="py-1 px-2 text-right text-slate-500">${ndpMoney(-costs)}</td>
+      <td class="py-1 px-2 text-right font-semibold ${ndpCls(t.pnl_net)}">${ndpMoney(t.pnl_net)}</td></tr>`;
+  }).join('');
+}
+
+function ndpRenderLog(st) {
+  const box = document.getElementById('ndp-log');
+  const col = { ENTRY: 'text-emerald-300', EXIT: 'text-amber-300', ERROR: 'text-rose-400', ABORT: 'text-rose-400',
+                BLOCKED: 'text-rose-300', WARN: 'text-amber-400', LEVELS: 'text-sky-300', FEED: 'text-slate-400',
+                RESUME: 'text-violet-300', SYSTEM: 'text-slate-500' };
+  const ev = [...(st.events || [])].reverse();
+  box.innerHTML = ev.length ? ev.map(e =>
+    `<div><span class="text-slate-600">${e.t}</span> <span class="${col[e.kind] || 'text-slate-400'}">${e.kind.padEnd(7, ' ')}</span> <span class="text-slate-300">${e.msg}</span></div>`
+  ).join('') : '<div class="text-slate-500">no events</div>';
+}
+
+async function ndpFetchState() {
+  if (!ndpDate) return;
+  let st;
+  try { st = await (await fetch('/api/ndp/state?date=' + encodeURIComponent(ndpDate))).json(); } catch (e) { return; }
+  document.getElementById('ndp-chart-date').textContent = ndpDate;
+  document.getElementById('ndp-trades-date').textContent = ndpDate;
+  if (!st || !st.ok) {
+    ndpLastState = null;
+    ndpCandle.setData([]); ndpStUp.setData([]); ndpStDn.setData([]); ndpCandle.setMarkers([]);
+    document.getElementById('ndp-trades-body').innerHTML = '';
+    document.getElementById('ndp-log').innerHTML = '';
+    if (ndpIsToday()) {
+      ndpBanner('warn', 'The engine has not published today yet. It starts automatically at 09:10 IST on trading days.');
+      ndpStatusBadge('warn', 'WAITING');
+    } else {
+      ndpBanner('info', `No chart for ${ndpDate}.`);
+      ndpStatusBadge('idle', 'NO DATA');
+    }
+    return;
+  }
+  ndpLastState = st;
+  const lv = st.levels || {};
+  document.getElementById('ndp-r1').textContent = ndpNum(lv.r1);
+  document.getElementById('ndp-pp').textContent = ndpNum(lv.pp);
+  document.getElementById('ndp-s1').textContent = ndpNum(lv.s1);
+  document.getElementById('ndp-prev').textContent = lv.prev_high
+    ? `prev session ${st.prev_session}: H ${ndpNum(lv.prev_high)} L ${ndpNum(lv.prev_low)} C ${ndpNum(lv.prev_close)}` : '';
+  document.getElementById('ndp-expiry').textContent = st.expiry ? `${st.expiry} (DTE ${st.dte})` : '—';
+  document.getElementById('ndp-size').textContent = st.qty ? `${st.lots} lots × ${st.lot_size} = ${st.qty}` : '—';
+
+  if (st.blocked) {
+    ndpBanner('bad', st.live_day
+      ? `<b>No trading today.</b> ${st.blocked} — the engine keeps streaming and charting.`
+      : `<b>No trades on ${st.date}.</b> ${st.blocked}`);
+  } else if (st.stale) {
+    ndpBanner('bad', `<b>Engine not updating</b> — state is ${Math.round(st.age)}s old. The dashboard watchdog restarts it automatically during market hours.`);
+  } else if (!st.live_day) {
+    ndpBanner('info', `Viewing <b>${st.date}</b> (historical).`);
+  } else if (st.skipped_before) {
+    ndpBanner('warn', `Engine came up mid-session — bars up to ${st.skipped_before} closed while it was offline and were not traded retroactively.`);
+  } else {
+    ndpBanner(null);
+  }
+
+  ndpRenderChart(st);
+  ndpRenderTrades(st);
+  ndpRenderLog(st);
+
+  if (!st.live_day) {
+    const d = st.day || {};
+    ndpSetMoney('ndp-day-net', d.day_net);
+    document.getElementById('ndp-day-gross').textContent = ndpMoney(d.day_gross);
+    document.getElementById('ndp-day-real').textContent = ndpMoney(d.realized_net);
+    document.getElementById('ndp-day-open').textContent = '—';
+    const last = (st.candles || []).slice(-1)[0];
+    document.getElementById('ndp-spot').textContent = last ? Number(last.close).toFixed(2) : '—';
+    document.getElementById('ndp-spot-chg').textContent = last && lv.prev_close
+      ? `${last.close - lv.prev_close >= 0 ? '+' : '−'}${Math.abs(last.close - lv.prev_close).toFixed(2)} close` : '';
+    ndpRenderPosition(null, st.entries_used, (st.params || {}).max_entries_per_day, (st.candles || []).length ? 'closed' : '—');
+    ndpStatusBadge('idle', 'HISTORICAL');
+  }
+  document.getElementById('ndp-day-trades').textContent =
+    `${(st.trades || []).length}${st.position ? ' + 1 open' : ''} (max ${(st.params || {}).max_entries_per_day || 2})`;
+
+  try {
+    const m = await (await fetch('/api/ndp/mtm?date=' + encodeURIComponent(ndpDate))).json();
+    const rows = (m.rows || []).map(r => {
+      const [h, mi, s] = r.t.split(':').map(Number);
+      const base = Date.UTC(+ndpDate.slice(0, 4), +ndpDate.slice(5, 7) - 1, +ndpDate.slice(8, 10), h, mi, s) / 1000;
+      return { time: base, value: r.net };
+    });
+    const seen = new Set();
+    ndpMtm.setData(rows.filter(r => !seen.has(r.time) && seen.add(r.time)));
+    requestAnimationFrame(() => { try { ndpMtmChart.timeScale().fitContent(); } catch (e) {} });
+  } catch (e) { /* optional */ }
+}
+
+async function ndpFetchDaily() {
+  let r;
+  try { r = await (await fetch('/api/ndp/daily')).json(); } catch (e) { return; }
+  if (!r || !r.ok) return;
+  const s = r.summary;
+  ndpEq.applyOptions({ baseValue: { type: 'price', price: r.capital } });
+  ndpEq.setData(r.curve.map(p => ({ time: p.date, value: p.equity })));
+  requestAnimationFrame(() => { try { ndpEqChart.timeScale().fitContent(); } catch (e) {} });
+  if (!ndpIsToday() || !document.getElementById('ndp-equity').textContent.includes('₹')) {
+    document.getElementById('ndp-equity').textContent = ndpRupee(s.equity);
+  }
+  const ret = document.getElementById('ndp-ret');
+  ret.textContent = `${ndpMoney(s.net)} (${s.return_pct >= 0 ? '+' : ''}${ndpNum(s.return_pct)}%)`;
+  ret.className = ndpCls(s.net);
+  document.getElementById('ndp-days').textContent = `${s.days_traded} (${s.winning_days} green)`;
+  document.getElementById('ndp-maxdd').textContent = `${ndpNum(s.max_dd_pct)}%`;
+  document.getElementById('ndp-costs').textContent = ndpRupee(s.costs);
+  document.getElementById('ndp-eq-summary').innerHTML =
+    `${s.trades} trades · net <span class="${ndpCls(s.net)}">${ndpMoney(s.net)}</span><br>` +
+    `gross ${ndpMoney(s.gross)} · costs ${ndpRupee(s.costs)}`;
+
+  const body = document.getElementById('ndp-days-body');
+  body.innerHTML = r.days.length ? r.days.map(d => `
+    <tr class="border-t border-slate-800 hover:bg-slate-800/40 cursor-pointer ${d.date === ndpDate ? 'bg-slate-800/60' : ''}"
+        onclick="ndpSelectDay('${d.date}')">
+      <td class="py-1 px-2 text-sky-300">${d.date}${d.blocked ? ' <span class="text-rose-400" title="' + d.blocked + '">⛔</span>' : ''}</td>
+      <td class="py-1 px-2 text-right">${d.trades}${d.trades ? ` <span class="text-slate-500">(${d.wins}W)</span>` : ''}</td>
+      <td class="py-1 px-2 text-right ${ndpCls(d.gross)}">${ndpMoney(d.gross)}</td>
+      <td class="py-1 px-2 text-right text-slate-500">${ndpMoney(-((d.charges || 0) + (d.slippage || 0)))}</td>
+      <td class="py-1 px-2 text-right font-semibold ${ndpCls(d.net)}">${ndpMoney(d.net)}</td>
+      <td class="py-1 px-2 text-right text-slate-300">${ndpRupee(d.equity_close)}</td>
+      <td class="py-1 px-2 text-right ${d.drawdown_pct < 0 ? 'pnl-neg' : 'text-slate-500'}">${ndpNum(d.drawdown_pct)}%</td>
+    </tr>`).join('') :
+    '<tr><td colspan="7" class="py-3 text-center text-slate-500">no sessions yet — first paper day will appear here</td></tr>';
+}
+
+async function ndpStartPoll(reloadDates = true) {
+  ndpStopPoll();
+  if (reloadDates || !ndpServerToday) await ndpLoadDates();
+  await ndpFetchState();
+  ndpFetchDaily();
+  if (ndpIsToday()) {
+    ndpFetchTick();
+    ndpTickTimer = setInterval(ndpFetchTick, 1000);
+    ndpStateTimer = setInterval(ndpFetchState, 3000);
+    ndpDailyTimer = setInterval(ndpFetchDaily, 20000);
+  }
+}
+function ndpStopPoll() {
+  [ndpTickTimer, ndpStateTimer, ndpDailyTimer].forEach(t => t && clearInterval(t));
+  ndpTickTimer = ndpStateTimer = ndpDailyTimer = null;
+}
+
 </script>
 </body>
 </html>

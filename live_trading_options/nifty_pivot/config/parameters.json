@@ -1,0 +1,33 @@
+{
+  "strategy_name": "Nifty Directional Pivot",
+  "mode": "paper",
+  "index": "NIFTY",
+
+  "supertrend_period": 14,
+  "supertrend_multiplier": 2.5,
+  "bar_minutes": 5,
+
+  "strike_step": 50,
+  "lots": 10,
+  "max_entries_per_day": 2,
+  "last_entry_time": "15:10",
+  "squareoff_time": "15:15",
+  "premium_stop_mult": 2.0,
+
+  "capital": 2000000,
+  "seed_sessions": 20,
+
+  "costs": {
+    "brokerage_per_order": 20,
+    "freeze_qty": 1800,
+    "slippage_base_pts": 0.25,
+    "slippage_per_lot_pts": 0.01,
+    "stop_slippage_mult": 2.0
+  },
+
+  "_notes": {
+    "source": "Backtest: backtesting/options_pivot_intraday (ST(14,2.5) + 2x premium stop). Every rule here must stay identical to that engine; replay.py proves it.",
+    "fills": "Paper fills at option LTP at the signal moment (backtest: option open of that minute). P&L is reported gross AND net of the same realistic cost model the backtest used.",
+    "lot_size": "Taken live from Kite's instrument dump, never hardcoded. The backtest used 75; current NIFTY lot size is whatever the exchange says today."
+  }
+}
