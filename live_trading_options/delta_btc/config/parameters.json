@@ -32,8 +32,8 @@
 
     "full_cycle": {
       "enabled": true,
-      "label": "B - full expiry cycle (IST rules, 100 premium, 1.2x)",
-      "sl_combined_multiple": 1.2,
+      "label": "B - full expiry cycle (IST rules, 100 premium, 1.5x)",
+      "sl_combined_multiple": 1.5,
       "entry_time": "17:35",
       "square_off": "17:10",
       "target_premium": 100,
@@ -49,8 +49,8 @@
 
     "continuous": {
       "enabled": true,
-      "label": "C - continuous (re-enters after stop-out, 100 premium, 1.2x)",
-      "sl_combined_multiple": 1.2,
+      "label": "C - continuous (re-enters after stop-out, 100 premium, 1.5x)",
+      "sl_combined_multiple": 1.5,
       "entry_time": "17:35",
       "square_off": "17:10",
       "target_premium": 100,
@@ -74,6 +74,8 @@
   "_shared_note": "Everything below applies to all three profiles. Only the session shape and its target/stop are allowed to differ, so that a difference in the month's results can be attributed to the session and not to the parameters.",
 
   "sl_combined_multiple": 1.2,
+  "sl_only_lowers": true,
+  "_sl_only_lowers_note": "Set 2026-09-15 for all three profiles, with all at 1.5x. The window recompute may only LOWER the stop; it may rise only on a new entry (fresh strangle, or re-entry after a stop-out). A 2x adjustment keeps the stop. Reason: on 15-Sep a losing PE inflated the combined premium and each window pushed its own stop up (244 -> 436 -> 942), so it never fired: full_cycle -$938 in replay vs -$158 with this rule, ist_day worst MTM -$261 vs -$76.",
   "_sl_per_profile_note": "Default multiple. Each profile may override it with its own sl_combined_multiple, and as of 2026-09-13 they do: ist_day 1.5x, full_cycle 2.0x, continuous 1.2x. Set after a four-day replay of the archived chain showed 1.2x was the weakest setting (-$10, 10 stop-outs, worst single day -$109) while 1.5x made +$128 with 5 and 2.0x +$414 with none. That replay contained no day larger than a 4.5% range, so it CANNOT show how a wide stop behaves in a real crash — which is why the live paper run carries three different multiples at once rather than betting everything on 2.0x.",
   "_sl_note": "The stop is NOT a fixed level. Every leg's stop sits at this multiple of the pair's CURRENT COMBINED premium (CE mark + PE mark), recomputed at entry and at every 15-minute window. Sell two legs at 50 and the stop is 1.2 x 100 = 120, a doubling — reasonable. Six hours later the same pair is worth 8 + 9 and the stop is 1.2 x 17 = 20.4, still proportional; a FIXED 100 there could never protect anything and the leg would run unbounded to the square-off. It cannot fire on placement either: 1.2 x (a+b) always exceeds a and b individually. Recomputed only while BOTH legs are alive — single-legged, 'combined' would mean one leg's own premium and the stop would clamp 20% above the market at the worst possible moment.",
 

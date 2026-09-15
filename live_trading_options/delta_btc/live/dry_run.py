@@ -610,6 +610,31 @@ ok("a re-entry after a single-legged resume is opened WITH a stop",
    not cS2.position.unprotected_legs()
    and all(l.sl_trigger is not None for l in cS2.position.live_legs()))
 
+# ══ 16. stop only LOWERS — except on a new entry ══════════════════════════
+cL = make({"sl_combined_multiple": 1.5}, params_over={"sl_only_lowers": True}, name="lower")
+chL = FakeChain(spot=80000.0)
+run(cL, chL, [f"{D} 09:30:00"])
+sl0 = cL.sl
+chL.set_spot(79700.0)                          # PE richer, combined up — no stop hit
+cL._recompute_sl("window test")
+check("stop does NOT rise when a leg gains in a window", cL.sl, sl0)
+chL.set_spot(80000.0)
+for l in cL.position.live_legs():              # decay: marks fall
+    pass
+chL.atm_prem = 200.0; chL.set_spot(80000.0)
+cL._recompute_sl("window test")
+ok("stop DOES fall as the pair decays", cL.sl < sl0)
+low = cL.sl
+cL._sl_fresh = True                            # what a re-entry after a stop sets
+chL.atm_prem = 400.0; chL.set_spot(80000.0)
+cL._recompute_sl("reentry test")
+ok("a new entry recomputes normally (may rise)", cL.sl > low)
+cO = make({"sl_combined_multiple": 1.5}, name="oldrule")
+chO = FakeChain(spot=80000.0)
+run(cO, chO, [f"{D} 09:30:00"])
+s0 = cO.sl; chO.set_spot(79700.0); cO._recompute_sl("window test")
+ok("switch off: old behaviour, stop follows the pair up", cO.sl > s0)
+
 print(f"\n  {PASS} passed, {FAIL} failed")
 for f in FAILURES:
     print(f"   FAIL {f}")

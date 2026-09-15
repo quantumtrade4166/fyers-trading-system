@@ -165,14 +165,14 @@ check("no next window after the last one", A.next_window(T("2026-09-04 17:05")),
 # against a 50 entry; reading the old field would say 100 and let the loss-limit
 # check pass a limit that the leg stops can in fact blow through.
 check("A runs a 1.5x stop", A.sl_mult, 1.5)
-check("B runs a 1.2x stop", B.sl_mult, 1.2)
-check("C runs a 1.2x stop", C.sl_mult, 1.2)
+check("B runs a 1.5x stop", B.sl_mult, 1.5)
+check("C runs a 1.5x stop", C.sl_mult, 1.5)
 check("A worst case both stopped is $200 (1.5x: stop 150 vs entry 50)",
       A.worst_case_both_stopped(), 200.0)
-check("B worst case both stopped is $280 (1.2x: stop 240 vs entry 100)",
-      B.worst_case_both_stopped(), 280.0)
-check("C worst case both stopped is $280 (1.2x: stop 240 vs entry 100)",
-      C.worst_case_both_stopped(), 280.0)
+check("B worst case both stopped is $400 (1.5x: stop 300 vs entry 100)",
+      B.worst_case_both_stopped(), 400.0)
+check("C worst case both stopped is $400 (1.5x: stop 300 vs entry 100)",
+      C.worst_case_both_stopped(), 400.0)
 check("a profile without its own multiple falls back to the default",
       SessionProfile("nodef", {"entry_time": "09:30", "square_off": "17:10",
                                "target_premium": 50, "sl_premium": 100,

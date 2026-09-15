@@ -98,6 +98,8 @@ class BTCController:
         self.sl_mult = (profile.sl_mult if profile.sl_mult is not None
                         else float(params.get("sl_combined_multiple", 1.2)))
         self.sl = round(self.sl_mult * 2 * self.target, 2)
+        self.sl_only_lowers = bool(params.get("sl_only_lowers", False))
+        self._sl_fresh = True          # next recompute may raise the stop (new entry)
 
         self.fees_cfg = params.get("fees", {})
         self.cross = bool((params.get("slippage") or {}).get("cross_the_spread", True))
@@ -569,7 +571,15 @@ class BTCController:
         # `force` re-applies even when the level is unchanged: after a resume the
         # engine's own `sl` can already equal the target while the LEGS still carry
         # stale stops, and the short-circuit would skip exactly the fix needed.
+        fresh, self._sl_fresh = self._sl_fresh, False
         if not force and self.sl is not None and abs(new - self.sl) < 0.05:
+            return
+        # STOP ONLY LOWERS. A losing leg inflates the combined premium, so a stop
+        # recomputed off it chases the loser upward and never fires. The stop may
+        # rise only on a NEW entry (fresh strangle, or re-entry after a stop-out);
+        # a 2x adjustment keeps the stop where it is.
+        if (self.sl_only_lowers and not force and not fresh
+                and self.sl is not None and new > self.sl):
             return
         old, self.sl = self.sl, new
         for leg in self.position.live_legs():
@@ -712,6 +722,7 @@ class BTCController:
                   sl_gated=cand.get("sl_gated"))
         if self._open_leg(leg):
             self.position.set_leg(leg)
+            self._sl_fresh = True
 
     def _fresh_entry(self, reason: str):
         """Open a complete strangle at the target premium — both legs or neither."""
@@ -762,6 +773,7 @@ class BTCController:
             self.position.set_leg(leg)
         # Both legs are on: retarget off what they are ACTUALLY worth rather than
         # the provisional 2x-target estimate used while opening them.
+        self._sl_fresh = True
         self._recompute_sl("entry")
         self._log("entry_complete",
                   ce=f"{legs[CE].strike:.0f}@{legs[CE].entry_price}",
