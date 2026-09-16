@@ -650,6 +650,23 @@ ovf.write_text(_json.dumps({"sl": 1.0}), encoding="utf-8")
 run(cV, chV, [f"{D} 09:32:00"])
 check("override below a live mark is refused", cV.sl, target)
 
+# == 18. a cycle that ended while we were DOWN is still recorded ===========
+# 2026-09-16: ist_day came back at 17:44, past its 17:10 square-off, so
+# cycle_key(now) was None and restore() returned before recording anything - a
+# whole day (2 legs live, $47.70 realized) vanished from cycles.jsonl.
+cD = make(name="lost")
+chD = FakeChain(spot=80000.0)
+run(cD, chD, [f"{D} 09:30:00", f"{D} 09:45:00"])
+cD._save_resume()
+cD2 = make(name="lost")
+ok("nothing restores outside the session window", not cD2.restore(T(f"{D} 23:30:00")))
+check("the ended cycle IS recorded", len(cD2.cycles_done), 1)
+ok("it is flagged interrupted", bool(cD2.cycles_done and cD2.cycles_done[0].get("interrupted")))
+check("its open legs are counted, not priced", cD2.cycles_done[0]["unresolved_legs"], 2)
+cD3 = make(name="lost")
+cD3.restore(T(f"{D} 23:45:00"))
+check("a second restart does not record it twice", len(cD3.cycles_done), 1)
+
 print(f"\n  {PASS} passed, {FAIL} failed")
 for f in FAILURES:
     print(f"   FAIL {f}")

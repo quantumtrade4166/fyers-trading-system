@@ -979,6 +979,18 @@ class BTCController:
         except Exception:
             pass
 
+    def _mark_resume_recorded(self, f, d: dict):
+        """Stamp a resume file whose cycle has been written to cycles.jsonl, so a
+        later restart in the same gap cannot record the same cycle a second time."""
+        try:
+            d["interrupted_recorded"] = True
+            # keep the record itself in the file too, so the next restart still
+            # carries the cycle rather than an empty history
+            d["cycles_done"] = self.cycles_done
+            f.write_text(json.dumps(d, default=str), encoding="utf-8")
+        except Exception:
+            pass
+
     def restore(self, now: dt.datetime) -> bool:
         """Reload an interrupted cycle. True if anything was restored.
 
@@ -997,8 +1009,6 @@ class BTCController:
         # exactly the wrong thing on the records that explain why a cycle ended.
         self._now = now
         key = self.profile.cycle_key(now)
-        if key is None:
-            return False
         f = self._resume_file()
         if not f.exists():
             return False
@@ -1007,6 +1017,16 @@ class BTCController:
         except Exception:
             return False
         self.cycles_done = d.get("cycles_done") or []
+        if key is None:
+            # We came back OUTSIDE the session window: the cycle in the file ended
+            # while we were down. Record it — on 2026-09-16 this path threw away a
+            # whole ist_day (two legs live, $47.70 realized) because it returned
+            # before `_record_interrupted` could run. The file is then marked so a
+            # second restart before the next session cannot record it twice.
+            if not d.get("interrupted_recorded"):
+                self._record_interrupted(d, now)
+                self._mark_resume_recorded(f, d)
+            return False
         if d.get("cycle") != key:
             # That cycle ENDED while we were down. It must still be RECORDED.
             #
@@ -1017,7 +1037,9 @@ class BTCController:
             # to a new cycle key, dropped the old book on the floor, and
             # cycles.jsonl stayed empty. A month-long experiment cannot lose a
             # cycle every time the process is interrupted.
-            self._record_interrupted(d, now)
+            if not d.get("interrupted_recorded"):
+                self._record_interrupted(d, now)
+                self._mark_resume_recorded(f, d)
             return False
         # SIZE CHANGE MID-CYCLE. If `contracts` was changed in config while a
         # cycle was live, the saved legs are the OLD size. Adopting them would
