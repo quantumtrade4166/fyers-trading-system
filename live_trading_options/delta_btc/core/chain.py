@@ -109,6 +109,7 @@ class LiveChain:
         self.ask: dict[tuple, float] = {}        # (strike, type) -> best ask
         self.by_key: dict[tuple, dict] = {}      # (strike, type) -> contract meta
         self.strikes: list[float] = []
+        self.new_strikes = 0                     # listed after build, adopted live
 
     # ── build from the product master ────────────────────────────────────
     def load(self, rows: list = None):
@@ -152,6 +153,21 @@ class LiveChain:
             if strike is None:
                 continue
             key = (strike, CE if sym.startswith("C-") else PE)
+            if key not in self.by_key and (t.get("product_id") or t.get("id")):
+                # A strike Delta listed AFTER this chain was built. Adopt it.
+                #
+                # On 2026-09-19 the 19-Sep chain was built at 17:30 the day before
+                # with 30 strikes topping out at 80000. BTC rose to 81,100 overnight
+                # and Delta listed strikes to 83000 — but the chain never learned of
+                # them, so ATM clamped to 80000, the CE side had nothing out of the
+                # money, and ist_day refused every entry all day ("no strike found").
+                self.by_key[key] = {
+                    "symbol": sym,
+                    "product_id": int(t.get("product_id") or t.get("id")),
+                    "tick_size": _f(t.get("tick_size")) or 0.1,
+                    "contract_value": _f(t.get("contract_value")) or self.contract_value,
+                }
+                self.new_strikes += 1
             q = t.get("quotes") or {}
             mk = _f(t.get("mark_price"))
             if mk is not None:
@@ -171,6 +187,8 @@ class LiveChain:
             if sp:
                 self.spot = sp
             n += 1
+        if len(self.strikes) != len({k[0] for k in self.by_key}):
+            self.strikes = sorted({k[0] for k in self.by_key})
         if self.spot is not None and self.strikes:
             self.atm = atm_strike(self.spot, self.strikes)
         if n:

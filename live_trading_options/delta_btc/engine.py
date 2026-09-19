@@ -195,7 +195,13 @@ def main():
                 if c.expiry and not c.position.is_flat:
                     wanted.add(c.expiry)
             for code in wanted:
-                chain_for(code).refresh(tickers)
+                ch = chain_for(code)
+                before = ch.new_strikes
+                ch.refresh(tickers)
+                if ch.new_strikes != before:
+                    log(f"  {code}: adopted {ch.new_strikes - before} newly listed "
+                        f"contract(s) — now {len(ch.strikes)} strikes "
+                        f"{ch.strikes[0]:.0f}-{ch.strikes[-1]:.0f}")
 
             for name, c in ctrls.items():
                 # a controller holding a position keeps the expiry it sold into
