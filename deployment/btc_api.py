@@ -96,31 +96,69 @@ def state():
 
 @router.get("/equity")
 def equity(profile: str = Query(None), day: str = Query(None)):
-    """Intraday MTM samples — the equity curve.
+    """One SESSION's MTM curve per profile — the P&L of that day's cycle, from 0.
 
-    Defaults to TODAY for every profile. The engine samples once a minute, so a
-    full day is ~1,400 rows per profile; the tab draws them directly.
+    Which cycle is "day D":
+      ist_day                 its own cycle, D 09:30 -> D 17:10
+      full_cycle, continuous  the cycle that ENDS on D (D-1 17:35 -> D 17:10) —
+                              the same day convention as the backtests
+      today                   whatever cycle is running now, so the live view
+                              after 17:35 follows the cycle that just opened
+
+    It used to return every sample stamped with date D and plot mtm + the
+    run-to-date closed total, so a day's chart showed full_cycle sitting at
+    -$1,600 (the whole run) and ist_day as a flat line all night outside its
+    session. Samples with no cycle (flat, between sessions) are dropped.
+
+    Days the engine did not trade can carry a REPLAY — the same controller run
+    over the recorded chain — from <profile>_equity_replay.jsonl. It is used only
+    when that day has no live samples, and every replayed row says so.
     """
-    day = day or _now_ist().date().isoformat()
+    today = _now_ist().date().isoformat()
+    day = day or today
+    prev = (dt.date.fromisoformat(day) - dt.timedelta(days=1)).isoformat()
     names = [profile] if profile else PROFILES
-    out = {}
-    for name in names:
+    out, source = {}, {}
+
+    def read(f):
         rows = []
-        f = RESULTS / f"{name}_equity.jsonl"
-        if f.exists():
-            try:
-                for line in f.read_text(encoding="utf-8").splitlines():
-                    line = line.strip()
-                    if not line or day not in line[:30]:
-                        continue
-                    try:
-                        rows.append(json.loads(line))
-                    except json.JSONDecodeError:
-                        continue
-            except Exception:
-                pass
-        out[name] = rows
-    return {"ok": True, "day": day, "equity": out}
+        if not f.exists():
+            return rows
+        try:
+            for line in f.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or (day not in line[:30] and prev not in line[:30]):
+                    continue
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if r.get("cycle"):
+                    rows.append(r)
+        except Exception:
+            pass
+        return rows
+
+    for name in names:
+        rows = read(RESULTS / f"{name}_equity.jsonl")
+        src = "live"
+        if day == today and rows:
+            want = max(r["cycle"] for r in rows)          # the cycle running now
+        elif name == "ist_day":
+            want = f"ist_day@{day}T09:30"
+        else:
+            want = f"{name}@{prev}T17:35"
+        picked = [r for r in rows if r["cycle"] == want]
+        # a session that opened but never held a leg (entries all blocked) is no
+        # curve at all — a replay, when one exists, says more than a flat zero
+        never_traded = picked and all(not r.get("n_live") and not r.get("mtm") for r in picked)
+        if not picked or never_traded:
+            rep = [r for r in read(RESULTS / f"{name}_equity_replay.jsonl") if r["cycle"] == want]
+            if rep:
+                picked, src = rep, "replay"
+        out[name] = picked
+        source[name] = src if picked else "none"
+    return {"ok": True, "day": day, "equity": out, "source": source}
 
 
 @router.get("/dates")

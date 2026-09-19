@@ -4812,7 +4812,7 @@ async function btcFetchState() {
     btcRenderLog(au.events || [], { total: au.total, shown: (au.events || []).length, truncated: au.truncated });
     btcRenderWindows(wi.windows || [], wi.legacy_rows || 0);
     btcRenderCycles(cy.cycles || []);
-    btcRenderEquity(eq.equity || {});
+    btcRenderEquity(eq.equity || {}, eq.source || {});
   } catch (e) { /* a failed refresh is the next refresh's problem */ }
 }
 
@@ -5126,7 +5126,9 @@ function btcRenderCycles(rows) {
   }).join('');
 }
 
-function btcRenderEquity(eq) {
+let btcEqFitKey = null;
+function btcRenderEquity(eq, source) {
+  source = source || {};
   if (!btcEqChart) return;
   // Gaps are DATA INTEGRITY, not cosmetics: a hole means the engine was not
   // running, so the curve either side of it is not one continuous session. Say so
@@ -5154,7 +5156,10 @@ function btcRenderEquity(eq) {
       const t = Math.floor(new Date(String(r.ts).replace(' ', 'T') + '+05:30').getTime() / 1000) + 19800;
       if (!t || seen.has(t) || isNaN(t)) return;
       seen.add(t);
-      pts.push({ time: t, value: Number(r.mtm) + Number(r.closed_total || 0) });
+      // The session's OWN P&L: this cycle's MTM, starting from 0. Adding the
+      // run-to-date closed total made every day's chart sit at the whole
+      // month's result (full_cycle at -$1,600) instead of that day's.
+      pts.push({ time: t, value: Number(r.mtm) });
     });
     pts.sort((a, b) => a.time - b.time);
     // BREAK THE LINE ACROSS GAPS. The engine samples once a minute, so a jump of
@@ -5172,6 +5177,19 @@ function btcRenderEquity(eq) {
       withGaps.push(pts[i]);
     }
     try { btcEqSeries[k].setData(withGaps); } catch (e) {}
+    // Fit the whole session when the day or profile changes, so a selected day
+    // opens showing 09:30-17:10 rather than whatever window was last in view.
+    const fitKey = (btcDate || 'today') + '|' + k;
+    if (btcEqFitKey !== fitKey && withGaps.length) {
+      btcEqFitKey = fitKey;
+      // explicit range, one frame later: fitContent right after setData kept
+      // the previous profile's logical span (1,380 bars) and squeezed a
+      // 460-minute session into the right third of the chart
+      const n = withGaps.length;
+      requestAnimationFrame(() => {
+        try { btcEqChart.timeScale().setVisibleLogicalRange({ from: 0, to: n - 1 }); } catch (e) {}
+      });
+    }
 
     {                                          // gaps of the profile being shown
       for (let i = 1; i < pts.length; i++) {
@@ -5187,11 +5205,20 @@ function btcRenderEquity(eq) {
     }
   });
   const gEl = document.getElementById('btc-gaps');
+  if (gEl && source[btcWinProfile] === 'replay') {
+    gEl.textContent = '↻ REPLAY — the engine did not trade this session; this curve is the '
+      + 'same strategy code run over the recorded option chain for that day.';
+    return;
+  }
+  if (gEl && source[btcWinProfile] === 'none') {
+    gEl.textContent = 'No session data for this profile on this day.';
+    return;
+  }
   if (gEl) {
     gEl.textContent = gapMins
       ? ('⚠ engine not running for ' + (gapMins >= 60
           ? (gapMins / 60).toFixed(1) + 'h' : gapMins + 'm')
-         + ' today (' + gapList.join(', ') + ') — the curve is broken across it, '
+         + ' (' + gapList.join(', ') + ') — the curve is broken across it, '
          + 'no P&L existed in that window')
       : '';
   }
