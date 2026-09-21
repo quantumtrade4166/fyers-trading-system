@@ -318,6 +318,15 @@ class _AllZero(StubKotak):
         return {"Net": "0", "CollateralValue": "0", "stat": "Ok"}
 check("a genuinely empty account still reads 0",
       K.cash_available(_AllZero()) == 0.0)
+class _Settled(StubKotak):
+    """Real Kotak Rohit response on 2026-09-21, after the holdings settled."""
+    def limits(self, **kw):
+        if kw:
+            return {"Net": "0", "stat": "Ok"}
+        return {"Collateral": "723699.86", "CollateralValue": "15289.50",
+                "Net": "738989.36", "stat": "Ok"}
+check("margin on settled holdings is NOT counted as cash",
+      abs(K.cash_available(_Settled()) - 15289.50) < 0.01, K.cash_available(_Settled()))
 
 print("\n=== 17. last_prices() against the REAL quotes() shape ===")
 _q = StubKotak()

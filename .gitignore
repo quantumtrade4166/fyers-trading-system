@@ -81,3 +81,4 @@ live_trading_options/delta_btc/logs/
 # DualMom client record (Kotak Rohit): trades, ledger, snapshots.
 # Backed up to private Google Drive every 10 min + a daily dated archive. NEVER git.
 deployment/dualmom_live_state/
+deployment/dualmom_kite_state/

@@ -359,6 +359,12 @@ def cash_available(client) -> float:
     than an error, so the earlier version reported Rs 0.00 on a funded account and
     looked exactly like a failed deposit. Sizing off that would deploy nothing.
     The filtered call is kept only as a fallback.
+
+    ⚠️ Net INCLUDES MARGIN AGAINST HOLDINGS once they settle. Verified 2026-09-21:
+        Net 738,989.36 = Collateral 723,699.86 (haircut value of the 40 settled
+        holdings) + CollateralValue 15,289.50 (the actual cash)
+    Counting that margin as cash inflated NAV to 17.2L (+72%). Real cash is
+    Net - Collateral. On 15/16-Sep Collateral was 0 (holdings unsettled).
     """
     best = 0.0
     for kwargs in ({}, {"segment": "ALL"},
@@ -374,6 +380,7 @@ def cash_available(client) -> float:
             continue
         v = _num(_dig(resp, "Net", "net", "AvailableCash", "availableCash",
                       "MarginAvailable", "CollateralValue"))
+        v -= _num(_dig(resp, "Collateral", "collateral"))   # margin on holdings is not cash
         if v > best:
             best = v
     return best

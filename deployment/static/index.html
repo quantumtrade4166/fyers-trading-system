@@ -179,6 +179,9 @@
     <button class="tab-btn" id="tab-btc" onclick="switchTab('btc')">
       ₿ BTC Delta Neutral
     </button>
+    <button class="tab-btn" id="tab-btcvwap" onclick="switchTab('btcvwap')">
+      ₿ BTC VWAP
+    </button>
     <button class="tab-btn" id="tab-ndp" onclick="switchTab('ndp')">
       📐 Nifty Directional Pivot
     </button>
@@ -267,7 +270,9 @@
           <button id="dm-mode-paper" onclick="dmSetMode(false)"
                   class="px-3 py-1 rounded text-xs font-medium bg-slate-600 text-white">Paper</button>
           <button id="dm-mode-live" onclick="dmSetMode(true)"
-                  class="px-3 py-1 rounded text-xs font-medium text-slate-400 hover:text-slate-200">Live</button>
+                  class="px-3 py-1 rounded text-xs font-medium text-slate-400 hover:text-slate-200">Kotak live</button>
+          <button id="dm-mode-kite" onclick="dmSetMode('kite')"
+                  class="px-3 py-1 rounded text-xs font-medium text-slate-400 hover:text-slate-200">Kite live</button>
         </div>
         <span id="dm-signal-badge" class="badge-unk text-xs font-medium px-3 py-1 rounded-full">— —</span>
       </div>
@@ -503,7 +508,7 @@
 
     </div><!-- /dm-paper-section -->
 
-    <!-- ══════════ LIVE (Kotak, separate account) ══════════ -->
+    <!-- ══════════ LIVE — Kotak (dedicated a/c) or Kite (shared a/c, own book) ══════════ -->
     <div id="dm-live-section" style="display:none">
 
       <!-- gate banner -->
@@ -517,7 +522,7 @@
               Preview always works and never sends an order. Unlock by setting
               <code class="text-slate-400">ENABLED=True</code> and
               <code class="text-slate-400">DRY_RUN=False</code> in
-              <code class="text-slate-400">deployment/dualmom_live/config.py</code>
+              <code id="dm-live-cfg-path" class="text-slate-400">deployment/dualmom_live/config.py</code>
               — only after go-live step 6 (the order-tag round-trip) passes.
             </p>
           </div>
@@ -577,6 +582,7 @@
             <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Cash</p>
             <p id="dm-k-cash" class="text-xl font-semibold text-white font-mono">—</p>
             <p id="dm-k-cash-sub" class="text-xs text-slate-600 mt-1">free, broker</p>
+            <p id="dm-k-cash-note" class="text-xs text-slate-600" style="display:none"></p>
           </div>
           <div class="card p-4">
             <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Max drawdown</p>
@@ -612,7 +618,7 @@
         <div class="card p-4 mb-4">
           <div class="flex items-center justify-between mb-3">
             <h3 class="text-sm font-medium text-slate-300">Positions
-              <span class="text-xs text-slate-600 font-normal">— quantities &amp; prices from Kotak · click a heading to sort</span></h3>
+              <span id="dm-port-src" class="text-xs text-slate-600 font-normal">— quantities &amp; prices from Kotak · click a heading to sort</span></h3>
             <span id="dm-port-count" class="text-xs text-slate-600">—</span>
           </div>
           <div style="overflow-x:auto">
@@ -667,7 +673,7 @@
         <div class="card p-4">
           <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Broker</p>
           <p id="dm-live-broker" class="text-lg font-semibold text-slate-400">—</p>
-          <p class="text-xs text-slate-600 mt-1">Kotak Neo · dedicated a/c</p>
+          <p id="dm-live-broker-sub" class="text-xs text-slate-600 mt-1">Kotak Neo · dedicated a/c</p>
         </div>
         <div class="card p-4">
           <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Free Cash</p>
@@ -1254,6 +1260,84 @@
        engine: live_trading_options/nifty_pivot/engine.py (separate process)
        api:    deployment/pivot_api.py (read-only)
   ══════════════════════════════════════════════════════════ -->
+  <!-- ══════════════════════════════════════════════════════════
+       TAB — BTC VWAP Strangle (Delta Exchange India, PAPER)
+       NIFTY Vwap Strangle rules on BTC daily options: equidistant CE+PE at a
+       combined ~100, 5-min combined candles + VWAP, sell below / exit above.
+  ══════════════════════════════════════════════════════════ -->
+  <div id="page-btcvwap" style="display:none">
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+      <div>
+        <h2 class="text-lg font-semibold text-white">₿ BTC VWAP Strangle <span class="ml-2 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-400 align-middle">PAPER</span></h2>
+        <p class="text-xs text-slate-500">Delta Exchange India · combined-premium VWAP · sell red-below-VWAP low−1 · exit close above VWAP · fills walk the real order book</p>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <div class="flex rounded overflow-hidden border border-slate-700">
+          <button id="bv-v-full_expiry" onclick="bvSetVersion('full_expiry')" class="px-3 py-1 text-xs">Full expiry</button>
+          <button id="bv-v-ist_day" onclick="bvSetVersion('ist_day')" class="px-3 py-1 text-xs">IST day</button>
+        </div>
+        <select id="bv-date" onchange="bvOnDateChange()"
+                class="bg-[#151a26] text-slate-300 text-xs rounded px-2 py-1 border border-[#2d3748]"></select>
+        <span id="bv-feed" class="px-2 py-1 rounded text-[10px] font-semibold bg-slate-800 text-slate-400">FEED —</span>
+      </div>
+    </div>
+
+    <div id="bv-banner" class="mb-3 px-3 py-2 rounded text-xs bg-slate-800/60 border border-slate-700/60 text-slate-300"></div>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-4">
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">Strikes</div><div id="bv-strikes" class="text-sm font-semibold text-slate-100 tabular-nums">—</div><div id="bv-expiry" class="text-[10px] text-slate-500"></div></div>
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">Combined (mark)</div><div id="bv-comb" class="text-xl font-bold text-slate-100 tabular-nums">—</div><div id="bv-legs" class="text-[10px] text-slate-500 tabular-nums"></div></div>
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">VWAP</div><div id="bv-vwap" class="text-xl font-bold text-sky-400 tabular-nums">—</div><div id="bv-side" class="text-[10px] text-slate-500"></div></div>
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">Sell trigger</div><div id="bv-trig" class="text-xl font-bold text-amber-400 tabular-nums">—</div><div id="bv-countdown" class="text-[10px] text-slate-500"></div></div>
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">Position</div><div id="bv-pos" class="text-sm font-semibold text-slate-100">—</div><div id="bv-entries" class="text-[10px] text-slate-500"></div></div>
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">MTM (USD)</div><div id="bv-mtm" class="text-xl font-bold tabular-nums">—</div><div id="bv-mtm-inr" class="text-[10px] text-slate-500"></div></div>
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">Realized</div><div id="bv-real" class="text-xl font-bold tabular-nums">—</div><div id="bv-stop" class="text-[10px] text-slate-500"></div></div>
+    </div>
+
+    <div class="card p-4 mb-4">
+      <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div class="text-sm font-semibold text-slate-200">Combined premium · 5 min · <span class="text-sky-400">VWAP</span></div>
+        <div id="bv-tip" class="text-[11px] text-slate-400 tabular-nums"></div>
+      </div>
+      <div id="bv-chart" style="height:420px"></div>
+    </div>
+
+    <div class="card p-4 mb-4">
+      <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div>
+          <div class="text-sm font-semibold text-slate-200">MTM — <span id="bv-eq-title">day</span></div>
+          <div class="text-[10px] text-slate-500">realized + open legs valued at what buying them back costs now (best asks) · fees included · per minute</div>
+        </div>
+        <div id="bv-eq-stats" class="text-[11px] text-slate-400 tabular-nums"></div>
+      </div>
+      <div id="bv-eq-chart" style="height:220px"></div>
+    </div>
+
+    <div class="grid grid-cols-1 gap-4">
+      <div class="card p-4">
+        <div class="text-sm font-semibold text-slate-200 mb-2">Trades <span id="bv-trades-meta" class="text-[10px] text-slate-500 font-normal"></span>
+          <span class="text-[10px] text-slate-500 font-normal">— every price is an order-book fill for the full size (sell into bids, buy through asks), not the mark</span></div>
+        <div style="overflow-x:auto">
+          <table class="w-full text-xs tabular-nums whitespace-nowrap">
+            <thead class="text-slate-500"><tr class="text-[10px] uppercase">
+              <th class="text-left py-1 pr-2">#</th><th class="text-left pr-2">Status</th><th class="text-left pr-3">Expiry</th>
+              <th class="text-right pr-2">CE strike</th><th class="text-right pr-3">PE strike</th>
+              <th class="text-left pr-2 border-l border-slate-800 pl-3">Entry time</th><th class="text-right pr-2">Trigger</th>
+              <th class="text-right pr-2">CE sell</th><th class="text-right pr-2">PE sell</th><th class="text-right pr-2">Sold</th><th class="text-right pr-3">Slip</th>
+              <th class="text-left pr-2 border-l border-slate-800 pl-3">Exit time</th><th class="text-right pr-2">CE buy</th><th class="text-right pr-2">PE buy</th><th class="text-right pr-3">Bought</th>
+              <th class="text-right pr-2 border-l border-slate-800 pl-3">Points</th><th class="text-right pr-2">Gross $</th><th class="text-right pr-2">Fees $</th><th class="text-right pr-2">Net $</th><th class="text-right pr-3">Net ₹</th><th class="text-left">Exit reason</th>
+            </tr></thead>
+            <tbody id="bv-trades"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="card p-4">
+        <div class="text-sm font-semibold text-slate-200 mb-2">Event log <span id="bv-log-meta" class="text-[10px] text-slate-500"></span></div>
+        <div id="bv-log" class="text-[11px] font-mono text-slate-400" style="max-height:360px;overflow-y:auto"></div>
+      </div>
+    </div>
+  </div>
+
   <div id="page-ndp" style="display:none">
 
     <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
@@ -1500,8 +1584,9 @@ function switchTab(tab) {
   _activeTab = tab;
   if (tab === 'deltaneutral') { dnInit(); dnStartPoll(); } else { dnStopPoll(); }
   if (tab === 'btc') { btcInit(); btcStartPoll(); } else { btcStopPoll(); }
+  if (tab === 'btcvwap') { bvInit(); bvStartPoll(); } else { bvStopPoll(); }
   if (tab === 'ndp') { ndpInit(); ndpStartPoll(); } else { ndpStopPoll(); }
-  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'ndp', 'terminal'].forEach(t => {
+  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'btcvwap', 'ndp', 'terminal'].forEach(t => {
     const pg = document.getElementById('page-' + t);
     if (pg) pg.style.display = (t === tab) ? '' : 'none';
     const btn = document.getElementById('tab-' + t);
@@ -4084,23 +4169,59 @@ function dmFmtL(v) {
   return dmFmtR(v);
 }
 
-function dmSetMode(live) {
+let dmBroker = 'kotak';          // which live account the Live screen shows
+function dmBase() { return dmBroker === 'kite' ? '/api/dualmom/live/kite' : '/api/dualmom/live'; }
+
+// mode: false = Paper, true = Kotak live, 'kite' = Kite live
+function dmSetMode(mode) {
+  const live = mode === true || mode === 'kite';
+  const broker = mode === 'kite' ? 'kite' : 'kotak';
+  const switched = live && broker !== dmBroker;
   dmLiveMode = live;
+  dmBroker = broker;
   document.getElementById('dm-paper-section').style.display = live ? 'none' : '';
   document.getElementById('dm-live-section').style.display = live ? '' : 'none';
-  const bp = document.getElementById('dm-mode-paper'), bl = document.getElementById('dm-mode-live');
   const on = 'px-3 py-1 rounded text-xs font-medium bg-slate-600 text-white';
   const off = 'px-3 py-1 rounded text-xs font-medium text-slate-400 hover:text-slate-200';
-  bp.className = live ? off : on;
-  bl.className = live ? on : off;
+  document.getElementById('dm-mode-paper').className = !live ? on : off;
+  document.getElementById('dm-mode-live').className = live && broker === 'kotak' ? on : off;
+  document.getElementById('dm-mode-kite').className = live && broker === 'kite' ? on : off;
   // the two engines are NOT the same strategy — paper is the old Top-50 yfinance
   // engine, live is the validated Top-40 capped one. Say which you're looking at.
   const sub = document.getElementById('dm-subtitle');
-  if (sub) sub.textContent = live
-    ? 'Nifty 500 · Monthly · Top-40 · 10% cap · −35% stop · Fyers data · Kotak (dedicated a/c)'
-    : 'Nifty 500 · Monthly · Top-50 Momentum Weighted · Nifty 100MA Filter';
-  try { localStorage.setItem('dm-mode', live ? 'live' : 'paper'); } catch (e) {}
+  if (sub) sub.textContent = !live
+    ? 'Nifty 500 · Monthly · Top-50 Momentum Weighted · Nifty 100MA Filter'
+    : broker === 'kite'
+      ? 'Nifty 500 · Monthly · Top-40 · 10% cap · −35% stop · Fyers data · Kite main a/c (shared — DualMom own book only)'
+      : 'Nifty 500 · Monthly · Top-40 · 10% cap · −35% stop · Fyers data · Kotak (dedicated a/c)';
+  dmSet('dm-live-broker-sub', broker === 'kite' ? 'Kite (Zerodha) · shared a/c' : 'Kotak Neo · dedicated a/c');
+  dmSet('dm-live-cfg-path', broker === 'kite' ? 'deployment/dualmom_kite/config.py' : 'deployment/dualmom_live/config.py');
+  dmSet('dm-port-src', broker === 'kite'
+    ? "— DualMom's own trades only (tagged orders), priced from Kite · click a heading to sort"
+    : '— quantities & prices from Kotak · click a heading to sort');
+  if (switched) dmResetLive();
+  try { localStorage.setItem('dm-mode', !live ? 'paper' : broker === 'kite' ? 'kite' : 'live'); } catch (e) {}
   if (live) { dmLiveLoad(); dmPortStart(); } else { dmPortStop(); }
+}
+
+// Switching account: blank everything first, so no number from one account is
+// ever shown under the other's name while the new one loads.
+function dmResetLive() {
+  dmPortRows = [];
+  ['dm-k-nav', 'dm-k-tot', 'dm-k-day', 'dm-k-mtm', 'dm-k-dep', 'dm-k-cash', 'dm-k-dd', 'dm-k-pos',
+   'dm-port-asof', 'dm-port-incep', 'dm-port-cap', 'dm-eq-note', 'dm-dd-note', 'dm-lg-note']
+    .forEach(id => dmSet(id, '—'));
+  dmSet('dm-port-acct', dmBroker === 'kite' ? 'Kite Main' : 'Kotak Rohit · UCC 15P56');
+  ['dm-port-body', 'dm-port-foot', 'dm-lg-body', 'dm-live-plan-body', 'dm-live-basket-body']
+    .forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = ''; });
+  document.getElementById('dm-live-plan-wrap').style.display = 'none';
+  const note = document.getElementById('dm-k-cash-note'); if (note) note.style.display = 'none';
+  if (dmLEqSer) dmLEqSer.setData([]);
+  if (dmLDdSer) dmLDdSer.setData([]);
+  if (dmLEqBase && dmLEqSer) { dmLEqSer.removePriceLine(dmLEqBase); dmLEqBase = null; }
+  const cap = document.getElementById('dm-live-capital');
+  if (cap) cap.value = '';
+  const m = document.getElementById('dm-live-msg'); if (m) m.textContent = '';
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -4151,7 +4272,9 @@ async function dmApi(path) {
 async function dmPortLoad(fresh) {
   const err = document.getElementById('dm-port-err');
   try {
-    const bk = await dmApi('/api/dualmom/live/book' + (fresh ? '?fresh=1' : ''));
+    const b0 = dmBroker;
+    const bk = await dmApi(dmBase() + '/book' + (fresh ? '?fresh=1' : ''));
+    if (b0 !== dmBroker) return;
     err.style.display = 'none';
     dmRenderBook(bk);
   } catch (e) {
@@ -4161,7 +4284,7 @@ async function dmPortLoad(fresh) {
 }
 
 function dmRenderBook(bk) {
-  dmSet('dm-port-acct', `${bk.account} · UCC ${bk.ucc}`);
+  dmSet('dm-port-acct', bk.broker === 'kite' ? `${bk.account} · Zerodha (shared a/c)` : `${bk.account} · UCC ${bk.ucc}`);
   dmSet('dm-port-incep', bk.inception);
   dmSet('dm-port-cap', dmFmtL(bk.capital_base));
   dmSet('dm-port-asof', bk.as_of + (bk.cached ? ' (cached)' : ''));
@@ -4179,7 +4302,15 @@ function dmRenderBook(bk) {
   dmSet('dm-k-dep', dmFmtR(bk.market_value));
   dmSet('dm-k-dep-sub', `${Number(bk.deployed_pct).toFixed(2)}% of NAV`);
   dmSet('dm-k-cash', dmFmtR(bk.cash));
-  dmSet('dm-k-cash-sub', `${Number(bk.cash_pct).toFixed(2)}% of NAV`);
+  dmSet('dm-k-cash-sub', `${Number(bk.cash_pct).toFixed(2)}% of NAV` + (bk.broker === 'kite' ? " · DualMom's own" : ''));
+  const cn = document.getElementById('dm-k-cash-note');
+  if (cn) {
+    const m = bk.account_margin || {};
+    cn.style.display = bk.broker === 'kite' ? '' : 'none';
+    cn.textContent = bk.broker === 'kite'
+      ? (m.error ? 'account margin: ' + m.error : `whole-account free margin ${dmFmtL(m.net)} — not counted`)
+      : '';
+  }
   dmSet('dm-k-pos', String(bk.positions));
   dmSet('dm-k-pos-sub', `est. charges ${dmFmtR(bk.charges_est_total)}` +
     (bk.unpriced && bk.unpriced.length ? ` · UNPRICED: ${bk.unpriced.join(', ')}` : ''));
@@ -4188,8 +4319,10 @@ function dmRenderBook(bk) {
   const recon = document.getElementById('dm-port-recon');
   recon.textContent = rc.ok ? `recon ✓ ${bk.positions}/${bk.positions}` : `RECON BREAK ×${(rc.breaks || []).length}`;
   recon.className = 'text-xs px-2 py-1 rounded ' + (rc.ok ? 'bg-emerald-900 text-emerald-300' : 'bg-rose-900 text-rose-200');
-  recon.title = rc.ok ? `broker qty matches ${rc.ledger_fills} exchange fills for every position`
-                      : 'BREAKS: ' + JSON.stringify(rc.breaks);
+  recon.title = rc.ok ? (bk.broker === 'kite'
+                          ? `Kite holds at least DualMom's quantity for every position (${rc.ledger_fills} fills)`
+                          : `broker qty matches ${rc.ledger_fills} exchange fills for every position`)
+                      : 'BREAKS: ' + JSON.stringify(rc.breaks) + (rc.error ? ' · ' + rc.error : '');
 
   dmPortRows = bk.rows || [];
   dmDrawPort(bk);
@@ -4264,7 +4397,9 @@ function dmEnsureCurves() {
 
 async function dmEquityLoad() {
   try {
-    const s = await dmApi('/api/dualmom/live/equity');
+    const b0 = dmBroker;
+    const s = await dmApi(dmBase() + '/equity');
+    if (b0 !== dmBroker) return;
     dmEnsureCurves();
     const eq = (s.equity || []).map(p => ({ time: p.t + DM_IST, value: p.nav }));
     const dd = (s.drawdown || []).map(p => ({ time: p.t + DM_IST, value: p.dd_pct }));
@@ -4309,7 +4444,9 @@ async function dmLedgerLoad(kind) {
     if (b) b.className = 'px-2 py-1 rounded text-xs ' + (k === kind ? 'bg-slate-600 text-white' : 'bg-slate-800 text-slate-400 hover:text-slate-200');
   }
   try {
-    const j = await dmApi(`/api/dualmom/live/ledger?kind=${kind}&limit=1000`);
+    const b0 = dmBroker;
+    const j = await dmApi(`${dmBase()}/ledger?kind=${kind}&limit=1000`);
+    if (b0 !== dmBroker) return;
     const cols = DM_LEDGER_COLS[kind];
     const get = (r, path) => path === '_detail'
       ? JSON.stringify(Object.fromEntries(Object.entries(r).filter(([x]) => !['type', 'key', 'kind', 'at', 'seq', 'prev_hash', 'hash', 'account'].includes(x)))).slice(0, 180)
@@ -4332,7 +4469,7 @@ async function dmLedgerLoad(kind) {
 async function dmLedgerVerify(show) {
   const el = document.getElementById('dm-port-chain');
   try {
-    const j = await dmApi('/api/dualmom/live/ledger/verify');
+    const j = await dmApi(dmBase() + '/ledger/verify');
     const n = Object.values(j.chains).reduce((s, c) => s + c.records, 0);
     el.textContent = j.ok ? `ledger ✓ ${n} records` : 'LEDGER TAMPERED';
     el.className = 'text-xs px-2 py-1 rounded ' + (j.ok ? 'bg-emerald-900 text-emerald-300' : 'bg-rose-900 text-rose-200');
@@ -4349,9 +4486,11 @@ async function dmLiveLoad(reconnect) {
   msg.textContent = reconnect ? 'reconnecting…' : 'loading…';
   msg.className = 'text-xs text-slate-500';
   try {
-    if (reconnect) await fetch('/api/dualmom/live/reconnect', { method: 'POST' });
+    if (reconnect) await fetch(dmBase() + '/reconnect', { method: 'POST' });
 
-    const resp = await fetch('/api/dualmom/live/status');
+    const b0 = dmBroker;
+    const resp = await fetch(dmBase() + '/status');
+    if (b0 !== dmBroker) return;
     if (resp.status === 404) {
       // The HTML ships from disk, the router only exists after a process restart.
       // Saying 'unknown' here sent someone hunting for a broker problem that did
@@ -4422,7 +4561,7 @@ async function dmLiveLoad(reconnect) {
     }
 
     // ---- signal + basket ----
-    const sg = await (await fetch('/api/dualmom/live/signal')).json();
+    const sg = await (await fetch(dmBase() + '/signal')).json();
     const se = document.getElementById('dm-live-signal');
     if (!sg.ok) {
       se.textContent = 'error';
@@ -4469,7 +4608,7 @@ async function dmLivePreview() {
   msg.textContent = 'building plan (resolving every symbol against the broker)…';
   msg.className = 'text-xs text-slate-500';
   try {
-    const pr = await fetch('/api/dualmom/live/plan', {
+    const pr = await fetch(dmBase() + '/plan', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ capital: raw === '' ? null : Number(raw) })
     });
@@ -4544,7 +4683,7 @@ function dmRenderPlan(run) {
 async function dmLiveDeploy() {
   if (!dmLiveCanDeploy) return;
   const typed = prompt(
-    'This places REAL orders on the DualMom Kotak account.\n\n' +
+    `This places REAL orders on the DualMom ${dmBroker === 'kite' ? 'KITE (main Zerodha)' : 'KOTAK'} account.\n\n` +
     'Type DEPLOY to confirm:');
   if (typed !== 'DEPLOY') {
     document.getElementById('dm-live-msg').textContent = 'cancelled — nothing sent';
@@ -4556,7 +4695,7 @@ async function dmLiveDeploy() {
   msg.textContent = 'placing orders…';
   msg.className = 'text-xs text-amber-400';
   try {
-    const r = await (await fetch('/api/dualmom/live/deploy', {
+    const r = await (await fetch(dmBase() + '/deploy', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ confirm: 'DEPLOY' })
     })).json();
@@ -4583,8 +4722,9 @@ async function dmLiveDeploy() {
 // Kotak login, which should be a deliberate act, not a side effect of page load.
 (function dmInitMode() {
   try {
-    if (localStorage.getItem('dm-mode') === 'live') {
-      document.addEventListener('DOMContentLoaded', () => dmSetMode(true));
+    const m = localStorage.getItem('dm-mode');
+    if (m === 'live' || m === 'kite') {
+      document.addEventListener('DOMContentLoaded', () => dmSetMode(m === 'kite' ? 'kite' : true));
     }
   } catch (e) {}
 })();
@@ -5701,6 +5841,258 @@ async function ndpStartPoll(reloadDates = true) {
 function ndpStopPoll() {
   [ndpTickTimer, ndpStateTimer, ndpDailyTimer].forEach(t => t && clearInterval(t));
   ndpTickTimer = ndpStateTimer = ndpDailyTimer = null;
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BTC VWAP Strangle (Delta Exchange India) — PAPER
+   A date = the day a cycle STARTED (full_expiry 15-Sep = 15-Sep 17:35 -> 16-Sep 17:10)
+   ══════════════════════════════════════════════════════════════════════════ */
+let bvVersion = 'full_expiry', bvDate = null, bvLiveDate = null;
+let bvChart = null, bvCandle = null, bvVwap = null, bvEqChart = null, bvEqLine = null, bvEqZero = null;
+let bvTickTimer = null, bvStateTimer = null, bvDatesTimer = null, bvFitted = '', bvIsLive = false;
+const BV_USDINR = 88.5;
+// "YYYY-MM-DD HH:MM" IST -> epoch shifted so the UTC-rendered axis reads IST
+const bvT = s => Math.floor(new Date(String(s).slice(0, 16).replace(' ', 'T') + ':00+05:30').getTime() / 1000) + 19800;
+const bvN = (v, dp = 2) => (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toFixed(dp);
+const bvCls = v => v > 0 ? 'text-emerald-400' : (v < 0 ? 'text-rose-400' : 'text-slate-300');
+const bvChartBase = {
+  layout: { background: { color: 'transparent' }, textColor: '#64748b' },
+  grid: { vertLines: { color: '#1e2533' }, horzLines: { color: '#1e2533' } },
+  rightPriceScale: { borderColor: '#2d3748' }, autoSize: true,
+  crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+  timeScale: { borderColor: '#2d3748', timeVisible: true, secondsVisible: false },
+};
+
+function bvInit() {
+  if (!bvChart) {
+    bvChart = LightweightCharts.createChart(document.getElementById('bv-chart'), bvChartBase);
+    bvCandle = bvChart.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
+      wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
+    bvVwap = bvChart.addLineSeries({ color: '#38bdf8', lineWidth: 2, priceLineVisible: false, lastValueVisible: true, title: 'VWAP' });
+    bvChart.subscribeCrosshairMove(p => {
+      const tip = document.getElementById('bv-tip');
+      if (!p.time || !p.point) { tip.textContent = ''; return; }
+      const c = p.seriesData.get(bvCandle), w = p.seriesData.get(bvVwap);
+      if (!c) { tip.textContent = ''; return; }
+      const d = new Date((p.time - 19800) * 1000).toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+      tip.textContent = `${d}  O ${bvN(c.open)}  H ${bvN(c.high)}  L ${bvN(c.low)}  C ${bvN(c.close)}  VWAP ${w ? bvN(w.value) : '—'}`;
+    });
+    bvEqChart = LightweightCharts.createChart(document.getElementById('bv-eq-chart'), bvChartBase);
+    bvEqLine = bvEqChart.addBaselineSeries({ baseValue: { type: 'price', price: 0 },
+      topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,0.25)', topFillColor2: 'rgba(34,197,94,0.02)',
+      bottomLineColor: '#f43f5e', bottomFillColor1: 'rgba(244,63,94,0.02)', bottomFillColor2: 'rgba(244,63,94,0.25)',
+      lineWidth: 2, priceLineVisible: false });
+  }
+  bvPaintVersion();
+  bvLoadDates();
+}
+
+function bvPaintVersion() {
+  ['full_expiry', 'ist_day'].forEach(v => {
+    const b = document.getElementById('bv-v-' + v);
+    if (b) b.className = 'px-3 py-1 text-xs ' + (v === bvVersion ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300');
+  });
+}
+
+function bvSetVersion(v) {
+  bvVersion = v; bvDate = null; bvFitted = '';
+  bvPaintVersion();
+  bvLoadDates().then(() => { bvRefreshState(); bvRefreshTick(); });
+}
+
+async function bvLoadDates() {
+  try {
+    const d = await (await fetch('/api/btcvwap/dates?version=' + bvVersion, { cache: 'no-store' })).json();
+    const days = d.days || [];
+    const sel = document.getElementById('bv-date');
+    const live = days.find(x => x.live);
+    bvLiveDate = live ? live.date : null;
+    sel.innerHTML = days.map(x => {
+      const tag = x.live ? ` · live · ${x.trades} tr · MTM ${x.pnl >= 0 ? '+' : ''}$${bvN(x.pnl)}`
+        : (x.trades || x.pnl ? ` · ${x.trades} tr ${x.pnl >= 0 ? '+' : ''}$${bvN(x.pnl)}` : ' · no trades');
+      return `<option value="${x.date}">${x.date}${tag}</option>`;
+    }).join('');
+    const want = bvDate && days.some(x => x.date === bvDate) ? bvDate : (bvLiveDate || (days[0] && days[0].date));
+    sel.value = want;
+    bvDate = want;
+  } catch (e) {}
+}
+
+function bvOnDateChange() {
+  bvDate = document.getElementById('bv-date').value; bvFitted = '';
+  bvRefreshState();
+}
+
+function bvStartPoll() {
+  bvStopPoll();
+  bvRefreshState(); bvRefreshTick();
+  bvStateTimer = setInterval(() => { bvRefreshState(); }, 5000);
+  bvTickTimer = setInterval(bvRefreshTick, 1000);
+  bvDatesTimer = setInterval(bvLoadDates, 60000);
+}
+function bvStopPoll() {
+  [bvStateTimer, bvTickTimer, bvDatesTimer].forEach(t => { if (t) clearInterval(t); });
+  bvStateTimer = bvTickTimer = bvDatesTimer = null;
+}
+
+async function bvRefreshState() {
+  try {
+    const q = `version=${bvVersion}` + (bvDate ? `&date=${bvDate}` : '');
+    const d = await (await fetch('/api/btcvwap/day?' + q, { cache: 'no-store' })).json();
+    bvIsLive = !!d.live;
+    bvRender(d);
+    const a = await (await fetch(`/api/btcvwap/audit?${q}&limit=300`, { cache: 'no-store' })).json();
+    bvRenderLog(a);
+  } catch (e) {}
+}
+
+function bvRender(d) {
+  const ban = document.getElementById('bv-banner');
+  const p = d.pair || null, pr = d.params || {};
+  if (d.empty) {
+    ban.innerHTML = `No cycle started on ${d.date}` + (d.status ? ` · engine status: <b>${d.status}</b>` : '');
+  } else if (!d.ok) {
+    ban.textContent = d.reason || 'engine not running';
+  } else {
+    let msg = d.live
+      ? `<span class="text-emerald-400 font-semibold">LIVE</span> · status <b>${d.status || '—'}</b>` + (d.stale ? ' <span class="text-rose-400">· STALE (engine not updating)</span>' : '')
+      : `<span class="text-slate-400 font-semibold">HISTORY</span> · cycle ${String(d.cycle || '').replace('T', ' ')}` + (d.summary ? ` · ended ${d.summary.ended} (${d.summary.end_reason})` : '');
+    if (pr.start) msg += ` · session ${pr.start}→${pr.square_off} IST · no entry after ${pr.cutoff} · max ${pr.max_entries} entries · MTM stop $${pr.mtm_stop_usd} · ${pr.contracts} contracts/leg`;
+    if (p && p.over_threshold) msg += ` · <span class="text-amber-400">no pair ≤ ${pr.threshold || 100} listed → farthest equidistant pair used</span>`;
+    if (d.late_start) msg += ' · <span class="text-slate-400">started mid-cycle (VWAP from first full candle)</span>';
+    ban.innerHTML = msg;
+  }
+  document.getElementById('bv-strikes').textContent = p ? `${p.ce} CE / ${p.pe} PE` : '—';
+  document.getElementById('bv-expiry').textContent = p ? `exp ${d.expiry} · ±${p.distance} from ATM ${p.atm} · picked @ ${bvN(p.combined)}` : '';
+  const trades = d.trades || [];
+  const real = trades.reduce((s, t) => s + (t.net_usd || 0), 0);
+  const re = document.getElementById('bv-real');
+  re.textContent = '$' + bvN(real); re.className = 'text-xl font-bold tabular-nums ' + bvCls(real);
+  document.getElementById('bv-stop').textContent = d.stop_reason || '';
+  const pos = d.live ? d.position : null;
+  document.getElementById('bv-pos').innerHTML = pos ? `<span class="text-rose-400">SHORT</span> @ ${bvN(pos.entry_combined)}` : 'flat';
+  document.getElementById('bv-entries').textContent = `entries ${d.entries ?? trades.length}/${pr.max_entries ?? '—'}${d.done ? ' · done' : ''}`;
+  if (!d.live) {
+    ['bv-comb', 'bv-vwap', 'bv-trig', 'bv-legs', 'bv-side', 'bv-countdown', 'bv-mtm-inr'].forEach(i => document.getElementById(i).textContent = i === 'bv-comb' || i === 'bv-vwap' || i === 'bv-trig' ? '—' : '');
+    const m = document.getElementById('bv-mtm');
+    const last = (d.equity || []).slice(-1)[0];
+    const v = d.summary ? d.summary.realized : (last ? last.mtm : null);
+    m.textContent = v == null ? '—' : '$' + bvN(v); m.className = 'text-xl font-bold tabular-nums ' + bvCls(v || 0);
+  }
+
+  // candles + vwap + markers
+  const candles = (d.candles || []).map(c => ({ time: bvT(c.t), open: c.o, high: c.h, low: c.l, close: c.c }));
+  if (d.forming && d.live) candles.push({ time: bvT(d.forming.t), open: d.forming.o, high: d.forming.h, low: d.forming.l, close: d.forming.c });
+  bvCandle.setData(candles);
+  bvVwap.setData((d.candles || []).filter(c => c.vwap != null).map(c => ({ time: bvT(c.t), value: c.vwap })));
+  const floor5 = s => { const x = String(s).slice(0, 16); return x.slice(0, 14) + String(Math.floor(Number(x.slice(14, 16)) / 5) * 5).padStart(2, '0'); };
+  const mk = [];
+  trades.concat(pos ? [pos] : []).forEach(t => {
+    if (t.entry_time) mk.push({ time: bvT(floor5(t.entry_time)), position: 'aboveBar', color: '#f43f5e', shape: 'arrowDown', text: `S${t.n} ${bvN(t.entry_combined, 1)}` });
+    if (t.exit_time) mk.push({ time: bvT(floor5(t.exit_time)), position: 'belowBar', color: '#22c55e', shape: 'arrowUp', text: `X${t.n} ${bvN(t.exit_combined, 1)}` });
+  });
+  mk.sort((a, b) => a.time - b.time);
+  bvCandle.setMarkers(mk);
+
+  // MTM of the day
+  const pts = [], seen = new Set();
+  (d.equity || []).forEach(r => { const t = bvT(r.t); if (!seen.has(t) && r.mtm != null) { seen.add(t); pts.push({ time: t, value: Number(r.mtm) }); } });
+  pts.sort((a, b) => a.time - b.time);
+  bvEqLine.setData(pts);
+  document.getElementById('bv-eq-title').textContent = `${bvVersion === 'ist_day' ? 'IST day' : 'Full expiry'} · ${d.date || ''}`;
+  if (pts.length) {
+    const vals = pts.map(x => x.value);
+    const hi = Math.max(...vals), lo = Math.min(...vals), now = vals[vals.length - 1];
+    document.getElementById('bv-eq-stats').innerHTML =
+      `now <span class="${bvCls(now)}">$${bvN(now)}</span> · high <span class="text-emerald-400">$${bvN(hi)}</span> · low <span class="text-rose-400">$${bvN(lo)}</span>`;
+  } else document.getElementById('bv-eq-stats').textContent = 'no MTM samples yet';
+
+  const fitKey = bvVersion + '|' + (d.date || '');
+  if (candles.length && bvFitted !== fitKey) { bvFitted = fitKey; bvChart.timeScale().fitContent(); bvEqChart.timeScale().fitContent(); }
+
+  // one row per trade: closed ones, plus the OPEN one valued at the live buy-back
+  const rows = trades.map(t => ({ ...t, open: false }));
+  if (pos) {
+    const l = d.last || {}, cv = 0.001, qty = pr.contracts || 1000;
+    const bb = l.buyback != null ? l.buyback : l.combined;
+    const pts = bb != null ? pos.entry_combined - bb : null;
+    const gross = pts != null ? pts * qty * cv : null;
+    rows.push({ ...pos, open: true, ce_strike: p && p.ce, pe_strike: p && p.pe, expiry: d.expiry,
+      ce_exit: l.ce_ask, pe_exit: l.pe_ask, exit_combined: bb, points: pts, gross_usd: gross,
+      fees: pos.entry_fees, net_usd: gross != null ? gross - pos.entry_fees : null, exit_reason: 'open — valued at best asks now' });
+  }
+  const hm = s => s ? String(s).slice(5, 19) : '—';
+  const sep = 'border-l border-slate-800 pl-3';
+  document.getElementById('bv-trades-meta').textContent =
+    `${trades.length} closed${pos ? ' · 1 open' : ''} · net $${bvN(real)}`;
+  const it = open => open ? 'italic text-slate-400' : '';
+  document.getElementById('bv-trades').innerHTML = rows.slice().reverse().map(t => `
+    <tr class="border-t border-slate-800 ${t.open ? 'bg-rose-500/5' : ''}">
+      <td class="py-1.5 pr-2">${t.n}</td>
+      <td class="pr-2">${t.open
+        ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/15 text-rose-400">OPEN</span>'
+        : '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-700/50 text-slate-300">CLOSED</span>'}</td>
+      <td class="pr-3 text-slate-400">${t.expiry || d.expiry || '—'}</td>
+      <td class="text-right pr-2">${t.ce_strike ?? '—'}</td><td class="text-right pr-3">${t.pe_strike ?? '—'}</td>
+      <td class="pr-2 ${sep}">${hm(t.entry_time)}</td><td class="text-right pr-2 text-amber-400">${bvN(t.trigger)}</td>
+      <td class="text-right pr-2">${bvN(t.ce_sell)}</td><td class="text-right pr-2">${bvN(t.pe_sell)}</td>
+      <td class="text-right pr-2 font-semibold">${bvN(t.entry_combined)}</td>
+      <td class="text-right pr-3 ${bvCls(t.entry_slippage)}">${bvN(t.entry_slippage)}</td>
+      <td class="pr-2 ${sep}">${t.open ? '<i class="text-slate-500">now</i>' : hm(t.exit_time)}</td>
+      <td class="text-right pr-2 ${it(t.open)}">${bvN(t.ce_exit)}</td><td class="text-right pr-2 ${it(t.open)}">${bvN(t.pe_exit)}</td>
+      <td class="text-right pr-3 font-semibold ${it(t.open)}">${bvN(t.exit_combined)}</td>
+      <td class="text-right pr-2 ${sep} ${bvCls(t.points)}">${bvN(t.points)}</td>
+      <td class="text-right pr-2 ${bvCls(t.gross_usd)}">${bvN(t.gross_usd)}</td>
+      <td class="text-right pr-2 text-slate-400">${bvN(t.fees)}</td>
+      <td class="text-right pr-2 font-semibold ${bvCls(t.net_usd)}">${bvN(t.net_usd)}</td>
+      <td class="text-right pr-3 ${bvCls(t.net_usd)}">${t.net_usd != null ? '₹' + Math.round(t.net_usd * BV_USDINR).toLocaleString('en-IN') : '—'}</td>
+      <td class="text-slate-400">${t.exit_reason || ''}</td>
+    </tr>`).join('') || '<tr><td colspan="21" class="py-3 text-center text-slate-600">no trades on this date</td></tr>';
+}
+
+async function bvRefreshTick() {
+  try {
+    const d = await (await fetch('/api/btcvwap/tick', { cache: 'no-store' })).json();
+    const f = document.getElementById('bv-feed');
+    f.textContent = !d.ok || d.stale ? 'ENGINE STALE' : (d.feed ? 'PUSH LIVE' : 'REST ONLY');
+    f.className = 'px-2 py-1 rounded text-[10px] font-semibold ' + (!d.ok || d.stale ? 'bg-rose-500/20 text-rose-400' : (d.feed ? 'bg-emerald-500/15 text-emerald-400' : 'bg-amber-500/15 text-amber-400'));
+    if (!bvIsLive) return;
+    const v = (d.versions || {})[bvVersion];
+    if (!v) return;
+    const l = v.last || {};
+    document.getElementById('bv-comb').textContent = bvN(l.combined);
+    document.getElementById('bv-legs').textContent = l.combined != null
+      ? `CE ${bvN(l.ce, 1)} + PE ${bvN(l.pe, 1)}` + (l.buyback != null ? ` · buy-back ${bvN(l.buyback, 1)}` : '') + ` · ${l.at || ''}` : '';
+    document.getElementById('bv-vwap').textContent = bvN(v.vwap);
+    const side = document.getElementById('bv-side');
+    if (l.combined != null && v.vwap != null) {
+      const below = l.combined < v.vwap;
+      side.textContent = below ? 'premium BELOW VWAP' : 'premium ABOVE VWAP';
+      side.className = 'text-[10px] ' + (below ? 'text-emerald-400' : 'text-rose-400');
+    } else side.textContent = '';
+    document.getElementById('bv-trig').textContent = v.pending ? bvN(v.pending.trigger) : '—';
+    const m = document.getElementById('bv-mtm');
+    m.textContent = '$' + bvN(v.mtm); m.className = 'text-xl font-bold tabular-nums ' + bvCls(v.mtm);
+    document.getElementById('bv-mtm-inr').textContent = v.mtm != null ? `≈ ₹${Math.round(v.mtm * BV_USDINR).toLocaleString('en-IN')}` : '';
+    const now = new Date(), s = (5 - (now.getUTCMinutes() % 5)) * 60 - now.getUTCSeconds();
+    document.getElementById('bv-countdown').textContent = `candle closes in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+    if (v.forming && bvCandle) {
+      const fc = v.forming;
+      try { bvCandle.update({ time: bvT(fc.t), open: fc.o, high: fc.h, low: fc.l, close: fc.c }); } catch (e) {}
+    }
+  } catch (e) {}
+}
+
+function bvRenderLog(a) {
+  const ev = (a.events || []).slice().reverse();
+  document.getElementById('bv-log-meta').textContent = `${a.date || ''} · ${a.total || 0} events`;
+  const col = e => ({ ENTRY: 'text-rose-400', EXIT: 'text-emerald-400', MTM_STOP: 'text-amber-400', cycle_start: 'text-sky-400', cycle_end: 'text-sky-400', trigger_armed: 'text-amber-300' }[e] || 'text-slate-400');
+  const skip = new Set(['ts', 'version', 'cycle', 'event']);
+  document.getElementById('bv-log').innerHTML = ev.map(e => {
+    const bits = Object.entries(e).filter(([k]) => !skip.has(k)).map(([k, v]) => `${k}=${typeof v === 'number' ? Math.round(v * 100) / 100 : v}`).join(' ');
+    return `<div class="py-0.5 border-b border-slate-800/60"><span class="text-slate-600">${(e.ts || '').slice(5)}</span> <span class="${col(e.event)}">${e.event}</span> ${bits}</div>`;
+  }).join('') || '<div class="text-slate-600">no events</div>';
 }
 
 </script>

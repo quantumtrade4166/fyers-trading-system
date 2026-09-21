@@ -95,13 +95,16 @@ def allocate(weights: dict, price: dict, capital: float,
     return {s: n for s, n in q.items() if n > 0}
 
 
-def plan(signal: dict, current: dict, marks: dict, nav: float) -> dict:
+def plan(signal: dict, current: dict, marks: dict, nav: float,
+         reserve: float = None) -> dict:
     """Build the order list.
 
     signal   from signal_engine.compute()
     current  {symbol: qty} we hold now
     marks    {symbol: last price}
     nav      capital to deploy
+    reserve  rupees held back from sizing (default config.CASH_RESERVE_RS; the
+             Kite account passes its own)
     """
     sells, buys, skipped = [], [], []
 
@@ -128,7 +131,8 @@ def plan(signal: dict, current: dict, marks: dict, nav: float) -> dict:
     # size off EXPECTED fill (matches the backtest), never off the limit cap
     eff = {s: p * (1 + C.SIZING_SLIPPAGE) for s, p in px.items()}
     # hold back CASH_RESERVE_RS for charges + the limit cap (see config)
-    target = allocate(weights, eff, max(nav - C.CASH_RESERVE_RS, 0.0))
+    reserve = C.CASH_RESERVE_RS if reserve is None else reserve
+    target = allocate(weights, eff, max(nav - reserve, 0.0))
 
     for sym in sorted(set(current) | set(target)):
         have, want = int(current.get(sym, 0)), int(target.get(sym, 0))

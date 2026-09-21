@@ -46,7 +46,7 @@ from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI
 
-from deployment.dualmom_live_api import router as live_router
+from deployment.dualmom_live_api import router as live_router, _etext
 
 IST = pytz.timezone("Asia/Kolkata")
 PORT = int(os.getenv("DUALMOM_PORT", "8010"))
@@ -109,7 +109,7 @@ def _job_data_refresh():
         if rep.get("failed"):
             _log(f"data refresh had {len(rep['failed'])} failure(s): {rep['failed'][:5]}")
     except Exception as e:
-        _log(f"data refresh FAILED: {type(e).__name__}: {e}")
+        _log(f"data refresh FAILED: {_etext(e)}")
 
 
 def _job_monthly_rebalance():
@@ -167,7 +167,7 @@ def _job_monthly_rebalance():
         G.mark_done(G.month_key(today), {"signal_date": str(d["signal_date"]), **summary})
         _log(f"monthly rebalance DONE for {G.month_key(today)}: {summary}")
     except Exception as e:
-        _log(f"monthly rebalance FAILED: {type(e).__name__}: {e}")
+        _log(f"monthly rebalance FAILED: {_etext(e)}")
 
 
 _hb = {"wall": None, "mono": None}
@@ -245,9 +245,9 @@ def _job_stop_check():
                                  "halted": run.get("halted")})
             L.capture(client)
         except Exception as e:
-            _log(f"ledger capture after stop FAILED: {type(e).__name__}: {e}")
+            _log(f"ledger capture after stop FAILED: {_etext(e)}")
     except Exception as e:
-        _log(f"stop check FAILED: {type(e).__name__}: {e}")
+        _log(f"stop check FAILED: {_etext(e)}")
 
 
 def _market_open_now() -> bool:
@@ -264,7 +264,7 @@ def _job_ledger_capture():
         if res.get("orders") or res.get("fills") or any(k.endswith("_error") for k in res):
             _log(f"ledger capture: {res}")
     except Exception as e:
-        _log(f"ledger capture FAILED: {type(e).__name__}: {e}")
+        _log(f"ledger capture FAILED: {_etext(e)}")
 
 
 def _job_intraday_nav():
@@ -278,7 +278,7 @@ def _job_intraday_nav():
         if bk.get("positions"):
             L.record_intraday(B.snapshot_row(bk))
     except Exception as e:
-        _log(f"intraday NAV FAILED: {type(e).__name__}: {e}")
+        _log(f"intraday NAV FAILED: {_etext(e)}")
 
 
 def _job_eod_snapshot():
@@ -313,12 +313,153 @@ def _job_eod_snapshot():
              f"({bk['total_return_pct']:+.2f}%), {bk['positions']} positions, "
              f"recon={'OK' if bk['reconciliation']['ok'] else 'BREAK'}")
     except Exception as e:
-        _log(f"EOD snapshot FAILED: {type(e).__name__}: {e}")
+        _log(f"EOD snapshot FAILED: {_etext(e)}")
 
 
 def C_RATE_CARD():
     from deployment.dualmom_live import config as C
     return C.CHARGES_RATE_CARD
+
+
+# ── Kite (main Zerodha account) ──────────────────────────────────────────────
+#
+# Same strategy, second account. Every job is independent of the Kotak ones: a
+# Kite failure is logged and never touches the Kotak session, and vice versa.
+# Kite forgets orders overnight, so capture runs every few minutes all session.
+
+def _kite_deployed() -> bool:
+    from deployment.dualmom_kite import ledger as KL
+    return bool(KL._read("fills.jsonl"))
+
+
+def _job_kite_rebalance():
+    """09:22 (+10:05 catch-up) - once per calendar month, after the first deploy."""
+    try:
+        from deployment.dualmom_kite import engine as KE
+        from deployment.dualmom_kite import kite_equity as KK
+        from deployment.dualmom_kite import ledger as KL
+        from deployment.dualmom_live import data_refresh as D
+        from deployment.dualmom_live import month_gate as G
+        from deployment.dualmom_live import signal_engine as S
+        if not _kite_deployed():
+            return                          # the first entry is a supervised deploy
+        today = datetime.now(IST).date()
+        last = KE.gate_state().get("last_done_month")
+        if last == G.month_key(today):
+            return
+        dates = {x.date() for x in S.load_prices().index}
+        d = G.decide(today, dates, last, market_open=True)
+        if d["action"] != "run":
+            _log(f"KITE monthly rebalance {d['action'].upper()}: {d['reason']}")
+            return
+        is_open = G._fyers_traded_on(D._connect(), today)
+        if is_open is not True:
+            d = G.decide(today, dates, last, market_open=is_open)
+            _log(f"KITE monthly rebalance {d['action'].upper()}: {d['reason']}")
+            return
+        kite = KK.client()
+        # an order from an earlier attempt still OPEN is not in the own book yet -
+        # re-planning now would send it a second time
+        KL.capture(kite)
+        still_open = [o for o in KK.our_orders(kite)
+                      if str(o.get("status", "")).upper() not in KK.TERMINAL]
+        if still_open:
+            _log(f"KITE monthly rebalance WAIT: {len(still_open)} DualMom order(s) still open")
+            return
+        run = KE.build_plan(kite, as_of=d["signal_date"])
+        KE.save(run, f"signal_{d['signal_date']:%Y%m%d}.json")
+        run = KE.execute(run, kite)
+        KE.save(run)
+        KL.capture(kite)
+        done, summary = KE.complete(run)
+        KL.event("monthly_rebalance", {**summary, "signal_date": str(d["signal_date"])})
+        if done:
+            KE.gate_mark_done(G.month_key(today), {"signal_date": str(d["signal_date"]), **summary})
+        _log(f"KITE monthly rebalance {'DONE' if done else 'NOT complete'}: {summary}")
+    except Exception as e:
+        _log(f"KITE monthly rebalance FAILED: {_etext(e)}")
+
+
+def _job_kite_stop_check():
+    """15:26 - the -35% stop on DualMom's own Kite positions."""
+    try:
+        if not _kite_deployed():
+            return
+        from deployment.dualmom_kite import engine as KE
+        from deployment.dualmom_kite import kite_equity as KK
+        from deployment.dualmom_kite import ledger as KL
+        kite = KK.client()
+        br = KE.stop_breaches(kite)
+        if not br:
+            _log("KITE stop check: none below the stop")
+            return
+        _log(f"KITE STOP BREACH: {', '.join(o['symbol'] for o in br)}")
+        run = {"plan": {"safe": True, "blocked": [], "sells": br, "buys": []}, "log": [],
+               "started": datetime.now(IST).replace(tzinfo=None).isoformat(timespec="seconds")}
+        run = KE.execute(run, kite)
+        KE.save(run, f"stop_{datetime.now(IST):%Y%m%d_%H%M%S}.json")
+        KL.event("stop_run", {"names": [o["symbol"] for o in br], "halted": run.get("halted")})
+        KL.capture(kite)
+    except Exception as e:
+        _log(f"KITE stop check FAILED: {_etext(e)}")
+
+
+def _job_kite_capture():
+    try:
+        if not _kite_deployed() and not _market_open_now():
+            return
+        from deployment.dualmom_kite import kite_equity as KK
+        from deployment.dualmom_kite import ledger as KL
+        res = KL.capture(KK.client())
+        if res.get("orders") or res.get("fills") or res.get("error"):
+            _log(f"KITE ledger capture: {res}")
+    except Exception as e:
+        _log(f"KITE ledger capture FAILED: {_etext(e)}")
+
+
+def _job_kite_intraday_nav():
+    if not _market_open_now() or not _kite_deployed():
+        return
+    try:
+        from deployment.dualmom_kite import book as KB
+        from deployment.dualmom_kite import kite_equity as KK
+        from deployment.dualmom_kite import ledger as KL
+        bk = KB.live(KK.client(), use_cache=False)
+        if bk.get("positions"):
+            KL.record_intraday(KB.snapshot_row(bk))
+    except Exception as e:
+        _log(f"KITE intraday NAV FAILED: {_etext(e)}")
+
+
+def _job_kite_eod():
+    """15:42 - final capture (Kite forgets today's orders overnight) + NAV row."""
+    try:
+        if not _kite_deployed():
+            return
+        from deployment.dualmom_kite import book as KB
+        from deployment.dualmom_kite import kite_equity as KK
+        from deployment.dualmom_kite import ledger as KL
+        from deployment.dualmom_kite import config as KC
+        from deployment.dualmom_live import book as B
+        from deployment.dualmom_live import data_refresh as D
+        from deployment.dualmom_live import month_gate as G
+        if G._fyers_traded_on(D._connect(), datetime.now(IST).date()) is False:
+            return
+        kite = KK.client()
+        cap = KL.capture(kite)
+        bk = KB.live(kite, use_cache=False)
+        chains = KL.verify_all()
+        wrote = KL.record_daily(KB.snapshot_row(bk, B.benchmark_close()), {
+            "positions_detail": bk["rows"], "reconciliation": bk["reconciliation"],
+            "capture": cap, "ledger_chains": chains, "account_margin": bk.get("account_margin"),
+            "charges_rate_card": KC.CHARGES_RATE_CARD})
+        if not bk["reconciliation"]["ok"]:
+            KL.event("reconciliation_break", bk["reconciliation"])
+            _log(f"KITE RECONCILIATION BREAK: {bk['reconciliation']['breaks']}")
+        _log(f"KITE EOD {'written' if wrote else 'already present'}: NAV Rs {bk['nav']:,.0f} "
+             f"({bk['total_return_pct']:+.2f}%), {bk['positions']} positions")
+    except Exception as e:
+        _log(f"KITE EOD snapshot FAILED: {_etext(e)}")
 
 
 def _build_scheduler() -> BackgroundScheduler:
@@ -356,6 +497,25 @@ def _build_scheduler() -> BackgroundScheduler:
     s.add_job(_job_eod_snapshot, CronTrigger(
         day_of_week="mon-fri", hour=15, minute=40, timezone=IST),
         id="dm_eod_snapshot", misfire_grace_time=7200, coalesce=True, max_instances=1)
+
+    # ── Kite: offset from the Kotak jobs so the two accounts never run together
+    from deployment.dualmom_kite import config as _KC
+    for hm, jid in ((_KC.REBALANCE_TIME, "dmk_rebalance"), (_KC.REBALANCE_CATCHUP, "dmk_rebalance_catchup")):
+        s.add_job(_job_kite_rebalance, CronTrigger(
+            day_of_week="mon-fri", hour=hm[0], minute=hm[1], timezone=IST),
+            id=jid, misfire_grace_time=3600, coalesce=True, max_instances=1)
+    s.add_job(_job_kite_stop_check, CronTrigger(
+        day_of_week="mon-fri", hour=15, minute=26, timezone=IST),
+        id="dmk_stop_check", misfire_grace_time=180, coalesce=True, max_instances=1)
+    s.add_job(_job_kite_capture, CronTrigger(
+        day_of_week="mon-fri", hour="9-15", minute="1-59/5", timezone=IST),
+        id="dmk_ledger_capture", misfire_grace_time=240, coalesce=True, max_instances=1)
+    s.add_job(_job_kite_intraday_nav, CronTrigger(
+        day_of_week="mon-fri", hour="9-15", minute="2-59/5", timezone=IST),
+        id="dmk_intraday_nav", misfire_grace_time=240, coalesce=True, max_instances=1)
+    s.add_job(_job_kite_eod, CronTrigger(
+        day_of_week="mon-fri", hour=15, minute=42, timezone=IST),
+        id="dmk_eod_snapshot", misfire_grace_time=7200, coalesce=True, max_instances=1)
     return s
 
 
@@ -383,6 +543,8 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="DualMom Live Service", lifespan=lifespan)
 app.state.run_scheduler = True
 app.include_router(live_router)
+from deployment.dualmom_kite_api import router as kite_router   # /api/dualmom/live/kite/*
+app.include_router(kite_router)
 
 
 @app.get("/health")

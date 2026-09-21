@@ -130,6 +130,16 @@ def _safe(o):
     return o
 
 
+def _etext(e) -> str:
+    """Exception text that can't itself raise. Kotak SDK exceptions can return
+    None from __str__, which turned a failed broker call into a TypeError."""
+    try:
+        msg = str(e)
+    except Exception:
+        msg = repr(getattr(e, "args", ""))
+    return f"{type(e).__name__}: {msg}"
+
+
 async def _run(fn):
     return await asyncio.get_event_loop().run_in_executor(None, fn)
 
@@ -141,7 +151,7 @@ async def status():
         try:
             C, S, R, RUN, K = _mods()
         except Exception as e:
-            return {"ok": False, "stage": "import", "error": f"{type(e).__name__}: {e}"}
+            return {"ok": False, "stage": "import", "error": f"{_etext(e)}"}
 
         blocked = []
         if not C.ENABLED:
@@ -168,7 +178,7 @@ async def status():
             client = _get_client()
             out["broker"] = {"connected": True}
         except Exception as e:
-            out["broker"] = {"connected": False, "error": f"{type(e).__name__}: {e}"}
+            out["broker"] = {"connected": False, "error": f"{_etext(e)}"}
             return out
 
         try:
@@ -179,13 +189,13 @@ async def status():
             ]
         except Exception as e:
             out["holdings"] = []
-            out["holdings_error"] = f"{type(e).__name__}: {e}"
+            out["holdings_error"] = f"{_etext(e)}"
 
         try:
             out["cash"] = round(K.cash_available(client), 2)
         except Exception as e:
             out["cash"] = None
-            out["cash_error"] = f"{type(e).__name__}: {e}"
+            out["cash_error"] = f"{_etext(e)}"
         return out
     return await _run(work)
 
@@ -199,7 +209,7 @@ async def signal():
             as_of = _month_signal_date(S)
             return {"ok": True, "month_signal_date": str(as_of), **_safe(S.compute(as_of=as_of))}
         except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            return {"ok": False, "error": f"{_etext(e)}"}
     return await _run(work)
 
 
@@ -214,7 +224,7 @@ async def plan(payload: dict = Body(default={})):
         try:
             C, S, R, RUN, K = _mods()
         except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            return {"ok": False, "error": f"{_etext(e)}"}
 
         cap = payload.get("capital")
         try:
@@ -227,7 +237,7 @@ async def plan(payload: dict = Body(default={})):
         try:
             client = _get_client(validate=True)
         except Exception as e:
-            return {"ok": False, "error": f"broker login failed: {type(e).__name__}: {e}"}
+            return {"ok": False, "error": f"broker login failed: {_etext(e)}"}
 
         # This month's basket (signal on last month's final close), sized at LIVE
         # Kotak prices. Sizing a mid-month entry at the month-end close would get
@@ -246,7 +256,7 @@ async def plan(payload: dict = Body(default={})):
                 run.setdefault("warnings", []).append(
                     f"no live price for {', '.join(unpriced)} - sized at the {as_of} close")
         except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            return {"ok": False, "error": f"{_etext(e)}"}
 
         # Resolve every leg so the UI shows EXACTLY what would be sent — the real
         # trading symbol (HFCL-BE, not HFCL), the instrument's own tick, and the
@@ -263,7 +273,7 @@ async def plan(payload: dict = Body(default={})):
                     o["limit_preview"] = K.marketable_limit(
                         o["mark"], o["side"], C.MARKETABLE_BUFFER, r["tick_size"])
                 except Exception as e:
-                    o["resolve_error"] = f"{type(e).__name__}: {e}"
+                    o["resolve_error"] = f"{_etext(e)}"
 
         _last_plan = run
         return {"ok": True, "run": _safe(run)}
@@ -277,7 +287,7 @@ async def deploy(payload: dict = Body(default={})):
         try:
             C, S, R, RUN, K = _mods()
         except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            return {"ok": False, "error": f"{_etext(e)}"}
 
         if payload.get("confirm") != "DEPLOY":
             return {"ok": False, "error": "confirmation text did not match — nothing sent"}
@@ -343,7 +353,7 @@ async def deploy(payload: dict = Body(default={})):
             return {"ok": True, "run": _safe(run), "month_recorded": done,
                     "summary": summary, "halted": run.get("halted") or None}
         except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            return {"ok": False, "error": f"{_etext(e)}"}
     return await _run(work)
 
 
@@ -355,7 +365,7 @@ async def book(fresh: bool = False):
             from deployment.dualmom_live import book as B
             return B.live(_get_client(validate=True), use_cache=not fresh)
         except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            return {"ok": False, "error": f"{_etext(e)}"}
     return await _run(work)
 
 
@@ -380,10 +390,10 @@ async def equity():
                         ser["max_drawdown_pct"] = min(d["dd_pct"] for d in ser["drawdown"])
                         ser["peak_nav"] = peak
             except Exception as e:
-                ser["live_error"] = f"{type(e).__name__}: {e}"
+                ser["live_error"] = f"{_etext(e)}"
             return {"ok": True, **ser}
         except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            return {"ok": False, "error": f"{_etext(e)}"}
     return await _run(work)
 
 
@@ -420,7 +430,7 @@ async def ledger_capture():
             from deployment.dualmom_live import ledger as L
             return {"ok": True, **L.capture(_get_client(validate=True))}
         except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            return {"ok": False, "error": f"{_etext(e)}"}
     return await _run(work)
 
 
@@ -432,5 +442,5 @@ async def reconnect():
             _get_client(reconnect=True)
             return {"ok": True}
         except Exception as e:
-            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+            return {"ok": False, "error": f"{_etext(e)}"}
     return await _run(work)

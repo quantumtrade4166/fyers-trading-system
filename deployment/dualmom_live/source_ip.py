@@ -40,6 +40,7 @@ import threading
 
 SOURCE_IP = os.getenv("KOTAK_DM_SOURCE_IP", "103.49.131.3").strip()
 PIN_SUFFIX = "kotaksecurities.com"
+KOTAK_TIMEOUT = (10, 30)   # (connect, read) seconds for every Kotak HTTP call
 
 # modules that belong to the STRANGLE's Kotak leg — never share a process with them
 _STRANGLE_MARKERS = ("live.kotak_auth", "kotak_executor", "kotak_controller",
@@ -128,6 +129,19 @@ def install(ip: str = None) -> str:
 
         pinned_create_connection._dualmom_pinned = True
         u3c.create_connection = pinned_create_connection
+
+        # The SDK calls requests with no timeout. On 2026-09-21 a limits() call sat
+        # in the TLS handshake indefinitely and every dashboard request queued
+        # behind the shared-session lock. Bound every Kotak call.
+        import requests.sessions as _rs
+        _orig_request = _rs.Session.request
+
+        def _bounded_request(self, method, url, *a, **kw):
+            if kw.get("timeout") is None and PIN_SUFFIX in str(url).lower():
+                kw["timeout"] = KOTAK_TIMEOUT
+            return _orig_request(self, method, url, *a, **kw)
+
+        _rs.Session.request = _bounded_request
         _installed_ip = ip
         return ip
 
