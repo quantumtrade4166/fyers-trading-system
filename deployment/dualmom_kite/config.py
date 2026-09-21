@@ -33,10 +33,11 @@ BROKER         = "zerodha"
 CAPITAL_BASE   = 600_000            # allocated to DualMom, from the account's cash
 INCEPTION_DATE = None               # None = date of the first DualMom fill
 
-# Held back from sizing for charges and whole-share rounding. Every buy pays STT
-# 0.1% + stamp + exchange charges (~Rs 700 on 6L), and Zerodha blocks funds at the
-# LIMIT price (0.5% above the mark). Kotak uses Rs 15,000 on Rs 10L.
-CASH_RESERVE_RS = 10_000
+# Held back from sizing. 0 by user decision (2026-09-21): the full Rs 6L goes into
+# the basket. Charges (~Rs 700 on 6L) and the 0.5% limit cap are covered by the
+# account's OTHER cash, so DualMom's own cash may read slightly negative - that is
+# the charges, and NAV includes it. (Kotak keeps Rs 15,000 on Rs 10L.)
+CASH_RESERVE_RS = 0
 
 # ── orders ───────────────────────────────────────────────────────────────────
 EXCHANGE = "NSE"

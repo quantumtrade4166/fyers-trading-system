@@ -216,7 +216,7 @@ a = R.plan(sig, {}, marks, 1_000_000)
 b = R.plan(sig, {}, marks, 1_000_000, reserve=SC.CASH_RESERVE_RS)
 check("default reserve == Kotak's Rs 15,000", a["buy_value"] == b["buy_value"])
 c = R.plan(sig, {}, marks, 600_000, reserve=C.CASH_RESERVE_RS)
-check("Kite sizes 6L less its own 10k reserve", 585_000 < c["buy_value"] <= 590_000, c["buy_value"])
+check("Kite sizes the full 6L (no reserve)", 595_000 < c["buy_value"] <= 600_000, c["buy_value"])
 
 print("\n=== 8. engine: plan + execute on the fake account ===")
 shutil.rmtree(L.ROOT, ignore_errors=True)
