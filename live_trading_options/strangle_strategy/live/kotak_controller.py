@@ -44,8 +44,13 @@ class KotakController:
                  kotak=None, kotak_syms=None):
         self.index, self.date = index, date_str
         self.ce, self.pe, self.dte = ce_sym, pe_sym, dte
-        self.lot_size, self.lots = lot_size, lots
-        self.qty = lot_size * lots
+        # Kotak's API returns numbers as STRINGS (e.g. lot_size "20"), so coerce here.
+        # If left as a string, self.qty becomes a string ("20") and the first ledger
+        # qty-sum (0 + "20") raises "unsupported operand type(s) for +: 'int' and 'str'"
+        # on every tick — the SENSEX on_tick error (it survived because, unlike NIFTY,
+        # SENSEX had no reconciled position to override qty to an int).
+        self.lot_size, self.lots = int(lot_size), int(lots)
+        self.qty = self.lot_size * self.lots
         self.mode = "paper"                     # 'paper' | 'live' from the KOTAK_{index} flag
         self.kotak = kotak                      # the NeoAPI client (None -> paper only)
         self.kotak_syms = kotak_syms or {}      # {fy_sym: {trading_symbol, exchange_segment, lot_size}}
