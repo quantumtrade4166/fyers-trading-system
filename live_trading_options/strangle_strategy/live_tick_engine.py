@@ -220,22 +220,24 @@ class IndexBook:
             "candles": [{**c, "vwap": float(df.loc[i, "vwap"])} for i, c in enumerate(candles)],
             "events": events, "pnl": pnl, "selection": self.meta,
         }
-        # Atomic write + retry: Google Drive / the backup intermittently locks this file
-        # (Errno 13). A raw write_text then fails, today's V2 file never lands, and
-        # _ensure_v2_running treats the engine as a zombie and KILLS it every cycle -> churn.
-        # Write to a temp and os.replace (atomic), retrying through a transient lock.
+        # Direct in-place write with retry. IMPORTANT: do NOT use a temp+os.replace
+        # here. On Windows os.replace() (rename-over) fails with Errno 13 whenever the
+        # dashboard has this file open for reading (the browser polls the strangle
+        # chart every ~2s) — a read-open does not grant FILE_SHARE_DELETE, so the
+        # rename is denied. That froze today's V2 file, which made _ensure_v2_running
+        # see freshest>480s and Stop-Process the engine every cycle -> permanent churn.
+        # A plain write_text SUCCEEDS past a concurrent reader (read-open grants
+        # FILE_SHARE_WRITE). The retry still rides out a transient Defender/backup lock.
         _path = ARCHIVE_DIR / f"{date_str}_{self.index}_V2.json"
         _blob = json.dumps(rec, indent=2)
-        _tmp = ARCHIVE_DIR / f".{date_str}_{self.index}_V2.json.tmp"
-        for _attempt in range(8):
+        for _attempt in range(10):
             try:
-                _tmp.write_text(_blob)
-                os.replace(_tmp, _path)
+                _path.write_text(_blob)
                 break
-            except PermissionError:
-                if _attempt == 7:
+            except (PermissionError, OSError):
+                if _attempt == 9:
                     raise
-                time.sleep(0.5)   # transient Drive/backup lock — let it release, retry
+                time.sleep(0.4)   # transient AV/backup lock — let it release, retry
 
 
 # ── module-level engine ───────────────────────────────────────────────────
