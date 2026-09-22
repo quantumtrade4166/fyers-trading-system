@@ -24,6 +24,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
 import json
+import os
 import time
 import threading
 import datetime as dt
@@ -219,7 +220,22 @@ class IndexBook:
             "candles": [{**c, "vwap": float(df.loc[i, "vwap"])} for i, c in enumerate(candles)],
             "events": events, "pnl": pnl, "selection": self.meta,
         }
-        (ARCHIVE_DIR / f"{date_str}_{self.index}_V2.json").write_text(json.dumps(rec, indent=2))
+        # Atomic write + retry: Google Drive / the backup intermittently locks this file
+        # (Errno 13). A raw write_text then fails, today's V2 file never lands, and
+        # _ensure_v2_running treats the engine as a zombie and KILLS it every cycle -> churn.
+        # Write to a temp and os.replace (atomic), retrying through a transient lock.
+        _path = ARCHIVE_DIR / f"{date_str}_{self.index}_V2.json"
+        _blob = json.dumps(rec, indent=2)
+        _tmp = ARCHIVE_DIR / f".{date_str}_{self.index}_V2.json.tmp"
+        for _attempt in range(8):
+            try:
+                _tmp.write_text(_blob)
+                os.replace(_tmp, _path)
+                break
+            except PermissionError:
+                if _attempt == 7:
+                    raise
+                time.sleep(0.5)   # transient Drive/backup lock — let it release, retry
 
 
 # ── module-level engine ───────────────────────────────────────────────────
