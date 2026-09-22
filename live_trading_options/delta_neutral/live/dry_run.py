@@ -73,6 +73,9 @@ def new_ctrl(dte: int = 0, index: str = "NIFTY", control: dict = None) -> DNCont
                         symbol_lookup=lambda strike, t: f"NSE:{index}{strike}{t}")
     ctrl.persist = lambda: None                     # keep the test off the filesystem
     ctrl._write_tick = lambda: None
+    # and off yesterday's REAL snapshot: DATE is a real trading day whose live file
+    # exists on disk, and a restart now restores the day's decisions from it
+    ctrl._read_live_snapshot = lambda: {}
     if control is None:
         ctrl._check_control = lambda: None
     else:
@@ -828,6 +831,156 @@ _rs._last_ctrl = 0.0
 _rs._check_control()
 check("a later mid-position resize is still refused", _rs.qty, 520)
 check("a later mid-position max-loss change is still refused", _rs.max_loss, 14000.0)
+
+# -- a restart rebuilds the DAY, not just the open legs ---------------------
+# 2026-09-22: a restart rebuilt only open legs, so realized P&L reset to zero
+# (+8,164 showed as 0) and with it the max-loss budget; SENSEX's controller also
+# tried to rebuild NIFTY's contracts. This replays that day's real order shape.
+from live.broker import kite_executor as _kx
+
+
+class DayKite:
+    def __init__(self, orders, instruments):
+        self._o, self._i = orders, instruments
+
+    def orders(self):
+        return self._o
+
+    def instruments(self, exchange):
+        return [r for r in self._i if r["_ex"] == exchange]
+
+
+def _fill(ts, side, qty, px, t, oid, ex="NFO", otype="LIMIT"):
+    return {"tag": "dnstrangle", "status": "COMPLETE", "tradingsymbol": ts, "exchange": ex,
+            "transaction_type": side, "filled_quantity": qty, "quantity": qty,
+            "average_price": px, "order_id": oid, "order_timestamp": t, "order_type": otype}
+
+
+def _stop(ts, qty, oid, ex="NFO"):
+    return {"tag": "dnstrangle", "status": "TRIGGER PENDING", "order_type": "SL",
+            "tradingsymbol": ts, "exchange": ex, "trigger_price": 40, "quantity": qty,
+            "order_id": oid}
+
+
+def _ins(ts, strike, t, ex="NFO"):
+    return {"tradingsymbol": ts, "strike": strike, "instrument_type": t, "expiry": D,
+            "lot_size": 65, "name": "NIFTY", "_ex": ex}
+
+
+_DAY_ORDERS = [
+    _fill("DAY23500CE", "SELL", 520, 24.9, "09:30:52", "a1"),
+    _fill("DAY23350PE", "SELL", 520, 16.8, "09:30:59", "a2"),
+    _fill("DAY23350PE", "BUY", 520, 11.7, "10:15:01", "a3"),           # adjustment
+    _fill("DAY23400PE", "SELL", 65, 21.4, "10:15:03", "a4"),            # the 65-qty leg
+    _fill("DAY23400PE", "BUY", 65, 40.0, "10:35:15", "a5", otype="SL"),  # its stop filled
+    _fill("DAY23200PE", "SELL", 520, 7.9, "10:45:16", "a6"),
+    _fill("SNX75000CE", "SELL", 20, 40.0, "09:30:10", "b1", ex="BFO"),  # SENSEX's own
+    _stop("DAY23500CE", 520, "s1"), _stop("DAY23200PE", 520, "s2"),
+    _stop("SNX75000CE", 20, "s3", ex="BFO"),
+]
+_DAY_INS = [_ins("DAY23500CE", 23500, "CE"), _ins("DAY23350PE", 23350, "PE"),
+            _ins("DAY23400PE", 23400, "PE"), _ins("DAY23200PE", 23200, "PE"),
+            _ins("SNX75000CE", 75000, "CE", ex="BFO")]
+
+
+def _day_ctrl(prior=None, orders=None):
+    _kx._instr_cache.clear()
+    c = new_ctrl(dte=0)
+    c.executor.kite = DayKite(orders or _DAY_ORDERS, _DAY_INS)
+    c._read_live_snapshot = lambda: dict(prior or {})
+    c.reconcile_broker()
+    return c
+
+
+print("\n  [restart rebuilds the day]")
+_d = _day_ctrl()
+check("open CE recovered", (_d.position.ce.strike, _d.position.ce.qty), (23500, 520))
+check("open PE is the LATEST one, at 520", (_d.position.pe.strike, _d.position.pe.qty), (23200, 520))
+check("both recovered legs protected", (_d.position.ce.is_protected, _d.position.pe.is_protected),
+      (True, True))
+check("the day's two closed legs came back", len(_d.position.history), 2)
+# (16.8-11.7)*520 + (21.4-40)*65 = 2652 - 1209 = 1443
+check("realized P&L survives the restart", round(_d.position.realized(), 2), 1443.0)
+check("SENSEX contracts are not NIFTY's to rebuild",
+      any("SNX" in (l.tradingsymbol or "") for l in _d.position.history + _d.position.live_legs()),
+      False)
+check("no RECONCILE_SKIP noise from the other index",
+      [e for e in _d.events if e.get("type") == "reconcile_skip"], [])
+
+# FIFO: the same strike sold, covered, and sold again
+_fifo = DNController._fifo_book([
+    {"tradingsymbol": "X", "side": "SELL", "qty": 65, "avg_price": 10.0, "order_id": "1", "fill_time": "09:31:00"},
+    {"tradingsymbol": "X", "side": "BUY", "qty": 65, "avg_price": 5.0, "order_id": "2", "fill_time": "10:00:00"},
+    {"tradingsymbol": "X", "side": "SELL", "qty": 65, "avg_price": 8.0, "order_id": "3", "fill_time": "10:15:00"}])
+_op, _cl = _fifo["X"]
+check("FIFO: the re-sold leg is open at ITS price", [(o["qty"], o["px"]) for o in _op], [(65, 8.0)])
+check("FIFO: the covered leg closed at the first sale's price",
+      [(c_["qty"], c_["entry_px"], c_["exit_px"]) for c_ in _cl], [(65, 10.0, 5.0)])
+
+print("\n  [restart restores the day's decisions]")
+_prior = {"date": DATE, "index": "NIFTY", "events": [{"t": "09:30:52", "type": "entry_complete"}],
+          "windows_done": ["09:45", "10:00", "10:15", "10:30", "10:45"], "fresh_entries": 1,
+          "sl": 30.0, "sl_step_i": 1, "sl_history": [{"at": "12:00", "to": 30.0}],
+          "killed": False, "done": False, "entered": True}
+_r = _day_ctrl(prior=_prior)
+check("windows already run are not re-run", "10:45" in _r.done_windows, True)
+check("the entry budget is not reset", _r.fresh_entries, 1)
+check("the tightened stop survives", (_r.sl, _r.sl_step_i), (30.0, 1))
+check("the morning's events are kept for the tab",
+      any(e.get("type") == "entry_complete" for e in _r.events), True)
+check("still trading", (_r.killed, _r.done), (False, False))
+
+_k = _day_ctrl(prior={**_prior, "killed": True, "done": True, "kill_reason": "kill switch"})
+check("a KILL-button halt is left to the control file", (_k.killed, _k.done), (False, False))
+
+_m = _day_ctrl(prior={**_prior, "killed": True, "done": True,
+                      "kill_reason": "margin shortfall — Insufficient funds",
+                      "margin_halt": "Insufficient funds"})
+check("a margin halt survives a restart", _m.killed, True)
+check("and its message", _m.margin_halt, "Insufficient funds")
+check("a halted day still holding legs is flattened, not resumed",
+      sorted(_m.stuck), sorted([CE, PE]))
+check("and is not marked done while short", _m.done, False)
+
+_flat = [o for o in _DAY_ORDERS if o["order_id"] not in ("a6", "s2")] + [
+    _fill("DAY23500CE", "BUY", 520, 5.0, "11:02:32", "a7")]
+_s = _day_ctrl(prior={**_prior, "killed": True, "done": True,
+                      "kill_reason": "both legs stopped out — done for the day"},
+               orders=_flat)
+check("a stopped-out day stays over after a restart", (_s.killed, _s.done), (True, True))
+check("with nothing left to flatten", _s.stuck, {})
+
+# -- cancelling a stop waits for the broker to finish --------------------------
+# `stop_cancel_failed` fired on nearly every adjustment for weeks. The cancel had
+# worked every time: order_history showed CANCEL PENDING -> CANCELLED within a
+# second, but the status was read once, immediately, mid-transition.
+import live.executor as _ex_mod
+from live.position import Leg as _L2
+
+print("\n  [stop cancel waits for a terminal state]")
+_ex = new_ctrl(dte=0).executor
+_ex.kite = object()
+_ex.set_live(True)
+_leg = _L2(CE, 24400, "NIFTY24400CE", 65)
+_leg.sl_order_id = "SL-1"
+_seq = {"s": ["CANCEL PENDING", "CANCEL PENDING", "CANCELLED"]}
+_real = (_ex_mod.kx.cancel, _ex_mod.kx.order_status)
+_ex_mod.kx.cancel = lambda kite, oid: None
+_ex_mod.kx.order_status = lambda kite, oid: {"status": _seq["s"].pop(0) if len(_seq["s"]) > 1
+                                             else _seq["s"][0]}
+check("CANCEL PENDING then CANCELLED counts as cancelled", _ex.cancel_stop(_leg), True)
+
+_seq["s"] = ["COMPLETE"]
+check("a stop that filled during the race also counts (leg already covered)",
+      _ex.cancel_stop(_leg), True)
+
+import time as _tm
+_seq["s"] = ["TRIGGER PENDING"]
+_t0 = _tm.monotonic()
+check("a stop still resting after the wait is a real failure", _ex.cancel_stop(_leg), False)
+check("and it gives up in bounded time", _tm.monotonic() - _t0 < 6, True)
+_ex_mod.kx.cancel, _ex_mod.kx.order_status = _real
+_ex.set_live(False)
 
 print(f"\n  {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

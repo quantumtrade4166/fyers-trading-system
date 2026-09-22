@@ -315,6 +315,8 @@ class DNController:
             return
         from live.broker import kite_executor as kx
         kite, tag = self.executor.kite, self.executor.tag
+        # read the day's decisions BEFORE anything here persists over the file
+        prior = self._read_live_snapshot()
         try:
             fills = kx.strategy_fills(kite, tag)
             stops = kx.resting_stops(kite, tag)
@@ -322,37 +324,60 @@ class DNController:
             audit_log(self.index, "RECONCILE_FAIL", error=f"{type(e).__name__}: {e}")
             return
 
-        # net short per contract, from our own fills only
-        net: dict[str, int] = {}
-        sells: dict[str, list] = {}
-        for f in sorted(fills, key=lambda x: (x.get("fill_time") or "")):
-            ts = f["tradingsymbol"]
-            net[ts] = net.get(ts, 0) + (f["qty"] if f["side"] == "SELL" else -f["qty"])
-            if f["side"] == "SELL":
-                sells.setdefault(ts, []).append(f)
+        # THIS index only. The tag is shared by NIFTY (NFO) and SENSEX (BFO), so
+        # without this each controller tried to rebuild the other's contracts and
+        # logged RECONCILE_SKIP for every one of them.
+        ex = self.executor.exchange
+        fills = [f for f in fills if (f.get("exchange") or ex) == ex]
+        stops = [x for x in stops if (x.get("exchange") or ex) == ex]
         if not fills:
+            self._restore_day(prior)
             return
 
         self.entered = True             # the day's entry clearly already happened
-        stop_by_sym = {s["tradingsymbol"]: s for s in stops}
-        recovered = []
-        for ts, qty in net.items():
-            if qty <= 0:                                   # already covered
-                continue
-            c = kx.contract_for(kite, self.executor.exchange, ts)
+        stop_by_sym = {x["tradingsymbol"]: x for x in stops}
+        recovered, closed_n = [], 0
+        contracts = {}
+
+        def contract(ts):
+            if ts not in contracts:
+                contracts[ts] = kx.contract_for(kite, ex, ts)
+            return contracts[ts]
+
+        for ts, (opens, closes) in self._fifo_book(fills).items():
+            c = contract(ts)
             if c is None or c["opt_type"] not in (CE, PE):
                 audit_log(self.index, "RECONCILE_SKIP", symbol=ts,
                           reason="contract not found in the instrument dump")
                 continue
             side = c["opt_type"]
-            last = sells[ts][-1]
-            leg = Leg(side, c["strike"], ts, qty, exchange=self.executor.exchange,
+
+            # CLOSED legs of the day. These are what realized P&L — and therefore
+            # the max-loss check — is computed from. A restart used to rebuild only
+            # the OPEN legs, so realized reset to zero: on 2026-09-22 a +8,164 day
+            # showed as 0 after the 11:18 restart, and a losing day would have got
+            # its whole max-loss budget a second time.
+            for cl in closes:
+                leg = Leg(side, c["strike"], ts, cl["qty"], exchange=ex,
+                          reason="recovered from the broker after a restart")
+                leg.product = self._broker_product(ts) or self.product
+                leg.mark_filled(cl["entry_oid"], cl["entry_px"], cl["entry_t"])
+                leg.mark_closed(cl["exit_px"], cl.get("reason") or "closed before restart",
+                                cl["exit_oid"], cl["exit_t"])
+                self.position.history.append(leg)
+                closed_n += 1
+
+            qty = sum(o["qty"] for o in opens)
+            if qty <= 0:
+                continue
+            entry = round(sum(o["qty"] * o["px"] for o in opens) / qty, 4)
+            leg = Leg(side, c["strike"], ts, qty, exchange=ex,
                       reason="recovered from the broker after a restart")
             # The product the position is REALLY held in, not what config says now.
             # A cover sent in the wrong product does not close the short — it opens
             # a long beside it and leaves the short running.
             leg.product = self._broker_product(ts) or self.product
-            leg.mark_filled(last["order_id"], last["avg_price"], last.get("fill_time"))
+            leg.mark_filled(opens[-1]["oid"], entry, opens[-1]["t"])
             st = stop_by_sym.get(ts)
             if st:
                 # recovered from a REAL resting order, so this one IS at the broker
@@ -360,16 +385,106 @@ class DNController:
                                    at_broker=True, time_str=self._hm())
             # no resting stop -> stays NAKED, and _enforce_protection replaces it
             self.position.set_leg(leg)
-            recovered.append(f"{c['strike']}{side}@{last['avg_price']}"
+            recovered.append(f"{c['strike']}{side}x{qty}@{entry}"
                              f"{'' if st else ' (NO STOP)'}")
 
+        self._restore_day(prior)
         audit_log(self.index, "RECONCILE", fills=len(fills), stops=len(stops),
                   recovered=", ".join(recovered) or "nothing open",
+                  closed=closed_n, realized=self.position.realized(),
                   shape=("strangle" if self.position.is_complete
                          else "single leg" if self.position.is_single else "flat"))
-        print(f"  [dn] {self.index} reconciled: {', '.join(recovered) or 'nothing open'}",
-              flush=True)
+        print(f"  [dn] {self.index} reconciled: {', '.join(recovered) or 'nothing open'}"
+              f"  (+{closed_n} closed, realized {self.position.realized()})", flush=True)
         self.persist()
+
+    @staticmethod
+    def _fifo_book(fills: list) -> dict:
+        """Match our own fills per contract, first-in first-out.
+
+        Returns {tradingsymbol: (opens, closes)}: `opens` are the sells still short,
+        `closes` one entry per buy that covered them, with the matched entry price.
+        FIFO is exact for realized P&L even when a strike is sold, covered and sold
+        again the same day."""
+        book = {}
+        for f in sorted(fills, key=lambda x: (x.get("fill_time") or "", x.get("order_id") or "")):
+            ts = f["tradingsymbol"]
+            opens, closes = book.setdefault(ts, ([], []))
+            q, px = int(f["qty"] or 0), float(f.get("avg_price") or 0)
+            if q <= 0:
+                continue
+            if f["side"] == "SELL":
+                opens.append({"qty": q, "px": px, "oid": f.get("order_id"), "t": f.get("fill_time")})
+                continue
+            take_total, cost = 0, 0.0
+            first = None
+            while q > 0 and opens:
+                o = opens[0]
+                take = min(q, o["qty"])
+                first = first or o
+                cost += take * o["px"]
+                take_total += take
+                o["qty"] -= take
+                q -= take
+                if o["qty"] == 0:
+                    opens.pop(0)
+            if take_total:
+                closes.append({"qty": take_total, "entry_px": round(cost / take_total, 4),
+                               "entry_oid": first["oid"], "entry_t": first["t"],
+                               "exit_px": px, "exit_oid": f.get("order_id"),
+                               "exit_t": f.get("fill_time")})
+        return book
+
+    def _read_live_snapshot(self) -> dict:
+        f = STATE_DIR / f"{self.date}_{self.index}_DN{self._suffix}.json"
+        try:
+            d = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        return d if (d.get("date") == self.date and d.get("index") == self.index) else {}
+
+    def _restore_day(self, d: dict):
+        """Bring back the day's DECISIONS after a restart — never its holdings.
+
+        What the strategy HOLDS always comes from the broker (above). What it has
+        DECIDED lives only in this process: which windows already ran, how many
+        fresh entries it has used, how far the stop schedule has advanced, whether
+        the day already ended. Losing those on a restart meant a window could run a
+        second adjustment, the entry budget reset, the stop schedule re-armed steps
+        already taken, and a day that had been halted resumed trading by itself.
+
+        One exception: a halt caused by the KILL button is NOT restored from here.
+        The control file is the authority for that — today's KILL still stands on
+        its own, and clearing it there (GO LIVE) must actually resume."""
+        if not d:
+            return
+        self.events = list(d.get("events") or []) + self.events
+        self.mtm_series = list(d.get("mtm_series") or [])
+        self.entered = self.entered or bool(d.get("entered"))
+        self.fresh_entries = max(self.fresh_entries, int(d.get("fresh_entries") or 0))
+        self.done_windows |= set(d.get("windows_done") or [])
+        sl, step = d.get("sl"), int(d.get("sl_step_i") or 0)
+        if sl is not None and self.sl_open is not None and float(sl) <= float(self.sl_open):
+            self.sl, self.sl_step_i = float(sl), step
+            self.sl_history = list(d.get("sl_history") or [])
+        reason = d.get("kill_reason") or ""
+        if d.get("margin_halt"):
+            self.margin_halt = d["margin_halt"]
+        if (d.get("killed") or d.get("done")) and reason != "kill switch":
+            self.killed = bool(d.get("killed"))
+            self.done = bool(d.get("done"))
+            self.kill_reason = reason or None
+            # A day that had already ended must not be holding anything. If the
+            # broker says otherwise, the exit that should have closed it did not
+            # finish — so finish it, through the same never-give-up path.
+            if not self.position.is_flat:
+                for leg in self.position.live_legs():
+                    self.stuck[leg.opt_type] = f"day already ended ({reason or 'done'}) — still open at restart"
+                self.done = False
+        self._log("day_restored", windows=len(self.done_windows),
+                  entries=self.fresh_entries, sl=self.sl, step=self.sl_step_i,
+                  killed=self.killed, done=self.done, margin_halt=bool(self.margin_halt),
+                  stuck=sorted(self.stuck))
 
     # ── the tick ─────────────────────────────────────────────────────────
     def on_tick(self, chain: dict, spot: float, now: dt.datetime):

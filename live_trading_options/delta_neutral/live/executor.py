@@ -255,9 +255,23 @@ class Executor:
             kx.cancel(self.kite, leg.sl_order_id)
         except Exception:
             pass
-        # confirm it is gone; if it FILLED during the race the leg is already covered
-        st = kx.order_status(self.kite, leg.sl_order_id)
-        return st["status"] in ("CANCELLED", "REJECTED", "COMPLETE")
+        # Confirm it is gone; if it FILLED during the race the leg is already covered.
+        #
+        # A cancel is not instant: the order passes through CANCEL PENDING before
+        # CANCELLED. Reading the status once, immediately, caught it mid-transition
+        # and reported every cancel as a failure — `stop_cancel_failed` fired on
+        # nearly every adjustment for weeks, and on 2026-09-22 order_history showed
+        # both "failed" stops going CANCEL PENDING -> CANCELLED in the same second.
+        # So wait for a terminal state before answering.
+        import time
+        deadline = time.monotonic() + 4.0
+        while True:
+            st = kx.order_status(self.kite, leg.sl_order_id)
+            if st["status"] in ("CANCELLED", "REJECTED", "COMPLETE"):
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.25)
 
     def stop_fill(self, leg) -> Fill | None:
         """If a leg's resting stop has fired, the Fill that covered it, else None."""
