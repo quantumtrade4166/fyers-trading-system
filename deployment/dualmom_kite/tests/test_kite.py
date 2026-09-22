@@ -297,6 +297,67 @@ check("-36% breaches the -35% stop, sells OUR 4 only",
 kt4.px["RELIANCE"] = 1300.0 * 0.70
 check("-30% does not breach", E.stop_breaches(kt4) == [])
 
+print("\n=== 12. 22-Sep fixes: rate limit, circuit, top-up, next-day circuit buys ===")
+check("buy limit clamped to the upper circuit", K.clamp_to_circuit(3674.7, "BUY", 0.1, {"upper_circuit": 3656.4}) == 3656.4)
+check("sell limit clamped to the lower circuit", K.clamp_to_circuit(95.0, "SELL", 0.05, {"lower_circuit": 96.03}) == 96.05)
+check("inside the band: untouched", K.clamp_to_circuit(1306.5, "BUY", 0.1, {"upper_circuit": 1400}) == 1306.5)
+class RateKite(FakeKite):
+    def __init__(self):
+        super().__init__(); self.calls = 0
+    def place_order(self, **kw):
+        self.calls += 1
+        if self.calls <= 2:
+            raise Exception("Maximum allowed order requests per second exceeded.")
+        return super().place_order(**kw)
+rk = RateKite()
+res = K.place_limit(rk, "RELIANCE", "BUY", 1, 1306.5, 0.1)
+check("rate-limited order retried and placed once", res["status"] == "PLACED" and rk.n == 1 and rk.calls == 3, res)
+
+class CircKite(FakeKite):
+    uc = {}
+    def quote(self, keys):
+        out = super().quote(keys)
+        for k, v in out.items():
+            ts = k.split(":", 1)[1]
+            if ts in self.uc:
+                v["upper_circuit_limit"] = self.uc[ts]
+        return out
+shutil.rmtree(L.ROOT, ignore_errors=True)
+for f in TMP.glob("pending_circuit.json"):
+    f.unlink()
+kt5 = CircKite()
+K.place_limit(kt5, "RELIANCE", "BUY", 200, 1306.5, 0.1)          # part of the basket already held
+L.capture(kt5)
+kt5.margin["available"]["live_balance"] = 400000.0
+kt5.uc = {"HFCL-BE": 220.5}                                       # HFCL sits at its upper circuit
+run5 = E.build_plan(kt5, top_up=True)
+p5 = run5["plan"]
+check("top-up sends NO sells", p5["sells"] == [] and run5.get("top_up"))
+check("circuit name NOT in today's buys", "HFCL" not in {o["symbol"] for o in p5["buys"]}, [o["symbol"] for o in p5["buys"]])
+check("circuit name deferred with a fixed qty", [d["symbol"] for d in p5["circuit_deferred"]] == ["HFCL"] and p5["circuit_deferred"][0]["qty"] > 0)
+res_cash = sum(d["value_at_limit"] for d in p5["circuit_deferred"])
+check("today's buys + reserved circuit cash fit DualMom's own cash",
+      sum(o["qty"] * o["limit_preview"] for o in p5["buys"]) + res_cash <= L.own_cash()["cash"] + 1e-6)
+kt5.margin["available"]["live_balance"] = 1000.0
+check("blocked when Kite CASH cannot pay (collateral does not count)", not E.build_plan(kt5, top_up=True)["plan"]["safe"])
+kt5.margin["available"]["live_balance"] = 400000.0
+E.datetime = type("D", (datetime,), {"now": classmethod(lambda cls, tz=None: datetime(2026, 9, 22, 14, 50, tzinfo=tz))})
+check("top-up allowed after same-day fills", E.deploy_guards(kt5, top_up=True) == [], E.deploy_guards(kt5, top_up=True))
+check("full deploy still refused after same-day fills", E.deploy_guards(kt5) != [])
+run5 = E.execute(run5, kt5)
+saved = E.defer_circuit(run5)
+check("deferred name written to pending_circuit.json", [i["symbol"] for i in E.load_pending_circuit()] == ["HFCL"])
+L.capture(kt5)
+r6 = E.run_pending_circuit(kt5)                                   # next day, still at circuit
+check("still at circuit next day -> kept, attempt counted",
+      r6["sent"] == 0 and E.load_pending_circuit()[0]["attempts"] == 1, r6)
+kt5.uc = {}                                                       # circuit released
+held_before = L.own_book()["positions"].get("HFCL", {}).get("qty", 0)
+r7 = E.run_pending_circuit(kt5)
+check("circuit released -> bought at the fixed qty, list cleared",
+      r7["filled"] == 1 and E.load_pending_circuit() == []
+      and L.own_book()["positions"]["HFCL"]["qty"] == held_before + saved[0]["qty"], r7)
+
 shutil.rmtree(TMP, ignore_errors=True)
 print(f"\n  {len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)

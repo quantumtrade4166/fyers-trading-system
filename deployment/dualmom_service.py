@@ -370,6 +370,7 @@ def _job_kite_rebalance():
         KE.save(run, f"signal_{d['signal_date']:%Y%m%d}.json")
         run = KE.execute(run, kite)
         KE.save(run)
+        KE.defer_circuit(run)
         KL.capture(kite)
         done, summary = KE.complete(run)
         KL.event("monthly_rebalance", {**summary, "signal_date": str(d["signal_date"])})
@@ -378,6 +379,22 @@ def _job_kite_rebalance():
         _log(f"KITE monthly rebalance {'DONE' if done else 'NOT complete'}: {summary}")
     except Exception as e:
         _log(f"KITE monthly rebalance FAILED: {_etext(e)}")
+
+
+def _job_kite_pending_circuit():
+    """09:25 - buy names deferred because they were at their upper circuit."""
+    try:
+        from deployment.dualmom_kite import engine as KE
+        if not KE.load_pending_circuit():
+            return
+        from deployment.dualmom_kite import kite_equity as KK
+        from deployment.dualmom_live import data_refresh as D
+        from deployment.dualmom_live import month_gate as G
+        if G._fyers_traded_on(D._connect(), datetime.now(IST).date()) is False:
+            return
+        _log(f"KITE pending circuit buys: {KE.run_pending_circuit(KK.client())}")
+    except Exception as e:
+        _log(f"KITE pending circuit FAILED: {_etext(e)}")
 
 
 def _job_kite_stop_check():
@@ -504,6 +521,9 @@ def _build_scheduler() -> BackgroundScheduler:
         s.add_job(_job_kite_rebalance, CronTrigger(
             day_of_week="mon-fri", hour=hm[0], minute=hm[1], timezone=IST),
             id=jid, misfire_grace_time=3600, coalesce=True, max_instances=1)
+    s.add_job(_job_kite_pending_circuit, CronTrigger(
+        day_of_week="mon-fri", hour=9, minute=25, timezone=IST),
+        id="dmk_pending_circuit", misfire_grace_time=3600, coalesce=True, max_instances=1)
     s.add_job(_job_kite_stop_check, CronTrigger(
         day_of_week="mon-fri", hour=15, minute=26, timezone=IST),
         id="dmk_stop_check", misfire_grace_time=180, coalesce=True, max_instances=1)

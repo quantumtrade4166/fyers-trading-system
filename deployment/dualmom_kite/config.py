@@ -30,7 +30,9 @@ DRY_RUN = False
 # ── account ──────────────────────────────────────────────────────────────────
 CLIENT_ACCOUNT = "Kite Main"
 BROKER         = "zerodha"
-CAPITAL_BASE   = 600_000            # allocated to DualMom, from the account's cash
+# 6.0L deployed 22-Sep 14:35 (33/37 filled, 5.37L); raised to 6.2L the same day by
+# the user ("under 6 lakhs 20 thousand") and completed with a BUY-ONLY top-up.
+CAPITAL_BASE   = 620_000            # allocated to DualMom, from the account's cash
 INCEPTION_DATE = None               # None = date of the first DualMom fill
 
 # Held back from sizing. 0 by user decision (2026-09-21): the full Rs 6L goes into

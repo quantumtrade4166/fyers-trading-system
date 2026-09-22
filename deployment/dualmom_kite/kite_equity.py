@@ -10,6 +10,7 @@ with config.ORDER_TAG. The account is shared; nothing else is ours.
 """
 
 import json
+import math
 import os
 import random
 import threading
@@ -166,8 +167,22 @@ def quotes(kite, trading_symbols) -> dict:
             pc = _f((v.get("ohlc") or {}).get("close"))
             chg = ltp - pc if ltp and pc else _f(v.get("net_change"))
             out[ts] = {"ltp": ltp, "prev_close": pc, "change": round(chg, 4),
-                       "change_pct": round(chg / pc * 100, 4) if pc else 0.0}
+                       "change_pct": round(chg / pc * 100, 4) if pc else 0.0,
+                       "upper_circuit": _f(v.get("upper_circuit_limit")) or None,
+                       "lower_circuit": _f(v.get("lower_circuit_limit")) or None}
     return out
+
+
+def clamp_to_circuit(px: float, side: str, tick: float, q: dict) -> float:
+    """Keep a marketable limit inside the exchange price band. 22-Sep: CPPLUS and
+    CEMPRO were REJECTED because mark +0.5% sat above the upper circuit."""
+    uc, lc = (q or {}).get("upper_circuit"), (q or {}).get("lower_circuit")
+    t = float(tick) if tick else 0.05
+    if side == "BUY" and uc and px > uc:
+        px = math.floor(uc / t + 1e-9) * t
+    if side == "SELL" and lc and px < lc:
+        px = math.ceil(lc / t - 1e-9) * t
+    return round(px, 2)
 
 
 def last_prices(kite, symbols) -> dict:
@@ -237,8 +252,37 @@ def place_limit(kite, trading_symbol: str, side: str, qty: int, price: float,
                 tick: float) -> dict:
     """One CNC LIMIT order with a unique tag. A lost HTTP response is resolved by
     LOOKING UP the tag, never by sending again."""
-    tag = unique_tag()
     px = round_tick(price, tick)
+    for attempt in range(RATE_RETRIES + 1):
+        res = _place_once(kite, trading_symbol, side, qty, px)
+        # 22-Sep: IDEA and AEGISLOG REJECTED "Maximum allowed order requests per
+        # second exceeded". The tag lookup has already proven the order does not
+        # exist, so sending again after a pause cannot duplicate it.
+        if res["status"] == "REJECTED" and _is_rate_limit(res.get("reason")) and attempt < RATE_RETRIES:
+            time.sleep(1.0 + attempt)
+            continue
+        return res
+    return res
+
+
+RATE_RETRIES = 3
+MIN_ORDER_GAP = 0.35            # s between orders; Kite allows 10/s, we stay far below
+_last_send = [0.0]
+_send_lock = threading.Lock()
+
+
+def _is_rate_limit(msg) -> bool:
+    m = str(msg or "").lower()
+    return "requests per second" in m or "too many requests" in m or "rate limit" in m
+
+
+def _place_once(kite, trading_symbol, side, qty, px) -> dict:
+    tag = unique_tag()
+    with _send_lock:
+        wait = MIN_ORDER_GAP - (time.time() - _last_send[0])
+        if wait > 0:
+            time.sleep(wait)
+        _last_send[0] = time.time()
     try:
         oid = kite.place_order(variety="regular", exchange=C.EXCHANGE,
                                tradingsymbol=trading_symbol, transaction_type=side,

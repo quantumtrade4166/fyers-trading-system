@@ -95,8 +95,18 @@ async def plan(payload: dict = Body(default={})):
             return {"ok": False, "error": "capital must be a number"}
         if cap is not None and cap <= 0:
             return {"ok": False, "error": "capital must be greater than zero"}
+        from deployment.dualmom_kite import ledger as L0
+        # Once DualMom holds Kite positions, a MANUAL preview is always a buy-only
+        # top-up: selling is the monthly job's business, never a button press
+        # (user, 22-Sep: "no need to sell the full portfolio").
+        top_up = bool(payload.get("top_up")) or bool(L0.own_book()["positions"])
         try:
-            run = E.build_plan(_kite(), capital=cap)
+            kite = _kite()
+            if top_up:
+                from deployment.dualmom_kite import ledger as L
+                L.capture(kite)                 # own book must include today's fills
+                cap = None
+            run = E.build_plan(kite, capital=cap, top_up=top_up)
         except Exception as e:
             return {"ok": False, "error": _etext(e)}
         _last_plan = run
@@ -124,7 +134,10 @@ async def deploy(payload: dict = Body(default={})):
                                           f"- press Preview again (limit prices go stale)"}
         try:
             kite = _kite()
-            why = E.deploy_guards(kite)
+            top_up = bool(_last_plan.get("top_up"))
+            if top_up:
+                L.capture(kite)
+            why = E.deploy_guards(kite, top_up=top_up)
             if why:
                 return {"ok": False, "blocked": why, "error": "refused: " + "; ".join(why)}
             L.event("deploy_start", {"signal_date": _last_plan.get("month_signal_date"),
@@ -133,6 +146,7 @@ async def deploy(payload: dict = Body(default={})):
                                      "nav": _last_plan["plan"].get("nav")})
             run = E.execute(_last_plan, kite)
             E.save(run)
+            run["circuit_deferred_saved"] = E.defer_circuit(run)
             try:
                 L.capture(kite)
             except Exception:
