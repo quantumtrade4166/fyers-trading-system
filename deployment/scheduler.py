@@ -254,37 +254,32 @@ def _ensure_v2_running():
                         f"({_V2_PS_FILTER} | Measure-Object).Count"],
                         capture_output=True, text=True, timeout=20)
     running = (r.stdout.strip() or "0") != "0"
-    # freshest V2 candle across indices (to catch a silent stall)
-    arch = root / "data" / "chart_history"
-    now_naive = now.replace(tzinfo=None)
-    freshest = None
+    # Liveness is judged from the TICK file mtime the engine rewrites every ~0.4s
+    # (data/live_state/{today}_{i}_TICK.json) — NOT the chart-archive candle time.
+    # The chart archive only advances on a live 5-min close, so for an engine
+    # RESTARTED late in the day it stays frozen (backfill fills only the early gap,
+    # never candles up to `now`). The old candle-time check then saw freshest>480
+    # forever and Stop-Process'd a perfectly healthy, ticking engine every 2-min
+    # cycle -> permanent churn. The tick mtime is fresh whenever the engine lives,
+    # exactly like _ensure_dn_running.  (2026-09-22 incident.)
+    live = root / "data" / "live_state"
+    gap = None
     for i in ("NIFTY", "SENSEX"):
-        f = arch / f"{today}_{i}_V2.json"
+        f = live / f"{today}_{i}_TICK.json"
         if not f.exists():
             continue
-        try:
-            c = _json.loads(f.read_text())["candles"]
-            if c:
-                lc = datetime.datetime.strptime(today + " " + c[-1]["time"], "%Y-%m-%d %H:%M")
-                g = (now_naive - lc).total_seconds()
-                freshest = g if freshest is None else min(freshest, g)
-        except Exception:
-            pass
-    # Zombie from a PREVIOUS day: the process is alive but hasn't written today's
-    # archive. `freshest` is None in that case (no today-file), so the plain stall
-    # check below can't see it — this catches it. Grace until 9:30 so a genuinely
-    # fresh engine (started ~9:20) has time to write its first archive.
-    no_today = not any((arch / f"{today}_{i}_V2.json").exists() for i in ("NIFTY", "SENSEX"))
-    zombie = running and no_today and now.time() >= datetime.time(9, 30)
-    stalled = zombie or (running and (freshest is not None) and freshest > 480)
+        g = datetime.datetime.now().timestamp() - f.stat().st_mtime
+        gap = g if gap is None else min(gap, g)
+    # grace until 9:30 so a just-started engine isn't judged before its first tick
+    stalled = running and now.time() >= datetime.time(9, 30) and (gap is None or gap > 180)
     if (not running) or stalled:
-        if stalled:      # kill the stale/zombie engine before starting fresh
+        if stalled:      # kill the hung/stale engine before starting fresh
             subprocess.run(["powershell", "-NoProfile", "-Command",
                             f"{_V2_PS_FILTER} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"],
                            capture_output=True, timeout=20)
         subprocess.run(["schtasks", "/Run", "/TN", "StrangleV2Engine"], capture_output=True, timeout=20)
         print(f"  [scheduler] V2 {'restart' if stalled else 'start'} "
-              f"(running={running}, zombie={zombie}, gap={freshest})")
+              f"(running={running}, tick_gap={gap})")
 
 
 _DN_PS_FILTER = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' "
