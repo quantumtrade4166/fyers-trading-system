@@ -800,5 +800,34 @@ _f3.shadow = True
 _f3._suffix = "_PAPER"
 check("no snapshot -> starts fresh, returns False", _f3.restore_paper(), False)
 
+# -- a restart MID-POSITION must still take its size from the control file --
+# 2026-09-22: restarted at 09:51 holding 8 lots; the flat-only sizing rule left
+# qty at config's 1 lot, so the 10:15 replacement PE opened at 65 instead of 520
+# and max loss sat at 5,000 instead of 14,000.
+from live.position import Leg as _Leg
+_rs = new_ctrl(dte=0, control={"mode": "paper", "kill": False, "qty": 520,
+                               "mtm_stop": 14000.0, "updated": "2099-01-01 09:00:00"})
+_l = _Leg(CE, ATM + 3 * IV, "NIFTYX_CE", 520)
+_l.mark_filled("o1", 16.0, "09:30:00")
+_rs.position.set_leg(_l)
+_l = _Leg(PE, ATM - 3 * IV, "NIFTYX_PE", 520)
+_l.mark_filled("o2", 15.0, "09:30:00")
+_rs.position.set_leg(_l)
+_rs.entered = True
+check("recovered book is not flat", _rs.position.is_flat, False)
+check("starts at config size", _rs.qty, 65)
+_rs._last_ctrl = 0.0
+_rs._check_control()
+check("first read restores qty from control despite open legs", _rs.qty, 520)
+check("and lots", _rs.lots, 8)
+check("and max loss", _rs.max_loss, 14000.0)
+import live.controller as _cm2
+_cm2.read_control = lambda idx: {"mode": "paper", "kill": False, "qty": 130,
+                                 "mtm_stop": 3000.0, "updated": "2099-01-01 09:00:00"}
+_rs._last_ctrl = 0.0
+_rs._check_control()
+check("a later mid-position resize is still refused", _rs.qty, 520)
+check("a later mid-position max-loss change is still refused", _rs.max_loss, 14000.0)
+
 print(f"\n  {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

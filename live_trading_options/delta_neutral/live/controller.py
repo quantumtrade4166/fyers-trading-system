@@ -145,6 +145,7 @@ class DNController:
         # try to cover, so a leg left behind is a naked short with nothing watching
         # it. Retried every tick, at a rising price, until the broker confirms.
         self.margin_halt = None                  # broker message, if funds ran out
+        self._sized_from_control = False         # first control read always sizes
         self.stuck: dict[str, str] = {}
         self.stuck_attempts = 0
         self._last_stuck_try = 0.0
@@ -196,8 +197,15 @@ class DNController:
         except Exception:
             return
         # size + max-loss changes apply ONLY while flat, so an open position can
-        # never be resized underneath itself
-        if self.position.is_flat:
+        # never be resized underneath itself — EXCEPT the first read after start.
+        # A restart mid-position rebuilds the legs from the broker, so the book is
+        # not flat, and the flat-only rule used to leave qty at config's 1 lot and
+        # max loss at config's default for the rest of the day. On 2026-09-22 the
+        # engine restarted at 09:51 holding 8 lots; the 10:15 adjustment then
+        # opened the replacement PE at 65 instead of 520, and max loss sat at
+        # 5,000 instead of 14,000. The first read is not a resize — it restores
+        # the size the position was opened at.
+        if self.position.is_flat or not self._sized_from_control:
             q = c.get("qty")
             if isinstance(q, (int, float)) and q > 0 and q % self.lot_size == 0 \
                     and (q // self.lot_size) <= int(self.params.get("max_lots", 15)) \
@@ -207,6 +215,7 @@ class DNController:
             m = c.get("mtm_stop")
             if isinstance(m, (int, float)) and m > 0:
                 self.max_loss = abs(float(m))
+            self._sized_from_control = True
         if self.shadow:
             # size + max-loss track the live book so the comparison is like for
             # like, but arming and KILL are deliberately ignored — see __init__
