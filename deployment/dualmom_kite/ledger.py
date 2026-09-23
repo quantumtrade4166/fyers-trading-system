@@ -275,9 +275,9 @@ def own_cash(fills: list = None) -> dict:
     chg = sum((f.get("charges_est") or {}).get("total", 0.0) for f in fills)
     sell_days = {(f["symbol"], (f.get("exchange_time") or "")[:10]) for f in fills if f["side"] == "SELL"}
     dp = len(sell_days) * C.CHARGES_RATE_CARD.get("dp_per_sell_scrip_day", 0.0)
-    cash = C.CAPITAL_BASE - buys + sells - chg - dp
-    return {"cash": round(cash, 2), "buys": round(buys, 2), "sells": round(sells, 2),
-            "charges_est": round(chg + dp, 2), "dp_est": round(dp, 2)}
+    cash = C.contributed() - buys + sells - chg - dp
+    return {"cash": round(cash, 2), "contributed": C.contributed(), "buys": round(buys, 2),
+            "sells": round(sells, 2), "charges_est": round(chg + dp, 2), "dp_est": round(dp, 2)}
 
 
 def inception_date():
@@ -319,7 +319,7 @@ def _write_row(p: Path, row: dict):
 
 
 def _dd(nav, prior):
-    peak = max([C.CAPITAL_BASE] + [float(x) for x in prior] + [nav])
+    peak = max([C.contributed()] + [float(x) for x in prior] + [nav])
     return round((nav / peak - 1) * 100, 4) if peak > 0 else 0.0
 
 

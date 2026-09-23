@@ -102,7 +102,9 @@ def live(kite, use_cache: bool = True) -> dict:
     out = {
         "ok": True, "as_of": now.strftime("%Y-%m-%d %H:%M:%S"),
         "account": C.CLIENT_ACCOUNT, "ucc": "Zerodha", "broker": "kite",
-        "capital_base": C.CAPITAL_BASE, "inception": L.inception_date() or "not deployed",
+        "capital_base": C.contributed(), "capital_total": C.CAPITAL_BASE,
+        "capital_flows": C.CAPITAL_FLOWS,
+        "inception": L.inception_date() or "not deployed",
         "nav": round(nav, 2), "cash": round(cash, 2), "market_value": round(mv, 2),
         "cost_basis": round(cost, 2),
         "deployed_pct": round(mv / nav * 100, 3) if nav else 0.0,
@@ -114,8 +116,9 @@ def live(kite, use_cache: bool = True) -> dict:
         "cash_basis": "own ledger: capital - buys + sells - est. charges (shared account)",
         "day_pnl": round(day_pnl, 2),
         "day_pnl_pct": round(day_pnl / (nav - day_pnl) * 100, 3) if nav - day_pnl else 0.0,
-        "total_pnl": round(nav - C.CAPITAL_BASE, 2),
-        "total_return_pct": round((nav / C.CAPITAL_BASE - 1) * 100, 3),
+        "total_pnl": round(nav - C.contributed(), 2),
+        "total_return_pct": round((nav / C.contributed() - 1) * 100, 3),
+        "twr_return_pct": equity_series().get("twr_return_pct"),
         "positions": len(rows), "unpriced": [r["symbol"] for r in rows if not r["priced"]],
         "reconciliation": {"ok": not breaks and broker_err is None, "breaks": breaks,
                            "error": broker_err, "ledger_fills": own["fills"],
@@ -139,27 +142,56 @@ def snapshot_row(bk: dict, benchmark=None) -> dict:
 
 
 def equity_series() -> dict:
+    """NAV curve + TIME-WEIGHTED return and drawdown.
+
+    A deposit lifts NAV without the strategy earning anything, so the curve is
+    measured the way a fund is: each step's return is NAV_now / (NAV_then + money
+    added in between) - 1, chained into an index. Drawdown comes from that index,
+    never from raw NAV - otherwise adding Rs 20,000 would show as a +3.3% gain and
+    hide a real fall.
+    """
     pts = []
     inc = L.inception_date()
     if inc:
         t0 = IST.localize(datetime.strptime(inc + " 09:15:00", "%Y-%m-%d %H:%M:%S"))
-        pts.append({"t": int(t0.timestamp()), "nav": float(C.CAPITAL_BASE), "kind": "inception"})
+        pts.append({"t": int(t0.timestamp()), "date": inc, "nav": C.contributed(inc),
+                    "kind": "inception"})
     today = datetime.now(IST).strftime("%Y-%m-%d")
     for r in L.read_nav_daily():
         if r["date"] == today:
             continue
         t = IST.localize(datetime.strptime(f"{r['date']} {r.get('time') or '15:30:00'}",
                                            "%Y-%m-%d %H:%M:%S"))
-        pts.append({"t": int(t.timestamp()), "nav": float(r["nav"]), "kind": "eod"})
+        pts.append({"t": int(t.timestamp()), "date": r["date"], "nav": float(r["nav"]),
+                    "kind": "eod"})
     for r in L.read_intraday(today):
         t = IST.localize(datetime.strptime(f"{r['date']} {r['time']}", "%Y-%m-%d %H:%M:%S"))
-        pts.append({"t": int(t.timestamp()), "nav": float(r["nav"]), "kind": "intraday"})
+        pts.append({"t": int(t.timestamp()), "date": r["date"], "nav": float(r["nav"]),
+                    "kind": "intraday"})
     dedup = {p["t"]: p for p in sorted(pts, key=lambda p: p["t"])}
     pts = list(dedup.values())
-    peak, dd = 0.0, []
+
+    idx, peak_idx, dd, prev = 1.0, 1.0, [], None
+    deposits = []
     for p in pts:
-        peak = max(peak, p["nav"])
-        dd.append({"t": p["t"], "dd_pct": round((p["nav"] / peak - 1) * 100, 4) if peak else 0.0})
-    return {"equity": pts, "drawdown": dd,
+        added = 0.0
+        if prev is not None:
+            added = C.contributed(p["date"]) - C.contributed(prev["date"])
+            if added:
+                deposits.append({"t": p["t"], "date": p["date"], "amount": added})
+            # money arrives in the morning and is invested that day, so it counts
+            # in the BASE of the period, not as a gain at the end of it
+            base = prev["nav"] + added
+            if base > 0:
+                idx *= p["nav"] / base
+        p["index"] = round(idx, 6)
+        p["capital"] = C.contributed(p["date"])
+        p["deposit"] = added or None
+        peak_idx = max(peak_idx, idx)
+        dd.append({"t": p["t"], "dd_pct": round((idx / peak_idx - 1) * 100, 4)})
+        prev = p
+    return {"equity": pts, "drawdown": dd, "deposits": deposits,
             "max_drawdown_pct": min((d["dd_pct"] for d in dd), default=0.0),
-            "peak_nav": peak, "points": len(pts)}
+            "twr_return_pct": round((idx - 1) * 100, 3),
+            "peak_nav": max((p["nav"] for p in pts), default=0.0),
+            "points": len(pts)}

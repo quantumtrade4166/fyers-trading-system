@@ -8,15 +8,14 @@
 # Fixes carried: order throttle + retry on Kite's per-second limit, circuit-aware
 # limits, cash (not collateral) check.
 #
-#  1. copies the code to the VPS (also carries today's Kotak fixes)
+#  1. copies today's code to the VPS
 #  2. runs the tests ON THE VPS - stops if any fail
-#  3. fixes the DualMom Windows task (no 72h kill, 5-min watchdog), adds Kite to
-#     the Google-Drive backup, restarts ONLY the DualMom service
-#  4. checks Kotak is healthy
-#  5. PREVIEWS the Kite basket for Rs 6,00,000 - nothing sent
+#  3. task + Drive-backup upkeep, restarts ONLY the DualMom service
+#  4. refuses to go on unless the NEW code is live (Rs 6,20,000 capital)
+#  5. PREVIEWS the buy-only top-up - nothing sent
 #  6. asks you to type DEPLOY. Anything else = nothing is sent.
 #  7. places the orders, then prints every entry price and saves them to
-#     logs\dualmom_kite_entries_<date>.csv
+#     logs\dualmom_kite_entries_<date>_<time>.csv
 #
 # Strangle, DN engine and the dashboard process are not touched. DualMom never
 # logs in to Kite - it reads the token the VPS already made this morning.
@@ -121,10 +120,10 @@ $up = $false
 for ($i = 0; $i -lt 12; $i++) {
     Start-Sleep -Seconds 10
     $h = DM GET "/health" "" 20
-    if ($h.ok -and (($h.jobs | ForEach-Object { $_.id }) -contains 'dmk_rebalance')) { $up = $true; break }
+    if ($h.ok -and (($h.jobs | ForEach-Object { $_.id }) -contains 'dmk_pending_circuit')) { $up = $true; break }
 }
-if (-not $up) { Stop-Here "DualMom service did not come back with the Kite jobs" }
-Write-Host "   service up - Kotak + Kite jobs scheduled"
+if (-not $up) { Stop-Here "DualMom service did not come back with today's code (dmk_pending_circuit job missing)" }
+Write-Host "   service up - today's code loaded (circuit + top-up jobs present)"
 
 Write-Host "`n5. Kotak check..."
 $kb = DM GET "/api/dualmom/live/book?fresh=1" "" 150
@@ -138,6 +137,7 @@ $st = DM GET "/api/dualmom/live/kite/status" "" 60
 if (-not $st.broker.connected) { Stop-Here "Kite not connected: $($st.broker.error)" }
 Write-Host "   Kite connected (today's token, no login)"
 Write-Host ("   DualMom on Kite now: {0} positions, own cash Rs {1:N0}, capital Rs {2:N0}" -f @($st.holdings).Count, $st.cash, $st.config.capital_base)
+if ([double]$st.config.capital_base -ne 620000) { Stop-Here ("the service is not on the Rs 6,20,000 capital (reads " + $st.config.capital_base + ") - the new code did not load") }
 
 Write-Host "`n7. PREVIEW - BUY-ONLY top-up (nothing is sent)..."
 $pl = DM POST "/api/dualmom/live/kite/plan" '{"top_up": true}' 300

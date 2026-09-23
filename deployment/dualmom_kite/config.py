@@ -30,9 +30,31 @@ DRY_RUN = False
 # ── account ──────────────────────────────────────────────────────────────────
 CLIENT_ACCOUNT = "Kite Main"
 BROKER         = "zerodha"
-# 6.0L deployed 22-Sep 14:35 (33/37 filled, 5.37L); raised to 6.2L the same day by
-# the user ("under 6 lakhs 20 thousand") and completed with a BUY-ONLY top-up.
-CAPITAL_BASE   = 620_000            # allocated to DualMom, from the account's cash
+# Capital is a list of DATED FLOWS, not one number. Adding money is not
+# performance: NAV jumps by the deposit, and a curve that ignores that shows a
+# fake gain and a fake drawdown. Returns are time-weighted across flows
+# (book.equity_series), so the curve measures the STRATEGY, not the funding.
+#   22-Sep  Rs 6,00,000  first deployment (33/37 filled, Rs 5.37L)
+#   23-Sep  Rs   20,000  raised to Rs 6.2L by the user, buy-only top-up
+CAPITAL_FLOWS = [
+    {"date": "2026-09-22", "amount": 600_000, "note": "initial deployment"},
+    {"date": "2026-09-23", "amount": 20_000, "note": "top-up to Rs 6.2L"},
+]
+
+
+def contributed(as_of=None) -> float:
+    """Money put in on or before `as_of` (date or YYYY-MM-DD; default today)."""
+    from datetime import date as _d
+    if as_of is None:
+        import pytz
+        from datetime import datetime as _dt
+        as_of = _dt.now(pytz.timezone("Asia/Kolkata")).date()
+    if isinstance(as_of, _d):
+        as_of = as_of.isoformat()
+    return float(sum(f["amount"] for f in CAPITAL_FLOWS if f["date"] <= str(as_of)))
+
+
+CAPITAL_BASE = float(sum(f["amount"] for f in CAPITAL_FLOWS))   # total contributed
 INCEPTION_DATE = None               # None = date of the first DualMom fill
 
 # Held back from sizing. 0 by user decision (2026-09-21): the full Rs 6L goes into

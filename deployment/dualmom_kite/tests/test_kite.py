@@ -358,6 +358,36 @@ check("circuit released -> bought at the fixed qty, list cleared",
       r7["filled"] == 1 and E.load_pending_circuit() == []
       and L.own_book()["positions"]["HFCL"]["qty"] == held_before + saved[0]["qty"], r7)
 
+print("\n=== 13. capital flows: a deposit is not performance ===")
+_flows = C.CAPITAL_FLOWS
+C.CAPITAL_FLOWS = [{"date": "2026-09-17", "amount": 600_000, "note": "initial"},
+                   {"date": "2026-09-18", "amount": 20_000, "note": "top-up"}]
+check("contributed grows on the deposit date", C.contributed("2026-09-17") == 600000.0
+      and C.contributed("2026-09-18") == 620000.0 and C.contributed("2026-09-16") == 0.0)
+shutil.rmtree(L.ROOT, ignore_errors=True)
+L.ROOT.mkdir(parents=True, exist_ok=True)
+(L.ROOT / "intraday").mkdir(exist_ok=True)
+L._append("fills.jsonl", [{"type": "fill", "key": "x1", "symbol": "RELIANCE", "side": "BUY",
+                           "qty": 1, "price": 100.0, "notional": 100.0, "trading_symbol": "RELIANCE",
+                           "exchange_time": "2026-09-17T10:00:00", "charges_est": {"total": 0.0}}])
+check("own cash uses money contributed SO FAR", L.own_cash()["cash"] == C.contributed() - 100.0)
+import csv as _csv
+with (L.ROOT / "nav_daily.csv").open("w", newline="", encoding="utf-8") as f:
+    w = _csv.DictWriter(f, fieldnames=L.NAV_FIELDS, extrasaction="ignore")
+    w.writeheader()
+    # 17-Sep: 6,00,000 -> 5,94,000 (-1%).  18-Sep: +20,000 deposit, then -1% again
+    w.writerow({"date": "2026-09-17", "time": "15:30:00", "nav": 594000})
+    w.writerow({"date": "2026-09-18", "time": "15:30:00", "nav": 607860})
+B._cache["value"] = None
+ser = B.equity_series()
+check("deposit recorded on the curve", [d["amount"] for d in ser["deposits"]] == [20000.0], ser["deposits"])
+check("TWR ignores the deposit (-1% then -1% = -1.99%)", abs(ser["twr_return_pct"] - (-1.99)) < 0.01, ser["twr_return_pct"])
+check("raw NAV would have said +1.31% - not used", abs((607860 / 600000 - 1) * 100 - 1.31) < 0.01)
+check("drawdown measured on the index, not on NAV",
+      abs(ser["max_drawdown_pct"] - (-1.99)) < 0.01, ser["max_drawdown_pct"])
+C.CAPITAL_FLOWS = _flows
+shutil.rmtree(L.ROOT, ignore_errors=True)
+
 shutil.rmtree(TMP, ignore_errors=True)
 print(f"\n  {len(PASS)} passed, {len(FAIL)} failed")
 sys.exit(1 if FAIL else 0)

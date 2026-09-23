@@ -4294,7 +4294,11 @@ function dmRenderBook(bk) {
     ? `after est. charges not yet debited: ${dmFmtR(bk.nav_after_pending_charges)}`
     : `market value + cash`);
   dmSet('dm-k-tot', dmRS(bk.total_pnl), dmClsV(bk.total_pnl));
-  dmSet('dm-k-tot-sub', `${dmPctS(bk.total_return_pct)} vs ${dmFmtL(bk.capital_base)} capital`);
+  // On a shared account money can be ADDED later. A deposit is not performance,
+  // so the strategy's own (time-weighted) return is shown next to the rupee P&L.
+  dmSet('dm-k-tot-sub', `${dmPctS(bk.total_return_pct)} vs ${dmFmtL(bk.capital_base)} capital`
+    + (bk.twr_return_pct != null ? ` · strategy ${dmPctS(bk.twr_return_pct)}` : '')
+    + (bk.capital_flows && bk.capital_flows.length > 1 ? ` · ${bk.capital_flows.length} deposits` : ''));
   dmSet('dm-k-day', dmRS(bk.day_pnl), dmClsV(bk.day_pnl));
   dmSet('dm-k-day-sub', dmPctS(bk.day_pnl_pct) + ' today');
   dmSet('dm-k-mtm', dmRS(bk.unrealized), dmClsV(bk.unrealized));
@@ -4411,8 +4415,10 @@ async function dmEquityLoad() {
       lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: true, title: 'capital' });
     dmLEq.timeScale().fitContent(); dmLDd.timeScale().fitContent();
     const last = eq.length ? eq[eq.length - 1].value : null;
-    dmSet('dm-eq-note', `${s.points} points · peak ${dmFmtR(s.peak_nav)}` + (last ? ` · now ${dmFmtR(last)}` : ''));
-    dmSet('dm-dd-note', `max ${Number(s.max_drawdown_pct).toFixed(2)}%`);
+    dmSet('dm-eq-note', `${s.points} points · peak ${dmFmtR(s.peak_nav)}` + (last ? ` · now ${dmFmtR(last)}` : '')
+      + (s.deposits && s.deposits.length ? ` · ${s.deposits.length} deposit(s), excluded from the return` : ''));
+    dmSet('dm-dd-note', `max ${Number(s.max_drawdown_pct).toFixed(2)}%`
+      + (s.twr_return_pct != null ? ` · strategy return ${dmPctS(s.twr_return_pct)}` : ''));
     dmSet('dm-k-dd', Number(s.max_drawdown_pct).toFixed(2) + '%', dmClsV(s.max_drawdown_pct));
     dmSet('dm-k-dd-sub', `peak NAV ${dmFmtR(s.peak_nav)}`);
   } catch (e) {
