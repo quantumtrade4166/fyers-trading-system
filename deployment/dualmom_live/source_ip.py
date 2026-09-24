@@ -8,12 +8,33 @@ TIMEOUTS — always on
     requests.Session.request to put a (connect, read) bound on every
     *.kotaksecurities.com call. This half of the module is not optional.
 
-SOURCE-IP PIN — off by default, and never fatal
-    The original design pinned Kotak Rohit (UCC 15P56) to a secondary address,
-    103.49.131.3, on the belief that Kotak binds a whitelisted IP to ONE client and
-    that the VPS's own 144.79.166.103 was already taken by the strangle's account.
+TWO KOTAK ACCOUNTS SHARE THIS VPS — read this before touching the pin
+    Kotak Rohit   UCC 15P5***  KOTAK_DM_*  DualMom, this package, its own service
+    "Kotak bhaiya" UCC 15S0***  KOTAK_*     the Vwap Strangle mirror leg
 
-    On 2026-09-24 that turned out to be wrong twice over:
+    They are different accounts with different consumer keys, so Kotak's one-session
+    limit applies to each separately and neither can end the other's session.
+
+    The strangle's live/kotak_auth.py has never pinned anything — it has always gone
+    out of the VPS's own 144.79.166.103. Since 2026-09-24 DualMom does too, so BOTH
+    accounts now log in from that one address. That is fine as observed (each API app
+    has its own registered IP list), but it is the first thing to check if Kotak ever
+    starts refusing one of them: the answer is to register the IP for that account,
+    NOT to resurrect a source-IP pin, which cannot work from this VPS (see below).
+
+SOURCE-IP PIN — off by default, and never fatal
+    The original design pinned Kotak Rohit to a secondary address, 103.49.131.3, on
+    the belief that Kotak binds a whitelisted IP to ONE client and that 144.79.166.103
+    was already spoken for by the strangle's account.
+
+    That address is a secondary IP registered WITH KOTAK for the DualMom account —
+    103.49.131.0/24 is an Indian "Private Customer" range, not the VPS provider's
+    (144.79.166.0/24, NEXTA WEB). Registering an IP with a broker means the broker
+    ACCEPTS calls arriving from it; it does not give this machine the right to send
+    from it. It worked at go-live on 2026-09-15 (the 1-share IDEA test filled through
+    it) and had stopped routing by 2026-09-24.
+
+    On 2026-09-24 the design turned out to be wrong twice over:
 
       * 103.49.131.3 is a /32 manually added to the NIC but NOT part of the VPS's
         144.79.166.0/24 network. Nothing routes it. Binding to it and connecting to
