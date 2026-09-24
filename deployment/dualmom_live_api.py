@@ -47,19 +47,31 @@ def _get_client(reconnect: bool = False, validate: bool = False):
     dualmom_service used to log in on their own, so a 15:25 stop check could kill
     the session the dashboard was using (or vice versa). Everything in the service
     now shares this client. validate=True makes a cheap limits() call first and
-    logs in again if the session has expired.
+    logs in again if the session has truly expired.
+
+    Note: a transient network timeout on the validate probe is NOT treated as
+    evidence of an expired session. On 2026-09-23 every dashboard refresh was
+    re-logging-in because mis.kotaksecurities.com was slow; the timeout
+    surfaced as ApiException(ConnectTimeout) to the browser and blanked all
+    numbers. Reconnects are now reserved for an explicit session-expired
+    answer from the broker, or an explicit reconnect=True caller.
     """
+    _CLIENT_RECONNECTABLE = {"900901", "401", "403"}  # explicit session-expired codes only
     global _client
     from deployment.dualmom_live import kotak_auth_dm as A
     with _client_lock:
         if _client is not None and validate and not reconnect:
             try:
                 r = _client.limits()
-                bad = isinstance(r, dict) and (r.get("error") or r.get("Error Message")
-                                               or str(r.get("stCode", "")) in ("900901", "401"))
-                if bad:
-                    reconnect = True
             except Exception:
+                # Network blip — keep the existing session rather than logging
+                # in on top of it (which would kill any other consumer).
+                return _client
+            bad = isinstance(r, dict) and (
+                r.get("error") or r.get("Error Message")
+                or str(r.get("stCode", "")) in _CLIENT_RECONNECTABLE
+            )
+            if bad:
                 reconnect = True
         if _client is None or reconnect:
             _client = A.login(verbose=False)
@@ -174,6 +186,12 @@ async def status():
             "can_deploy": not blocked,
             "deploy_blocked_by": blocked,
         }
+        try:
+            from deployment.dualmom_live import source_ip
+            out["source_ip"] = source_ip.status()
+        except Exception as e:
+            out["source_ip"] = {"error": _etext(e)}
+
         try:
             client = _get_client()
             out["broker"] = {"connected": True}
@@ -359,41 +377,71 @@ async def deploy(payload: dict = Body(default={})):
 
 @router.get("/book")
 async def book(fresh: bool = False):
-    """Live client book from the broker, cross-checked against the ledger."""
+    """Live client book from the broker, cross-checked against the ledger.
+
+    Display-only endpoint — never validates the session. Session maintenance is the
+    service's job (dm_session_keepalive: once ~15s after startup, then every 5 min),
+    so a request normally finds a session already open rather than paying for a login.
+
+    This endpoint never returns "no data" while a book has ever been built. In order:
+    the 20s in-memory cache, a fresh broker fetch, then the last good book from disk,
+    marked stale with its age. Only an account that has never once been read
+    successfully can produce ok=False.
+    """
     def work():
+        from deployment.dualmom_live import book as B
         try:
-            from deployment.dualmom_live import book as B
-            return B.live(_get_client(validate=True), use_cache=not fresh)
+            client = _get_client(validate=False)
         except Exception as e:
-            return {"ok": False, "error": f"{_etext(e)}"}
+            # The login itself failed (broker down, session expired, no session yet
+            # after a restart). Fall back to the last good book from disk so the
+            # page shows real numbers with a staleness marker instead of "—".
+            fallback = B.stale(B.last_good(), _etext(e))
+            return fallback or {"ok": False, "error": _etext(e)}
+        try:
+            return B.live(client, use_cache=not fresh)
+        except Exception as e:
+            fallback = B.stale(B.last_good(), _etext(e))
+            return fallback or {"ok": False, "error": _etext(e)}
     return await _run(work)
 
 
 @router.get("/equity")
 async def equity():
-    """NAV curve + drawdown since inception, with the live NAV as the last point."""
+    """NAV curve + drawdown since inception, with the live NAV as the last point.
+
+    Display-only - never validates the session, and a fresh book fetch is best
+    effort. When the broker is down the in-memory series (last EOD snapshot +
+    whatever intraday points we have) is still returned so the curve and stats
+    do not go blank.
+    """
     def work():
+        from deployment.dualmom_live import book as B
+        ser = B.equity_series()
         try:
-            from deployment.dualmom_live import book as B
-            ser = B.equity_series()
             try:
-                bk = B.live(_get_client(validate=True))
-                if bk.get("ok"):
-                    import pytz
-                    from datetime import datetime as _dt
-                    t = int(pytz.timezone("Asia/Kolkata").localize(
-                        _dt.strptime(bk["as_of"], "%Y-%m-%d %H:%M:%S")).timestamp())
-                    if not ser["equity"] or t > ser["equity"][-1]["t"]:
-                        ser["equity"].append({"t": t, "nav": bk["nav"], "kind": "live"})
-                        peak = max(p["nav"] for p in ser["equity"])
-                        ser["drawdown"].append({"t": t, "dd_pct": round((bk["nav"] / peak - 1) * 100, 4)})
-                        ser["max_drawdown_pct"] = min(d["dd_pct"] for d in ser["drawdown"])
-                        ser["peak_nav"] = peak
+                client = _get_client(validate=False)
+                bk = B.live(client, use_cache=True)
             except Exception as e:
-                ser["live_error"] = f"{_etext(e)}"
-            return {"ok": True, **ser}
+                # Broker unreachable: still extend the curve with the last book we
+                # have, so the NAV line does not stop short of where it really is.
+                ser["live_error"] = _etext(e)
+                bk = B.last_good()
+                ser["live_from_snapshot"] = bool(bk)
+            if bk.get("ok"):
+                import pytz
+                from datetime import datetime as _dt
+                t = int(pytz.timezone("Asia/Kolkata").localize(
+                    _dt.strptime(bk["as_of"], "%Y-%m-%d %H:%M:%S")).timestamp())
+                if not ser["equity"] or t > ser["equity"][-1]["t"]:
+                    ser["equity"].append({"t": t, "nav": bk["nav"], "kind": "live"})
+                    peak = max(p["nav"] for p in ser["equity"])
+                    ser["drawdown"].append({"t": t, "dd_pct": round((bk["nav"] / peak - 1) * 100, 4)})
+                    ser["max_drawdown_pct"] = min(d["dd_pct"] for d in ser["drawdown"])
+                    ser["peak_nav"] = peak
         except Exception as e:
-            return {"ok": False, "error": f"{_etext(e)}"}
+            ser["live_error"] = _etext(e)
+        return {"ok": True, **ser}
     return await _run(work)
 
 

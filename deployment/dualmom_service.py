@@ -91,6 +91,50 @@ def _client():
     return _get_client(validate=True)
 
 
+_session = {"ok": None, "since": None, "error": None, "source_ip": None}
+
+
+def _job_session_keepalive():
+    """Every 5 min (and ~15s after startup) — keep a usable Kotak session in hand.
+
+    The dashboard used to be the thing that discovered a dead session: the first
+    /book after a restart triggered the login, and if Kotak was slow that request
+    blocked for the full connect timeout and the page rendered every figure as "—".
+
+    Establishing the session in the background instead means a dashboard request
+    almost always finds one already open, and a genuinely broken broker shows up
+    here (in the log, and in /status) rather than as a blank page. Read-only:
+    it logs in and warms the book cache, and places nothing.
+    """
+    try:
+        from deployment.dualmom_live import book as B
+        from deployment.dualmom_live import source_ip
+        from deployment.dualmom_live_api import _get_client
+
+        client = _get_client(validate=True)
+        was = _session["ok"]
+        _session.update(ok=True, error=None, source_ip=source_ip.installed_ip() or "default",
+                        since=datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S"))
+        if was is not True:
+            _log(f"Kotak session OK (source IP {_session['source_ip']})")
+
+        # Warm the book so the snapshot on disk stays close to current even when
+        # nobody is looking at the dashboard.
+        try:
+            B.live(client, use_cache=True)
+        except Exception as e:
+            _log(f"session keepalive: book refresh failed: {_etext(e)}")
+    except Exception as e:
+        first = _session["ok"] is not False
+        _session.update(ok=False, error=_etext(e))
+        if first:
+            _log(f"Kotak session DOWN: {_etext(e)}")
+
+
+def session_state() -> dict:
+    return dict(_session)
+
+
 def _job_data_refresh():
     """16:10 daily — bring the Nifty 500 parquets up to today's close.
 
@@ -483,6 +527,16 @@ def _build_scheduler() -> BackgroundScheduler:
     s = BackgroundScheduler(timezone=IST)
     s.add_job(_job_heartbeat, IntervalTrigger(seconds=60, timezone=IST),
               id="dm_heartbeat", coalesce=True, max_instances=1)
+    # Keep a live Kotak session in hand at all times, so the dashboard never has to
+    # wait on a login. Runs all day, not just market hours: the book is worth
+    # showing correctly at 22:00 too. The startup run is what makes a restart
+    # invisible to whoever opens the page a moment later.
+    from datetime import timedelta as _td0
+    s.add_job(_job_session_keepalive, IntervalTrigger(minutes=5, timezone=IST),
+              id="dm_session_keepalive", coalesce=True, max_instances=1)
+    s.add_job(_job_session_keepalive, "date",
+              run_date=datetime.now(IST) + _td0(seconds=15),
+              id="dm_session_startup", misfire_grace_time=600)
     # 09:20 - first session of each month; retried on later mornings if closed.
     s.add_job(_job_monthly_rebalance, CronTrigger(
         day_of_week="mon-fri", hour=9, minute=20, timezone=IST),

@@ -1,36 +1,59 @@
 """
-Pin Kotak Rohit's API traffic to its own whitelisted source IP.
+Bound every Kotak call, and (optionally) pin it to a specific source IP.
 
-WHY
-    Kotak binds a whitelisted IP to ONE client (UCC). The VPS's main IP,
-    144.79.166.103, already belongs to the strangle's Kotak account, so Kotak Rohit
-    (UCC 15P56) was given a secondary IP, 103.49.131.3. It is configured on the NIC
-    with SkipAsSource=True, so Windows never uses it on its own — every connection
-    leaves from 144.79.166.103 unless a program explicitly binds to .3. This module
-    does that binding.
+TIMEOUTS — always on
+    neo_api_client calls requests with no timeout at all. On 2026-09-21 a limits()
+    call sat in the TLS handshake indefinitely and every dashboard request queued
+    behind the shared-session lock. install() therefore always wraps
+    requests.Session.request to put a (connect, read) bound on every
+    *.kotaksecurities.com call. This half of the module is not optional.
 
-HOW
-    neo_api_client makes plain module-level requests.get/post calls (no Session),
-    so there is no per-client object to configure. Instead we wrap urllib3's
-    create_connection — the single point every requests call goes through — and
-    add source_address ONLY when the destination host is *.kotaksecurities.com.
+SOURCE-IP PIN — off by default, and never fatal
+    The original design pinned Kotak Rohit (UCC 15P56) to a secondary address,
+    103.49.131.3, on the belief that Kotak binds a whitelisted IP to ONE client and
+    that the VPS's own 144.79.166.103 was already taken by the strangle's account.
+
+    On 2026-09-24 that turned out to be wrong twice over:
+
+      * 103.49.131.3 is a /32 manually added to the NIC but NOT part of the VPS's
+        144.79.166.0/24 network. Nothing routes it. Binding to it and connecting to
+        Kotak timed out on 5 attempts out of 5 (10s each), while the default IP
+        connected in 0.03s. Because bind() still succeeds for an address that is on
+        a NIC, the old _ip_is_local() check passed and the pin was installed anyway
+        — so every login hung for 10s and the dashboard blanked with
+        ApiException: ConnectTimeout.
+
+      * A full totp_login + totp_validate from the DEFAULT IP succeeded in ~1s and
+        holdings() returned all 40 live positions. 144.79.166.103 is whitelisted for
+        UCC 15P56, so the pin was never needed.
+
+    A pin is now only installed if it DEMONSTRABLY WORKS: the candidate address must
+    both be local and complete a TCP connection to Kotak from that address. If it
+    cannot, the pin is skipped with a loud warning and traffic leaves from the
+    default IP, which is what the account accepts. A dead pin must degrade to a
+    working login, never to a total outage.
+
+    Set KOTAK_DM_SOURCE_IP to an address to request a pin; leave it unset (the
+    default), or "none"/"auto"/"off", for no pin.
+
+HOW THE PIN WORKS
+    neo_api_client makes plain module-level requests.get/post calls (no Session), so
+    there is no per-client object to configure. Instead we wrap urllib3's
+    create_connection — the single point every requests call goes through — and add
+    source_address ONLY when the destination host is *.kotaksecurities.com.
 
     Everything else in the same process is untouched on purpose:
-      * the Fyers data refresh (api-t1.fyers.in) keeps leaving from 144.79.166.103
+      * the Fyers data refresh (api-t1.fyers.in) keeps leaving from the default IP
       * localhost calls (the dashboard proxy -> :8010) must never be bound to a
         public address, or they fail outright
 
-SCOPE — this is a PROCESS-wide patch
+SCOPE — the pin is a PROCESS-wide patch
     If this process also ran the strangle's Kotak client, that client talks to the
     same *.kotaksecurities.com hosts and would get pinned too — sending the
-    strangle's orders from Kotak Rohit's IP. install() therefore REFUSES to run in
-    any process that has the strangle's Kotak modules loaded. Today only the
-    DualMom service (and scripts run by hand) log in as Kotak Rohit, and the
-    dashboard reaches DualMom through a proxy, so they never share a process.
-
-FAIL CLOSED
-    If 103.49.131.3 is not bound on this machine, install() raises instead of
-    quietly letting Kotak Rohit log in from the strangle's IP.
+    strangle's orders from Kotak Rohit's IP. A pin therefore REFUSES to install in
+    any process that has the strangle's Kotak modules loaded. Today only the DualMom
+    service (and scripts run by hand) log in as Kotak Rohit, and the dashboard
+    reaches DualMom through a proxy, so they never share a process.
 """
 
 import os
@@ -38,9 +61,19 @@ import socket
 import sys
 import threading
 
-SOURCE_IP = os.getenv("KOTAK_DM_SOURCE_IP", "103.49.131.3").strip()
+# No pin by default: 144.79.166.103 is whitelisted for UCC 15P56 (proven by a full
+# login + 40-row holdings() on 2026-09-24). Set KOTAK_DM_SOURCE_IP to request one.
+SOURCE_IP = os.getenv("KOTAK_DM_SOURCE_IP", "").strip()
+_NO_PIN = {"", "none", "auto", "off", "default", "0"}
 PIN_SUFFIX = "kotaksecurities.com"
 KOTAK_TIMEOUT = (10, 30)   # (connect, read) seconds for every Kotak HTTP call
+
+# How long to let the pre-flight reachability probe run. It must be shorter than the
+# connect timeout above, so a dead pin is detected once at startup instead of costing
+# every later call a full 10s hang.
+PROBE_TIMEOUT = 4.0
+PROBE_HOST = "mis.kotaksecurities.com"
+PROBE_PORT = 443
 
 # modules that belong to the STRANGLE's Kotak leg — never share a process with them
 _STRANGLE_MARKERS = ("live.kotak_auth", "kotak_executor", "kotak_controller",
@@ -48,6 +81,8 @@ _STRANGLE_MARKERS = ("live.kotak_auth", "kotak_executor", "kotak_controller",
 
 _lock = threading.Lock()
 _installed_ip = None
+_installed = False  # the timeout wrapper is in place (with or without a pin)
+_pin_skipped = None  # why a requested pin was not installed, for /status
 _seen = []          # (host, local_ip) of recent pinned connections, for verification
 
 
@@ -63,6 +98,11 @@ def _strangle_loaded() -> list:
 
 
 def _ip_is_local(ip: str) -> bool:
+    """True if `ip` is assigned to a NIC on this machine.
+
+    NOT proof that anything routes FROM it — 103.49.131.3 passed this check for days
+    while every connection out of it timed out. Always pair it with _pin_reaches().
+    """
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         s.bind((ip, 0))
@@ -73,17 +113,120 @@ def _ip_is_local(ip: str) -> bool:
         s.close()
 
 
+def _pin_reaches_kotak(ip: str) -> tuple:
+    """Can we actually open a TCP connection to Kotak FROM `ip`? -> (ok, detail).
+
+    This is the check the old fail-closed logic was missing. An address can sit on
+    the NIC and still be unroutable: if it is not part of a network this host is
+    allowed to source from, the SYN is dropped upstream (or the reply is routed to
+    whoever really owns the address) and the connect hangs to its full timeout.
+    """
+    try:
+        infos = socket.getaddrinfo(PROBE_HOST, PROBE_PORT, socket.AF_INET, socket.SOCK_STREAM)
+    except OSError as e:
+        return False, f"cannot resolve {PROBE_HOST}: {e}"
+    if not infos:
+        return False, f"no A record for {PROBE_HOST}"
+
+    dest = infos[0][4]
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(PROBE_TIMEOUT)
+    try:
+        s.bind((ip, 0))
+    except OSError as e:
+        s.close()
+        return False, f"cannot bind to {ip}: {e}"
+    try:
+        s.connect(dest)
+        return True, f"connected to {dest[0]}:{dest[1]} from {ip}"
+    except socket.timeout:
+        return False, (f"TCP connect to {dest[0]}:{dest[1]} from {ip} timed out after "
+                       f"{PROBE_TIMEOUT:g}s - the address is on a NIC but nothing routes it")
+    except OSError as e:
+        return False, f"TCP connect to {dest[0]}:{dest[1]} from {ip} failed: {e}"
+    finally:
+        s.close()
+
+
+def _install_timeouts():
+    """Bound every Kotak HTTP call. Idempotent; independent of any pin."""
+    import requests.sessions as _rs
+    if getattr(_rs.Session.request, "_dualmom_bounded", False):
+        return
+    _orig_request = _rs.Session.request
+
+    def _bounded_request(self, method, url, *a, **kw):
+        if kw.get("timeout") is None and PIN_SUFFIX in str(url).lower():
+            kw["timeout"] = KOTAK_TIMEOUT
+        return _orig_request(self, method, url, *a, **kw)
+
+    _bounded_request._dualmom_bounded = True
+    _rs.Session.request = _bounded_request
+
+
+def _install_pin(ip: str):
+    """Route *.kotaksecurities.com out of `ip`. Caller has already verified it."""
+    import urllib3.util.connection as u3c
+    original = u3c.create_connection
+
+    def pinned_create_connection(address, *args, **kwargs):
+        host = address[0] if isinstance(address, (tuple, list)) else None
+        if not _host_is_kotak(host):
+            return original(address, *args, **kwargs)
+        # source_address is the 3rd positional arg in urllib3 2.x
+        if len(args) >= 2:
+            args = list(args)
+            args[1] = (ip, 0)
+            args = tuple(args)
+        else:
+            kwargs["source_address"] = (ip, 0)
+        sock = original(address, *args, **kwargs)
+        try:
+            local = sock.getsockname()[0]
+            _seen.append((host, local))
+            del _seen[:-50]
+            if local != ip:
+                sock.close()
+                raise OSError(f"Kotak connection to {host} left from {local}, "
+                              f"not the pinned {ip}")
+        except OSError:
+            raise
+        except Exception:
+            pass
+        return sock
+
+    pinned_create_connection._dualmom_pinned = True
+    u3c.create_connection = pinned_create_connection
+
+
 def install(ip: str = None) -> str:
-    """Pin *.kotaksecurities.com connections in THIS process to `ip`. Idempotent."""
-    global _installed_ip
-    ip = (ip or SOURCE_IP).strip()
+    """Bound every Kotak call, and pin the source IP if one is asked for AND works.
+
+    Returns the address Kotak traffic will leave from: the pinned IP, or "default"
+    when no pin is in effect. Never raises for an unreachable pin — a dead pin
+    degrades to the default IP (which the account accepts), because the alternative
+    is a total outage. Idempotent.
+    """
+    global _installed_ip, _installed, _pin_skipped
+    ip = (ip if ip is not None else SOURCE_IP).strip()
+    want_pin = ip.lower() not in _NO_PIN
+
     with _lock:
+        _install_timeouts()
+
+        if not want_pin:
+            _installed = True
+            return _installed_ip or "default"
+
         if _installed_ip == ip:
             return ip
         if _installed_ip is not None:
             raise RuntimeError(f"Kotak source IP already pinned to {_installed_ip}; "
                                f"refusing to re-pin to {ip}")
 
+        # A pin is process-wide, so it must never be installed alongside the
+        # strangle's Kotak client - that would send its orders from the wrong IP.
+        # This one still fails hard: it is a correctness risk, not a reachability one.
         clash = _strangle_loaded()
         if clash:
             raise RuntimeError(
@@ -93,61 +236,42 @@ def install(ip: str = None) -> str:
                 "IP. Run DualMom in its own service.")
 
         if not _ip_is_local(ip):
-            raise RuntimeError(
-                f"Kotak Rohit's source IP {ip} is not configured on this machine. "
-                "Refusing to log in from the default IP, which is whitelisted for the "
-                "strangle's account.")
+            _pin_skipped = f"{ip} is not configured on this machine"
+            _installed = True
+            return "default"
 
-        import urllib3.util.connection as u3c
-        original = u3c.create_connection
+        ok, detail = _pin_reaches_kotak(ip)
+        if not ok:
+            # The failure mode this module exists to prevent is silent breakage, so
+            # say it loudly - but keep DualMom working from the default IP.
+            _pin_skipped = detail
+            print(f"  [dualmom] WARNING: source-IP pin {ip} SKIPPED - {detail}. "
+                  f"Kotak traffic will leave from the default IP instead.", flush=True)
+            _installed = True
+            return "default"
 
-        def pinned_create_connection(address, *args, **kwargs):
-            host = address[0] if isinstance(address, (tuple, list)) else None
-            if not _host_is_kotak(host):
-                return original(address, *args, **kwargs)
-            # source_address is the 3rd positional arg in urllib3 2.x
-            if len(args) >= 2:
-                args = list(args)
-                args[1] = (ip, 0)
-                args = tuple(args)
-            else:
-                kwargs["source_address"] = (ip, 0)
-            sock = original(address, *args, **kwargs)
-            try:
-                local = sock.getsockname()[0]
-                _seen.append((host, local))
-                del _seen[:-50]
-                if local != ip:
-                    sock.close()
-                    raise OSError(f"Kotak connection to {host} left from {local}, "
-                                  f"not the pinned {ip}")
-            except OSError:
-                raise
-            except Exception:
-                pass
-            return sock
-
-        pinned_create_connection._dualmom_pinned = True
-        u3c.create_connection = pinned_create_connection
-
-        # The SDK calls requests with no timeout. On 2026-09-21 a limits() call sat
-        # in the TLS handshake indefinitely and every dashboard request queued
-        # behind the shared-session lock. Bound every Kotak call.
-        import requests.sessions as _rs
-        _orig_request = _rs.Session.request
-
-        def _bounded_request(self, method, url, *a, **kw):
-            if kw.get("timeout") is None and PIN_SUFFIX in str(url).lower():
-                kw["timeout"] = KOTAK_TIMEOUT
-            return _orig_request(self, method, url, *a, **kw)
-
-        _rs.Session.request = _bounded_request
+        _install_pin(ip)
         _installed_ip = ip
+        _pin_skipped = None
+        _installed = True
         return ip
 
 
 def installed_ip():
     return _installed_ip
+
+
+def status() -> dict:
+    """What the pin is actually doing — surfaced by /status so a silent
+    fallback to the default IP is visible instead of being guessed at."""
+    return {
+        "requested": SOURCE_IP or None,
+        "pinned": _installed_ip,
+        "effective": _installed_ip or "default",
+        "timeouts_installed": _installed,
+        "pin_skipped_because": _pin_skipped,
+        "recent": list(_seen[-5:]),
+    }
 
 
 def recent_connections() -> list:

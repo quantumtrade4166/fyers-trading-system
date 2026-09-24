@@ -19,8 +19,10 @@ SOURCES
 Nothing here places an order.
 """
 
+import json
 import time
 from datetime import datetime
+from pathlib import Path
 
 import pytz
 
@@ -32,6 +34,93 @@ IST = pytz.timezone("Asia/Kolkata")
 _SERIES = ("-EQ", "-BE", "-BZ", "-SM", "-ST")
 _cache = {"at": 0.0, "value": None}
 CACHE_SECONDS = 20
+
+# The last book we successfully built, kept on disk as well as in memory.
+#
+# The in-memory cache dies with the process, so after any restart the dashboard had
+# nothing to fall back on: if Kotak was slow at that moment every figure rendered as
+# "—". Persisting the last good book means a restart, a broker blip or an expired
+# session degrades to "these are the numbers as of HH:MM" instead of a blank page.
+_SNAPSHOT = Path(__file__).resolve().parents[1] / C.STATE_DIR / "last_book.json"
+
+# {symbol: exchange token} learned from the scrip master, kept across restarts.
+#
+# positions() carries a token for stock bought TODAY, but holdings() does not: once
+# the basket settles, all 40 names arrive with token=None and each one costs a
+# ~2s search_scrip call, so a cold book took ~70s to build. The in-process cache in
+# kotak_equity is keyed by the client object, so every restart and every re-login
+# threw it away and paid the 70s again.
+#
+# Tokens are only trusted because every quote is checked against the display_symbol
+# Kotak returns with it (see quotes()): a token that no longer belongs to its symbol
+# is dropped and re-resolved rather than pricing the wrong instrument.
+_TOKENS = Path(__file__).resolve().parents[1] / C.STATE_DIR / "scrip_tokens.json"
+
+
+def _save_snapshot(book: dict) -> None:
+    """Persist the last good book. Best effort — never break a live call."""
+    try:
+        _SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _SNAPSHOT.with_suffix(".tmp")
+        tmp.write_text(json.dumps(book), encoding="utf-8")
+        tmp.replace(_SNAPSHOT)          # atomic: never leave a half-written file
+    except Exception:
+        pass
+
+
+def _load_tokens() -> dict:
+    try:
+        if _TOKENS.exists():
+            m = json.loads(_TOKENS.read_text(encoding="utf-8"))
+            if isinstance(m, dict):
+                return {str(k): str(v) for k, v in m.items() if v}
+    except Exception:
+        pass
+    return {}
+
+
+def _save_tokens(m: dict) -> None:
+    try:
+        _TOKENS.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _TOKENS.with_suffix(".tmp")
+        tmp.write_text(json.dumps(m, indent=0, sort_keys=True), encoding="utf-8")
+        tmp.replace(_TOKENS)
+    except Exception:
+        pass
+
+
+def last_good() -> dict:
+    """The most recent book we managed to build, from memory or from disk.
+
+    Returns {} when there has never been one. The caller is responsible for marking
+    it stale — this function deliberately does not, so it can also be used by code
+    that just wants the last known positions.
+    """
+    if _cache["value"]:
+        return dict(_cache["value"])
+    try:
+        if _SNAPSHOT.exists():
+            book = json.loads(_SNAPSHOT.read_text(encoding="utf-8"))
+            if isinstance(book, dict) and book.get("as_of"):
+                return book
+    except Exception:
+        pass
+    return {}
+
+
+def stale(book: dict, reason: str) -> dict:
+    """Mark a fallback book so the dashboard renders it AND says it is not live."""
+    if not book:
+        return {}
+    age = None
+    try:
+        t = IST.localize(datetime.strptime(book["as_of"], "%Y-%m-%d %H:%M:%S"))
+        age = int((datetime.now(IST) - t).total_seconds())
+    except Exception:
+        pass
+    return {**book, "ok": True, "cached": True, "stale": True,
+            "broker_unreachable": True, "broker_error": reason,
+            "stale_seconds": age}
 
 
 def _base_symbol(s: str) -> str:
@@ -83,21 +172,38 @@ def broker_positions(client) -> dict:
 def quotes(client, symbols, tokens: dict = None) -> dict:
     """{symbol: {ltp, change, change_pct, prev_close}} in one batched call per 25.
 
-    `tokens` {symbol: exchange token} skips the scrip-master lookup. positions()
-    already carries each stock's token; resolving 40 names from scratch took 65s
-    on the first dashboard load after a restart (sandbox run, 2026-09-15).
+    Tokens are taken from, in order: the `tokens` argument (positions() carries one
+    for stock bought today), the on-disk cache, then a scrip-master lookup. Only the
+    last is slow — ~2s per name, and holdings() returns no tokens at all, so a
+    settled 40-name basket cost ~70s on every cold build before the cache existed.
+
+    SAFETY: a token is an index into Kotak's scrip master, which is republished
+    daily, so a remembered token could in principle point at a different instrument
+    later. Every row is therefore checked against the `display_symbol` Kotak returns
+    beside it; a mismatch drops the price and evicts the token instead of quietly
+    reporting another stock's LTP as ours. The symbol then shows up in `unpriced`,
+    which the book already surfaces, and is re-resolved on the next call.
     """
     tokens = tokens or {}
-    token_of = {}
+    cached = _load_tokens()
+    learned = dict(cached)
+    token_of, resolved_now = {}, False
+    from_cache = set()
     for s in symbols:
-        tok = tokens.get(s)
+        tok = tokens.get(s) or cached.get(s)
+        if tok and not tokens.get(s):
+            from_cache.add(s)
         if not tok:
             try:
                 tok = K.resolve(client, s)["token"]
+                resolved_now = True
             except Exception:
                 continue
         token_of[str(tok)] = s
+        learned[s] = str(tok)
+
     out, toks = {}, list(token_of)
+    evicted = []
     for i in range(0, len(toks), 25):
         req = [{"instrument_token": t, "exchange_segment": K.SEGMENT} for t in toks[i:i + 25]]
         try:
@@ -112,11 +218,32 @@ def quotes(client, symbols, tokens: dict = None) -> dict:
             s = token_of.get(str(r.get("exchange_token")))
             if not s:
                 continue
+            # The token must still belong to the symbol we asked for.
+            shown = _base_symbol(r.get("display_symbol") or "")
+            if shown and shown != _base_symbol(s):
+                evicted.append((s, learned.get(s), shown))
+                learned.pop(s, None)
+                continue
             ltp = L._f(r.get("ltp"))
             chg = L._f(r.get("change"))
             ohlc = r.get("ohlc") if isinstance(r.get("ohlc"), dict) else {}
             out[s] = {"ltp": ltp, "change": chg, "change_pct": L._f(r.get("per_change")),
                       "prev_close": round(ltp - chg, 4) if ltp else L._f(ohlc.get("close"))}
+
+    # A cached token that produced no row at all is also suspect — e.g. two symbols
+    # remembered against the same token, where only one of them can come back. Drop
+    # it so the next call re-resolves rather than leaving that name unpriced forever.
+    # Freshly resolved tokens are kept: no quote there means no market data, not a
+    # bad token, and re-resolving it every call would cost ~2s for nothing.
+    for s in from_cache - set(out):
+        learned.pop(s, None)
+
+    if evicted:
+        print(f"  [dualmom] scrip token mismatch, evicted {len(evicted)}: "
+              + ", ".join(f"{s} (token {t} is now {got})" for s, t, got in evicted[:5]),
+              flush=True)
+    if resolved_now or evicted or learned != cached:
+        _save_tokens(learned)
     return out
 
 
@@ -223,6 +350,7 @@ def live(client, use_cache: bool = True) -> dict:
         "rows": rows,
     }
     _cache.update(at=time.time(), value=out)
+    _save_snapshot(out)
     return out
 
 

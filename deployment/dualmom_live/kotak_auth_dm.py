@@ -93,9 +93,11 @@ def login(verbose: bool = True):
                 f"{PREFIX}{f[len('KOTAK_'):]} is identical to {f} — that is the "
                 "STRANGLE's account. Logging in would steal its session. Refusing.")
 
-    # Kotak Rohit's whitelisted IP is 103.49.131.3; the VPS default IP belongs to
-    # the strangle's account. Pin BEFORE the SDK opens its first connection.
-    # Fails closed if that IP is not present on this machine.
+    # Bound every Kotak HTTP call before the SDK opens its first connection, and
+    # apply a source-IP pin only if one is configured AND provably reaches Kotak.
+    # 144.79.166.103 (the VPS default) is whitelisted for UCC 15P56, so an
+    # unreachable pin falls back to it rather than taking DualMom down — see
+    # source_ip.py for the 2026-09-24 outage this replaced.
     from deployment.dualmom_live import source_ip
     pinned = source_ip.install()
 
@@ -121,6 +123,26 @@ def login(verbose: bool = True):
         print(f"  [dualmom] Kotak login OK (UCC {_env('UCC')[:4]}***, "
               f"dedicated DualMom account, source IP {pinned})")
     return client
+
+
+def probe() -> dict:
+    """Is a login possible right now? Read-only; places nothing.
+
+    Used by the service watchdog so a broken session is repaired in the background
+    instead of on a dashboard request.
+    """
+    from deployment.dualmom_live import source_ip
+    out = {"missing": missing(), "source_ip": None, "ok": False, "error": None}
+    if out["missing"]:
+        out["error"] = "credentials missing"
+        return out
+    try:
+        out["source_ip"] = source_ip.install()
+        login(verbose=False)
+        out["ok"] = True
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+    return out
 
 
 if __name__ == "__main__":
