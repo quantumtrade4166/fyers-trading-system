@@ -576,7 +576,7 @@
           <div class="card p-4">
             <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Capital deployed</p>
             <p id="dm-k-dep" class="text-xl font-semibold text-white font-mono">—</p>
-            <p id="dm-k-dep-sub" class="text-xs text-slate-600 mt-1">market value</p>
+            <p id="dm-k-dep-sub" class="text-xs text-slate-600 mt-1">cost basis</p>
           </div>
           <div class="card p-4">
             <p class="text-xs text-slate-500 uppercase tracking-wide mb-1">Cash</p>
@@ -4303,7 +4303,7 @@ function dmRenderBook(bk) {
   dmSet('dm-k-day-sub', dmPctS(bk.day_pnl_pct) + ' today');
   dmSet('dm-k-mtm', dmRS(bk.unrealized), dmClsV(bk.unrealized));
   dmSet('dm-k-mtm-sub', `${dmPctS(bk.unrealized_pct)} on ${dmFmtL(bk.cost_basis)} invested`);
-  dmSet('dm-k-dep', dmFmtR(bk.market_value));
+  dmSet('dm-k-dep', dmFmtR(bk.cost_basis));
   dmSet('dm-k-dep-sub', `${Number(bk.deployed_pct).toFixed(2)}% of NAV`);
   dmSet('dm-k-cash', dmFmtR(bk.cash));
   dmSet('dm-k-cash-sub', `${Number(bk.cash_pct).toFixed(2)}% of NAV` + (bk.broker === 'kite' ? " · DualMom's own" : ''));
