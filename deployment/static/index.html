@@ -4292,7 +4292,7 @@ function dmRenderBook(bk) {
   dmSet('dm-k-nav', dmFmtR(bk.nav));
   dmSet('dm-k-nav-sub', bk.charges_pending_est > 0
     ? `after est. charges not yet debited: ${dmFmtR(bk.nav_after_pending_charges)}`
-    : `market value + cash`);
+    : `market value of positions`);
   dmSet('dm-k-tot', dmRS(bk.total_pnl), dmClsV(bk.total_pnl));
   // On a shared account money can be ADDED later. A deposit is not performance,
   // so the strategy's own (time-weighted) return is shown next to the rupee P&L.
@@ -4650,7 +4650,7 @@ function dmRenderPlan(run) {
   const deployed = buys.reduce((a, o) => a + (o.qty * o.mark), 0);
   document.getElementById('dm-live-deployed').textContent = dmFmtL(deployed);
   document.getElementById('dm-live-left').textContent =
-    p.nav !== undefined ? dmFmtL(p.nav - deployed) : '—';
+    p.account_value !== undefined ? dmFmtL(p.account_value - deployed) : (p.nav !== undefined ? dmFmtL(p.nav - deployed) : '—');
 
   const badge = document.getElementById('dm-live-plan-badge');
   badge.textContent = p.safe ? 'safety checks passed' : 'BLOCKED';

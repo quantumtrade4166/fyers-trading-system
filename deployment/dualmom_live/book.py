@@ -310,11 +310,13 @@ def live(client, use_cache: bool = True) -> dict:
         cost += pcost
         day_pnl += d_pnl
 
-    nav = mv + cash
+    nav = mv
     for r in rows:
         r["weight_pct"] = round(r["value"] / nav * 100, 3) if nav else 0.0
     rows.sort(key=lambda r: -r["value"])
     unreal = mv - cost
+
+    account_value = mv + cash          # total liquid net worth (positions + cash)
 
     # Charges not yet debited. Kotak's cash on 2026-09-15 equalled capital minus the
     # exact trade value to within 6 paise, i.e. STT/stamp/exchange charges had not
@@ -331,19 +333,19 @@ def live(client, use_cache: bool = True) -> dict:
         "ok": True, "as_of": now.strftime("%Y-%m-%d %H:%M:%S"),
         "account": C.CLIENT_ACCOUNT, "ucc": C.CLIENT_UCC,
         "capital_base": C.CAPITAL_BASE, "inception": C.INCEPTION_DATE,
-        "nav": round(nav, 2), "cash": round(cash, 2), "market_value": round(mv, 2),
+        "nav": round(nav, 2), "account_value": round(account_value, 2), "cash": round(cash, 2), "market_value": round(mv, 2),
         "cost_basis": round(cost, 2),
-        "deployed_pct": round(mv / nav * 100, 3) if nav else 0.0,
-        "cash_pct": round(cash / nav * 100, 3) if nav else 0.0,
+        "deployed_pct": round(mv / account_value * 100, 3) if account_value else 0.0,
+        "cash_pct": round(cash / account_value * 100, 3) if account_value else 0.0,
         "unrealized": round(unreal, 2),
         "unrealized_pct": round(unreal / cost * 100, 3) if cost else 0.0,
         "realized": own["realized"], "charges_est_total": own["charges_est_total"],
         "charges_pending_est": round(pending, 2),
-        "nav_after_pending_charges": round(nav - pending, 2),
+        "nav_after_pending_charges": round(account_value - pending, 2),
         "day_pnl": round(day_pnl, 2),
-        "day_pnl_pct": round(day_pnl / (nav - day_pnl) * 100, 3) if nav - day_pnl else 0.0,
-        "total_pnl": round(nav - C.CAPITAL_BASE, 2),
-        "total_return_pct": round((nav / C.CAPITAL_BASE - 1) * 100, 3),
+        "day_pnl_pct": round(day_pnl / (account_value - day_pnl) * 100, 3) if account_value - day_pnl else 0.0,
+        "total_pnl": round(account_value - C.CAPITAL_BASE, 2),
+        "total_return_pct": round((account_value / C.CAPITAL_BASE - 1) * 100, 3),
         "positions": len(rows), "unpriced": [r["symbol"] for r in rows if not r["priced"]],
         "reconciliation": {"ok": not breaks, "breaks": breaks,
                            "ledger_fills": own["fills"], "broker_positions": len(broker)},
@@ -355,10 +357,17 @@ def live(client, use_cache: bool = True) -> dict:
 
 
 def snapshot_row(book: dict, benchmark=None) -> dict:
-    """The NAV-series row for a book (intraday or end-of-day)."""
+    """The NAV-series row for a book (intraday or end-of-day).
+
+    `nav` is the market value of open positions only (not cash); `account_value`
+    is the total liquid net worth (positions + cash). Historical pre-2026-09-25
+    rows used nav = mv + cash, so the equity curve CSV mixes two definitions -
+    acceptable for a curve whose purpose is shape, not exact level.
+    """
     dt = datetime.strptime(book["as_of"], "%Y-%m-%d %H:%M:%S")
     return {"date": dt.strftime("%Y-%m-%d"), "time": dt.strftime("%H:%M:%S"),
             "nav": book["nav"], "market_value": book["market_value"], "cash": book["cash"],
+            "account_value": book.get("account_value", book["nav"] + book["cash"]),
             "cost_basis": book["cost_basis"], "unrealized": book["unrealized"],
             "realized_cum": book["realized"], "charges_est_cum": book["charges_est_total"],
             "deployed_pct": book["deployed_pct"], "positions": book["positions"],
