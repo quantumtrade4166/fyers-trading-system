@@ -11,7 +11,8 @@ $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $desktop = "C:\Users\Administrator\Desktop"
 
 # 1. Put the launcher scripts back on the Desktop (tasks reference these paths)
-foreach ($b in 'start_dashboard.bat','start_cloudflared.bat','fyers_auto_login.bat',
+foreach ($b in 'start_dashboard.bat','start_cloudflared.bat','start_jarvis_api.bat',
+               'fyers_auto_login.bat',
                'vps_backup_to_drive.ps1','vps_backup_hidden.vbs','vps_heartbeat.ps1') {
     $src = Join-Path $here $b
     if (Test-Path $src) { Copy-Item $src (Join-Path $desktop $b) -Force; "placed $b" }
@@ -25,7 +26,10 @@ Get-ChildItem (Join-Path $here '*.xml') | ForEach-Object {
 }
 
 Write-Output "`nDone. Verify with:  Get-ScheduledTask | ? { `$_.TaskPath -eq '\' }"
-Write-Output "Then start the services:  Start-ScheduledTask -TaskName PairsDashboard ; Start-ScheduledTask -TaskName CloudflaredTunnel"
+Write-Output "Start services:"
+Write-Output "  Start-ScheduledTask -TaskName PairsDashboard"
+Write-Output "  Start-ScheduledTask -TaskName JarvisAPI"
+Write-Output "  Start-ScheduledTask -TaskName JarvisTunnel"
 Write-Output "Stable URL (Tailscale Funnel) — after re-joining the tailnet:"
 Write-Output "  tailscale up ; tailscale cert <node>.<tailnet>.ts.net ; tailscale funnel --bg 8000"
 Write-Output "  (then disable key expiry for the node in the Tailscale admin console)"
