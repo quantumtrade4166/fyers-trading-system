@@ -154,6 +154,13 @@ try:
 except Exception as _e:                                    # pragma: no cover
     print(f"[btc] router NOT loaded: {type(_e).__name__}: {_e}", flush=True)
 
+# BTC VWAP strangle (PAPER). Same isolation: its own engine publishes files.
+try:
+    from deployment.btc_vwap_api import router as _btcvwap_router
+    app.include_router(_btcvwap_router)
+except Exception as _e:                                    # pragma: no cover
+    print(f"[btcvwap] router NOT loaded: {type(_e).__name__}: {_e}", flush=True)
+
 # Nifty Directional Pivot (PAPER). Same isolation as BTC: a separate engine process
 # publishes files, this router only reads them.
 try:
@@ -488,17 +495,26 @@ def _strangle_lot_sizes() -> dict:
 
 def _flag_index(index: str, broker: str) -> str:
     """Control-flag key for a broker+index. Kotak arms INDEPENDENTLY of Zerodha via a
-    KOTAK_{INDEX} flag; Zerodha (default) uses the plain {INDEX}."""
+    KOTAK_{INDEX} flag; Kotak Rohit uses KOTAK_ROHIT_{INDEX}; Zerodha (default) uses the
+    plain {INDEX}."""
     idx = index.upper()
-    return f"KOTAK_{idx}" if str(broker).lower() == "kotak" else idx
+    b = str(broker).lower()
+    if b == "kotak":
+        return f"KOTAK_{idx}"
+    if b == "kotak_rohit":
+        return f"KOTAK_ROHIT_{idx}"
+    return idx
 
 
 def _snap_file(date: str, index: str, broker: str, kind: str):
     """State/tick file for a broker. kind='LIVE' or 'TICK'. Kotak files carry a KOTAK infix,
-    so the two brokers never overwrite each other's snapshots."""
+    Kotak Rohit carries KOTAK_ROHIT, so the three brokers never overwrite each other."""
     idx = index.upper()
-    if str(broker).lower() == "kotak":
+    b = str(broker).lower()
+    if b == "kotak":
         return _LIVE_DIR / (f"{date}_{idx}_KOTAK.json" if kind == "LIVE" else f"{date}_{idx}_KOTAK_TICK.json")
+    if b == "kotak_rohit":
+        return _LIVE_DIR / (f"{date}_{idx}_KOTAK_ROHIT.json" if kind == "LIVE" else f"{date}_{idx}_KOTAK_ROHIT_TICK.json")
     return _LIVE_DIR / f"{date}_{idx}_{kind}.json"
 
 

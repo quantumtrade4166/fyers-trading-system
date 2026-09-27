@@ -330,3 +330,16 @@ def strategy_fills(client, tag_prefix: str = TAG_PREFIX) -> list:
                     "avg_price": _dig(o, *_AVG_KEYS), "order_id": str(_dig(o, *_OID_KEYS)),
                     "fill_time": _dig(o, *_TIME_KEYS)})
     return out
+
+
+# Margin / shortfall detection: Kotak rejects with these substrings when there's no
+# margin left. Used by the controller to halt + flatten EVERYTHING (not just one leg)
+# so a fully matched short pair on a margin-starved account is closed too.
+_MARGIN_KEYS = ("margin", "insufficient", "shortfall", "rms reject",
+                "exposure", "limit exceeded", "pwr reject")
+
+
+def is_margin_error(exc: BaseException) -> bool:
+    """True if `exc` looks like a Kotak margin / funds rejection."""
+    msg = (str(exc) or "").lower()
+    return any(k in msg for k in _MARGIN_KEYS)

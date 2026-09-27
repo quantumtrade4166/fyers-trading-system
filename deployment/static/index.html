@@ -2381,7 +2381,7 @@ async function fetchStrangle() {
 // ── Combined-premium chart archive ──────────────────────────────────────────
 let scaIndex = 'NIFTY';
 let scaVersion = 'V1';
-let scaBroker = 'zerodha';        // 'zerodha' | 'kotak' — each broker arms INDEPENDENTLY
+let scaBroker = 'zerodha';        // 'zerodha' | 'kotak' | 'kotak_rohit' — each arms independently
 let scaList = [];
 // live-order sizing per BROKER+INDEX. Lot sizes must match parameters.json (the backend
 // validates against the same values). Pending inputs persist across the 30s re-render
@@ -2407,11 +2407,11 @@ function scaSetIndex(idx) {
 // Zerodha / Kotak toggle — each broker has its own arm switch, size, kill and P&L.
 function scaSetBroker(b) {
   scaBroker = b;
-  ['zerodha', 'kotak'].forEach(x => {
+  ['zerodha', 'kotak', 'kotak_rohit'].forEach(x => {
     const el = document.getElementById('sca-bk-' + x);
     if (el) el.classList.toggle('active', x === b);
   });
-  scaTkLast = null; scaTkLastDate = null;   // drop the other broker's last tick
+  scaTkLast = null; scaTkLastDate = null;
   scaRenderLive();
 }
 
@@ -3213,7 +3213,7 @@ function scaTime(date, hm) {
   return Math.floor(Date.UTC(Y, M - 1, D, h, m) / 1000);
 }
 
-function scaBkName() { return scaBroker === 'kotak' ? 'KOTAK' : 'ZERODHA'; }
+function scaBkName() { return scaBroker === 'kotak_rohit' ? 'KOTAK ROHIT' : (scaBroker === 'kotak' ? 'KOTAK' : 'ZERODHA'); }
 async function scaSetMode(m) {
   const who = scaBkName() + ' ' + scaIndex;
   if (m === 'live' && !confirm(
@@ -3594,8 +3594,9 @@ async function scaRenderLive(keepView = false) {
       <div class="flex items-center gap-2 flex-wrap mb-2" style="border-bottom:1px solid #1e2636;padding-bottom:8px">
         <span class="text-[10px] text-slate-500 uppercase">broker</span>
         <button id="sca-bk-zerodha" onclick="scaSetBroker('zerodha')" class="sca-idx-btn ${scaBroker === 'zerodha' ? 'active' : ''}">Zerodha</button>
-        <button id="sca-bk-kotak" onclick="scaSetBroker('kotak')" class="sca-idx-btn ${scaBroker === 'kotak' ? 'active' : ''}">Kotak</button>
-        <span class="text-[10px] text-slate-600">${scaBroker === 'kotak' ? 'independent mirror · NRML · own arm/kill' : 'primary'}</span>
+        <button id="sca-bk-kotak" onclick="scaSetBroker('kotak')" class="sca-idx-btn ${scaBroker === 'kotak' ? 'active' : ''}">Kotak Bhaiya</button>
+        <button id="sca-bk-kotak_rohit" onclick="scaSetBroker('kotak_rohit')" class="sca-idx-btn ${scaBroker === 'kotak_rohit' ? 'active' : ''}">Kotak Rohit</button>
+        <span class="text-[10px] text-slate-600">${scaBroker === 'kotak' ? 'independent mirror · NRML · own arm/kill' : (scaBroker === 'kotak_rohit' ? '2nd mirror · NRML · own arm/kill' : 'primary')}</span>
       </div>
       <div class="flex items-center gap-3 flex-wrap mb-2">
         <span class="text-[10px] text-slate-500 uppercase">size · ${scaIndex}</span>
@@ -3639,7 +3640,8 @@ async function scaRenderLive(keepView = false) {
   } else if (d.trades_allowed === false) {
     stTxt = '● ARMED but DTE ' + d.dte + ' — chart-only, will NOT trade today'; stCol = '#fcd34d'; stBg = '#4a3410';
   } else if (d.broker_ready === false) {
-    stTxt = '⚠ ARMED but BROKER NOT CONNECTED — orders will NOT reach Zerodha'; stCol = '#fca5a5'; stBg = '#5b1a1a';
+    const bkLabel = scaBroker === 'kotak_rohit' ? 'Kotak Rohit' : (scaBroker === 'kotak' ? 'Kotak Bhaiya' : 'Zerodha');
+    stTxt = '⚠ ARMED but BROKER NOT CONNECTED — orders will NOT reach ' + bkLabel; stCol = '#fca5a5'; stBg = '#5b1a1a';
   } else {
     stTxt = '● LIVE — real orders WILL fire on the next signal'; stCol = '#fecaca'; stBg = '#7f1d1d';
   }

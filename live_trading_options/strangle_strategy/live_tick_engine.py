@@ -69,7 +69,8 @@ class IndexBook:
         self.candles: list[dict] = []  # finalized candles
         self.lock = threading.Lock()
         self.controller = None         # Zerodha live/paper-live controller (attached only if enabled)
-        self.controller_kotak = None   # INDEPENDENT Kotak mirror controller (attached only if kotak_orders.enabled)
+        self.controller_kotak = None   # INDEPENDENT Kotak Bhaiya mirror controller
+        self.controller_kotak_rohit = None  # INDEPENDENT Kotak Rohit mirror controller (3rd broker)
         # resume support: if the engine restarts mid-day, the bucket that was still
         # forming before the restart is restored here and CONTINUED from live ticks
         # (its true bucket-open / high / low are preserved, never reset to V1).
@@ -123,10 +124,12 @@ class IndexBook:
                 self.h = max(self.h, comb)
                 self.l = min(self.l, comb)
                 self.c = comb
-            # live tap — feed BOTH brokers' controllers, each in its OWN try/except so a
-            # Kotak error can NEVER reach the Zerodha controller or the capture loop.
+            # live tap — feed ALL controllers, each in its OWN try/except so an error in
+            # one broker can NEVER reach the others or the capture loop.
             _hm = now.strftime("%H:%M")
-            for _ctrl, _bk in ((self.controller, "live"), (self.controller_kotak, "kotak")):
+            for _ctrl, _bk in ((self.controller, "live"),
+                               (self.controller_kotak, "kotak"),
+                               (self.controller_kotak_rohit, "kotak_rohit")):
                 if _ctrl is not None:
                     try:
                         _ctrl.on_tick(comb, self.ltp[self.ce_sym], self.ltp[self.pe_sym], _hm)
@@ -167,8 +170,10 @@ class IndexBook:
                   "open": round(self.o, 2), "high": round(self.h, 2),
                   "low": round(self.l, 2), "close": round(self.c, 2), "volume": int(vol)}
         self.candles.append(candle)
-        # live tap — feed BOTH brokers' controllers, each isolated; never break capture
-        for _ctrl, _bk in ((self.controller, "live"), (self.controller_kotak, "kotak")):
+        # live tap — feed ALL controllers, each isolated; never break capture
+        for _ctrl, _bk in ((self.controller, "live"),
+                           (self.controller_kotak, "kotak"),
+                           (self.controller_kotak_rohit, "kotak_rohit")):
             if _ctrl is not None:
                 try:
                     _ctrl.on_candle(candle)
@@ -388,18 +393,27 @@ def _maybe_attach_controller(book, idx, date_str, pick, meta):
         print(f"  [live] {idx} controller attach failed: {e}")
 
 
-_kotak_client = None            # ONE Kotak session for the whole process (both indices share it)
+_kotak_client = None            # ONE Kotak session for the whole process (Bhaiya's account)
+_kotak_client_rohit = None      # ONE Kotak session for Rohit's account (separate login)
 
 
 def _get_kotak_client():
-    """Log into Kotak ONCE and reuse the session for every index — Kotak allows a single
-    active session per account, so a per-index login would fight itself. Cached for the
-    process (a restart re-logs-in fresh)."""
+    """Log into Kotak Bhaiya ONCE and reuse the session for every index."""
     global _kotak_client
     if _kotak_client is None:
         from live import kotak_auth
         _kotak_client = kotak_auth.login()
     return _kotak_client
+
+
+def _get_kotak_client_rohit():
+    """Log into Kotak Rohit ONCE and reuse the session for every index.
+    Separate client because each Kotak account allows only one active session."""
+    global _kotak_client_rohit
+    if _kotak_client_rohit is None:
+        from live import kotak_auth
+        _kotak_client_rohit = kotak_auth.login(rohit=True)
+    return _kotak_client_rohit
 
 
 def _maybe_attach_kotak(book, idx, date_str, pick, meta):
@@ -451,6 +465,55 @@ def _maybe_attach_kotak(book, idx, date_str, pick, meta):
         print(f"  [kotak] {idx} mirror attach failed (Zerodha unaffected): {e}")
 
 
+def _maybe_attach_kotak_rohit(book, idx, date_str, pick, meta):
+    """Attach the INDEPENDENT Kotak Rohit mirror controller — ONLY when
+    kotak_rohit_orders.enabled and this index is configured. Fully isolated from both
+    Zerodha and Kotak Bhaiya: own control flags (KOTAK_ROHIT_{INDEX}), own snapshot
+    files, own order tag prefix (vwsk2), own Kotak login session. A failure here can
+    never affect the other two brokers."""
+    kro = _PARAMS.get("kotak_rohit_orders", {})
+    indices = kro.get("indices") or ([kro.get("index")] if kro.get("index") else [])
+    if not kro.get("enabled") or idx not in indices:
+        return
+    try:
+        from live.kotak_rohit_controller import KotakRohitController
+        kotak, kotak_syms = None, {}
+        try:
+            from live import kotak_executor as ke
+            kotak = _get_kotak_client_rohit()       # Rohit's own session (separate from Bhaiya)
+            for fy, strike, typ in [(pick["ce_symbol"], pick["ce_strike"], "CE"),
+                                    (pick["pe_symbol"], pick["pe_strike"], "PE")]:
+                kotak_syms[fy] = ke.resolve(kotak, idx, pick["expiry"], strike, typ)
+            print(f"  [kotak_rohit] {idx}: {[v['trading_symbol'] for v in kotak_syms.values()]}")
+        except Exception as e:
+            kotak, kotak_syms = None, {}
+            print(f"  [kotak_rohit] {idx} login/resolve skipped (paper-only): {e}")
+        kot_lot = next((v.get("lot_size") for v in kotak_syms.values() if v.get("lot_size")), None)
+        lot_size = kot_lot or _LOT_SIZES.get(idx, 1)
+        ctrl = KotakRohitController(
+            idx, date_str, pick["ce_symbol"], pick["pe_symbol"], meta.get("dte"),
+            lot_size=lot_size, lots=kro.get("lots", 1),
+            max_cycles=kro.get("max_cycles", 4), mtm_stop=kro.get("mtm_stop", 1000),
+            entry_cutoff=_PARAMS.get("entry_cutoff", "14:30"),
+            square_off=_PARAMS.get("square_off", "15:14"),
+            kotak=kotak, kotak_syms=kotak_syms)
+        if book.candles:
+            ctrl.seed(list(book.candles), lambda comb: (round(comb / 2, 2), round(comb / 2, 2)))
+        ctrl.reconcile_kotak()
+        book.controller_kotak_rohit = ctrl
+        print(f"  [kotak_rohit] {idx}: Rohit controller attached "
+              f"(lot_size={lot_size}, broker_ready={bool(kotak and kotak_syms)})")
+        try:
+            from live import audit
+            audit.log(idx, "ROHIT_ATTACH", ce=pick["ce_symbol"], pe=pick["pe_symbol"],
+                      dte=meta.get("dte"), lot=lot_size, broker_ready=bool(kotak and kotak_syms),
+                      seeded_candles=len(book.candles))
+        except Exception:
+            pass
+    except Exception as e:
+        print(f"  [kotak_rohit] {idx} attach failed (others unaffected): {e}")
+
+
 def build_books(date_str: str):
     """Resolve the day's strikes (cached) and create a book per index."""
     from core.fyers_client import get_client
@@ -468,6 +531,7 @@ def build_books(date_str: str):
         _seed_book(book, idx, date_str)
         _maybe_attach_controller(book, idx, date_str, pick, meta)
         _maybe_attach_kotak(book, idx, date_str, pick, meta)
+        _maybe_attach_kotak_rohit(book, idx, date_str, pick, meta)
         _books[idx] = book
         _sym_to_book[pick["ce_symbol"]] = book
         _sym_to_book[pick["pe_symbol"]] = book
@@ -537,6 +601,10 @@ def _backfill_early_history(date_str: str):
                         if kc is not None and not kc.cycles and not kc.trigger.in_pos:
                             kc.seed(list(book.candles), split_fn)
                             kc.reconcile_kotak()
+                        kr = book.controller_kotak_rohit             # backfill for Rohit too
+                        if kr is not None and not kr.cycles and not kr.trigger.in_pos:
+                            kr.seed(list(book.candles), split_fn)
+                            kr.reconcile_kotak()
                         try:
                             from live import audit
                             audit.log(idx, "HISTORY_BACKFILL", added=len(missing),

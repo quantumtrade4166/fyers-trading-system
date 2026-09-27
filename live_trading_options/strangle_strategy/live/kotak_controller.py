@@ -71,7 +71,9 @@ class KotakController:
         self._last_fill_time = {}
         self._last_ctrl = 0.0
         self._last_tick_write = 0.0
-        self._last_flatten_try = 0.0            # throttle for the keep-trying-flat safety loop
+        self._last_flatten_try = 0.0
+        self._open_product = {}
+        self.margin_halt = None
         self._trades_allowed = dte in (0, 1)
 
     # ── arm switch: KOTAK-prefixed control flag (independent of Zerodha) ──────
@@ -306,19 +308,33 @@ class KotakController:
                 pe_fill = self._sell(self.pe, cycle)
         except Exception as e:
             msg = f"{type(e).__name__}: {e}"
-            print(f"  [kotak] {self.index} ENTRY FAILED cyc{cycle}: {msg}", flush=True)
-            self.events.append({"t": self._hm, "type": "entry_order_failed", "cycle": cycle, "error": msg})
-            audit.log(self.index, "KOTAK_ORDER_FAILED", cyc=cycle, error=msg)
-            naked = self.guard.check_naked(self.ce, self.pe)
-            if naked:
-                self._cover_naked(naked, cycle, "entry failed mid-leg")
-            self.guard.kill(f"entry failed: {msg}")
+            try:
+                from live import kotak_executor as _ke
+                margin = _ke.is_margin_error(e)
+            except Exception:
+                margin = False
+            print(f"  [kotak] {self.index} ENTRY ORDER FAILED cyc{cycle}"
+                  f"{' (MARGIN)' if margin else ''}: {msg}", flush=True)
+            self.events.append({"t": self._hm, "type": "entry_order_failed",
+                                "cycle": cycle, "error": msg, "margin": margin})
+            audit.log(self.index, "KOTAK_ORDER_FAILED", cyc=cycle, error=msg, margin=margin)
+            if margin:
+                self.margin_halt = msg[:300]
+                self.guard.kill(f"margin shortfall: {msg}")
+                self._flatten(f"margin shortfall — {msg}")
+            else:
+                naked = self.guard.check_naked(self.ce, self.pe)
+                if naked:
+                    self._cover_naked(naked, cycle, "entry failed mid-leg")
+                self.guard.kill(f"entry failed: {msg}")
             self.trigger.done = True
             self.persist()
             return
         if live and (ce_fill is None or pe_fill is None):
-            self.events.append({"t": self._hm, "type": "entry_incomplete", "cycle": cycle,
-                                "ce": ce_fill, "pe": pe_fill})
+            print(f"  [kotak] {self.index} ENTRY INCOMPLETE cyc{cycle}: ce={ce_fill} pe={pe_fill} "
+                  f"— covering filled leg + stopping", flush=True)
+            self.events.append({"t": self._hm, "type": "entry_incomplete",
+                                "cycle": cycle, "ce": ce_fill, "pe": pe_fill})
             audit.log(self.index, "KOTAK_ENTRY_INCOMPLETE", cyc=cycle, ce=ce_fill, pe=pe_fill)
             naked = self.guard.check_naked(self.ce, self.pe)
             if naked:
@@ -417,12 +433,19 @@ class KotakController:
 
     @staticmethod
     def _k_filled(status) -> bool:
-        s = str(status or "").lower()
-        return "complete" in s or "traded" in s or s == "filled"
+        s = str(status or "").strip().lower()
+        # Match whole words: "complete", "traded", "filled" — NOT "incomplete" or "partial".
+        # Kotak reports: COMPLETE / COMPLETED / TRADED / FILLED / INCOMPLETE / PARTIAL
+        for kw in ("complete", "traded", "filled"):
+            if kw in s and "incomplete" not in s and "partial" not in s:
+                return True
+        return False
 
     @staticmethod
     def _k_dead(status) -> bool:
-        s = str(status or "").lower()
+        s = str(status or "").strip().lower()
+        # "reject" catches reject/rejected/REJECTED; "cancel" catches cancel/cancelled
+        # but NOT "incomplete" (the leading 'i' keeps it from matching "reject" anyway).
         return "reject" in s or "cancel" in s
 
     def _place_live(self, sym, side, cycle, kind, qty):
@@ -520,12 +543,15 @@ class KotakController:
                 if legs[s]["fill"] is not None:
                     continue
                 st = ke.order_status(self.kotak, legs[s]["oid"])
-                if st.get("filled_qty") and self._k_filled(st.get("status")):
+                if self._k_filled(st.get("status")):
+                    fq = int(st.get("filled_qty") or self.qty)
                     legs[s]["fill"] = st.get("avg_price")
                     self._last_fill_time[s] = st.get("fill_time")
-                    self.ledger.update_fill(legs[s]["oid"], COMPLETE,
-                                            filled_qty=int(st.get("filled_qty") or self.qty),
+                    self.ledger.update_fill(legs[s]["oid"], COMPLETE, filled_qty=fq,
                                             avg_price=st.get("avg_price"), fill_time=st.get("fill_time"))
+                elif self._k_dead(st.get("status")):
+                    legs[s]["fill"] = st.get("avg_price")  # book whatever filled, then cancel
+                    self.ledger.update_fill(legs[s]["oid"], CANCELLED)
             _time.sleep(0.5)
 
     def _sell_pair_live(self, cycle):
@@ -575,7 +601,8 @@ class KotakController:
     def snapshot(self):
         realized = sum(c["pnl"] for c in self.cycles if c["pnl"] is not None)
         mtm = self.ledger.mtm({k: v for k, v in self.marks.items() if v is not None})
-        return {"index": self.index, "date": self.date, "broker": "KOTAK", "mode": self.mode,
+        return {"margin_halt": self.margin_halt,
+                "index": self.index, "date": self.date, "broker": "KOTAK", "mode": self.mode,
                 "dte": self.dte, "armed": self.is_live_armed(), "trades_allowed": self._trades_allowed,
                 "broker_ready": bool(self.kotak and self.kotak_syms),
                 "ce_symbol": self.ce, "pe_symbol": self.pe, "qty": self.qty,
