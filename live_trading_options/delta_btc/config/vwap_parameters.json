@@ -1,0 +1,65 @@
+{
+  "_comment": "BTC VWAP Strangle — the NIFTY/SENSEX Vwap Strangle rules ported to Delta Exchange India BTC daily options. PAPER ONLY (no order path exists). Built 2026-09-15. Two versions run side by side in ONE engine on ONE feed: ist_day (today's expiry, awake hours) and full_expiry (next expiry, 17:35 -> 17:10 next day).",
+
+  "contract_value": 0.001,
+  "settlement_time_ist": "17:30",
+  "usd_inr": 88.5,
+
+  "versions": {
+    "ist_day": {
+      "enabled": true,
+      "label": "IST day (09:30 -> 17:10, today's expiry)",
+      "start": "09:30",
+      "entry_cutoff": "16:25",
+      "square_off": "17:10",
+      "combined_threshold": 100,
+      "contracts": 1000,
+      "max_entries": 4,
+      "mtm_stop_usd": 0,
+      "fallback_last_pair": false
+    },
+    "full_expiry": {
+      "enabled": true,
+      "label": "Full expiry (17:35 -> 17:10 next day)",
+      "start": "17:35",
+      "entry_cutoff": "16:25",
+      "square_off": "17:10",
+      "combined_threshold": 100,
+      "contracts": 1000,
+      "max_entries": 8,
+      "mtm_stop_usd": 0,
+      "fallback_last_pair": true
+    }
+  },
+
+  "_rules_note": "Identical to the NSE Vwap Strangle. Strikes: once at session start, first same-distance-from-ATM CE+PE pair whose combined MARK <= combined_threshold, fixed for the whole cycle. Candles: 5-min combined premium (CE mark + PE mark sampled at the same instant), VWAP = cumulative sum(typical*volume)/sum(volume), typical=(H+L+C)/3, volume = CE+PE traded contracts in that 5 min, resets each cycle. ENTRY: a red candle closing below VWAP arms a sell trigger at low-1; it fills the instant combined premium trades to it; next candle cancels (close above VWAP) or replaces (fresh red-below-VWAP at its new low-1). EXIT: any candle closing above VWAP -> buy back at market. One position at a time, max_entries fills per cycle, no entry after entry_cutoff, flatten at square_off. MTM stop: cycle MTM <= -mtm_stop_usd flattens and stops for the cycle.",
+
+  "_fallback_note": "Strikes are ALWAYS equidistant from ATM (ATM+d CE, ATM-d PE, both listed), exactly like NIFTY. If no equidistant pair is <= combined_threshold: full_expiry takes the LAST (farthest) equidistant pair Delta lists (user decision 2026-09-15 — next-day premium at the edge of the listed grid was ~219 at 21:50 IST); ist_day waits and re-checks every poll until one is <= threshold.",
+
+  "_max_entries_note": "NSE uses 4 per 6-hour day. ist_day keeps 4 (7.7h). full_expiry runs 23.6h so it gets 8 — change it here if you want strict 4.",
+
+  "_mark_note": "BTC options trade thinly, so the last-traded price steps and goes stale for minutes. Candles are built from Delta's MARK (continuous fair value) instead; volume still comes from real trades via the 5m candle history of each leg. Fills never use the mark: every paper entry/exit walks the live L2 book at full size (core/fills.py), and Delta's fee is charged per side.",
+
+  "_size_note": "1000 contracts = 1 BTC per leg, same as the delta-neutral BTC books. Credit at a combined 100 = 100 * 0.001 * 1000 = $100 per strangle.",
+
+  "fees": {
+    "taker_rate_notional": 0.0001,
+    "premium_cap_rate": 0.035
+  },
+
+  "max_entry_slippage_pct": 5,
+  "_slippage_guard_note": "An entry is only taken if walking the real book fills the pair within this % of the trigger. Otherwise NOTHING is sold and the signal stays armed for a later tick — the paper equivalent of a limit through the touch that does not get hit. Added 2026-09-16 after a 1000-lot sell swept a 119-contract top level and filled at 117 against a 150.2 trigger (23% round-trip). It does not consume one of the day's entries.",
+
+  "_mtm_stop_note": "mtm_stop_usd 0 = NO dollar stop (user decision 2026-09-16). Trades exit only on a close above VWAP or at square-off, exactly like the NIFTY rules. The first $50 cycle stop fired 21 seconds after an entry because MTM was valued at the buy-back (ask) side, which books the whole spread the moment you enter.",
+
+  "trigger_offset": 1.0,
+  "candle_minutes": 5,
+  "chain_span": 45,
+  "poll_seconds": 2,
+  "stall_seconds": 180,
+
+  "live_orders": {
+    "enabled": false,
+    "_comment": "PAPER ONLY. No live path exists."
+  }
+}
