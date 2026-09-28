@@ -202,6 +202,16 @@ class AgentLoop:
         vps_ip = "144.79.166.103"
         port = 22  # SSH port
 
+        from .vps_controller import running_on_vps
+        if running_on_vps():
+            # We ARE the VPS: never open sockets to our own sshd every 5 min.
+            return CheckResult(
+                name="vps_ping",
+                status="healthy",
+                message="Running on the VPS itself",
+                data={"vps_ip": vps_ip, "mode": "local"},
+            )
+
         try:
             sock = socket.create_connection((vps_ip, port), timeout=5)
             sock.close()

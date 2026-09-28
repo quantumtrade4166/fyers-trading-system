@@ -130,7 +130,39 @@ class TestVPSController:
         """Controller should be creatable without SSH."""
         assert self.ctrl.host == self.VPS_IP
         assert self.ctrl.port == 22
-        assert self.ctrl.user == "ubuntu"
+        assert self.ctrl.user == "Administrator"
+
+    def test_local_mode_on_vps(self, monkeypatch):
+        """On the VPS, the controller must run locally — never SSH to itself."""
+        from jarvis.vps_controller import VPSController
+        monkeypatch.setenv("JARVIS_ON_VPS", "1")
+        assert VPSController().local is True
+        # A different host is always remote, even when running on the VPS
+        assert VPSController(host="10.0.0.1").local is False
+
+    def test_health_check_single_call(self, monkeypatch):
+        """Health check must make exactly ONE execute call and parse its JSON."""
+        import asyncio
+        import json
+        from jarvis.vps_controller import VPSController
+        monkeypatch.setenv("JARVIS_ON_VPS", "1")
+        ctrl = VPSController()
+        calls = []
+
+        async def fake_execute(cmd):
+            calls.append(cmd)
+            payload = {"uptime": "5d", "disk": "C: 33 GB free", "memory": "14 GB free",
+                       "dashboard": "HTTP 200", "engines": {"pid": 1, "cmd": "python x"}}
+            return {"status": "ok", "stdout": json.dumps(payload), "stderr": ""}
+
+        monkeypatch.setattr(ctrl, "execute", fake_execute)
+        result = asyncio.run(ctrl.health_check())
+        assert len(calls) == 1
+        assert result["status"] == "ok"
+        assert result["checks"]["dashboard"] == "HTTP 200"
+        # A single engine (PowerShell emits an object) is normalised to a list
+        assert result["checks"]["engines"] == [{"pid": 1, "cmd": "python x"}]
+        assert result["checks"]["engine_count"] == 1
 
     def test_parse_health_basic(self):
         """Parse a simple health output."""

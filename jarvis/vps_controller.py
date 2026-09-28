@@ -21,8 +21,11 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
+import os
 import re
+import socket
 import sys
 import time
 from datetime import datetime, timezone
@@ -42,8 +45,26 @@ log = get_logger("vps_controller")
 VPS_IP = "144.79.166.103"
 VPS_SSH_PORT = 22
 VPS_USER = "Administrator"
-# Absolute key path so SYSTEM user (scheduled task) can find it
-VPS_KEY_PATH = r"C:\Users\Administrator\.ssh\id_rsa"
+# Key used only when JARVIS runs OFF the VPS (e.g. on the local PC)
+VPS_KEY_PATH = os.path.expanduser("~/.ssh/id_rsa")
+VPS_HOSTNAME = "WIN-IK7N6SD2UBU"
+
+
+def running_on_vps() -> bool:
+    """True when this process is on the VPS itself.
+
+    On the VPS, JARVIS must run commands LOCALLY. SSH-ing into itself
+    (5 logins per health check) tripped the sshd throttle and locked
+    everyone out — see memory note feedback_vps_ssh_hammering.
+    """
+    if os.environ.get("JARVIS_ON_VPS") == "1":
+        return True
+    try:
+        if socket.gethostname().upper() == VPS_HOSTNAME:
+            return True
+        return VPS_IP in socket.gethostbyname_ex(socket.gethostname())[2]
+    except OSError:
+        return False
 
 # Known engine service names on the VPS (Windows scheduled tasks / processes)
 VPS_ENGINES = {
@@ -66,8 +87,8 @@ _SAFE_COMMANDS: dict[str, str] = {
     "restart btc_vwap": "schtasks /Run /TN BTCVwapEngine 2>&1",
     "restart jarvis_api": "schtasks /Run /TN JarvisAPI 2>&1",
     "restart all": "schtasks /Run /TN Dashboard 2>&1; schtasks /Run /TN DualMomKite 2>&1; schtasks /Run /TN DualMomKotak 2>&1; schtasks /Run /TN NiftyPivotEngine 2>&1",
-    "check dashboard": "try { $r = Invoke-WebRequest -Uri 'http://localhost:8000/health' -UseBasicParsing -TimeoutSec 5; Write-Output (\"HTTP \" + $r.StatusCode) } catch { Write-Output ('Port 8000: ' + ((Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | Measure-Object).Count + ' open')) }",
-    "check jarvis_api": "try { $r = Invoke-WebRequest -Uri 'http://localhost:8081/health' -UseBasicParsing -TimeoutSec 5; Write-Output (\"HTTP \" + $r.StatusCode) } catch { Write-Output ('Port 8081: ' + ((Get-NetTCPConnection -LocalPort 8081 -ErrorAction SilentlyContinue | Measure-Object).Count + ' open')) }",
+    "check dashboard": "try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8000/' -UseBasicParsing -TimeoutSec 5; Write-Output ('HTTP ' + $r.StatusCode) } catch { Write-Output 'unreachable' }",
+    "check jarvis_api": "try { $r = Invoke-WebRequest -Uri 'http://127.0.0.1:8081/health' -UseBasicParsing -TimeoutSec 5; Write-Output ('HTTP ' + $r.StatusCode) } catch { Write-Output 'unreachable' }",
     "check dualmom_kite": "Get-Process -Name python -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -match 'dualmom_kite'} | Select-Object Id,ProcessName",
     "check dualmom_kotak": "Get-Process -Name python -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -match 'dualmom_kotak'} | Select-Object Id,ProcessName",
     "check nifty_pivot": "Get-Process -Name python -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -match 'nifty_pivot'} | Select-Object Id,ProcessName",
@@ -83,6 +104,29 @@ _SAFE_COMMANDS: dict[str, str] = {
     "ps": "Get-CimInstance Win32_Process -Filter \"Name = 'python.exe' OR Name = 'uvicorn.exe' OR Name = 'node.exe'\" | Select-Object ProcessId,Name,CommandLine | Format-List",
     "tasks": "schtasks /Query /FO LIST /V 2>&1 | Select-String -Pattern 'TaskName|Status|Last Run' -Context 0,0",
 }
+
+
+# Everything the health check needs, in ONE PowerShell run, emitted as JSON.
+_HEALTH_SCRIPT = r"""
+$os = Get-CimInstance Win32_OperatingSystem
+$span = (Get-Date) - $os.LastBootUpTime
+$d = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'"
+try { $dash = 'HTTP ' + (Invoke-WebRequest -Uri 'http://127.0.0.1:8000/' -UseBasicParsing -TimeoutSec 5).StatusCode } catch { $dash = 'unreachable' }
+$eng = @(Get-CimInstance Win32_Process -Filter "Name='python.exe'" | Where-Object { $_.CommandLine } | ForEach-Object {
+    $c = ($_.CommandLine -replace '\s+', ' ').Trim()
+    [pscustomobject]@{ pid = $_.ProcessId; cmd = $c.Substring(0, [math]::Min(200, $c.Length)) }
+})
+[pscustomobject]@{
+    uptime    = ('{0}d {1}h {2}m (boot {3})' -f $span.Days, $span.Hours, $span.Minutes, $os.LastBootUpTime.ToString('yyyy-MM-dd HH:mm'))
+    disk      = ('C: {0} GB free of {1} GB' -f [math]::Round($d.FreeSpace / 1GB, 1), [math]::Round($d.Size / 1GB, 1))
+    memory    = ('{0} GB free of {1} GB' -f [math]::Round($os.FreePhysicalMemory / 1MB, 1), [math]::Round($os.TotalVisibleMemorySize / 1MB, 1))
+    dashboard = $dash
+    engines   = $eng
+} | ConvertTo-Json -Depth 4 -Compress
+"""
+
+# Remote (off-VPS) SSH calls go through this lock: one login at a time, ever.
+_REMOTE_LOCK = asyncio.Lock()
 
 
 class VPSConnectionError(Exception):
@@ -112,6 +156,7 @@ class VPSController:
         self.use_key_auth = use_key_auth
         self.key_path = key_path
         self._connected = False
+        self.local = host == VPS_IP and running_on_vps()
 
     async def execute(self, command: str) -> dict:
         """
@@ -159,6 +204,10 @@ class VPSController:
 
     async def check_connectivity(self) -> dict:
         """Check if the VPS is reachable (socket test)."""
+        if self.local:
+            # We ARE the VPS — never poke our own sshd.
+            self._connected = True
+            return {"status": "ok", "vps": self.host, "mode": "local", "reachable": True}
         try:
             reader, writer = await asyncio.wait_for(
                 asyncio.open_connection(self.host, self.port),
@@ -178,27 +227,32 @@ class VPSController:
         if connectivity["status"] != "ok":
             return connectivity
 
-        # Run lightweight checks in parallel
-        tasks = [
-            self.execute("uptime"),
-            self.execute("disk"),
-            self.execute("memory"),
-            self.execute("check dashboard"),
-            self.execute("check all"),
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
+        # ONE script gathers everything → one process locally, one SSH
+        # login remotely. (The old version fired 5 SSH logins in parallel.)
+        result = await self.execute(_HEALTH_SCRIPT)
+        if result["status"] != "ok":
+            return {**result, "connectivity": connectivity}
+        try:
+            checks = json.loads(result["stdout"])
+        except (json.JSONDecodeError, TypeError):
+            return {
+                "status": "error",
+                "vps": self.host,
+                "connectivity": connectivity,
+                "error": "health script returned non-JSON",
+                "stdout": result.get("stdout", "")[:500],
+                "stderr": result.get("stderr", "")[:500],
+            }
+        engines = checks.get("engines") or []
+        if isinstance(engines, dict):  # single process → PowerShell emits an object
+            engines = [engines]
+        checks["engines"] = engines
+        checks["engine_count"] = len(engines)
         return {
             "status": "ok",
             "vps": self.host,
             "connectivity": connectivity,
-            "checks": {
-                "uptime": results[0].get("stdout", "") if not isinstance(results[0], Exception) else str(results[0]),
-                "disk": results[1].get("stdout", "") if not isinstance(results[1], Exception) else str(results[1]),
-                "memory": results[2].get("stdout", "") if not isinstance(results[2], Exception) else str(results[2]),
-                "dashboard": results[3].get("stdout", "") if not isinstance(results[3], Exception) else str(results[3]),
-                "engines": results[4].get("stdout", "") if not isinstance(results[4], Exception) else str(results[4]),
-            },
+            "checks": checks,
         }
 
     async def restart_engine(self, engine_name: str) -> dict:
@@ -209,13 +263,39 @@ class VPSController:
     # ── SSH Implementation ────────────────────────────────────────────────
 
     async def _ssh_run(self, shell_cmd: str) -> tuple[str, str]:
-        """Run a command over SSH, returning (stdout, stderr)."""
-        # All commands are PowerShell — encode to bypass shell quoting
-        import base64
+        """Run a PowerShell command on the VPS, returning (stdout, stderr).
+
+        On the VPS itself: runs locally, no SSH at all.
+        Off the VPS: ONE SSH login at a time (serialised by a lock) so we
+        can never burst the VPS sshd throttle.
+        """
         full_cmd = f"$ProgressPreference = 'SilentlyContinue'; {shell_cmd}"
         encoded = base64.b64encode(full_cmd.encode("utf-16-le")).decode()
-        ps_cmd = f"powershell -NoProfile -EncodedCommand {encoded}"
 
+        if self.local:
+            return await self._local_run(encoded)
+
+        ps_cmd = f"powershell -NoProfile -EncodedCommand {encoded}"
+        async with _REMOTE_LOCK:
+            return await self._remote_run(ps_cmd)
+
+    async def _local_run(self, encoded: str) -> tuple[str, str]:
+        """Run an encoded PowerShell command on this machine."""
+        proc = await asyncio.create_subprocess_exec(
+            "powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        except asyncio.TimeoutError:
+            proc.kill()
+            raise
+        return (stdout.decode("utf-8", errors="replace"),
+                stderr.decode("utf-8", errors="replace"))
+
+    async def _remote_run(self, ps_cmd: str) -> tuple[str, str]:
+        """Run over SSH — asyncssh, then paramiko, then the ssh binary."""
         # Try asyncssh first (fast, native async)
         try:
             return await self._ssh_run_asyncssh(ps_cmd)
