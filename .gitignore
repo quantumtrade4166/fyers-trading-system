@@ -82,3 +82,12 @@ live_trading_options/delta_btc/logs/
 # Backed up to private Google Drive every 10 min + a daily dated archive. NEVER git.
 deployment/dualmom_live_state/
 deployment/dualmom_kite_state/
+
+# JARVIS runtime state. jwt_secret.key signs the API's auth tokens and the
+# sqlite db holds the command ledger, decisions and timeline — both are
+# per-machine runtime state, and the key is a live credential. Never git.
+jarvis/data/*.db
+jarvis/data/*.db-shm
+jarvis/data/*.db-wal
+jarvis/data/*.key
+jarvis/timeline/*.json

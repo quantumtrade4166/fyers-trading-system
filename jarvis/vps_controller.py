@@ -41,42 +41,47 @@ log = get_logger("vps_controller")
 
 VPS_IP = "144.79.166.103"
 VPS_SSH_PORT = 22
-VPS_USER = "ubuntu"
+VPS_USER = "Administrator"
+# Absolute key path so SYSTEM user (scheduled task) can find it
+VPS_KEY_PATH = r"C:\Users\Administrator\.ssh\id_rsa"
 
-# Known engine service names on the VPS
+# Known engine service names on the VPS (Windows scheduled tasks / processes)
 VPS_ENGINES = {
-    "dashboard": "uvicorn dashboard.main:app --host 0.0.0.0 --port 8000",
-    "dualmom_kite": "python main.py (DualMom Kite)",
-    "dualmom_kotak": "python main.py (DualMom Kotak)",
-    "nifty_pivot": "python main.py (Nifty Pivot)",
-    "vwap_strangle": "python main.py (Vwap Strangle)",
-    "btc_vwap": "python main.py (BTC Vwap)",
+    "dashboard": "uvicorn deployment.main:app --port 8000",
+    "dualmom_kite": "dualmom_kite engine",
+    "dualmom_kotak": "dualmom_kotak engine",
+    "nifty_pivot": "nifty_pivot engine",
+    "vwap_strangle": "vwap_strangle engine",
+    "btc_vwap": "btc_vwap engine",
+    "jarvis_api": "uvicorn jarvis.api.server:app --port 8081",
 }
 
-# Commands that can be run remotely
+# Commands that can be run remotely — Windows PowerShell equivalents
 _SAFE_COMMANDS: dict[str, str] = {
-    "restart dashboard": "sudo systemctl restart dashboard || kill -HUP $(pgrep -f 'uvicorn dashboard')",
-    "restart dualmom_kite": "sudo systemctl restart dualmom_kite || kill -HUP $(pgrep -f 'dualmom_kite')",
-    "restart dualmom_kotak": "sudo systemctl restart dualmom_kotak",
-    "restart nifty_pivot": "sudo systemctl restart nifty_pivot",
-    "restart vwap_strangle": "sudo systemctl restart vwap_strangle",
-    "restart btc_vwap": "sudo systemctl restart btc_vwap",
-    "restart all": "for svc in dashboard dualmom_kite dualmom_kotak nifty_pivot vwap_strangle btc_vwap; do sudo systemctl restart $svc 2>/dev/null; done",
-    "check dashboard": "curl -s -o /dev/null -w '%{http_code}' http://localhost:8000/health 2>/dev/null || echo 'unreachable'",
-    "check dualmom_kite": "pgrep -f 'dualmom_kite' && echo 'running' || echo 'stopped'",
-    "check dualmom_kotak": "pgrep -f 'dualmom_kotak' && echo 'running' || echo 'stopped'",
-    "check nifty_pivot": "pgrep -f 'nifty_pivot' && echo 'running' || echo 'stopped'",
-    "check vwap_strangle": "pgrep -f 'vwap_strangle' && echo 'running' || echo 'stopped'",
-    "check btc_vwap": "pgrep -f 'btc_vwap' && echo 'running' || echo 'stopped'",
-    "check all": "for svc in dashboard dualmom_kite dualmom_kotak nifty_pivot vwap_strangle btc_vwap; do echo \"$svc: $(pgrep -f $svc > /dev/null && echo 'running' || echo 'stopped')\"; done",
-    "disk": "df -h / | tail -1",
-    "memory": "free -h | head -2",
-    "cpu": "top -bn1 | head -5",
-    "logs dashboard": "journalctl -u dashboard --no-pager -n 50 2>/dev/null || tail -50 /var/log/dashboard.log 2>/dev/null || echo 'no logs'",
-    "logs dualmom_kite": "journalctl -u dualmom_kite --no-pager -n 50 2>/dev/null || tail -50 ~/dual*/log*.log 2>/dev/null || echo 'no logs'",
-    "uptime": "uptime && cat /proc/loadavg",
-    "who": "who",
-    "ps": "ps aux | grep -E 'python|uvicorn|node' | grep -v grep",
+    "restart dashboard": "schtasks /Run /TN Dashboard 2>&1; Stop-Process -Name python -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -match 'deployment.main'} | Stop-Process -Force -ErrorAction SilentlyContinue; cd C:\\Users\\Administrator\\Desktop\\fyers_data_pipeline_git; Start-Process .venv\\Scripts\\python.exe -ArgumentList '-m','uvicorn','deployment.main:app','--host','0.0.0.0','--port','8000' -WindowStyle Hidden",
+    "restart dualmom_kite": "schtasks /Run /TN DualMomKite 2>&1",
+    "restart dualmom_kotak": "schtasks /Run /TN DualMomKotak 2>&1",
+    "restart nifty_pivot": "schtasks /Run /TN NiftyPivotEngine 2>&1",
+    "restart vwap_strangle": "schtasks /Run /TN VwapStrangleEngine 2>&1",
+    "restart btc_vwap": "schtasks /Run /TN BTCVwapEngine 2>&1",
+    "restart jarvis_api": "schtasks /Run /TN JarvisAPI 2>&1",
+    "restart all": "schtasks /Run /TN Dashboard 2>&1; schtasks /Run /TN DualMomKite 2>&1; schtasks /Run /TN DualMomKotak 2>&1; schtasks /Run /TN NiftyPivotEngine 2>&1",
+    "check dashboard": "try { $r = Invoke-WebRequest -Uri 'http://localhost:8000/health' -UseBasicParsing -TimeoutSec 5; Write-Output (\"HTTP \" + $r.StatusCode) } catch { Write-Output ('Port 8000: ' + ((Get-NetTCPConnection -LocalPort 8000 -ErrorAction SilentlyContinue | Measure-Object).Count + ' open')) }",
+    "check jarvis_api": "try { $r = Invoke-WebRequest -Uri 'http://localhost:8081/health' -UseBasicParsing -TimeoutSec 5; Write-Output (\"HTTP \" + $r.StatusCode) } catch { Write-Output ('Port 8081: ' + ((Get-NetTCPConnection -LocalPort 8081 -ErrorAction SilentlyContinue | Measure-Object).Count + ' open')) }",
+    "check dualmom_kite": "Get-Process -Name python -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -match 'dualmom_kite'} | Select-Object Id,ProcessName",
+    "check dualmom_kotak": "Get-Process -Name python -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -match 'dualmom_kotak'} | Select-Object Id,ProcessName",
+    "check nifty_pivot": "Get-Process -Name python -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -match 'nifty_pivot'} | Select-Object Id,ProcessName",
+    "check vwap_strangle": "Get-Process -Name python -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -match 'vwap_strangle'} | Select-Object Id,ProcessName",
+    "check btc_vwap": "Get-Process -Name python -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -match 'btc_vwap'} | Select-Object Id,ProcessName",
+    "check all": "Get-Process -Name python -ErrorAction SilentlyContinue | Select-Object Id,@{N='CmdLine';E={(Get-WmiObject Win32_Process -Filter \"ProcessId = $($_.Id)\").CommandLine}} | Format-List",
+    "disk": "Get-CimInstance Win32_LogicalDisk -Filter \"DeviceID='C:'\" | ForEach-Object { Write-Output (\"Total: \" + [math]::Round($_.Size/1GB,1) + \"GB, Free: \" + [math]::Round($_.FreeSpace/1GB,1) + \"GB\") }",
+    "memory": "$os = Get-CimInstance Win32_OperatingSystem; $total = [math]::Round($os.TotalVisibleMemorySize/1MB, 1); $free = [math]::Round($os.FreePhysicalMemory/1MB, 1); $used = $total - $free; Write-Output \"Total: ${total}GB, Used: ${used}GB, Free: ${free}GB ($([math]::Round($free/$total*100,1))% free)\"",
+    "cpu": "Get-CimInstance Win32_Processor | Select-Object Name,NumberOfCores,NumberOfLogicalProcessors,LoadPercentage",
+    "uptime": "$os = Get-CimInstance Win32_OperatingSystem; $span = (Get-Date) - $os.LastBootUpTime; $days = $span.Days; $hrs = $span.Hours; $mins = $span.Minutes; Write-Output \"Uptime: ${days}d ${hrs}h ${mins}m\"; Write-Output ('Boot: ' + $os.LastBootUpTime)",
+    "logs dashboard": "Get-Content C:\\Users\\Administrator\\Desktop\\fyers_data_pipeline_git\\logs\\server.log -Tail 50 -ErrorAction SilentlyContinue || echo 'no logs'",
+    "who": "whoami",
+    "ps": "Get-CimInstance Win32_Process -Filter \"Name = 'python.exe' OR Name = 'uvicorn.exe' OR Name = 'node.exe'\" | Select-Object ProcessId,Name,CommandLine | Format-List",
+    "tasks": "schtasks /Query /FO LIST /V 2>&1 | Select-String -Pattern 'TaskName|Status|Last Run' -Context 0,0",
 }
 
 
@@ -99,7 +104,7 @@ class VPSController:
         port: int = VPS_SSH_PORT,
         user: str = VPS_USER,
         use_key_auth: bool = True,
-        key_path: str = "~/.ssh/id_rsa",
+        key_path: str = VPS_KEY_PATH,
     ) -> None:
         self.host = host
         self.port = port
@@ -205,20 +210,26 @@ class VPSController:
 
     async def _ssh_run(self, shell_cmd: str) -> tuple[str, str]:
         """Run a command over SSH, returning (stdout, stderr)."""
+        # All commands are PowerShell — encode to bypass shell quoting
+        import base64
+        full_cmd = f"$ProgressPreference = 'SilentlyContinue'; {shell_cmd}"
+        encoded = base64.b64encode(full_cmd.encode("utf-16-le")).decode()
+        ps_cmd = f"powershell -NoProfile -EncodedCommand {encoded}"
+
         # Try asyncssh first (fast, native async)
         try:
-            return await self._ssh_run_asyncssh(shell_cmd)
+            return await self._ssh_run_asyncssh(ps_cmd)
         except ImportError:
             pass
 
         # Fallback to paramiko
         try:
-            return await self._ssh_run_paramiko(shell_cmd)
+            return await self._ssh_run_paramiko(ps_cmd)
         except ImportError:
             pass
 
         # Last resort: subprocess ssh
-        return await self._ssh_run_subprocess(shell_cmd)
+        return await self._ssh_run_subprocess(ps_cmd)
 
     async def _ssh_run_asyncssh(self, shell_cmd: str) -> tuple[str, str]:
         """Run via asyncssh."""
@@ -269,7 +280,7 @@ class VPSController:
         finally:
             ssh.close()
 
-    async def _ssh_run_subprocess(self, shell_cmd: str) -> tuple[str, str]:
+    async def _ssh_run_subprocess(self, ps_cmd: str) -> tuple[str, str]:
         """Run via system ssh command (fallback)."""
         import os
         key_file = os.path.expanduser(self.key_path) if self.use_key_auth else ""
@@ -277,7 +288,7 @@ class VPSController:
         if key_file:
             ssh_args.extend(["-i", key_file])
         ssh_args.append(f"{self.user}@{self.host}")
-        ssh_args.append(shell_cmd)
+        ssh_args.append(ps_cmd)
 
         proc = await asyncio.create_subprocess_exec(
             *ssh_args,
@@ -286,7 +297,6 @@ class VPSController:
         )
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
         if proc.returncode is not None and proc.returncode != 0:
-            # stderr might contain connection errors
             if "Connection refused" in stderr.decode() or "No route" in stderr.decode():
                 raise VPSConnectionError(f"SSH to {self.host}:{self.port} failed: {stderr.decode().strip()}")
         return stdout.decode("utf-8", errors="replace"), stderr.decode("utf-8", errors="replace")
