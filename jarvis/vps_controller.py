@@ -77,9 +77,18 @@ VPS_ENGINES = {
     "jarvis_api": "uvicorn jarvis.api.server:app --port 8081",
 }
 
+# Engines the API may restart. Only ones with a verified-safe restart path.
+# The other "restart X" entries below point at scheduled-task names that don't
+# exist on the VPS (the real tasks are PairsDashboard, DualMomService,
+# NiftyPivotEngine, ...), so they are NOT exposed until each is verified.
+RESTARTABLE_ENGINES: tuple[str, ...] = ("dashboard",)
+
 # Commands that can be run remotely — Windows PowerShell equivalents
 _SAFE_COMMANDS: dict[str, str] = {
-    "restart dashboard": "schtasks /Run /TN Dashboard 2>&1; Stop-Process -Name python -ErrorAction SilentlyContinue | Where-Object {$_.CommandLine -match 'deployment.main'} | Stop-Process -Force -ErrorAction SilentlyContinue; cd C:\\Users\\Administrator\\Desktop\\fyers_data_pipeline_git; Start-Process .venv\\Scripts\\python.exe -ArgumentList '-m','uvicorn','deployment.main:app','--host','0.0.0.0','--port','8000' -WindowStyle Hidden",
+    # Dashboard ONLY, via the repo's own script (stops just *uvicorn*deployment.main*,
+    # then reruns task PairsDashboard). NEVER `Stop-Process -Name python` — that
+    # kills every live trading engine (see memory feedback_vps_process_counting).
+    "restart dashboard": "& 'C:\\Users\\Administrator\\Desktop\\fyers_data_pipeline_git\\deployment\\restart_server.ps1'",
     "restart dualmom_kite": "schtasks /Run /TN DualMomKite 2>&1",
     "restart dualmom_kotak": "schtasks /Run /TN DualMomKotak 2>&1",
     "restart nifty_pivot": "schtasks /Run /TN NiftyPivotEngine 2>&1",

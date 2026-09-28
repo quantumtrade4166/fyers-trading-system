@@ -29,7 +29,6 @@ Write-Output "`nDone. Verify with:  Get-ScheduledTask | ? { `$_.TaskPath -eq '\'
 Write-Output "Start services:"
 Write-Output "  Start-ScheduledTask -TaskName PairsDashboard"
 Write-Output "  Start-ScheduledTask -TaskName JarvisAPI"
-Write-Output "  Start-ScheduledTask -TaskName JarvisTunnel"
 Write-Output "Stable URL (Tailscale Funnel) — after re-joining the tailnet:"
 Write-Output "  tailscale up ; tailscale cert <node>.<tailnet>.ts.net ; tailscale funnel --bg 8000"
 Write-Output "  (then disable key expiry for the node in the Tailscale admin console)"

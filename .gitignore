@@ -90,4 +90,5 @@ jarvis/data/*.db
 jarvis/data/*.db-shm
 jarvis/data/*.db-wal
 jarvis/data/*.key
+jarvis/data/api_keys.*
 jarvis/timeline/*.json
