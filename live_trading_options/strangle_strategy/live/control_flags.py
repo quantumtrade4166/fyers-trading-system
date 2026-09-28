@@ -88,14 +88,35 @@ def write_control(index: str = None, mode: str = None, kill: bool = None,
                   qty: int = None, mtm_stop: float = None,
                   state_dir: Path = None) -> dict:
     c = read_control(index, state_dir)
+    wrote = False
     if mode is not None:
-        c["mode"] = "live" if str(mode).lower() == "live" else "paper"
+        new_mode = "live" if str(mode).lower() == "live" else "paper"
+        if new_mode != c.get("mode"):
+            wrote = True
+        c["mode"] = new_mode
+        # When disarming, clear size overrides so the NEXT arm starts from defaults,
+        # not from whatever the previous arm had (this was showing 585 qty on Kotak Rohit).
+        if new_mode == "paper" and c.get("qty") is not None:
+            c["qty"] = None
+            wrote = True
+        if new_mode == "paper" and c.get("mtm_stop") is not None:
+            c["mtm_stop"] = None
+            wrote = True
     if kill is not None:
+        if c.get("kill") != bool(kill):
+            wrote = True
         c["kill"] = bool(kill)
     if qty is not None:                     # set an explicit size override (0/None-safe)
-        c["qty"] = int(qty) if qty else None
+        new_qty = int(qty) if qty else None
+        if new_qty != c.get("qty"):
+            wrote = True
+        c["qty"] = new_qty
     if mtm_stop is not None:                # set an explicit MTM-stop override
-        c["mtm_stop"] = float(mtm_stop) if mtm_stop else None
-    c["updated"] = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    _control_file(index, state_dir).write_text(json.dumps(c, indent=2))
+        new_mtm = float(mtm_stop) if mtm_stop else None
+        if new_mtm != c.get("mtm_stop"):
+            wrote = True
+        c["mtm_stop"] = new_mtm
+    if wrote or mode is not None:
+        c["updated"] = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        _control_file(index, state_dir).write_text(json.dumps(c, indent=2))
     return c

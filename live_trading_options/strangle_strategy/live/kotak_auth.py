@@ -57,11 +57,11 @@ def _mobile_variants(m: str) -> list:
     order: as-given, +91-prefixed, and the bare 10 digits. First that logs in wins."""
     m = (m or "").strip()
     digits = m.lstrip("+")
+    bare = digits[-10:] if len(digits) >= 10 else digits
     out = [m]
-    if digits.startswith("91") and len(digits) > 10:
-        out += ["+" + digits, digits[-10:]]
-    elif len(digits) == 10:
-        out += ["+91" + digits, digits]
+    if len(bare) == 10 and bare != digits:
+        out.append("+" + bare)
+    out.append(bare)
     seen = set()
     return [x for x in out if x and not (x in seen or seen.add(x))]
 
@@ -106,6 +106,7 @@ def login(verbose: bool = True, *, rohit: bool = False):
                 if verbose:
                     print(f"  [kotak] totp_validate failed: {r2.get('error')}", flush=True)
                 continue
+            acct = "Rohit" if rohit else "Bhaiya"
             if verbose:
                 print(f"  [kotak] login OK {acct} (mobile={mob})", flush=True)
             return client
