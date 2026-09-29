@@ -209,9 +209,9 @@ def free_margin(kite) -> dict:
 # ── broker positions (whole account; filtered by the caller) ─────────────────
 
 def broker_equity_qty(kite) -> dict:
-    """{symbol: {qty, settled, t1, today_buy, today_sell, trading_symbol}} for
-    NSE CNC equity in the whole account. holdings() carries settled + T1 shares;
-    today's buys/sells exist only in positions()['day']."""
+    """{symbol: {qty, settled, t1, today_buy, today_sell, trading_symbol, avg_price}} for
+    NSE CNC equity in the whole account. holdings() carries settled + T1 shares and
+    the broker's own average_price; today's buys/sells exist only in positions()['day']."""
     out = {}
     for h in kite.holdings() or []:
         if str(h.get("exchange", "")).upper() not in ("NSE", "BSE"):
@@ -221,6 +221,7 @@ def broker_equity_qty(kite) -> dict:
                                "trading_symbol": h.get("tradingsymbol")})
         p["settled"] += _i(h.get("quantity"))
         p["t1"] += _i(h.get("t1_quantity"))
+        p["broker_avg"] = _f(h.get("average_price"))
     pos = (kite.positions() or {}).get("day") or []
     for r in pos:
         if str(r.get("product", "")).upper() != "CNC" or str(r.get("exchange", "")).upper() != "NSE":
