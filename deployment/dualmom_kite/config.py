@@ -80,8 +80,8 @@ ORDER_POLL_TIMEOUT = 120
 MIN_FREE_MARGIN_AFTER = 0
 
 # ── timing ───────────────────────────────────────────────────────────────────
-REBALANCE_TIME = (9, 22)            # 2 min after Kotak's 09:20 - never overlap
-REBALANCE_CATCHUP = (10, 5)         # if the 09:22 token was not ready yet
+REBALANCE_TIME = (15, 17)           # 2 min after Kotak's 15:15 - never overlap
+REBALANCE_CATCHUP = (15, 21)        # if the 15:17 run was blocked by open orders
 
 STATE_DIR = "dualmom_kite_state"
 

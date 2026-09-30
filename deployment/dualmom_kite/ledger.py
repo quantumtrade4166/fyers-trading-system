@@ -268,8 +268,14 @@ def own_book() -> dict:
 
 def own_cash(fills: list = None) -> dict:
     """DualMom's cash inside the shared account, from its own fills:
-    capital - buys + sells - estimated charges (incl. DP charge per sell scrip-day)."""
+    capital - buys + sells - estimated charges (incl. DP charge per sell scrip-day).
+
+    Delivery equity only. This account is SHARED with the strangle and the DN
+    engine, so an option premium paid out of the same balance is not a DualMom
+    cash movement - see LK.DELIVERY_PRODUCTS.
+    """
     fills = fills if fills is not None else _read("fills.jsonl")
+    fills, _foreign = LK.split_foreign(fills)
     buys = sum(f["notional"] for f in fills if f["side"] == "BUY")
     sells = sum(f["notional"] for f in fills if f["side"] == "SELL")
     chg = sum((f.get("charges_est") or {}).get("total", 0.0) for f in fills)

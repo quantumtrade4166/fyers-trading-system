@@ -365,6 +365,35 @@ def capture(client) -> dict:
 
 # ── own book from fills (FIFO) ───────────────────────────────────────────────
 
+# DELIVERY EQUITY ONLY.
+#
+# 2026-09-29: two NIFTY option legs (NIFTY26SEP23850CE / 21800PE, nse_fo, NRML)
+# were traded in the DualMom Kotak account and captured into this ledger, which
+# records EVERY fill the account reports rather than only tagged ones. own_book
+# then showed a 390-lot "NIFTY" position that the demat account does not hold,
+# which is the reconciliation break on the dashboard.
+#
+# The fix belongs HERE, not in capture: the ledger is the honest audit trail of
+# everything that happened in the account and must keep those rows. DualMom's
+# BOOK is a different question - it is delivery equity only. `product` is the
+# discriminator that works for both brokers (Kotak CNC vs NRML, Kite CNC vs NRML).
+#
+# Excluded fills are counted and returned, never silently dropped: a client
+# record that quietly omits trades is worse than one that shows them.
+DELIVERY_PRODUCTS = {"CNC"}
+
+
+def is_own_equity(fill) -> bool:
+    """True if this fill is a DualMom delivery-equity trade."""
+    return str(fill.get("product") or "").upper() in DELIVERY_PRODUCTS
+
+
+def split_foreign(fills: list):
+    """(delivery equity, everything else) — the second list is the contamination."""
+    ours = [f for f in fills if is_own_equity(f)]
+    return ours, [f for f in fills if not is_own_equity(f)]
+
+
 def own_book(fills: list = None) -> dict:
     """Positions rebuilt ONLY from exchange fills, FIFO lot matching.
 
@@ -372,8 +401,12 @@ def own_book(fills: list = None) -> dict:
     so realised P&L here matches the client's tax statement, not an average-cost
     approximation. Returns {symbol: {...}} for open positions plus a 'realized'
     total and the lot detail for every symbol ever traded.
+
+    Non-delivery fills (options/futures that landed in a shared account) are
+    excluded and reported under 'excluded' - see DELIVERY_PRODUCTS above.
     """
     fills = fills if fills is not None else _read("fills.jsonl")
+    fills, foreign = split_foreign(fills)
     fills = sorted(fills, key=lambda x: (x.get("exchange_time") or "", str(x.get("exchange_fill_id"))))
     lots, realized, charges, meta = {}, {}, {}, {}
     for fl in fills:
@@ -412,7 +445,13 @@ def own_book(fills: list = None) -> dict:
             "realized": round(sum(realized.values()), 4),
             "realized_by_symbol": {k: round(v, 4) for k, v in realized.items()},
             "charges_est_total": round(sum(charges.values()), 4),
-            "fills": len(fills)}
+            "fills": len(fills),
+            "excluded_fills": len(foreign),
+            "excluded": [{"symbol": f.get("symbol"), "trading_symbol": f.get("trading_symbol"),
+                          "segment": f.get("segment"), "product": f.get("product"),
+                          "side": f.get("side"), "qty": f.get("qty"), "price": f.get("price"),
+                          "exchange_time": f.get("exchange_time"),
+                          "client_tag": f.get("client_tag")} for f in foreign]}
 
 
 # ── NAV series ───────────────────────────────────────────────────────────────

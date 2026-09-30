@@ -538,8 +538,14 @@ def _build_scheduler() -> BackgroundScheduler:
               run_date=datetime.now(IST) + _td0(seconds=15),
               id="dm_session_startup", misfire_grace_time=600)
     # 09:20 - first session of each month; retried on later mornings if closed.
+    # 15:15, not 09:20. Moved permanently 2026-10-01: the open is the worst
+    # slippage window for momentum names (dualmom_live/config EXECUTE_TIME says
+    # so), the Kite account is SHARED with the strangle which fires at 09:20,
+    # and on expiry days both would hit the same broker together. 15:15 sits
+    # after the strangle squares off at 15:14, is nearer the month-end CLOSE the
+    # backtest fills at, and still leaves 15 minutes before the bell.
     s.add_job(_job_monthly_rebalance, CronTrigger(
-        day_of_week="mon-fri", hour=9, minute=20, timezone=IST),
+        day_of_week="mon-fri", hour=15, minute=15, timezone=IST),
         id="dm_monthly_rebalance", misfire_grace_time=7200, coalesce=True,
         max_instances=1)
     # 15:25 - the -35% stop, before the close so orders can still fill.

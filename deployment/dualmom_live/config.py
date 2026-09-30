@@ -84,8 +84,16 @@ CREDENTIAL_PREFIX = "KOTAK_DM_"
 
 # ── execution timing ─────────────────────────────────────────────────────────
 SIGNAL_TIME   = "15:20"   # after the strangle's 15:14 square-off releases the session
-EXECUTE_TIME  = "09:20"   # next morning; NOT 09:15 — the open is the worst
-                          # slippage window for recently-mooned small caps
+EXECUTE_TIME  = "15:15"   # first session of the new month, in the AFTERNOON.
+                          # Was 09:20 until 2026-10-01. Three reasons for the
+                          # move: the open is the worst slippage window for
+                          # recently-mooned small caps; the Kite account is
+                          # SHARED with the strangle, which fires at 09:20, so on
+                          # expiry days both hit the same broker at once; and
+                          # 15:15 is nearer the month-end CLOSE the backtest
+                          # fills at. Runs after the strangle squares off at
+                          # 15:14, 15 minutes before the bell. The authoritative
+                          # schedule is dualmom_service.py; this documents it.
 STOP_CHECK    = "15:25"   # daily intra-month stop check (new operational need)
 
 # ── safety limits (hard stops on an automated run) ──────────────────────────
