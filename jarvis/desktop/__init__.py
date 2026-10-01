@@ -1,3 +1,0 @@
-"""
-JARVIS — Desktop Package Initialization
-"""

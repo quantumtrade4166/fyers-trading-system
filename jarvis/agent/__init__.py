@@ -1,3 +1,0 @@
-"""
-JARVIS — Agent Package Initialization
-"""

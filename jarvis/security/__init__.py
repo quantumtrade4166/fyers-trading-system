@@ -1,3 +1,0 @@
-"""
-JARVIS — Security Package Initialization
-"""

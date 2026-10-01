@@ -1,3 +1,0 @@
-"""
-JARVIS — Memory Package Initialization
-"""
