@@ -50,6 +50,8 @@ class KotakRohitController(KotakController):
     Overrides only: control-flag prefix, snapshot/tick file naming, and order tag prefix.
     """
 
+    tag_prefix = TAG_PREFIX          # "vwsk2" — every Rohit order + its reconcile lookup
+
     def _check_control(self):
         now = _time.monotonic()
         if now - self._last_ctrl < 1.0:
@@ -87,8 +89,11 @@ class KotakRohitController(KotakController):
         on Rohit's Kotak account are always distinguishable from Bhaiya's."""
         ks = self.kotak_syms[sym]
         price = self._leg_price(sym, side, self.qty, buf)
+        # tag with THIS mirror's order-tag prefix ("vwsk2") — NOT the control-flag
+        # prefix. Using _ctrl_prefix here produced a 21-char underscore tag that Kotak
+        # rejected, so Rohit entries silently failed while Zerodha's went through.
         oid = ke.place_limit(self.kotak, ks["trading_symbol"], ks["exchange_segment"],
-                             side, self.qty, price, tag=_ctrl_prefix)
+                             side, self.qty, price, tag=self.tag_prefix)
         self.ledger.record(Order(oid, sym, side, self.qty, cycle, kind))
         audit.log(self.index, "ROHIT_ORDER_PLACED", cyc=cycle, side=side,
                   sym=ks["trading_symbol"], qty=self.qty, oid=oid, limit=price)
@@ -146,7 +151,7 @@ class KotakRohitController(KotakController):
             pass
         ts_to_fy = {v["trading_symbol"]: fy for fy, v in self.kotak_syms.items()}
         try:
-            fills = ke.strategy_fills(self.kotak, tag_prefix=TAG_PREFIX)
+            fills = ke.strategy_fills(self.kotak, tag_prefix=self.tag_prefix)
         except Exception as e:
             audit.log(self.index, "ROHIT_RECONCILE_FAIL", error=str(e))
             return

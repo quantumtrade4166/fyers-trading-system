@@ -182,6 +182,9 @@
     <button class="tab-btn" id="tab-btcvwap" onclick="switchTab('btcvwap')">
       ₿ BTC VWAP
     </button>
+    <button class="tab-btn" id="tab-btcarb" onclick="switchTab('btcarb')">
+      ₿ BTC Arbitrage
+    </button>
     <button class="tab-btn" id="tab-ndp" onclick="switchTab('ndp')">
       📐 Nifty Directional Pivot
     </button>
@@ -1268,13 +1271,16 @@
   <div id="page-btcvwap" style="display:none">
     <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
       <div>
-        <h2 class="text-lg font-semibold text-white">₿ BTC VWAP Strangle <span class="ml-2 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-400 align-middle">PAPER</span></h2>
+        <h2 class="text-lg font-semibold text-white">₿ BTC VWAP Strangle <span id="bv-mode-badge" class="ml-2 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-400 align-middle">PAPER</span></h2>
         <p class="text-xs text-slate-500">Delta Exchange India · combined-premium VWAP · sell red-below-VWAP low−1 · exit close above VWAP · fills walk the real order book</p>
       </div>
       <div class="flex items-center gap-2 flex-wrap">
         <div class="flex rounded overflow-hidden border border-slate-700">
           <button id="bv-v-full_expiry" onclick="bvSetVersion('full_expiry')" class="px-3 py-1 text-xs">Full expiry</button>
           <button id="bv-v-ist_day" onclick="bvSetVersion('ist_day')" class="px-3 py-1 text-xs">IST day</button>
+          <button id="bv-v-ist_live" onclick="bvSetVersion('ist_live')" class="px-3 py-1 text-xs">Vwap New Paper</button>
+          <button id="bv-v-ist_cap" onclick="bvSetVersion('ist_cap')" class="px-3 py-1 text-xs">Vwap 1.5x Paper</button>
+          <button id="bv-v-ist_delta" onclick="bvSetVersion('ist_delta')" class="px-3 py-1 text-xs">Vwap New Delta Ex</button>
         </div>
         <select id="bv-date" onchange="bvOnDateChange()"
                 class="bg-[#151a26] text-slate-300 text-xs rounded px-2 py-1 border border-[#2d3748]"></select>
@@ -1282,6 +1288,14 @@
       </div>
     </div>
 
+    <div id="bv-control" style="display:none" class="mb-3 px-3 py-2 rounded border border-rose-700/50 bg-rose-950/20 flex items-center gap-3 flex-wrap">
+      <span class="text-xs font-semibold text-slate-200">Delta Exchange · real money</span>
+      <span id="bv-ctl-state" class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-700 text-slate-200">—</span>
+      <button id="bv-arm-btn" onclick="bvControl('arm')" class="px-3 py-1 rounded text-xs font-semibold bg-rose-600 hover:bg-rose-500 text-white">ARM LIVE</button>
+      <button onclick="bvControl('paper')" class="px-3 py-1 rounded text-xs font-semibold bg-slate-700 hover:bg-slate-600 text-white">PAPER</button>
+      <button onclick="bvControl('kill')" class="px-3 py-1 rounded text-xs font-semibold bg-black hover:bg-slate-900 text-rose-400 border border-rose-600">KILL</button>
+      <span class="text-[10px] text-slate-500">ARM / PAPER take effect when flat · KILL closes every open leg now and stops for today</span>
+    </div>
     <div id="bv-banner" class="mb-3 px-3 py-2 rounded text-xs bg-slate-800/60 border border-slate-700/60 text-slate-300"></div>
 
     <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 mb-4">
@@ -1292,6 +1306,7 @@
       <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">Position</div><div id="bv-pos" class="text-sm font-semibold text-slate-100">—</div><div id="bv-entries" class="text-[10px] text-slate-500"></div></div>
       <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">MTM (USD)</div><div id="bv-mtm" class="text-xl font-bold tabular-nums">—</div><div id="bv-mtm-inr" class="text-[10px] text-slate-500"></div></div>
       <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">Realized</div><div id="bv-real" class="text-xl font-bold tabular-nums">—</div><div id="bv-stop" class="text-[10px] text-slate-500"></div></div>
+      <div id="bv-net-card" class="card p-3" style="display:none"><div class="text-[10px] uppercase text-slate-500">Net P&amp;L after all charges</div><div id="bv-net" class="text-xl font-bold tabular-nums">—</div><div id="bv-net-sub" class="text-[10px] text-slate-500"></div></div>
     </div>
 
     <div class="card p-4 mb-4">
@@ -1300,6 +1315,54 @@
         <div id="bv-tip" class="text-[11px] text-slate-400 tabular-nums"></div>
       </div>
       <div id="bv-chart" style="height:420px"></div>
+    </div>
+
+    <div id="bv-legs-card" class="card p-4 mb-4" style="display:none">
+      <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div>
+          <div class="text-sm font-semibold text-slate-200">Each leg · 5 min · <span class="text-sky-400">own VWAP</span></div>
+          <div class="text-[10px] text-slate-500">a KEPT leg is bought back when ITS OWN candle closes above ITS OWN VWAP (red ▼ sell · green ▲ buy · K = kept-leg exit · B = busted leg)</div>
+        </div>
+        <div id="bv-leg-tip" class="text-[11px] text-slate-400 tabular-nums"></div>
+      </div>
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div><div id="bv-leg-title-CE" class="text-xs text-slate-300 mb-1">CE</div><div id="bv-leg-chart-CE" style="height:280px"></div></div>
+        <div><div id="bv-leg-title-PE" class="text-xs text-slate-300 mb-1">PE</div><div id="bv-leg-chart-PE" style="height:280px"></div></div>
+      </div>
+    </div>
+
+    <div id="bv-broker-card" class="card p-4 mb-4" style="display:none">
+      <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div>
+          <div class="text-sm font-semibold text-slate-200">Broker — what Delta Exchange itself reports</div>
+          <div class="text-[10px] text-slate-500">read straight from Delta (positions, today's fills with the commission charged, wallet) · refreshed every 15 s · reconciled against our book</div>
+        </div>
+        <div class="flex items-center gap-2">
+          <span id="bv-recon" class="px-2 py-0.5 rounded text-[10px] font-semibold bg-slate-700 text-slate-200">—</span>
+          <span id="bv-broker-at" class="text-[10px] text-slate-500"></span>
+        </div>
+      </div>
+      <div id="bv-wallet" class="text-xs text-slate-300 mb-1 tabular-nums"></div>
+      <div id="bv-ledger" class="text-xs text-slate-300 mb-3 tabular-nums"></div>
+      <div class="text-[10px] uppercase text-slate-500 mb-1">Open positions on Delta</div>
+      <div style="overflow-x:auto" class="mb-3">
+        <table class="w-full text-xs tabular-nums whitespace-nowrap">
+          <thead class="text-slate-500"><tr class="text-[10px] uppercase">
+            <th class="text-left py-1 pr-3">Symbol</th><th class="text-right pr-3">Size</th><th class="text-right pr-3">Entry</th>
+            <th class="text-right pr-3">Mark</th><th class="text-right pr-3">uPnL $</th><th class="text-right pr-3">Margin $</th><th class="text-right pr-3">Liq. price</th></tr></thead>
+          <tbody id="bv-bpos"></tbody>
+        </table>
+      </div>
+      <div class="text-[10px] uppercase text-slate-500 mb-1">Today's fills on Delta <span id="bv-bfees" class="normal-case"></span></div>
+      <div style="overflow-x:auto;max-height:260px;overflow-y:auto">
+        <table class="w-full text-xs tabular-nums whitespace-nowrap">
+          <thead class="text-slate-500"><tr class="text-[10px] uppercase">
+            <th class="text-left py-1 pr-3">Time</th><th class="text-left pr-3">Symbol</th><th class="text-left pr-3">Side</th>
+            <th class="text-right pr-3">Size</th><th class="text-right pr-3">Price</th><th class="text-right pr-3">Fee $</th>
+            <th class="text-left pr-3">Role</th><th class="text-left pr-3">Order</th><th class="text-left">Ours</th></tr></thead>
+          <tbody id="bv-bfills"></tbody>
+        </table>
+      </div>
     </div>
 
     <div class="card p-4 mb-4">
@@ -1334,6 +1397,140 @@
       <div class="card p-4">
         <div class="text-sm font-semibold text-slate-200 mb-2">Event log <span id="bv-log-meta" class="text-[10px] text-slate-500"></span></div>
         <div id="bv-log" class="text-[11px] font-mono text-slate-400" style="max-height:360px;overflow-y:auto"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       ₿ BTC ARBITRAGE — Delta vs Binance perpetual spread (READ-ONLY)
+  ══════════════════════════════════════════════════════════ -->
+  <div id="page-btcarb" style="display:none">
+    <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+      <div>
+        <h2 class="text-lg font-semibold text-white">₿ BTC Futures Arbitrage Monitor <span class="ml-2 px-2 py-0.5 rounded text-[10px] font-semibold bg-sky-500/15 text-sky-400 align-middle">READ-ONLY</span></h2>
+        <p class="text-xs text-slate-500">Delta Exchange India vs Binance · perpetual vs perpetual · executable bid/ask spread · no orders, no keys</p>
+      </div>
+      <div class="flex items-center gap-2 flex-wrap">
+        <span id="ba-conn-d" class="px-2 py-1 rounded text-[10px] font-semibold bg-slate-800 text-slate-400">DELTA —</span>
+        <span id="ba-conn-b" class="px-2 py-1 rounded text-[10px] font-semibold bg-slate-800 text-slate-400">BINANCE —</span>
+        <span id="ba-feed" class="px-2 py-1 rounded text-[10px] font-semibold bg-slate-800 text-slate-400">MONITOR —</span>
+      </div>
+    </div>
+
+    <div id="ba-banner" class="mb-3 px-3 py-2 rounded text-xs bg-slate-800/60 border border-slate-700/60 text-slate-300"></div>
+
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+      <div class="card p-3">
+        <div class="flex justify-between text-[10px] uppercase text-slate-500"><span id="ba-d-name">Delta</span><span id="ba-d-age"></span></div>
+        <div class="grid grid-cols-2 gap-2 mt-1">
+          <div><div class="text-[10px] text-slate-500">Bid</div><div id="ba-d-bid" class="text-lg font-bold text-emerald-400 tabular-nums">—</div><div id="ba-d-bq" class="text-[10px] text-slate-500 tabular-nums"></div></div>
+          <div><div class="text-[10px] text-slate-500">Ask</div><div id="ba-d-ask" class="text-lg font-bold text-rose-400 tabular-nums">—</div><div id="ba-d-aq" class="text-[10px] text-slate-500 tabular-nums"></div></div>
+        </div>
+        <div id="ba-d-meta" class="text-[10px] text-slate-500 mt-1 tabular-nums"></div>
+      </div>
+      <div class="card p-3">
+        <div class="flex justify-between text-[10px] uppercase text-slate-500"><span id="ba-b-name">Binance</span><span id="ba-b-age"></span></div>
+        <div class="grid grid-cols-2 gap-2 mt-1">
+          <div><div class="text-[10px] text-slate-500">Bid</div><div id="ba-b-bid" class="text-lg font-bold text-emerald-400 tabular-nums">—</div><div id="ba-b-bq" class="text-[10px] text-slate-500 tabular-nums"></div></div>
+          <div><div class="text-[10px] text-slate-500">Ask</div><div id="ba-b-ask" class="text-lg font-bold text-rose-400 tabular-nums">—</div><div id="ba-b-aq" class="text-[10px] text-slate-500 tabular-nums"></div></div>
+        </div>
+        <div id="ba-b-meta" class="text-[10px] text-slate-500 mt-1 tabular-nums"></div>
+      </div>
+      <div class="card p-3">
+        <div class="text-[10px] uppercase text-slate-500">Status</div>
+        <div id="ba-status" class="text-2xl font-bold text-slate-400">—</div>
+        <div id="ba-dir" class="text-xs text-slate-300 mt-1">—</div>
+        <div id="ba-status-sub" class="text-[10px] text-slate-500 mt-1"></div>
+      </div>
+    </div>
+
+    <div class="card p-4 mb-4">
+      <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div class="text-sm font-semibold text-slate-200">Spread (USD per BTC) · <span class="text-sky-400">mid: Binance − Delta</span> · <span class="text-emerald-400">B bid − D ask</span> · <span class="text-rose-400">B ask − D bid</span></div>
+        <div class="flex rounded overflow-hidden border border-slate-700" id="ba-windows"></div>
+      </div>
+      <div id="ba-chart" style="height:380px"></div>
+      <div id="ba-legend" class="text-[11px] text-slate-500 mt-2"></div>
+    </div>
+
+    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-4">
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">Mid spread</div><div id="ba-mid" class="text-xl font-bold tabular-nums">—</div><div id="ba-mid-pct" class="text-[10px] text-slate-500 tabular-nums"></div></div>
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">Gross spread</div><div id="ba-gross" class="text-xl font-bold tabular-nums">—</div><div id="ba-gross-pct" class="text-[10px] text-slate-500 tabular-nums"></div></div>
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">Fees</div><div id="ba-fees" class="text-xl font-bold text-slate-300 tabular-nums">—</div><div id="ba-fee-mode" class="text-[10px] text-slate-500"></div></div>
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">Net after fees</div><div id="ba-net" class="text-xl font-bold tabular-nums">—</div><div id="ba-net-pct" class="text-[10px] text-slate-500 tabular-nums"></div></div>
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">Threshold</div><div id="ba-thr" class="text-xl font-bold text-amber-400 tabular-nums">—</div><div id="ba-thr-sub" class="text-[10px] text-slate-500"></div></div>
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">Top-of-book size</div><div id="ba-size" class="text-xl font-bold tabular-nums">—</div><div id="ba-size-sub" class="text-[10px] text-slate-500"></div></div>
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">Funding (per 8h)</div><div id="ba-fund" class="text-sm font-semibold text-slate-200 tabular-nums">—</div><div id="ba-fund-sub" class="text-[10px] text-slate-500 tabular-nums"></div></div>
+      <div class="card p-3"><div class="text-[10px] uppercase text-slate-500">USDC / USDT</div><div id="ba-usdc" class="text-xl font-bold text-slate-300 tabular-nums">—</div><div id="ba-usdc-sub" class="text-[10px] text-slate-500"></div></div>
+    </div>
+
+    <div class="card p-4 mb-4">
+      <div class="text-sm font-semibold text-slate-200 mb-2">This window <span id="ba-stats-meta" class="text-[11px] font-normal text-slate-500"></span></div>
+      <div id="ba-stats" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-3 text-xs"></div>
+    </div>
+
+    <div class="card p-4 mb-4 border border-amber-500/30">
+      <div class="flex items-center justify-between mb-3 flex-wrap gap-3">
+        <div>
+          <div class="text-sm font-semibold text-slate-200">Paper trading <span class="ml-1 px-2 py-0.5 rounded text-[10px] font-semibold bg-amber-500/15 text-amber-400 align-middle">PAPER</span></div>
+          <div class="text-[11px] text-slate-500">No fees · 1 BTC each side · both legs priced by walking the real order books · fills use the books <span id="bap-lat-txt">300</span> ms after the signal · no orders are ever sent</div>
+        </div>
+        <button id="bap-toggle" onclick="bapToggle()" class="px-4 py-2 rounded text-xs font-bold bg-slate-700 text-slate-300">PAPER: —</button>
+      </div>
+      <div class="flex items-end gap-3 flex-wrap mb-3 text-xs">
+        <label class="text-slate-400">Enter when 1-BTC gap ≥ $<br><input id="bap-entry" oninput="this.dataset.dirty='1'" type="number" step="0.5" min="0.5" class="mt-1 w-24 bg-[#151a26] text-slate-200 rounded px-2 py-1 border border-[#2d3748]"></label>
+        <label class="text-slate-400">Exit when unwind ≥ −$<br><input id="bap-exit" oninput="this.dataset.dirty='1'" type="number" step="0.5" min="0" class="mt-1 w-24 bg-[#151a26] text-slate-200 rounded px-2 py-1 border border-[#2d3748]"></label>
+        <label class="text-slate-400">Order delay ms<br><input id="bap-lat" oninput="this.dataset.dirty='1'" type="number" step="50" min="0" max="5000" class="mt-1 w-24 bg-[#151a26] text-slate-200 rounded px-2 py-1 border border-[#2d3748]"></label>
+        <button onclick="bapSave()" class="px-3 py-1.5 rounded bg-sky-600 text-white font-semibold">Save rules</button>
+        <span id="bap-msg" class="text-[11px] text-slate-500"></span>
+      </div>
+      <div class="flex items-end gap-6 flex-wrap mb-3 px-3 py-3 rounded bg-[#151a26] border border-[#2d3748]">
+        <div><div class="text-[10px] uppercase text-slate-500">Current P&amp;L · live</div>
+          <div id="bap-live" class="text-3xl font-bold tabular-nums text-slate-300">$0.00</div>
+          <div id="bap-live-sub" class="text-[11px] text-slate-500 tabular-nums">closed $0.00 · open $0.00</div></div>
+        <div><div class="text-[10px] uppercase text-slate-500">Open position MTM</div>
+          <div id="bap-live-mtm" class="text-xl font-bold tabular-nums text-slate-400">—</div>
+          <div id="bap-live-at" class="text-[11px] text-slate-500 tabular-nums"></div></div>
+      </div>
+      <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-3">
+        <div><div class="text-[10px] uppercase text-slate-500">State</div><div id="bap-state" class="text-sm font-semibold text-slate-200">—</div></div>
+        <div><div class="text-[10px] uppercase text-slate-500">1 BTC: buy Delta</div><div id="bap-s1" class="text-sm font-semibold tabular-nums">—</div><div class="text-[10px] text-slate-500">B sell − D buy</div></div>
+        <div><div class="text-[10px] uppercase text-slate-500">1 BTC: buy Binance</div><div id="bap-s2" class="text-sm font-semibold tabular-nums">—</div><div class="text-[10px] text-slate-500">D sell − B buy</div></div>
+        <div><div class="text-[10px] uppercase text-slate-500">Trades</div><div id="bap-n" class="text-sm font-semibold text-slate-200 tabular-nums">—</div><div id="bap-win" class="text-[10px] text-slate-500"></div></div>
+        <div><div class="text-[10px] uppercase text-slate-500">Closed P&amp;L</div><div id="bap-pnl" class="text-sm font-semibold tabular-nums">—</div><div id="bap-avg" class="text-[10px] text-slate-500"></div></div>
+        <div><div class="text-[10px] uppercase text-slate-500">Avg slippage</div><div id="bap-slip" class="text-sm font-semibold tabular-nums">—</div><div class="text-[10px] text-slate-500">fill vs signal, $</div></div>
+        <div><div class="text-[10px] uppercase text-slate-500">Avg hold</div><div id="bap-hold" class="text-sm font-semibold text-slate-200 tabular-nums">—</div><div id="bap-best" class="text-[10px] text-slate-500"></div></div>
+      </div>
+      <div id="bap-pos" class="mb-3 px-3 py-2 rounded text-xs bg-slate-800/60 border border-slate-700/60 text-slate-400">No open paper position.</div>
+      <div class="text-[11px] text-slate-500 mb-1">Cumulative P&amp;L — the last point moves live with the open position</div>
+      <div id="bap-chart" style="height:220px" class="mb-3"></div>
+      <div class="overflow-x-auto" style="max-height:300px;overflow-y:auto">
+        <table class="w-full text-[11px] tabular-nums">
+          <thead class="text-slate-500 sticky top-0 bg-[#1a1f2e]"><tr>
+            <th class="text-left py-1 pr-2">Entry (IST)</th><th class="text-left pr-2">Direction</th>
+            <th class="text-right pr-2">Signal $</th><th class="text-right pr-2">Filled $</th><th class="text-right pr-2">Exit $</th>
+            <th class="text-right pr-2">Delta in → out</th><th class="text-right pr-2">Binance in → out</th>
+            <th class="text-right pr-2">Hold</th><th class="text-right pr-2">P&amp;L $</th><th class="text-left">Exit</th>
+          </tr></thead>
+          <tbody id="bap-trades"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card p-4 mb-4">
+      <div class="flex items-center justify-between mb-2">
+        <div class="text-sm font-semibold text-slate-200">Events <span class="text-[11px] font-normal text-slate-500">opportunity started / changed / ended · connection drops · paper trades</span></div>
+        <div id="ba-ev-meta" class="text-[11px] text-slate-500"></div>
+      </div>
+      <div class="overflow-x-auto" style="max-height:340px;overflow-y:auto">
+        <table class="w-full text-[11px] tabular-nums">
+          <thead class="text-slate-500 sticky top-0 bg-[#1a1f2e]"><tr>
+            <th class="text-left py-1 pr-2">Time (IST)</th><th class="text-left pr-2">Event</th><th class="text-left pr-2">Direction</th>
+            <th class="text-right pr-2">Gross $</th><th class="text-right pr-2">Fees $</th><th class="text-right pr-2">Net $</th>
+            <th class="text-right pr-2">Spread %</th><th class="text-right pr-2">Ages ms (D/B)</th><th class="text-right pr-2">Duration</th><th class="text-left">Note</th>
+          </tr></thead>
+          <tbody id="ba-events"></tbody>
+        </table>
       </div>
     </div>
   </div>
@@ -1585,8 +1782,9 @@ function switchTab(tab) {
   if (tab === 'deltaneutral') { dnInit(); dnStartPoll(); } else { dnStopPoll(); }
   if (tab === 'btc') { btcInit(); btcStartPoll(); } else { btcStopPoll(); }
   if (tab === 'btcvwap') { bvInit(); bvStartPoll(); } else { bvStopPoll(); }
+  if (tab === 'btcarb') { setTimeout(() => { baInit(); baStartPoll(); }, 0); } else { baStopPoll(); }
   if (tab === 'ndp') { ndpInit(); ndpStartPoll(); } else { ndpStopPoll(); }
-  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'btcvwap', 'ndp', 'terminal'].forEach(t => {
+  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'btcvwap', 'btcarb', 'ndp', 'terminal'].forEach(t => {
     const pg = document.getElementById('page-' + t);
     if (pg) pg.style.display = (t === tab) ? '' : 'none';
     const btn = document.getElementById('tab-' + t);
@@ -3974,8 +4172,10 @@ function renderStrangle(d) {
 // ── Terminal tab (multi-broker live positions) ──────────────────────────────
 let _termTimer = null;
 const BROKER_META = {
-  zerodha: { label: 'Zerodha', code: 'ZRD', color: '#f5a623' },
-  jainam:  { label: 'XTS',     code: 'XTS', color: '#f5a623' },
+  zerodha:     { label: 'Zerodha',     code: 'ZRD', color: '#f5a623' },
+  kotak:       { label: 'Kotak Bhaiya', code: 'KTK', color: '#23d18b' },
+  kotak_rohit: { label: 'Kotak Rohit',  code: 'KTR', color: '#60a5fa' },
+  jainam:      { label: 'XTS',          code: 'XTS', color: '#f5a623' },
 };
 const inr = v => {
   const n = Number(v) || 0;
@@ -5872,6 +6072,7 @@ const bvChartBase = {
   timeScale: { borderColor: '#2d3748', timeVisible: true, secondsVisible: false },
 };
 
+let bvLegCharts = {};
 function bvInit() {
   if (!bvChart) {
     bvChart = LightweightCharts.createChart(document.getElementById('bv-chart'), bvChartBase);
@@ -5886,6 +6087,20 @@ function bvInit() {
       const d = new Date((p.time - 19800) * 1000).toLocaleString('en-GB', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
       tip.textContent = `${d}  O ${bvN(c.open)}  H ${bvN(c.high)}  L ${bvN(c.low)}  C ${bvN(c.close)}  VWAP ${w ? bvN(w.value) : '—'}`;
     });
+    ['CE', 'PE'].forEach(t => {
+      const ch = LightweightCharts.createChart(document.getElementById('bv-leg-chart-' + t), bvChartBase);
+      const cs = ch.addCandlestickSeries({ upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
+        wickUpColor: '#26a69a', wickDownColor: '#ef5350' });
+      const vw = ch.addLineSeries({ color: '#38bdf8', lineWidth: 2, priceLineVisible: false, lastValueVisible: true, title: 'VWAP' });
+      ch.subscribeCrosshairMove(p => {
+        const tip = document.getElementById('bv-leg-tip');
+        if (!p.time || !p.point) { tip.textContent = ''; return; }
+        const c = p.seriesData.get(cs), w = p.seriesData.get(vw);
+        if (!c) return;
+        tip.textContent = `${t}  O ${bvN(c.open)}  H ${bvN(c.high)}  L ${bvN(c.low)}  C ${bvN(c.close)}  VWAP ${w ? bvN(w.value) : '—'}` + (w ? (c.close > w.value ? '  ▲ above own VWAP' : '  ▼ below own VWAP') : '');
+      });
+      bvLegCharts[t] = { ch, cs, vw };
+    });
     bvEqChart = LightweightCharts.createChart(document.getElementById('bv-eq-chart'), bvChartBase);
     bvEqLine = bvEqChart.addBaselineSeries({ baseValue: { type: 'price', price: 0 },
       topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,0.25)', topFillColor2: 'rgba(34,197,94,0.02)',
@@ -5897,7 +6112,7 @@ function bvInit() {
 }
 
 function bvPaintVersion() {
-  ['full_expiry', 'ist_day'].forEach(v => {
+  ['full_expiry', 'ist_day', 'ist_live', 'ist_cap', 'ist_delta'].forEach(v => {
     const b = document.getElementById('bv-v-' + v);
     if (b) b.className = 'px-3 py-1 text-xs ' + (v === bvVersion ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300');
   });
@@ -5966,6 +6181,7 @@ function bvRender(d) {
     let msg = d.live
       ? `<span class="text-emerald-400 font-semibold">LIVE</span> · status <b>${d.status || '—'}</b>` + (d.stale ? ' <span class="text-rose-400">· STALE (engine not updating)</span>' : '')
       : `<span class="text-slate-400 font-semibold">HISTORY</span> · cycle ${String(d.cycle || '').replace('T', ' ')}` + (d.summary ? ` · ended ${d.summary.ended} (${d.summary.end_reason})` : '');
+    if (d.split) msg += ` · <b>split legs</b> (busted leg out, kept leg exits on its own VWAP)` + (d.vwap_cap ? ` · <b>busted leg out the moment combined ≥ ${d.vwap_cap}× VWAP</b>` : '') + ` · stop on ${d.stop_basis || 'price'} P&L` + (d.margin_halt ? ' · <span class="text-rose-400">MARGIN HALT</span>' : '');
     if (pr.start) msg += ` · session ${pr.start}→${pr.square_off} IST · no entry after ${pr.cutoff} · max ${pr.max_entries} entries · MTM stop $${pr.mtm_stop_usd} · ${pr.contracts} contracts/leg`;
     if (p && p.over_threshold) msg += ` · <span class="text-amber-400">no pair ≤ ${pr.threshold || 100} listed → farthest equidistant pair used</span>`;
     if (d.late_start) msg += ' · <span class="text-slate-400">started mid-cycle (VWAP from first full candle)</span>';
@@ -5979,9 +6195,18 @@ function bvRender(d) {
   re.textContent = '$' + bvN(real); re.className = 'text-xl font-bold tabular-nums ' + bvCls(real);
   document.getElementById('bv-stop').textContent = d.stop_reason || '';
   const pos = d.live ? d.position : null;
-  document.getElementById('bv-pos').innerHTML = pos ? `<span class="text-rose-400">SHORT</span> @ ${bvN(pos.entry_combined)}` : 'flat';
+  const badge = document.getElementById('bv-mode-badge');
+  const isLiveMode = d.mode === 'live';
+  badge.textContent = isLiveMode ? 'LIVE — REAL MONEY' : (d.live_capable ? 'PAPER (live-capable)' : 'PAPER');
+  bvShowControl(d);
+  badge.className = 'ml-2 px-2 py-0.5 rounded text-[10px] font-semibold align-middle ' + (isLiveMode ? 'bg-rose-600 text-white' : 'bg-amber-500/15 text-amber-400');
+  const openLegs = pos && pos.legs ? Object.values(pos.legs).filter(Boolean) : [];
+  document.getElementById('bv-pos').innerHTML = !pos ? 'flat' : (openLegs.length
+    ? openLegs.map(l => `<span class="text-rose-400">SHORT</span> ${l.typ} @ ${bvN(l.sell)}${l.kept ? ' <span class="text-amber-400">(kept)</span>' : ''}${l.exit_pending ? ' <span class="text-rose-400">EXIT PENDING</span>' : ''}`).join('<br>')
+    : `<span class="text-rose-400">SHORT</span> @ ${bvN(pos.entry_combined)}`);
   document.getElementById('bv-entries').textContent = `entries ${d.entries ?? trades.length}/${pr.max_entries ?? '—'}${d.done ? ' · done' : ''}`;
   if (!d.live) {
+    const ncard = document.getElementById('bv-net-card'); if (ncard) ncard.style.display = 'none';
     ['bv-comb', 'bv-vwap', 'bv-trig', 'bv-legs', 'bv-side', 'bv-countdown', 'bv-mtm-inr'].forEach(i => document.getElementById(i).textContent = i === 'bv-comb' || i === 'bv-vwap' || i === 'bv-trig' ? '—' : '');
     const m = document.getElementById('bv-mtm');
     const last = (d.equity || []).slice(-1)[0];
@@ -6002,13 +6227,15 @@ function bvRender(d) {
   });
   mk.sort((a, b) => a.time - b.time);
   bvCandle.setMarkers(mk);
+  bvRenderLegs(d, trades, pos);
+  bvRenderBroker();
 
   // MTM of the day
   const pts = [], seen = new Set();
   (d.equity || []).forEach(r => { const t = bvT(r.t); if (!seen.has(t) && r.mtm != null) { seen.add(t); pts.push({ time: t, value: Number(r.mtm) }); } });
   pts.sort((a, b) => a.time - b.time);
   bvEqLine.setData(pts);
-  document.getElementById('bv-eq-title').textContent = `${bvVersion === 'ist_day' ? 'IST day' : 'Full expiry'} · ${d.date || ''}`;
+  document.getElementById('bv-eq-title').textContent = `${({ ist_day: 'IST day', full_expiry: 'Full expiry', ist_live: 'Vwap New Paper', ist_cap: 'Vwap 1.5x Paper', ist_delta: 'Vwap New Delta Ex' })[bvVersion]} · ${d.date || ''}` + (d.split ? ' · price P&L (marks, no fees) — what the stop watches' : '');
   if (pts.length) {
     const vals = pts.map(x => x.value);
     const hi = Math.max(...vals), lo = Math.min(...vals), now = vals[vals.length - 1];
@@ -6021,7 +6248,19 @@ function bvRender(d) {
 
   // one row per trade: closed ones, plus the OPEN one valued at the live buy-back
   const rows = trades.map(t => ({ ...t, open: false }));
-  if (pos) {
+  if (pos && openLegs.length) {
+    // split book: one OPEN row per leg, valued at the leg's mark now
+    const l = d.last || {};
+    openLegs.forEach(g => {
+      const mk = g.typ === 'CE' ? l.ce : l.pe, pts = mk != null ? g.sell - mk : null;
+      const gross = pts != null ? pts * g.qty * 0.001 : null;
+      rows.push({ n: g.n, leg: g.typ, open: true, ce_strike: p && p.ce, pe_strike: p && p.pe, expiry: d.expiry,
+        entry_time: g.sell_time, trigger: g.trigger, ce_sell: g.typ === 'CE' ? g.sell : null, pe_sell: g.typ === 'PE' ? g.sell : null,
+        entry_combined: g.sell, ce_exit: g.typ === 'CE' ? mk : null, pe_exit: g.typ === 'PE' ? mk : null, exit_combined: mk,
+        points: pts, gross_usd: gross, fees: g.sell_fee, net_usd: gross != null ? gross - (g.sell_fee || 0) : null,
+        exit_reason: `open${g.kept ? ' (kept leg)' : ''} — valued at mark now` });
+    });
+  } else if (pos) {
     const l = d.last || {}, cv = 0.001, qty = pr.contracts || 1000;
     const bb = l.buyback != null ? l.buyback : l.combined;
     const pts = bb != null ? pos.entry_combined - bb : null;
@@ -6033,11 +6272,11 @@ function bvRender(d) {
   const hm = s => s ? String(s).slice(5, 19) : '—';
   const sep = 'border-l border-slate-800 pl-3';
   document.getElementById('bv-trades-meta').textContent =
-    `${trades.length} closed${pos ? ' · 1 open' : ''} · net $${bvN(real)}`;
+    `${trades.length} closed${pos ? ` · ${openLegs.length || 1} open` : ''} · net $${bvN(real)}` + (d.split && d.price_mtm != null ? ` · price P&L $${bvN(d.price_mtm)}` : '');
   const it = open => open ? 'italic text-slate-400' : '';
   document.getElementById('bv-trades').innerHTML = rows.slice().reverse().map(t => `
     <tr class="border-t border-slate-800 ${t.open ? 'bg-rose-500/5' : ''}">
-      <td class="py-1.5 pr-2">${t.n}</td>
+      <td class="py-1.5 pr-2">${t.n}${t.leg ? ' <span class="text-slate-400">' + t.leg + '</span>' : ''}${t.mode === 'live' ? ' <span class="text-rose-400 text-[9px]">LIVE</span>' : ''}</td>
       <td class="pr-2">${t.open
         ? '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-rose-500/15 text-rose-400">OPEN</span>'
         : '<span class="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-slate-700/50 text-slate-300">CLOSED</span>'}</td>
@@ -6055,8 +6294,116 @@ function bvRender(d) {
       <td class="text-right pr-2 text-slate-400">${bvN(t.fees)}</td>
       <td class="text-right pr-2 font-semibold ${bvCls(t.net_usd)}">${bvN(t.net_usd)}</td>
       <td class="text-right pr-3 ${bvCls(t.net_usd)}">${t.net_usd != null ? '₹' + Math.round(t.net_usd * BV_USDINR).toLocaleString('en-IN') : '—'}</td>
-      <td class="text-slate-400">${t.exit_reason || ''}</td>
+      <td class="text-slate-400">${t.exit_reason || ''}${t.exit_slippage != null ? ` · exit slip <span class="${bvCls(t.exit_slippage)}">${bvN(t.exit_slippage)}</span>` : ''}${t.entry_ms != null || t.exit_ms != null ? ` · ${t.entry_ms ?? '—'}/${t.exit_ms ?? '—'} ms` : ''}${(t.orders || []).length ? ` · <span title="${(t.orders || []).map(o => (o.market ? 'MKT' : 'LMT ' + o.limit) + ' id ' + o.id + ' filled ' + o.filled + ' @ ' + o.price + ' fee ' + o.fee).join(' | ')}" class="underline decoration-dotted cursor-help">${t.orders.length} Delta orders</span>` : ''}</td>
     </tr>`).join('') || '<tr><td colspan="21" class="py-3 text-center text-slate-600">no trades on this date</td></tr>';
+}
+
+function bvRenderLegs(d, trades, pos) {
+  const card = document.getElementById('bv-legs-card');
+  const lc = d.leg_candles;
+  if (!lc || !bvLegCharts.CE) { card.style.display = 'none'; return; }
+  card.style.display = '';
+  const floor5 = s => { const x = String(s).slice(0, 16); return x.slice(0, 14) + String(Math.floor(Number(x.slice(14, 16)) / 5) * 5).padStart(2, '0'); };
+  const p = d.pair || {};
+  ['CE', 'PE'].forEach(t => {
+    const L = lc[t] || {}, g = bvLegCharts[t];
+    const cs = (L.candles || []).map(c => ({ time: bvT(c.t), open: c.o, high: c.h, low: c.l, close: c.c }));
+    if (L.forming && d.live) cs.push({ time: bvT(L.forming.t), open: L.forming.o, high: L.forming.h, low: L.forming.l, close: L.forming.c });
+    g.cs.setData(cs);
+    g.vw.setData((L.candles || []).filter(c => c.vwap != null).map(c => ({ time: bvT(c.t), value: c.vwap })));
+    const mk = [];
+    trades.filter(x => x.leg === t).forEach(x => {
+      mk.push({ time: bvT(floor5(x.entry_time)), position: 'aboveBar', color: '#f43f5e', shape: 'arrowDown', text: `S${x.n} ${bvN(x.entry_combined, 1)}` });
+      const tag = /own VWAP/.test(x.exit_reason || '') ? 'K' : (/busted/.test(x.exit_reason || '') ? 'B' : 'X');
+      mk.push({ time: bvT(floor5(x.exit_time)), position: 'belowBar', color: '#22c55e', shape: 'arrowUp', text: `${tag}${x.n} ${bvN(x.exit_combined, 1)}` });
+    });
+    const open = pos && pos.legs && pos.legs[t];
+    if (open) mk.push({ time: bvT(floor5(open.sell_time)), position: 'aboveBar', color: open.kept ? '#f59e0b' : '#f43f5e', shape: 'arrowDown', text: `S${open.n} ${bvN(open.sell, 1)}${open.kept ? ' kept' : ''}` });
+    mk.sort((a, b) => a.time - b.time);
+    g.cs.setMarkers(mk);
+    const last = (L.candles || []).slice(-1)[0];
+    document.getElementById('bv-leg-title-' + t).innerHTML = `<b>${p[t.toLowerCase()] ?? ''} ${t}</b>` +
+      (last ? ` · close ${bvN(last.c)} · own VWAP <span class="text-sky-400">${bvN(last.vwap)}</span> · <span class="${last.c > last.vwap ? 'text-rose-400' : 'text-emerald-400'}">${last.c > last.vwap ? 'ABOVE' : 'below'}</span>` : '') +
+      (open ? (open.kept ? ' · <span class="text-amber-400 font-semibold">KEPT — exits on close above own VWAP</span>' : ' · <span class="text-rose-400">short</span>') : '');
+    if (bvFitted && cs.length && g._fit !== bvFitted) { g._fit = bvFitted; g.ch.timeScale().fitContent(); }
+  });
+}
+
+async function bvRenderBroker() {
+  const card = document.getElementById('bv-broker-card');
+  if (bvVersion !== 'ist_delta') { card.style.display = 'none'; return; }
+  card.style.display = '';
+  try {
+    const b = await (await fetch('/api/btcvwap/broker', { cache: 'no-store' })).json();
+    const rc = document.getElementById('bv-recon');
+    if (!b.ok) { rc.textContent = 'BROKER UNREACHABLE'; rc.className = 'px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-600 text-white';
+      document.getElementById('bv-wallet').textContent = b.reason || ''; return; }
+    document.getElementById('bv-broker-at').textContent = 'as of ' + b.at;
+    const nRec = (b.recon || []).length;
+    rc.textContent = !nRec ? 'NO LIVE LEGS' : (b.recon_ok ? 'RECONCILED ✓ book = Delta' : 'MISMATCH ✗ book ≠ Delta');
+    rc.className = 'px-2 py-0.5 rounded text-[10px] font-semibold ' + (!nRec ? 'bg-slate-700 text-slate-200' : (b.recon_ok ? 'bg-emerald-600 text-white' : 'bg-rose-600 text-white'));
+    const w = b.wallet || {};
+    document.getElementById('bv-wallet').innerHTML = `Wallet USD: balance <b>$${bvN(w.balance)}</b> · available <b>$${bvN(w.available)}</b>` +
+      (w.blocked_margin != null ? ` · margin in use $${bvN(w.blocked_margin)}` : '') +
+      (!b.recon_ok && nRec ? '<br><span class="text-rose-400">' + b.recon.filter(r => !r.ok).map(r => `${r.leg} ${r.symbol}: book ${r.ours} vs Delta ${r.delta}`).join(' · ') + '</span>' : '');
+    document.getElementById('bv-bpos').innerHTML = (b.positions || []).map(x => `
+      <tr class="border-t border-slate-800"><td class="py-1 pr-3">${x.symbol}</td>
+      <td class="text-right pr-3 ${x.size < 0 ? 'text-rose-400' : 'text-emerald-400'}">${x.size}</td>
+      <td class="text-right pr-3">${bvN(x.entry_price)}</td><td class="text-right pr-3">${bvN(x.mark)}</td>
+      <td class="text-right pr-3 ${bvCls(x.unrealized_pnl || 0)}">${bvN(x.unrealized_pnl)}</td>
+      <td class="text-right pr-3">${bvN(x.margin)}</td><td class="text-right pr-3">${bvN(x.liquidation_price)}</td></tr>`).join('')
+      || '<tr><td colspan="7" class="py-2 text-slate-600">no open positions on Delta</td></tr>';
+    document.getElementById('bv-bfees').textContent = `· our fees today $${bvN(b.fees_today)}`;
+    const L = b.ledger || {};
+    document.getElementById('bv-ledger').innerHTML = L.rows == null ? '' :
+      `Delta's own ledger today: premium cash <b>${bvN(L.cashflow)}</b> · fees <b>${bvN(L.fees_ex_gst)}</b> + GST <b>${bvN(L.gst)}</b> = charges <b>${bvN(L.charges)}</b>` +
+      (L.open_buyback ? ` · open legs to buy back ${bvN(L.open_buyback)}` : '') +
+      ` → <b>net today <span class="${bvCls(L.net_today || 0)}">$${bvN(L.net_today)}</span></b> <span class="text-slate-500">(${L.rows} ledger rows)</span>`;
+    document.getElementById('bv-bfills').innerHTML = (b.fills || []).map(x => `
+      <tr class="border-t border-slate-800 ${x.ours ? '' : 'text-slate-500'}"><td class="py-1 pr-3">${x.time}</td><td class="pr-3">${x.symbol}</td>
+      <td class="pr-3 ${x.side === 'sell' ? 'text-rose-400' : 'text-emerald-400'}">${x.side}</td><td class="text-right pr-3">${x.size}</td>
+      <td class="text-right pr-3">${bvN(x.price)}</td><td class="text-right pr-3">${bvN(x.fee, 4)}</td><td class="pr-3">${x.role || ''}</td>
+      <td class="pr-3 text-slate-500">${x.order_id || ''}</td><td>${x.ours ? '✓' : 'manual'}</td></tr>`).join('')
+      || '<tr><td colspan="9" class="py-2 text-slate-600">no fills today</td></tr>';
+  } catch (e) {}
+}
+
+function bvShowControl(d) {
+  const box = document.getElementById('bv-control');
+  if (!box) return;
+  box.style.display = bvVersion === 'ist_delta' ? 'flex' : 'none';
+  if (bvVersion !== 'ist_delta') return;
+  // read the arm switch itself: before the first session of the day the engine has
+  // no state for this version yet, so d.control alone would show PAPER while armed
+  fetch('/api/btcvwap/control', { cache: 'no-store' }).then(r => r.json()).then(x => {
+    const c = x.control || d.control || {}, el = document.getElementById('bv-ctl-state');
+    const armed = c.mode === 'live', running = (x.engine_mode || d.mode) === 'live';
+    const killedToday = c.kill && String(c.updated || '').slice(0, 10) === new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
+    el.textContent = killedToday ? 'KILLED today' : (running ? 'LIVE — orders are real'
+      : (armed ? 'ARMED — goes live at the next flat moment (09:30 start)' : 'PAPER'));
+    el.className = 'px-2 py-0.5 rounded text-[10px] font-semibold ' + (killedToday ? 'bg-black text-rose-400'
+      : (running ? 'bg-rose-600 text-white' : (armed ? 'bg-amber-500 text-black' : 'bg-slate-700 text-slate-200')));
+    const btn = document.getElementById('bv-arm-btn');
+    if (btn) {
+      btn.textContent = running ? '● LIVE' : (armed ? '✓ ARMED' : 'ARM LIVE');
+      btn.className = 'px-3 py-1 rounded text-xs font-semibold ' + (running ? 'bg-rose-700 text-white ring-2 ring-rose-400'
+        : (armed ? 'bg-amber-500 text-black' : 'bg-rose-600 hover:bg-rose-500 text-white'));
+    }
+  }).catch(() => {});
+}
+
+async function bvControl(action) {
+  const msg = { arm: 'ARM Vwap New Delta Ex for LIVE trading on Delta Exchange with REAL MONEY? 500 contracts per leg, 200x leverage, stop -$35.',
+                paper: 'Switch Vwap New Delta Ex back to PAPER (takes effect when flat)?',
+                kill: 'KILL: buy back every open leg NOW and stop trading for today?' }[action];
+  if (!confirm(msg)) return;
+  if (action === 'arm' && prompt('Type LIVE to confirm real-money trading') !== 'LIVE') return;
+  try {
+    const r = await (await fetch('/api/btcvwap/control', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action }) })).json();
+    if (!r.ok) alert(r.reason || 'failed');
+    bvRefreshState();
+  } catch (e) { alert('control failed: ' + e); }
 }
 
 async function bvRefreshTick() {
@@ -6082,6 +6429,13 @@ async function bvRefreshTick() {
     document.getElementById('bv-trig').textContent = v.pending ? bvN(v.pending.trigger) : '—';
     const m = document.getElementById('bv-mtm');
     m.textContent = '$' + bvN(v.mtm); m.className = 'text-xl font-bold tabular-nums ' + bvCls(v.mtm);
+    const nc = document.getElementById('bv-net-card');
+    if (v.net_mtm != null) {
+      nc.style.display = '';
+      const ne = document.getElementById('bv-net');
+      ne.textContent = '$' + bvN(v.net_mtm); ne.className = 'text-xl font-bold tabular-nums ' + bvCls(v.net_mtm);
+      document.getElementById('bv-net-sub').textContent = `fees+GST paid $${bvN(v.charges)} · open legs at buy-back ask − exit fee · ≈ ₹${Math.round(v.net_mtm * BV_USDINR).toLocaleString('en-IN')}`;
+    } else nc.style.display = 'none';
     document.getElementById('bv-mtm-inr').textContent = v.mtm != null ? `≈ ₹${Math.round(v.mtm * BV_USDINR).toLocaleString('en-IN')}` : '';
     const now = new Date(), s = (5 - (now.getUTCMinutes() % 5)) * 60 - now.getUTCSeconds();
     document.getElementById('bv-countdown').textContent = `candle closes in ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
@@ -6101,6 +6455,403 @@ function bvRenderLog(a) {
     const bits = Object.entries(e).filter(([k]) => !skip.has(k)).map(([k, v]) => `${k}=${typeof v === 'number' ? Math.round(v * 100) / 100 : v}`).join(' ');
     return `<div class="py-0.5 border-b border-slate-800/60"><span class="text-slate-600">${(e.ts || '').slice(5)}</span> <span class="${col(e.event)}">${e.event}</span> ${bits}</div>`;
   }).join('') || '<div class="text-slate-600">no events</div>';
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ₿ BTC ARBITRAGE — Delta vs Binance perpetual spread monitor (READ-ONLY)
+// The monitor process (crypto/btc_arbitrage/main.py) publishes; this only reads.
+// Line = mid spread (Binance mid − Delta mid), ribbon = the two executable edges:
+//   green  Binance bid − Delta ask   (> 0  → BUY DELTA / SELL BINANCE is executable)
+//   red    Binance ask − Delta bid   (< 0  → BUY BINANCE / SELL DELTA is executable)
+// ══════════════════════════════════════════════════════════════════════════════
+const BA_WINDOWS = ['1m', '5m', '15m', '1h', '4h', '1d'];
+const BA_SPAN = { '1m': 60, '5m': 300, '15m': 900, '1h': 3600, '4h': 14400, '1d': 86400 };
+let baChart, baMid, baLo, baHi, baWindow = '5m', baBucket = 1, baPts = [], baLastT = 0;
+let baTickTimer = null, baSeriesTimer = null, baEventsTimer = null, baHurdle = null, baHurdleLines = [];
+const baN = (v, d = 2) => (v == null || isNaN(v)) ? '—' : Number(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const baS = (v, d = 2) => (v == null || isNaN(v)) ? '—' : (v > 0 ? '+' : '') + baN(v, d);
+const baCls = v => v == null ? 'text-slate-400' : (v > 0 ? 'text-emerald-400' : (v < 0 ? 'text-rose-400' : 'text-slate-300'));
+const baIST = 19800;
+const baHMS = t => new Date(t * 1000).toLocaleTimeString('en-GB', { timeZone: 'Asia/Kolkata' });
+
+function baInit() {
+  if (!baChart) {
+    baChart = LightweightCharts.createChart(document.getElementById('ba-chart'),
+      { ...bvChartBase, timeScale: { ...bvChartBase.timeScale, secondsVisible: true, rightOffset: 3, minBarSpacing: 0.01 } });
+    const pf = { type: 'price', precision: 2, minMove: 0.01 };
+    baHi = baChart.addLineSeries({ color: 'rgba(244,63,94,0.6)', lineWidth: 1, priceFormat: pf,
+      priceLineVisible: false, lastValueVisible: true, title: 'B ask − D bid' });
+    baLo = baChart.addLineSeries({ color: 'rgba(34,197,94,0.6)', lineWidth: 1, priceFormat: pf,
+      priceLineVisible: false, lastValueVisible: true, title: 'B bid − D ask' });
+    baMid = baChart.addBaselineSeries({ baseValue: { type: 'price', price: 0 }, priceFormat: pf,
+      topLineColor: '#38bdf8', topFillColor1: 'rgba(56,189,248,0.22)', topFillColor2: 'rgba(56,189,248,0.02)',
+      bottomLineColor: '#f59e0b', bottomFillColor1: 'rgba(245,158,11,0.02)', bottomFillColor2: 'rgba(245,158,11,0.22)',
+      lineWidth: 2, priceLineVisible: false, title: 'mid' });
+    baMid.createPriceLine({ price: 0, color: '#cbd5e1', lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: 'ZERO' });
+    baChart.subscribeCrosshairMove(p => {
+      const lg = document.getElementById('ba-legend');
+      if (!p.time || !p.point) { baLegendDefault(); return; }
+      const m = p.seriesData.get(baMid), lo = p.seriesData.get(baLo), hi = p.seriesData.get(baHi);
+      lg.textContent = `${baHMS(p.time - baIST)} IST   mid ${baS(m && m.value)}   B bid − D ask ${baS(lo && lo.value)}   B ask − D bid ${baS(hi && hi.value)}`;
+    });
+    document.getElementById('ba-windows').innerHTML = BA_WINDOWS.map(w =>
+      `<button id="ba-w-${w}" onclick="baSetWindow('${w}')" class="px-3 py-1 text-xs">${w}</button>`).join('');
+  }
+  baPaintWindow();
+  baLoadSeries();
+}
+
+function baLegendDefault() {
+  const h = baHurdle != null ? `$${baN(baHurdle)}` : 'fees + threshold';
+  document.getElementById('ba-legend').innerHTML =
+    `Executable only when the <span class="text-emerald-400">green</span> line is above 0 (buy Delta / sell Binance) or the ` +
+    `<span class="text-rose-400">red</span> line is below 0 (buy Binance / sell Delta). Worth taking only beyond ±${h} ` +
+    `(dashed lines — often off-scale).`;
+}
+
+function baPaintWindow() {
+  BA_WINDOWS.forEach(w => {
+    const b = document.getElementById('ba-w-' + w);
+    if (b) b.className = 'px-3 py-1 text-xs ' + (w === baWindow ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300');
+  });
+}
+
+function baSetWindow(w) {
+  baWindow = w; baPaintWindow(); baLoadSeries(); baStartSeriesTimer();
+}
+
+function baSetData() {
+  baMid.setData(baPts.map(p => ({ time: p.t, value: p.mid })));
+  baLo.setData(baPts.map(p => ({ time: p.t, value: p.lo })));
+  baHi.setData(baPts.map(p => ({ time: p.t, value: p.hi })));
+  // always show exactly the selected window and keep the newest point in view.
+  // (fitContent alone kept a stale zoom from the first load, made while the tab
+  // was still hidden, which squashed the line against the right edge)
+  if (baPts.length) baChart.timeScale().setVisibleLogicalRange({ from: -0.5, to: baPts.length - 0.5 + 3 });
+}
+
+async function baLoadSeries() {
+  try {
+    const d = await (await fetch('/api/btcarb/series?window=' + baWindow, { cache: 'no-store' })).json();
+    baBucket = d.bucket_s || 1;
+    baPts = (d.points || []).filter(p => p.mid_spread != null).map(p => ({
+      t: p.t + baIST, mid: p.mid_spread,
+      lo: baBucket > 1 && p.s1_max != null ? p.s1_max : p.s1,          // best buy-Delta edge in the bucket
+      hi: baBucket > 1 && p.s2_max != null ? -p.s2_max : -p.s2 }));    // best buy-Binance edge in the bucket
+    baLastT = baPts.length ? baPts[baPts.length - 1].t : 0;
+    baSetData();
+    baRenderStats(d.stats || {}, d);
+  } catch (e) {}
+}
+
+function baRenderStats(s, d) {
+  const pct = (n) => s.ok_seconds ? `${(n / s.ok_seconds * 100).toFixed(2)}%` : '—';
+  document.getElementById('ba-stats-meta').textContent =
+    `· ${baWindow} · ${s.seconds || 0} s recorded, ${s.ok_seconds || 0} with clean data` + (baBucket > 1 ? ` · chart: 1 point = ${baBucket}s (ribbon shows the best edge in each)` : '');
+  const cell = (k, v, sub, cls = 'text-slate-200') =>
+    `<div><div class="text-[10px] uppercase text-slate-500">${k}</div><div class="text-sm font-semibold ${cls} tabular-nums">${v}</div><div class="text-[10px] text-slate-500">${sub || ''}</div></div>`;
+  document.getElementById('ba-stats').innerHTML = [
+    cell('Crossed: buy Delta', s.crossed_buy_delta ?? '—', `seconds · ${pct(s.crossed_buy_delta || 0)} of time`, 'text-emerald-400'),
+    cell('Best gross: buy Delta', '$' + baS(s.max_s1), 'B bid − D ask, max', baCls(s.max_s1)),
+    cell('Crossed: buy Binance', s.crossed_buy_binance ?? '—', `seconds · ${pct(s.crossed_buy_binance || 0)} of time`, 'text-rose-400'),
+    cell('Best gross: buy Binance', '$' + baS(s.max_s2), 'D bid − B ask, max', baCls(s.max_s2)),
+    cell('Best net after fees', '$' + baS(Math.max(s.max_net1 ?? -1e9, s.max_net2 ?? -1e9) > -1e9 ? Math.max(s.max_net1 ?? -1e9, s.max_net2 ?? -1e9) : null), `${s.opp_seconds || 0} s flagged opportunity`, baCls(Math.max(s.max_net1 ?? -1e9, s.max_net2 ?? -1e9))),
+    cell('Mid spread mean ± sd', `${baS(s.mid_mean)} ± ${baN(s.mid_std)}`, 'USD'),
+    cell('Mid spread range', `${baS(s.mid_min)} … ${baS(s.mid_max)}`, 'USD'),
+  ].join('');
+}
+
+function baFeedCard(k, f, name) {
+  f = f || {};
+  document.getElementById(`ba-${k}-name`).textContent = name;
+  document.getElementById(`ba-${k}-bid`).textContent = baN(f.bid, 1);
+  document.getElementById(`ba-${k}-ask`).textContent = baN(f.ask, 1);
+  document.getElementById(`ba-${k}-bq`).textContent = f.bid_qty != null ? `${baN(f.bid_qty, 3)} BTC` : '';
+  document.getElementById(`ba-${k}-aq`).textContent = f.ask_qty != null ? `${baN(f.ask_qty, 3)} BTC` : '';
+  const age = document.getElementById(`ba-${k}-age`);
+  age.textContent = f.age_ms != null ? `data age ${Math.round(f.age_ms)} ms` : '';
+  age.className = f.age_ms != null && f.age_ms > 3000 ? 'text-rose-400' : '';
+  document.getElementById(`ba-${k}-meta`).textContent =
+    `latency ${f.latency_ms != null ? Math.round(f.latency_ms) + ' ms' : '—'} · ${f.messages || 0} msgs · ${f.reconnects || 0} reconnects` +
+    (f.rejected ? ` · ${f.rejected} rejected` : '') + (f.last_error && !f.connected ? ` · ${f.last_error}` : '');
+  const c = document.getElementById(`ba-conn-${k}`);
+  c.textContent = `${k === 'd' ? 'DELTA' : 'BINANCE'}: ${f.connected ? '🟢 CONNECTED' : '🔴 DISCONNECTED'}`;
+  c.className = 'px-2 py-1 rounded text-[10px] font-semibold ' + (f.connected ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/20 text-rose-400');
+}
+
+async function baRefreshTick() {
+  try {
+    const d = await (await fetch('/api/btcarb/tick', { cache: 'no-store' })).json();
+    const feed = document.getElementById('ba-feed');
+    feed.textContent = !d.ok ? 'MONITOR DOWN' : (d.stale ? `MONITOR STALE ${d.age_s}s` : 'MONITOR LIVE');
+    feed.className = 'px-2 py-1 rounded text-[10px] font-semibold ' + (!d.ok || d.stale ? 'bg-rose-500/20 text-rose-400' : 'bg-emerald-500/15 text-emerald-400');
+    const banner = document.getElementById('ba-banner');
+    if (d.fatal) { banner.className = 'mb-3 px-3 py-2 rounded text-xs bg-rose-900/40 border border-rose-700 text-rose-200'; banner.textContent = 'Monitor refused to start: ' + d.fatal; return; }
+    if (!d.ok) { banner.textContent = d.reason || 'monitor not running'; return; }
+    const c = d.config || {}, F = d.feeds || {}, s = d.spread;
+    banner.className = 'mb-3 px-3 py-2 rounded text-xs bg-slate-800/60 border border-slate-700/60 text-slate-300';
+    banner.innerHTML = `<b>${c.delta_symbol}</b> (Delta, USD) vs <b>${c.binance_symbol}</b> (Binance ${(c.binance_market || '').toUpperCase()}, ${c.binance_quote}) · ` +
+      `taker fees Delta ${(c.delta_taker_fee * 100).toFixed(3)}% + ${Math.round(c.delta_fee_gst * 100)}% GST, Binance ${(c.binance_taker_fee * 100).toFixed(3)}% · ` +
+      `${c.fee_mode === 'round_trip' ? 'round trip (4 fills)' : 'entry only (2 fills)'} = ${c.fee_cost_pct}% · threshold $${c.threshold_usd} / ${c.threshold_pct}% · ` +
+      `stale after ${c.max_data_age_ms} ms` +
+      (c.binance_quote === 'USDT' && !c.adjust_quote_to_usd ? ` · <span class="text-amber-400">Binance prices are USDT, Delta USD — not converted</span>` : '');
+
+    bapLive(d.paper, d.ts_ms || Date.now());
+    baFeedCard('d', F.delta, `Delta · ${c.delta_symbol}`);
+    baFeedCard('b', F.binance, `Binance · ${c.binance_symbol}`);
+
+    const st = document.getElementById('ba-status'), sub = document.getElementById('ba-status-sub');
+    if (d.quality && d.quality !== 'OK') {
+      st.textContent = d.quality === 'STALE' ? 'STALE DATA' : d.quality; st.className = 'text-2xl font-bold text-rose-400';
+      sub.textContent = 'not classified while data is untrustworthy';
+    } else if (d.opportunity) {
+      st.textContent = 'OPPORTUNITY'; st.className = 'text-2xl font-bold text-emerald-400'; sub.textContent = '';
+    } else {
+      st.textContent = 'NO OPPORTUNITY'; st.className = 'text-2xl font-bold text-slate-400';
+      sub.textContent = s ? `best direction is $${baN(Math.max(0, d.threshold - s.net))} short of the threshold` : '';
+    }
+    document.getElementById('ba-dir').textContent = d.direction_label || '—';
+    if (!s) return;
+
+    const set = (id, txt, cls) => { const e = document.getElementById(id); e.textContent = txt; if (cls) e.className = cls; };
+    set('ba-mid', '$' + baS(s.mid_spread), 'text-xl font-bold tabular-nums ' + baCls(s.mid_spread));
+    set('ba-mid-pct', `${baS(s.mid_spread_pct, 4)}% · ${s.mid_spread > 0 ? 'Binance richer' : (s.mid_spread < 0 ? 'Delta richer' : 'aligned')}`);
+    set('ba-gross', '$' + baS(s.gross), 'text-xl font-bold tabular-nums ' + baCls(s.gross));
+    set('ba-gross-pct', `${baS(s.gross_pct, 4)}% · best direction`);
+    set('ba-fees', '$' + baN(s.fees));
+    set('ba-fee-mode', c.fee_mode === 'round_trip' ? 'round trip, 4 fills' : 'entry, 2 fills');
+    set('ba-net', '$' + baS(s.net), 'text-xl font-bold tabular-nums ' + baCls(s.net));
+    set('ba-net-pct', `${baS(s.net_pct, 4)}%`);
+    set('ba-thr', '$' + baN(d.threshold));
+    set('ba-thr-sub', `after fees · held ${c.min_ms} ms`);
+    set('ba-size', d.size_ok ? 'OK' : 'THIN', 'text-xl font-bold tabular-nums ' + (d.size_ok ? 'text-emerald-400' : 'text-amber-400'));
+    set('ba-size-sub', `${c.trade_size_btc} BTC at best price`);
+    const fd = (F.delta || {}).funding_rate, fb = (F.binance || {}).funding_rate;
+    set('ba-fund', `D ${fd != null ? (fd * 100).toFixed(4) + '%' : '—'} · B ${fb != null ? (fb * 100).toFixed(4) + '%' : '—'}`);
+    set('ba-fund-sub', fd != null && fb != null ? `diff ${((fd - fb) * 100).toFixed(4)}% ≈ $${baN(Math.abs(fd - fb) * s.d_mid)}/BTC per 8h` : '');
+    set('ba-usdc', d.usdc_usdt != null ? Number(d.usdc_usdt).toFixed(5) : '—');
+    set('ba-usdc-sub', d.usdc_usdt != null ? `1 bp ≈ $${baN(s.d_mid / 10000)} · clock ${baS(d.clock_offset_ms, 0)} ms` : '');
+
+    // dashed hurdle lines: the edge must clear fees + threshold
+    const hurdle = Math.round(((s.fees1 + s.fees2) / 2 + d.threshold) * 100) / 100;
+    if (hurdle !== baHurdle && baChart) {
+      baHurdleLines.forEach(([ser, l]) => ser.removePriceLine(l));
+      baHurdleLines = [
+        [baLo, baLo.createPriceLine({ price: hurdle, color: '#22c55e', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: 'buy Delta pays' })],
+        [baHi, baHi.createPriceLine({ price: -hurdle, color: '#f43f5e', lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: 'buy Binance pays' })],
+      ];
+      baHurdle = hurdle;
+      baLegendDefault();
+    }
+
+    // live append at 1-second resolution (only windows stored un-bucketed)
+    if (baBucket === 1 && baChart && d.recent) {
+      let added = false;
+      for (const r of d.recent) {
+        const t = Math.floor(r[0]) + baIST;
+        if (t > baLastT) { baPts.push({ t, mid: r[1], lo: r[2], hi: r[3] }); baLastT = t; added = true; }
+        else if (t === baLastT && baPts.length) Object.assign(baPts[baPts.length - 1], { mid: r[1], lo: r[2], hi: r[3] });
+      }
+      const cut = baLastT - BA_SPAN[baWindow];
+      while (baPts.length && baPts[0].t < cut) baPts.shift();
+      if (added) baSetData();
+    }
+  } catch (e) {}
+}
+
+async function baRefreshEvents() {
+  try {
+    const d = await (await fetch('/api/btcarb/events?limit=200', { cache: 'no-store' })).json();
+    const ev = d.events || [];
+    document.getElementById('ba-ev-meta').textContent = `${ev.length} shown`;
+    const col = { STARTED: 'text-emerald-400', CHANGED: 'text-sky-400', ENDED: 'text-slate-400', CONNECTED: 'text-emerald-500', DISCONNECTED: 'text-rose-400', PAPER_ENTRY: 'text-amber-400', PAPER_EXIT: 'text-amber-300', PAPER_SKIP: 'text-slate-500', PAPER_CONTROL: 'text-sky-300' };
+    document.getElementById('ba-events').innerHTML = ev.map(e => {
+      if ((e.event || '').startsWith('PAPER_')) {
+        const txt = e.event === 'PAPER_ENTRY' ? `${e.label} · signal $${baN(e.signal_spread)} → filled $${baN(e.fill_spread)} · ${e.size_btc} BTC`
+          : e.event === 'PAPER_EXIT' ? `${e.label} · exit gap $${baN(e.fill_spread)} · P&L $${baS(e.pnl)} · ${e.hold_s}s`
+          : e.event === 'PAPER_CONTROL' ? `${e.enabled ? 'ON' : 'OFF'} · entry $${e.entry_usd} · exit −$${e.exit_band_usd} · delay ${e.latency_ms} ms`
+          : (e.direction || '');
+        return `<tr class="border-t border-slate-800/60"><td class="py-1 pr-2 text-slate-400">${(e.ts || '').slice(5)}</td>
+          <td class="pr-2 font-semibold ${col[e.event] || 'text-slate-300'}">${e.event.replace('_', ' ')}</td>
+          <td class="pr-2" colspan="7">${txt}</td><td class="text-slate-500">${e.reason || ''}</td></tr>`;
+      }
+      const conn = e.event === 'CONNECTED' || e.event === 'DISCONNECTED';
+      return `<tr class="border-t border-slate-800/60">
+        <td class="py-1 pr-2 text-slate-400">${(e.ts || '').slice(5)}</td>
+        <td class="pr-2 font-semibold ${col[e.event] || 'text-slate-300'}">${e.event}</td>
+        <td class="pr-2">${conn ? (e.exchange || '').toUpperCase() : (e.label || '')}</td>
+        <td class="text-right pr-2 ${baCls(e.gross)}">${conn ? '' : baN(e.gross)}</td>
+        <td class="text-right pr-2 text-slate-400">${conn ? '' : baN(e.fees)}</td>
+        <td class="text-right pr-2 font-semibold ${baCls(e.net)}">${conn ? '' : baN(e.net)}</td>
+        <td class="text-right pr-2">${conn ? '' : baN(e.spread_pct, 4)}</td>
+        <td class="text-right pr-2 text-slate-400">${conn ? '' : `${e.delta_age_ms ?? '—'}/${e.binance_age_ms ?? '—'}`}</td>
+        <td class="text-right pr-2 text-slate-400">${e.duration_ms != null ? (e.duration_ms / 1000).toFixed(1) + 's' : ''}</td>
+        <td class="text-slate-500">${e.reason || e.error || ''}</td></tr>`;
+    }).join('') || '<tr><td colspan="10" class="py-3 text-center text-slate-600">no events yet — the threshold has not been crossed</td></tr>';
+  } catch (e) {}
+}
+
+function baStartSeriesTimer() {
+  if (baSeriesTimer) clearInterval(baSeriesTimer);
+  // un-bucketed windows grow live from the tick; bucketed ones are re-read
+  baSeriesTimer = setInterval(() => { if (baBucket > 1) baLoadSeries(); else baLoadStatsOnly(); },
+    baWindow === '1d' ? 30000 : (baWindow === '4h' ? 15000 : 5000));
+}
+
+async function baLoadStatsOnly() {
+  try {
+    const d = await (await fetch('/api/btcarb/series?points=false&window=' + baWindow, { cache: 'no-store' })).json();
+    baRenderStats(d.stats || {}, d);
+  } catch (e) {}
+}
+
+
+// ── BTC arbitrage: zero-fee PAPER trader (1 BTC a side, depth-priced) ───────
+let bapTimer = null, bapChart = null, bapLine = null, bapLineF = null, bapCtl = null, bapCurveN = -1, bapBase = [], bapFeesTotal = 0;
+
+function bapInitChart() {
+  if (bapChart) return;
+  bapChart = LightweightCharts.createChart(document.getElementById('bap-chart'),
+    { ...bvChartBase, timeScale: { ...bvChartBase.timeScale, secondsVisible: true, minBarSpacing: 0.01 } });
+  bapLine = bapChart.addBaselineSeries({ baseValue: { type: 'price', price: 0 }, lineWidth: 2, priceLineVisible: false,
+    topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,0.2)', topFillColor2: 'rgba(34,197,94,0.02)',
+    bottomLineColor: '#f43f5e', bottomFillColor1: 'rgba(244,63,94,0.02)', bottomFillColor2: 'rgba(244,63,94,0.2)', title: 'P&L' });
+}
+
+async function bapRefresh() {
+  try {
+    const d = await (await fetch('/api/btcarb/paper?limit=300', { cache: 'no-store' })).json();
+    const ctl = (d.live && d.live.control) || d.control_file || {};
+    bapCtl = ctl;
+    const tg = document.getElementById('bap-toggle');
+    tg.textContent = ctl.enabled ? 'PAPER: ON' : 'PAPER: OFF';
+    tg.className = 'px-4 py-2 rounded text-xs font-bold ' + (ctl.enabled ? 'bg-emerald-600 text-white' : 'bg-slate-700 text-slate-300');
+    document.getElementById('bap-lat-txt').textContent = ctl.latency_ms ?? 300;
+    for (const [id, k] of [['bap-entry', 'entry_usd'], ['bap-exit', 'exit_band_usd'], ['bap-lat', 'latency_ms']]) {
+      const el = document.getElementById(id);
+      if (document.activeElement !== el && el.dataset.dirty !== '1') el.value = ctl[k] ?? '';
+    }
+    const L = d.live || {}, sp = L.spreads_1btc;
+    const st = document.getElementById('bap-state');
+    st.textContent = d.stale ? 'MONITOR STALE' : (L.state || '—');
+    st.className = 'text-sm font-semibold ' + (d.stale ? 'text-rose-400' : (L.state === 'OPEN' ? 'text-amber-400' : 'text-slate-200'));
+    const s1 = document.getElementById('bap-s1'), s2 = document.getElementById('bap-s2');
+    s1.textContent = sp ? '$' + baS(sp.s1) : 'no clean depth'; s1.className = 'text-sm font-semibold tabular-nums ' + (sp ? baCls(sp.s1) : 'text-slate-500');
+    s2.textContent = sp ? '$' + baS(sp.s2) : 'no clean depth'; s2.className = 'text-sm font-semibold tabular-nums ' + (sp ? baCls(sp.s2) : 'text-slate-500');
+
+    const S = d.summary || {};
+    document.getElementById('bap-n').textContent = S.trades ?? 0;
+    document.getElementById('bap-win').textContent = S.trades ? `${S.wins} wins · ${S.win_rate}%` : '';
+    const pn = document.getElementById('bap-pnl'); pn.textContent = '$' + baS(S.pnl); pn.className = 'text-sm font-semibold tabular-nums ' + baCls(S.pnl);
+    document.getElementById('bap-avg').textContent = S.trades ? `avg $${baS(S.avg_pnl)} / trade` : '';
+    const sl = document.getElementById('bap-slip'); sl.textContent = S.trades ? '$' + baS(S.avg_slippage) : '—'; sl.className = 'text-sm font-semibold tabular-nums ' + baCls(S.avg_slippage);
+    document.getElementById('bap-hold').textContent = S.avg_hold_s != null ? `${S.avg_hold_s}s` : '—';
+    document.getElementById('bap-best').textContent = S.trades ? `best $${baS(S.best)} · worst $${baS(S.worst)}` : '';
+
+    const pos = L.position, pe = document.getElementById('bap-pos');
+    if (pos) {
+      pe.className = 'mb-3 px-3 py-2 rounded text-xs bg-amber-900/20 border border-amber-600/40 text-slate-200';
+      pe.innerHTML = `<b class="text-amber-400">OPEN</b> ${pos.label} · ${pos.size_btc} BTC · since ${(pos.entry_ts || '').slice(11, 19)} (${pos.held_s}s) · ` +
+        `entry gap <b>$${baS(pos.entry_spread)}</b> (signal $${baS(pos.signal_spread)}) · Delta @ ${baN(pos.entry_delta_px)} · Binance @ ${baN(pos.entry_binance_px)} · ` +
+        `unwind now $${baS(pos.unwind_spread)} · MTM <b class="${baCls(pos.mtm)}">$${baS(pos.mtm)}</b> · closes when unwind ≥ −$${baN(ctl.exit_band_usd)}`;
+    } else if (L.pending) {
+      pe.className = 'mb-3 px-3 py-2 rounded text-xs bg-sky-900/20 border border-sky-600/40 text-slate-200';
+      pe.textContent = `${L.pending.kind} signal at $${baS(L.pending.signal_spread)} — filling on the books ${ctl.latency_ms} ms later…`;
+    } else {
+      pe.className = 'mb-3 px-3 py-2 rounded text-xs bg-slate-800/60 border border-slate-700/60 text-slate-400';
+      pe.textContent = ctl.enabled ? `Waiting for a 1-BTC gap of $${baN(ctl.entry_usd)} or more on either side.` : 'Paper trading is OFF.';
+    }
+
+    const curve = d.curve || [];
+    if (curve.length !== bapCurveN) {
+      bapCurveN = curve.length;
+      bapInitChart();
+      // trades can close in the same second: nudge times so they stay strictly increasing
+      let last = 0;
+      const pts = curve.map(c => { const t = Math.max(c.t + baIST, last + 1); last = t; return { t, p: c.pnl, f: c.pnl_fees }; });
+      bapBase = pts;
+      bapLine.setData(pts.map(x => ({ time: x.t, value: x.p })));
+      bapChart.timeScale().fitContent();
+    }
+
+
+    document.getElementById('bap-trades').innerHTML = (d.trades || []).map(t => `<tr class="border-t border-slate-800/60">
+      <td class="py-1 pr-2 text-slate-400">${(t.entry_ts || '').slice(5, 19)}</td>
+      <td class="pr-2">${t.direction === 'BUY_DELTA_SELL_BINANCE' ? 'Buy Delta / Sell Binance' : 'Buy Binance / Sell Delta'}</td>
+      <td class="text-right pr-2 text-slate-400">${baN(t.signal_spread)}</td>
+      <td class="text-right pr-2 ${baCls(t.entry_spread)}">${baN(t.entry_spread)}</td>
+      <td class="text-right pr-2 ${baCls(t.exit_spread)}">${baN(t.exit_spread)}</td>
+      <td class="text-right pr-2 text-slate-400">${baN(t.entry_delta_px, 1)} → ${baN(t.exit_delta_px, 1)}</td>
+      <td class="text-right pr-2 text-slate-400">${baN(t.entry_binance_px, 1)} → ${baN(t.exit_binance_px, 1)}</td>
+      <td class="text-right pr-2 text-slate-400">${t.hold_s}s</td>
+      <td class="text-right pr-2 font-semibold ${baCls(t.pnl)}">${baS(t.pnl)}</td>
+      <td class="text-slate-500">${t.exit_reason || ''}</td></tr>`).join('')
+      || '<tr><td colspan="10" class="py-3 text-center text-slate-600">no paper trades yet</td></tr>';
+  } catch (e) {}
+}
+
+// called from baRefreshTick (1 s) with the paper snapshot the monitor publishes
+function bapLive(P, tickMs) {
+  if (!P) return;
+  const pos = P.position, mtm = pos && pos.mtm != null ? pos.mtm : 0;
+  const total = (P.realized || 0) + mtm;
+  const el = document.getElementById('bap-live');
+  el.textContent = '$' + baS(total); el.className = 'text-3xl font-bold tabular-nums ' + baCls(total);
+  document.getElementById('bap-live-sub').textContent = `closed $${baS(P.realized)} · open $${baS(mtm)} · ${P.trades} trades`;
+  const m = document.getElementById('bap-live-mtm');
+  m.textContent = pos ? (pos.mtm != null ? '$' + baS(pos.mtm) : 'no clean depth') : 'flat';
+  m.className = 'text-xl font-bold tabular-nums ' + (pos ? baCls(pos.mtm) : 'text-slate-500');
+  document.getElementById('bap-live-at').textContent = pos
+    ? `${pos.label} · entry $${baS(pos.entry_spread)} · unwind $${baS(pos.unwind_spread)} · ${pos.held_s}s`
+    : (P.state || '');
+  if (pos) {                                   // keep the position box ticking too
+    const pe = document.getElementById('bap-pos');
+    if (pe && bapCtl) pe.innerHTML = `<b class="text-amber-400">OPEN</b> ${pos.label} · ${pos.size_btc} BTC · since ${(pos.entry_ts || '').slice(11, 19)} (${pos.held_s}s) · ` +
+      `entry gap <b>$${baS(pos.entry_spread)}</b> (signal $${baS(pos.signal_spread)}) · Delta @ ${baN(pos.entry_delta_px)} · Binance @ ${baN(pos.entry_binance_px)} · ` +
+      `unwind now $${baS(pos.unwind_spread)} · MTM <b class="${baCls(pos.mtm)}">$${baS(pos.mtm)}</b> · closes when unwind ≥ −$${baN(bapCtl.exit_band_usd)}`;
+  }
+  // live point on the cumulative curve (never before the last closed trade)
+  if (bapLine && P.trades === bapBase.length) {
+    const lastT = bapBase.length ? bapBase[bapBase.length - 1].t : 0;
+    const t = Math.max(Math.floor(tickMs / 1000) + baIST, lastT + 1);
+    try { bapLine.update({ time: t, value: total }); } catch (e) {}
+  }
+}
+
+async function bapPost(body) {
+  const msg = document.getElementById('bap-msg');
+  try {
+    const r = await (await fetch('/api/btcarb/paper/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json();
+    msg.textContent = r.ok ? 'saved — the monitor picks it up within a second' : ('not saved: ' + (r.errors || []).join('; '));
+    msg.className = 'text-[11px] ' + (r.ok ? 'text-emerald-400' : 'text-rose-400');
+    ['bap-entry', 'bap-exit', 'bap-lat'].forEach(id => document.getElementById(id).dataset.dirty = '');
+    setTimeout(bapRefresh, 600);
+  } catch (e) { msg.textContent = 'save failed: ' + e; msg.className = 'text-[11px] text-rose-400'; }
+}
+
+function bapToggle() {
+  const on = !(bapCtl && bapCtl.enabled);
+  if (!on && !confirm('Turn paper trading OFF? Any open paper position is closed at current order-book prices.')) return;
+  bapPost({ enabled: on });
+}
+
+function bapSave() {
+  bapPost({ entry_usd: document.getElementById('bap-entry').value,
+            exit_band_usd: document.getElementById('bap-exit').value,
+            latency_ms: document.getElementById('bap-lat').value });
+}
+
+function baStartPoll() {
+  baStopPoll();
+  baRefreshTick(); baRefreshEvents(); bapRefresh();
+  baTickTimer = setInterval(baRefreshTick, 1000);
+  baEventsTimer = setInterval(baRefreshEvents, 5000);
+  bapTimer = setInterval(bapRefresh, 2000);
+  baStartSeriesTimer();
+}
+function baStopPoll() {
+  [baTickTimer, baSeriesTimer, baEventsTimer, bapTimer].forEach(t => { if (t) clearInterval(t); });
+  baTickTimer = baSeriesTimer = baEventsTimer = bapTimer = null;
 }
 
 </script>

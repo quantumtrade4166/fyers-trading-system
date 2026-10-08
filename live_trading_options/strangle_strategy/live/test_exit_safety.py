@@ -156,10 +156,11 @@ c2.on_tick(58.0, 30.0, 28.0, "11:00:00")
 check("an active breach reports as the MTM stop", calls2, ["MTM stop"])
 
 
-print("\n  ── a margin rejection flattens EVERYTHING ──")
-# The 2026-08-25 Delta Neutral incident, applied to VWAP: an order refused for want
-# of funds must not leave a matched short pair running on an account the broker has
-# already said no to. check_naked() only sees a LOPSIDED book, so it would not act.
+print("\n  ── entry failure (margin OR reject) ALWAYS fail-safe closes via the broker ──")
+# The 2026-10-05 incident: a 22800 CE SELL FILLED, the PE leg was rejected on margin,
+# and the stale local ledger showed the CE "pending" so _flatten covered nothing — a
+# naked CE sat all day. Now EVERY entry failure routes through _fail_safe_flatten, which
+# verifies against the broker and closes anything really short.
 MARGIN = ("GeneralException: Insufficient funds. Margin required: 3565383.52. "
           "Margin available: 3564721.64. Add 661.88 to place this order.")
 
@@ -172,8 +173,8 @@ def _raises(msg):
 
 c = ctrl(kite=StubKite(), mode="live")
 c.marks[CE], c.marks[PE] = 30.0, 28.0
-flat = []
-c._flatten = lambda reason: flat.append(reason)
+fs = []
+c._fail_safe_flatten = lambda reason: fs.append(reason)
 c.guard.validate_entry = lambda *a, **k: (True, "")
 c._sell_pair_live = _raises(MARGIN)
 c._enter(58.0, 1, "test")
@@ -181,23 +182,61 @@ c._enter(58.0, 1, "test")
 check("margin flagged on the event", c.events[-1].get("margin"), True)
 check("margin_halt recorded", bool(c.margin_halt), True)
 check("the broker's own words are kept", "661.88" in (c.margin_halt or ""), True)
-check("EVERYTHING flattened, not just an imbalance", len(flat), 1)
-check("and it says why", "margin shortfall" in (flat[0] if flat else ""), True)
+check("margin -> fail-safe flatten", len(fs), 1)
+check("and it says why", "margin shortfall" in (fs[0] if fs else ""), True)
 check("guard killed", c.guard.killed, True)
 check("snapshot carries the alarm", bool(c.snapshot().get("margin_halt")), True)
 
-# a NON-margin rejection keeps the old, narrower behaviour
+# a NON-margin rejection now ALSO fail-safe closes (a filled leg must never be abandoned)
 c2 = ctrl(kite=StubKite(), mode="live")
 c2.marks[CE], c2.marks[PE] = 30.0, 28.0
-flat2 = []
-c2._flatten = lambda reason: flat2.append(reason)
+fs2 = []
+c2._fail_safe_flatten = lambda reason: fs2.append(reason)
 c2.guard.validate_entry = lambda *a, **k: (True, "")
-c2.guard.check_naked = lambda ce, pe: None
 c2._sell_pair_live = _raises("InputException: bad price")
 c2._enter(58.0, 1, "test")
-check("non-margin error does NOT force a full flatten", len(flat2), 0)
+check("non-margin error ALSO fail-safe closes", len(fs2), 1)
 check("but still kills for the day", c2.guard.killed, True)
 check("and is not mislabelled as margin", c2.margin_halt, None)
+
+
+print("\n  ── fail-safe VERIFIES with the broker and closes a leg the ledger lost ──")
+# Reproduce 2026-10-05 exactly: the BROKER holds a real 520 CE short, but the local
+# ledger is empty (the margin abort never booked the fill). _fail_safe_flatten must
+# learn the short from the broker, buy it back, and CONFIRM flat against the broker.
+from live import kite_executor as _kxmod
+
+CE_TS = SYMS[CE]["tradingsymbol"]
+_saved = {k: getattr(_kxmod, k) for k in ("strategy_fills", "place_limit_verified", "order_status", "cancel")}
+broker = [{"tradingsymbol": CE_TS, "side": SELL, "qty": 520,
+           "avg_price": 23.25, "order_id": "SELL1", "fill_time": "09:43"}]
+covers = []
+_kxmod.strategy_fills = lambda kite, tag="vwstrangle": list(broker)
+
+
+def _fs_place(kite, tsym, exch, side, qty, price, product, tag="vwstrangle", retries=2):
+    oid = f"COV{len(covers) + 1}"
+    covers.append(oid)
+    broker.append({"tradingsymbol": tsym, "side": BUY, "qty": qty,      # cover fills at the broker
+                   "avg_price": 10.3, "order_id": oid, "fill_time": "09:44"})
+    return oid
+
+
+_kxmod.place_limit_verified = _fs_place
+_kxmod.order_status = lambda kite, oid: {"status": "COMPLETE", "filled_qty": 520, "avg_price": 10.3, "fill_time": "09:44"}
+_kxmod.cancel = lambda kite, oid: None
+
+c3 = ctrl(kite=StubKite(), mode="live")
+c3._CLOSE_POLL_S = 0.4
+c3._limit_price = lambda sym, side, buf=None, cushion_ticks=2: 10.0
+c3._product_for = lambda sym, side: "NRML"
+check("broker shows the naked CE, ledger does not", (c3._broker_open_shorts(), c3.ledger.open_short_real(CE)), ({CE: 520}, 0))
+c3._fail_safe_flatten("margin shortfall — test")
+check("a cover BUY was placed", len(covers) >= 1, True)
+check("broker CONFIRMS flat after fail-safe", c3._broker_open_shorts(), {})
+check("ledger agrees flat", c3.ledger.open_short_real(CE), 0)
+for _k, _v in _saved.items():
+    setattr(_kxmod, _k, _v)
 
 
 
@@ -221,6 +260,116 @@ c2 = ctrl(kite=StubKite(), mode="live")
 c2.product = "NRML"
 check("a symbol this process never opened falls back to config",
       c2._product_for("NSE:UNSEEN", BUY), "NRML")
+
+
+print("\n  -- a close NEVER gives up: re-prices off depth until the short is flat --")
+# The 2026-09-30 SENSEX incident: an exit fired on a candle closing above VWAP, the
+# PE bought back, but the rising CE's buy-back missed the fill and the leg sat naked
+# until the user hit Kill. A close must keep lifting deeper into the book instead.
+from live import kite_executor as kx
+
+# (a) fills on the first attempt -> one placement, no cancel
+c = ctrl(kite=StubKite(), mode="live")
+c.marks[CE] = 30.0
+c._CLOSE_POLL_S = 0.4
+c._limit_price = lambda sym, side, buf=None, cushion_ticks=2: 31.0 + (cushion_ticks or 0) * 0.05
+c._product_for = lambda sym, side: "NRML"
+short = {CE: 65}
+c.ledger.open_short_real = lambda sym: short.get(sym, 0)
+c.ledger.record = lambda o: None
+c.ledger.update_fill = lambda *a, **k: None
+placed, cancels = [], []
+kx.place_limit_verified = lambda *a, **k: (placed.append(1) or f"oid-{len(placed)}")
+kx.cancel = lambda kite, oid: cancels.append(oid)
+
+def _status_fill_now(kite, oid):
+    short[CE] = 0                                   # the fill flattens the short
+    return {"status": "COMPLETE", "filled_qty": 65, "avg_price": 32.0, "fill_time": "11:00:05"}
+
+kx.order_status = _status_fill_now
+fill = c._close_leg(CE, 1, "exit", 65)
+check("filled on attempt 1", (len(placed), len(cancels)), (1, 0))
+check("returns the real fill price", fill, 32.0)
+check("and the short is flat", short[CE], 0)
+
+# (b) first attempt will not fill -> cancel, re-price harder, fill on the next
+c = ctrl(kite=StubKite(), mode="live")
+c.marks[CE] = 30.0
+c._CLOSE_POLL_S = 0.4
+bufs_seen, cush_seen = [], []
+
+def _price_spy(sym, side, buf=None, cushion_ticks=2):
+    bufs_seen.append(buf)
+    cush_seen.append(cushion_ticks)
+    return 31.0 + (cushion_ticks or 0) * 0.05
+
+c._limit_price = _price_spy
+c._product_for = lambda sym, side: "NRML"
+short = {CE: 65}
+c.ledger.open_short_real = lambda sym: short.get(sym, 0)
+c.ledger.record = lambda o: None
+c.ledger.update_fill = lambda *a, **k: None
+placed, cancels = [], []
+kx.place_limit_verified = lambda *a, **k: (placed.append(1) or f"oid-{len(placed)}")
+kx.cancel = lambda kite, oid: cancels.append(oid)
+seq = iter(["OPEN", "COMPLETE"])                    # attempt1 won't fill, attempt2 does
+
+def _status_seq(kite, oid):
+    st = next(seq, "COMPLETE")
+    if st == "COMPLETE":
+        short[CE] = 0
+        return {"status": "COMPLETE", "filled_qty": 65, "avg_price": 33.0, "fill_time": "11:00:06"}
+    return {"status": st, "filled_qty": 0, "avg_price": None, "fill_time": None}
+
+kx.order_status = _status_seq
+fill = c._close_leg(CE, 1, "exit", 65)
+check("re-placed after the miss", len(placed), 2)
+check("the stuck order was cancelled", len(cancels), 1)
+check("re-priced harder (cushion escalated)", cush_seen[1] > cush_seen[0], True)
+check("closed on the retry", (fill, short[CE]), (33.0, 0))
+
+
+print("\n  -- orphan guard: a short left on the book when we think we're flat --")
+# Belt-and-suspenders for a close that still can't fill inside its in-call tries:
+# if the strategy believes it is flat (no open cycle, trigger not in-position) yet a
+# REAL short remains, every tick keeps covering it off fresh depth until it's gone.
+c = ctrl(kite=StubKite(), mode="live")
+c.marks[CE], c.marks[PE] = 30.0, 28.0
+covered = []
+c._close_leg = lambda sym, cycle, kind, qty: covered.append((sym, kind, qty))
+c.ledger.open_shorts = lambda: {}                  # MTM/kill block is skipped
+c.ledger.open_short_real = lambda sym: 65 if sym == CE else 0
+c._open = None
+c.trigger.in_pos = False
+c.guard.killed = False
+c.trigger.on_tick = lambda combined, hm: None
+c._last_flatten_try = 0.0
+c.on_tick(58.0, 30.0, 28.0, "11:00:00")
+check("orphan naked short is covered off depth", covered, [(CE, "orphan_cover", 65)])
+c.on_tick(58.0, 30.0, 28.0, "11:00:01")
+check("orphan cover throttled ~2s", len(covered), 1)
+c.ledger.open_short_real = lambda sym: 0
+c._last_flatten_try = 0.0
+c.on_tick(58.0, 30.0, 28.0, "11:00:05")
+check("flat -> no orphan cover", len(covered), 1)
+
+# a legitimately-HELD position (in a cycle / trigger in-position) is NEVER auto-covered
+c3 = ctrl(kite=StubKite(), mode="live")
+c3.marks[CE], c3.marks[PE] = 30.0, 28.0
+cov3 = []
+c3._close_leg = lambda sym, cycle, kind, qty: cov3.append(sym)
+c3.ledger.open_shorts = lambda: {CE: 65, PE: 65}
+c3.ledger.open_short_real = lambda sym: 65
+c3.guard.check_mtm = lambda marks: (False, 0.0)
+c3.guard.killed = False
+c3.guard.must_square_off = lambda now: False
+c3._open = {"cycle": 1}
+c3.trigger.in_pos = True
+c3.trigger.on_tick = lambda combined, hm: None
+c3._last_flatten_try = 0.0
+c3.on_tick(58.0, 30.0, 28.0, "11:00")          # HH:MM — reaches the time-square-off check
+check("a legitimately-held position is NEVER auto-covered", cov3, [])
+
 
 print(f"\n  {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

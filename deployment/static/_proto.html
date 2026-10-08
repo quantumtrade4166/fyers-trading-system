@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terminal — Hiddenmetrix style prototype</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root{
+    --bg:#0a0a0b; --panel:#101012; --panel2:#0c0c0e; --bd:#1d1d21; --bd2:#2a2a30;
+    --tx:#e9e9ec; --tx2:#8b8b93; --tx3:#56565e; --am:#f5a623; --gn:#26c281; --rd:#f0524a;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--tx);font-family:'Inter',system-ui,sans-serif;font-size:13px;-webkit-font-smoothing:antialiased}
+  .mono{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+  .up{color:var(--gn)} .dn{color:var(--rd)} .am{color:var(--am)}
+  .muted{color:var(--tx2)} .dim{color:var(--tx3)}
+  .app{display:flex;min-height:100vh}
+  /* sidebar */
+  .sb{width:62px;background:var(--panel2);border-right:1px solid var(--bd);display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:4px;flex-shrink:0}
+  .sb a{width:42px;height:42px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px;color:var(--tx3);border-radius:9px;text-decoration:none;font-size:8.5px}
+  .sb a svg{width:19px;height:19px}
+  .sb a:hover{color:var(--tx);background:#161619}
+  .sb a.on{color:var(--am)}
+  .sb .gap{flex:1}
+  /* main */
+  .main{flex:1;display:flex;flex-direction:column;min-width:0}
+  .top{height:54px;display:flex;align-items:center;gap:18px;padding:0 20px;border-bottom:1px solid var(--bd);flex-shrink:0}
+  .logo{font-weight:700;font-size:18px;letter-spacing:-.01em}
+  .search{flex:1;max-width:520px;height:34px;background:#0e0e10;border:1px solid var(--bd);border-radius:8px;display:flex;align-items:center;gap:8px;padding:0 12px;color:var(--tx3)}
+  .search input{background:none;border:none;outline:none;color:var(--tx);flex:1;font-size:12.5px}
+  .top .right{margin-left:auto;display:flex;align-items:center;gap:16px}
+  .iconbtn{width:34px;height:34px;border:1px solid var(--bd);border-radius:8px;display:flex;align-items:center;justify-content:center;color:var(--tx2)}
+  .iconbtn svg{width:17px;height:17px}
+  .status{display:flex;align-items:center;gap:7px;font-size:12px}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--gn);box-shadow:0 0 0 0 rgba(38,194,129,.5);animation:pulse 1.6s infinite}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 rgba(38,194,129,.45)}70%{box-shadow:0 0 0 6px rgba(38,194,129,0)}100%{box-shadow:0 0 0 0 rgba(38,194,129,0)}}
+  /* tabs */
+  .tabs{height:44px;display:flex;align-items:center;gap:4px;padding:0 16px;border-bottom:1px solid var(--bd);flex-shrink:0}
+  .tab{display:flex;align-items:center;gap:7px;height:44px;padding:0 14px;color:var(--tx2);font-size:13px;border-bottom:2px solid transparent;cursor:pointer}
+  .tab svg{width:15px;height:15px}
+  .tab.on{color:var(--tx);border-bottom-color:var(--am)}
+  .tab.on svg{color:var(--am)}
+  /* content */
+  .content{padding:14px 16px 70px;display:flex;flex-direction:column;gap:12px}
+  .cards6{display:grid;grid-template-columns:repeat(6,1fr);gap:12px}
+  .card{background:var(--panel);border:1px solid var(--bd);border-radius:11px}
+  .pad{padding:13px 15px}
+  .icard{padding:11px 13px;position:relative;overflow:hidden}
+  .icard .nm{font-size:12px;color:var(--tx2);margin-bottom:6px}
+  .icard .pr{font-size:18px;font-weight:600}
+  .icard .ch{font-size:11.5px;margin-top:2px}
+  .icard .sp{position:absolute;right:10px;bottom:10px;width:62px;height:26px;opacity:.85}
+  .row2{display:grid;grid-template-columns:2fr 1.05fr 1.05fr;gap:12px}
+  .row3{display:grid;grid-template-columns:1.35fr 1.15fr 1.05fr;gap:12px}
+  .hd{display:flex;align-items:center;justify-content:space-between;padding:11px 15px;border-bottom:1px solid var(--bd)}
+  .hd h3{font-size:13.5px;font-weight:600}
+  .hd .va{font-size:11.5px;color:var(--am)}
+  .chartwrap{padding:12px 14px}
+  .chart-top{display:flex;align-items:center;gap:12px;margin-bottom:8px}
+  .seg{display:flex;gap:2px;background:#0d0d10;border:1px solid var(--bd);border-radius:7px;padding:2px;margin-left:auto}
+  .seg span{font-size:11px;color:var(--tx2);padding:3px 9px;border-radius:5px}
+  .seg span.on{background:#1d1d21;color:var(--tx)}
+  #pnlchart{width:100%;height:236px}
+  .stats{display:flex;gap:26px;padding:10px 14px 4px;border-top:1px solid var(--bd);margin-top:8px}
+  .stats .s .k{font-size:10.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.05em}
+  .stats .s .v{font-size:13px;margin-top:2px}
+  table{width:100%;border-collapse:collapse}
+  th{font-size:10.5px;color:var(--tx3);text-transform:uppercase;letter-spacing:.04em;font-weight:500;text-align:right;padding:8px 14px}
+  th:first-child,td:first-child{text-align:left}
+  td{font-size:12.5px;padding:8px 14px;text-align:right;border-top:1px solid #161619}
+  tbody tr:hover{background:#131316}
+  .tag{display:inline-block;font-size:10px;font-weight:600;padding:1px 6px;border-radius:4px}
+  .tag.z{color:var(--am);background:rgba(245,166,35,.12)}
+  .tag.x{color:#5cc8ff;background:rgba(92,200,255,.12)}
+  .news .it{display:flex;gap:10px;padding:9px 15px;border-top:1px solid #161619}
+  .news .it:first-child{border-top:none}
+  .news .tm{font-size:11px;color:var(--tx3);min-width:38px;font-variant-numeric:tabular-nums}
+  .news .tx{font-size:12px;line-height:1.4}
+  .wl .it{display:flex;align-items:center;gap:10px;padding:8px 14px;border-top:1px solid #161619}
+  .wl .it:first-child{border-top:none}
+  .wl .nm{flex:1;min-width:0}
+  .wl .nm b{font-size:12.5px;font-weight:500;display:block}
+  .wl .nm small{font-size:10.5px;color:var(--tx3)}
+  .wl .sp{width:54px;height:22px}
+  .wl .pz{text-align:right;min-width:74px}
+  .wl .pz b{font-size:12.5px;font-weight:500;display:block}
+  .wl .pz small{font-size:10.5px}
+  /* bottom tape */
+  .tape{position:fixed;left:62px;right:0;bottom:0;height:46px;background:var(--panel2);border-top:1px solid var(--bd);display:flex;align-items:center;gap:0;padding:0 18px}
+  .tape .lbl{font-size:11px;color:var(--tx3);text-transform:uppercase;letter-spacing:.06em;margin-right:18px}
+  .tape .ti{display:flex;align-items:center;gap:7px;padding:0 16px;border-right:1px solid var(--bd);font-size:12.5px}
+  .tape .ti b{font-weight:500}
+  .tape .right{margin-left:auto;display:flex;align-items:center;gap:26px;padding-left:18px}
+  .tape .kv .k{font-size:10px;color:var(--tx3);text-transform:uppercase;letter-spacing:.05em}
+  .tape .kv .v{font-size:14px;font-weight:600}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="sb">
+    <a href="#"><i data-lucide="menu"></i></a>
+    <a href="#" class="on"><i data-lucide="layout-dashboard"></i>Home</a>
+    <a href="#"><i data-lucide="bar-chart-3"></i>Markets</a>
+    <a href="#"><i data-lucide="star"></i>Watch</a>
+    <a href="#"><i data-lucide="briefcase"></i>Folio</a>
+    <a href="#"><i data-lucide="sliders-horizontal"></i>Screen</a>
+    <a href="#"><i data-lucide="newspaper"></i>News</a>
+    <a href="#"><i data-lucide="bell"></i>Alerts</a>
+    <span class="gap"></span>
+    <a href="#"><i data-lucide="settings"></i>Settings</a>
+  </aside>
+
+  <div class="main">
+    <div class="top">
+      <span class="logo">Strategic<span class="am">Trader</span></span>
+      <div class="search"><i data-lucide="search" style="width:16px;height:16px"></i><input placeholder="Search symbols, strikes, strategies…"><span class="dim">/</span></div>
+      <div class="right">
+        <span class="status"><span class="dot"></span>LIVE · NSE/BSE</span>
+        <span class="muted mono" style="font-size:12px">Jun 26, 2026 · 15:23 IST</span>
+        <span class="iconbtn"><i data-lucide="bell"></i></span>
+        <span class="iconbtn"><i data-lucide="user"></i></span>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <div class="tab"><i data-lucide="layout-grid"></i>Overview</div>
+      <div class="tab"><i data-lucide="git-compare"></i>Pairs</div>
+      <div class="tab"><i data-lucide="git-fork"></i>Strangle</div>
+      <div class="tab on"><i data-lucide="activity"></i>Terminal</div>
+      <div class="tab"><i data-lucide="trending-up"></i>Dual Mom</div>
+      <div class="tab"><i data-lucide="dots"></i>More</div>
+    </div>
+
+    <div class="content">
+
+      <div class="cards6" id="cards"></div>
+
+      <div class="row2">
+        <div class="card">
+          <div class="chartwrap">
+            <div class="chart-top">
+              <span class="dot"></span>
+              <b style="font-size:14px">Combined P&amp;L</b>
+              <span class="up mono" style="font-size:14px;font-weight:600">+₹27,807</span>
+              <span class="up" style="font-size:11.5px">(+0.55% on capital)</span>
+              <div class="seg"><span>1D</span><span class="on">5D</span><span>1M</span><span>3M</span><span>YTD</span></div>
+            </div>
+            <div id="pnlchart"></div>
+            <div class="stats">
+              <div class="s"><div class="k">Open</div><div class="v mono">₹0</div></div>
+              <div class="s"><div class="k">Peak</div><div class="v mono up">+₹31,240</div></div>
+              <div class="s"><div class="k">Trough</div><div class="v mono dn">-₹2,280</div></div>
+              <div class="s"><div class="k">Realised</div><div class="v mono dn">-₹2,282</div></div>
+              <div class="s"><div class="k">Open legs</div><div class="v mono">12</div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="hd"><h3>Indices</h3><span class="va">View all</span></div>
+          <table><tbody id="indices"></tbody></table>
+        </div>
+
+        <div class="card news">
+          <div class="hd"><h3>Strategy log</h3><span class="va">View all</span></div>
+          <div id="news"></div>
+        </div>
+      </div>
+
+      <div class="row3">
+        <div class="card">
+          <div class="hd"><h3>Positions · combined</h3><span class="va">12 open</span></div>
+          <table>
+            <thead><tr><th>Acct · Instrument</th><th>Qty</th><th>Avg</th><th>LTP</th><th>P&amp;L</th></tr></thead>
+            <tbody id="positions"></tbody>
+          </table>
+        </div>
+
+        <div class="card">
+          <div class="hd"><h3 class="up">Winners</h3><span class="va">by P&amp;L</span></div>
+          <table><tbody id="winners"></tbody></table>
+          <div class="hd" style="border-top:1px solid var(--bd)"><h3 class="dn">Losers</h3><span class="va">by P&amp;L</span></div>
+          <table><tbody id="losers"></tbody></table>
+        </div>
+
+        <div class="card wl">
+          <div class="hd"><h3>Watchlist</h3><span class="va">View all</span></div>
+          <div id="watch"></div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="tape">
+      <span class="lbl">Markets</span>
+      <span class="ti">NIFTY <b class="mono">23,887.90</b> <span class="dn mono">-0.24%</span></span>
+      <span class="ti">BANKNIFTY <b class="mono">57,583.40</b> <span class="dn mono">-0.25%</span></span>
+      <span class="ti">SENSEX <b class="mono">76,528.66</b> <span class="dn mono">-0.26%</span></span>
+      <span class="ti">INDIA VIX <b class="mono">13.52</b> <span class="dn mono">-0.66%</span></span>
+      <div class="right">
+        <div class="kv"><div class="k">Margin used</div><div class="v mono">₹58.32L <span class="am" style="font-size:11px">82.1%</span></div></div>
+        <div class="kv"><div class="k">Combined day P&amp;L</div><div class="v mono up">+₹27,807</div></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/lucide@latest"></script>
+<script>
+const idx = [
+  ["NIFTY 50","23,887.90","-57.35","-0.24",0],
+  ["SENSEX","76,528.66","-199.71","-0.26",0],
+  ["BANK NIFTY","57,583.40","-143.95","-0.25",0],
+  ["FIN NIFTY","26,590.35","-8.00","-0.03",0],
+  ["INDIA VIX","13.52","-0.09","-0.66",0],
+  ["MIDCAP","14,433.00","+65.60","+0.46",1],
+];
+document.getElementById('cards').innerHTML = idx.map(r=>`
+  <div class="card icard">
+    <div class="nm">${r[0]}</div>
+    <div class="pr mono">${r[1]}</div>
+    <div class="ch mono ${r[4]?'up':'dn'}">${r[2]} (${r[3]}%)</div>
+    <div class="sp spark" data-dir="${r[4]?'up':'down'}"></div>
+  </div>`).join('');
+
+const indices = [
+  ["Hang Seng","22,671.86","-1.76",0],["Nifty 50","23,887.90","-0.24",0],
+  ["Bank Nifty","57,583.40","-0.25",0],["Sensex","76,528.66","-0.26",0],
+  ["Fin Nifty","26,590.35","-0.03",0],["Midcap 100","14,433.00","+0.46",1],
+  ["Smallcap 100","18,123.90","+0.15",1],["India VIX","13.52","-0.66",0],
+];
+document.getElementById('indices').innerHTML = indices.map(r=>`
+  <tr><td>${r[0]}</td><td class="mono muted">${r[1]}</td><td class="mono ${r[3]?'up':'dn'}">${r[2]}%</td></tr>`).join('');
+
+const news = [
+  ["15:21","XTS · 24100 CE bought back 50% @ 0.35"],
+  ["14:32","Day P&L peak +₹31,240"],
+  ["12:48","ZRD · 23850 PE squared off (realised -₹8,980)"],
+  ["11:05","Watchdog · tick engine auto-restarted"],
+  ["09:20","Strangle entered · short 23750 PE / 24100 CE"],
+  ["09:15","Market open · NIFTY 23,945 (+0.2%)"],
+];
+document.getElementById('news').innerHTML = news.map(r=>`
+  <div class="it"><span class="tm">${r[0]}</span><span class="tx">${r[1]}</span></div>`).join('');
+
+const pos = [
+  ["z","NIFTY 23750 PE","-585","14.64","0.05","+14,489",1],
+  ["x","NIFTY 23750 PE","-585","15.01","0.05","+14,372",1],
+  ["z","NIFTY 24100 CE","-1170","2.30","0.05","+2,633",1],
+  ["x","NIFTY 24100 CE","-1170","2.30","0.35","+2,282",1],
+  ["z","NIFTY 24900 CE","+585","1.15","0.05","-644",0],
+  ["x","NIFTY 24900 CE","+585","1.15","0.10","-614",0],
+  ["z","NIFTY 23400 PE","+585","1.00","0.10","-527",0],
+  ["x","NIFTY 23350 PE","+585","0.95","0.20","-439",0],
+  ["z","NIFTY 25200 CE","+585","0.90","0.05","-497",0],
+  ["x","NIFTY 25200 CE","+585","0.90","0.10","-468",0],
+];
+document.getElementById('positions').innerHTML = pos.map(r=>`
+  <tr><td><span class="tag ${r[0]}">${r[0]==='z'?'ZRD':'XTS'}</span> ${r[1]}</td>
+  <td class="mono ${r[2][0]==='-'?'dn':'up'}">${r[2]}</td>
+  <td class="mono muted">${r[3]}</td><td class="mono muted">${r[4]}</td>
+  <td class="mono ${r[6]?'up':'dn'}">${r[5]}</td></tr>`).join('');
+
+const winners=[["z","NIFTY 23750 PE","+14,489"],["x","NIFTY 23750 PE","+14,372"],["z","NIFTY 24100 CE","+2,633"],["x","NIFTY 24100 CE","+2,282"]];
+const losers=[["z","NIFTY 24900 CE","-644"],["x","NIFTY 24900 CE","-614"],["z","NIFTY 23400 PE","-527"],["z","NIFTY 25200 CE","-497"]];
+const mkrows = a => a.map(r=>`<tr><td><span class="tag ${r[0]}">${r[0]==='z'?'ZRD':'XTS'}</span> ${r[1]}</td><td class="mono ${r[2][0]==='-'?'dn':'up'}">${r[2]}</td></tr>`).join('');
+document.getElementById('winners').innerHTML = mkrows(winners);
+document.getElementById('losers').innerHTML = mkrows(losers);
+
+const watch=[
+  ["RELIANCE","Reliance Industries","1,293.60","-0.57",0],
+  ["TCS","Tata Consultancy","2,029.90","-3.24",0],
+  ["HDFCBANK","HDFC Bank","799.00","+0.01",1],
+  ["ICICIBANK","ICICI Bank","1,378.10","-0.68",0],
+  ["INFY","Infosys","1,005.10","-3.05",0],
+  ["ITC","ITC Ltd","287.15","-1.22",0],
+  ["LT","Larsen & Toubro","4,145.80","-0.47",0],
+];
+document.getElementById('watch').innerHTML = watch.map(r=>`
+  <div class="it"><div class="nm"><b>${r[0]}</b><small>${r[1]}</small></div>
+  <div class="sp spark" data-dir="${r[4]?'up':'down'}"></div>
+  <div class="pz"><b class="mono">${r[2]}</b><small class="mono ${r[4]?'up':'dn'}">${r[3]}%</small></div></div>`).join('');
+
+function drawSparks(){
+  document.querySelectorAll('.spark').forEach(el=>{
+    const up = el.dataset.dir==='up';
+    const c = up ? getComputedStyle(document.documentElement).getPropertyValue('--gn') : getComputedStyle(document.documentElement).getPropertyValue('--rd');
+    let pts=[], y=12;
+    for(let i=0;i<26;i++){ y += (Math.random()-0.5)*4.5 + (up?-0.22:0.22); y=Math.max(3,Math.min(21,y)); pts.push((i*(100/25)).toFixed(1)+','+y.toFixed(1)); }
+    el.innerHTML = `<svg viewBox="0 0 100 24" preserveAspectRatio="none" style="width:100%;height:100%"><polyline fill="none" stroke="${c.trim()}" stroke-width="1.6" points="${pts.join(' ')}"/></svg>`;
+  });
+}
+drawSparks();
+
+const chart = LightweightCharts.createChart(document.getElementById('pnlchart'), {
+  autoSize:true,
+  layout:{background:{type:'solid',color:'transparent'}, textColor:'#8b8b93', fontFamily:'Inter', fontSize:11},
+  grid:{vertLines:{color:'#151517'}, horzLines:{color:'#151517'}},
+  rightPriceScale:{borderColor:'#1d1d21'},
+  timeScale:{borderColor:'#1d1d21', timeVisible:true, secondsVisible:false},
+  crosshair:{mode:0, vertLine:{color:'#2a2a30',labelBackgroundColor:'#26c281'}, horzLine:{color:'#2a2a30',labelBackgroundColor:'#26c281'}},
+});
+const s = chart.addAreaSeries({lineColor:'#26c281', topColor:'rgba(38,194,129,0.22)', bottomColor:'rgba(38,194,129,0.01)', lineWidth:2, priceLineVisible:false, priceFormat:{type:'price',precision:0,minMove:1}});
+const base = Math.floor(Date.UTC(2026,5,26,9,15,0)/1000);
+const vals=[0,-300,-800,-1500,-2280,-1800,-900,200,1500,3200,4800,6100,7400,8800,10200,12500,14800,16200,18000,19500,21200,23000,24800,26500,28200,29800,31000,31240,30500,29800,30200,29500,28800,28200,27900,27850,27807];
+s.setData(vals.map((v,i)=>({time: base + i*600, value: v})));
+chart.timeScale().fitContent();
+
+if(window.lucide) lucide.createIcons();
+</script>
+</body>
+</html>

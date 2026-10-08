@@ -29,8 +29,57 @@
       "max_entries": 8,
       "mtm_stop_usd": 0,
       "fallback_last_pair": true
+    },
+    "ist_live": {
+      "enabled": true,
+      "label": "Vwap New Paper (split legs, own VWAP) — paper reference, never live",
+      "live_capable": false,
+      "start": "09:30",
+      "entry_cutoff": "16:25",
+      "square_off": "17:10",
+      "combined_threshold": 100,
+      "contracts": 1000,
+      "max_entries": 4,
+      "mtm_stop_usd": 70,
+      "stop_basis": "price",
+      "split_legs": true,
+      "fallback_last_pair": false
+    },
+    "ist_cap": {
+      "enabled": true,
+      "label": "Vwap 1.5x Paper (split legs + busted leg out at 1.5x VWAP) — paper only",
+      "live_capable": false,
+      "vwap_cap_mult": 1.5,
+      "start": "09:30",
+      "entry_cutoff": "16:25",
+      "square_off": "17:10",
+      "combined_threshold": 100,
+      "contracts": 1000,
+      "max_entries": 4,
+      "mtm_stop_usd": 70,
+      "stop_basis": "price",
+      "split_legs": true,
+      "fallback_last_pair": false
+    },
+    "ist_delta": {
+      "enabled": true,
+      "label": "Vwap New Delta Ex (split legs) — LIVE-capable",
+      "live_capable": true,
+      "start": "09:30",
+      "entry_cutoff": "16:25",
+      "square_off": "17:10",
+      "combined_threshold": 100,
+      "contracts": 500,
+      "max_entries": 4,
+      "mtm_stop_usd": 35,
+      "stop_basis": "price",
+      "split_legs": true,
+      "fallback_last_pair": false
     }
   },
+
+  "_size_note_20261004": "User 2026-10-04: paper versions ist_live + ist_cap at 1000 contracts / -$70 stop; the live ist_delta stays 500 / -$35.",
+  "_ist_live_note": "User rules 2026-10-03: D version (busted leg out, kept leg exits on its own 5-min close above its own VWAP, re-sell only the missing leg), max 4 entries, 500 contracts/leg, stop -$35 on PRICE P&L only (open legs at mark, no fees/spread). ist_live = 'Vwap New Paper': the same rules kept PAPER forever as the reference (2026-10-04). ist_delta = 'Vwap New Delta Ex': identical rules, the only live-capable version — PAPER until armed from the dashboard or tools/vwap_live_control.py (data/vwap_state/live_control_ist_delta.json).",
 
   "_rules_note": "Identical to the NSE Vwap Strangle. Strikes: once at session start, first same-distance-from-ATM CE+PE pair whose combined MARK <= combined_threshold, fixed for the whole cycle. Candles: 5-min combined premium (CE mark + PE mark sampled at the same instant), VWAP = cumulative sum(typical*volume)/sum(volume), typical=(H+L+C)/3, volume = CE+PE traded contracts in that 5 min, resets each cycle. ENTRY: a red candle closing below VWAP arms a sell trigger at low-1; it fills the instant combined premium trades to it; next candle cancels (close above VWAP) or replaces (fresh red-below-VWAP at its new low-1). EXIT: any candle closing above VWAP -> buy back at market. One position at a time, max_entries fills per cycle, no entry after entry_cutoff, flatten at square_off. MTM stop: cycle MTM <= -mtm_stop_usd flattens and stops for the cycle.",
 
@@ -44,7 +93,9 @@
 
   "fees": {
     "taker_rate_notional": 0.0001,
-    "premium_cap_rate": 0.035
+    "premium_cap_rate": 0.035,
+    "gst_rate": 0.18,
+    "_gst_note": "Delta India adds 18% GST to every fee (ledger 2026-10-06: 0.875 + 0.1575 = 1.0325). Used by the split-leg books (ist_live, ist_cap, ist_delta paper fills + exit-fee estimate); the original ist_day/full_expiry books still model the fee WITHOUT GST."
   },
 
   "max_entry_slippage_pct": 5,
@@ -59,7 +110,12 @@
   "stall_seconds": 180,
 
   "live_orders": {
-    "enabled": false,
-    "_comment": "PAPER ONLY. No live path exists."
+    "_comment": "Used only by split_legs versions when armed live. IOC limit orders priced off the live L2 book. Entry: sweep price minus entry_buffer_pct, never below the slippage floor, entry_attempts tries, a half-filled strangle is unwound. Exit: sweep price plus each exit buffer in turn, then a MARKET order; still open -> retried every poll until Delta confirms.",
+    "leverage": 200,
+    "_leverage_note": "Order leverage set on each contract before its first sell (Delta default seen 100x). User 2026-10-04: isolated margin, 200x -> ~$860 for 1000 CE + 1000 PE; 500+500 ~ $430.",
+    "entry_attempts": 3,
+    "entry_buffer_pct": 1.0,
+    "exit_buffers_pct": [2, 5, 10, 25],
+    "exit_market_fallback": true
   }
 }

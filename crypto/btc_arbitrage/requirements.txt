@@ -1,0 +1,5 @@
+# Already in the project .venv; listed so the monitor can be set up on its own.
+websockets>=12
+requests>=2.31
+# dashboard side (deployment/) — already installed for the main web app
+fastapi

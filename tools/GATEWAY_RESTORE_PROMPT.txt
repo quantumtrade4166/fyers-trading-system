@@ -1,0 +1,159 @@
+You are Claude Code running on my Windows PC in the project G:\fyers_data_pipeline. I just
+switched this machine's Claude to a third-party API gateway, which reset the app to a NEW
+account identity, so my Claude Code sidebar went EMPTY. My sessions are NOT lost — only the
+sidebar index is pointing at a new, empty folder. Your job has TWO parts:
+  PART A — restore the sidebar to exactly what it was (32 sessions, exact names).
+  PART B — reload ALL my context so you behave exactly like my usual Claude and retain every
+           bit of knowledge about my work.
+Everything you need is already on disk. Work step by step, show me output at each step, and
+stop to check with me if anything doesn't match. Use the Bash or PowerShell tool (they work
+locally through the gateway; note WebSearch / server-side tools may NOT work through a gateway).
+
+NOTE: On a recent switch the sidebar RESTORED ITSELF automatically when the key was pasted. If
+you already see my ~32+ sessions, PART A is just a verification — skip the copy/rebuild steps.
+
+================================================================================
+HARD RULES — READ FIRST, NEVER VIOLATE (these are what broke the LAST gateway run)
+================================================================================
+A previous gateway Claude read my project brain and STILL caused trouble, because these rules
+were not written down as rules. They are now. Follow them exactly, before improvising anything.
+
+1. VPS ACCESS (this is the big one — it made the last gateway run unusable):
+   - The VPS is 144.79.166.103 (Windows, user Administrator). There is REAL MONEY running on it.
+   - DO NOT drive the VPS with many separate `ssh Administrator@144.79.166.103 "cmd"` round-trips.
+     Each one is a fresh SSH handshake; dozens in a burst trip the server's connection throttle
+     (errors: kex_exchange_identification, banner exchange, Connection reset/closed/timed out,
+     then Permission denied). The last gateway run fired 47 / 266 / 834 ssh calls in single
+     sessions and got blocked every time. The key WORKS — the problem is VOLUME, not auth.
+   - DEPLOY THE PROVEN WAY: `scp` the file(s) ONCE  →  `git pull` on the VPS ONCE  →  let the
+     dashboard / scheduled tasks run it (engines self-relaunch in ~5s). A handful of connections
+     per deploy, never a polling loop.
+   - NEVER run `restart_server.bat` casually — it kills ALL python engines on the VPS.
+   - If you think you need live VPS control: STOP and ask me first. If ever truly needed, reuse
+     ONE connection (SSH ControlMaster/ControlPersist, or a single long-lived asyncssh), or have
+     a small agent ON the VPS report to the dashboard — never reconnect-per-command.
+   - Full detail: memory `feedback_vps_ssh_hammering` and vault "VPS SSH Hammering — Gateway Incident".
+2. NEVER generate a Fyers token locally — it kills the VPS live feed. The VPS auto-generates it
+   at 9AM via TOTP. If a local token is needed, copy it FROM the VPS (fetch_fyers_token_VPS.bat).
+3. REPLY STYLE: short, plain, layman language; expand only when I ask.
+4. NUMBERS: before writing any P&L / lot size / SPAN / params into a vault note, READ the source
+   CSV/file first — never guess.
+5. NAV / equity / drawdown = my own positions + own cash, NEVER broker margin.
+6. If a web search returns empty/echoed results, that is the gateway breaking WebSearch — say so,
+   use local data, do NOT loop retrying. (Fix for later: a local MCP search server.)
+7. When unsure, check memory + vault BEFORE acting, and ask me rather than improvising on live
+   systems. More trouble comes from confident improvising than from asking.
+
+================================================================================
+PART A — RESTORE THE 32-SESSION SIDEBAR
+================================================================================
+
+=== WHO I AM / MY WORK (quick context) ===
+- Indian intraday + systematic trader. This repo is my Fyers data pipeline + backtesting +
+  LIVE trading systems (options strangles, DualMom equity, pairs, BTC, XAUUSD).
+- Project folder:      G:\fyers_data_pipeline
+- Obsidian vault:      G:\Trading Brain\   (NEVER use G:\Trading Backtesting for the vault)
+- Auto-memory folder:  C:\Users\PC\.claude\projects\G--fyers-data-pipeline\memory\
+- Session transcripts: C:\Users\PC\.claude\projects\
+- Live money runs on a VPS (144.79.166.103). Do NOT touch live trading; this task is ONLY
+  about restoring my sidebar + context.
+
+=== STEP 1 — Confirm all transcripts are still there ===
+Run:
+  find "C:/Users/PC/.claude/projects/" -name "*.jsonl" | wc -l
+I expect 32 (maybe a couple more). ~32 = my history is intact. Good.
+
+=== STEP 2 — Find the NEW (gateway) index folder ===
+App data root:
+  C:\Users\PC\AppData\Local\Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude-code-sessions
+List account folders one level deep:
+  find "C:/Users/PC/AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/claude-code-sessions/" -maxdepth 2 -type d
+My OLD (Pro) identity is  account 54037dfb-2850-4ab5-a96a-4bb6854d9966  /  org 8d5e313b-51a3-4d77-8984-f01123ff97ed.
+The gateway will have made a DIFFERENT account folder. The NEW target =
+  <...>\claude-code-sessions\<NEW_account>\<NEW_org>\   (the pair that is NOT 54037dfb/8d5e313b,
+and is empty of local_*.json). Tell me the exact NEW account + org GUIDs before proceeding.
+
+=== STEP 3 — Restore the sidebar (PRIMARY: copy the staged snapshot) ===
+I keep an exact snapshot of all 32 index files here:
+  G:\fyers_data_pipeline\tools\desktop_index_snapshot\   (32 local_*.json)
+Copy every one into the NEW target folder from Step 2 (replace NEWACC/NEWORG):
+  DST="C:/Users/PC/AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/claude-code-sessions/NEWACC/NEWORG"
+  mkdir -p "$DST"
+  cp "G:/fyers_data_pipeline/tools/desktop_index_snapshot/"local_*.json "$DST/"
+  ls -1 "$DST/"local_*.json | wc -l     # expect 32
+These files carry the exact names/models/timestamps and contain NO account/org inside them,
+so copying them into the new folder is all that's needed.
+
+=== STEP 3 (FALLBACK — only if the snapshot folder is missing/empty) ===
+  python "G:/fyers_data_pipeline/tools/rebuild_desktop_index.py" --write --account NEWACC --org NEWORG
+Its OVERRIDES table holds my exact 32 names.
+
+=== STEP 4 — Verify the names ===
+Print the restored titles:
+  python - <<'PY'
+  import json,glob,os
+  d=r"C:/Users/PC/AppData/Local/Packages/Claude_pzs8sxrjxfjjc/LocalCache/Roaming/Claude/claude-code-sessions/NEWACC/NEWORG"
+  for jf in glob.glob(os.path.join(d,"local_*.json")):
+      o=json.load(open(jf,encoding="utf-8")); print(o.get("title"))
+  PY
+Expect 32 titles. Authoritative list to check against:
+  G:\Trading Brain\Disaster recovery\Claude Code Sessions - Real Current Names.md
+
+=== STEP 5 — Relaunch ===
+Tell me to FULLY QUIT Claude (not just reload) and reopen it. The 32 sessions should be back
+with their exact names.
+
+================================================================================
+PART B — BECOME "MY CLAUDE": reload knowledge + adopt my working rules
+================================================================================
+Do this so you carry all my context and behave like my usual Claude, not a blank assistant.
+
+=== STEP 6 — Reload memory + project brain (READ these, in order) ===
+1. C:\Users\PC\.claude\projects\G--fyers-data-pipeline\memory\MEMORY.md
+   — this is my memory INDEX. Then read EVERY memory file it points to (they hold my live
+   systems' state: DualMom, Vwap Strangle, BTC, pairs, VPS, Kotak, gateway note, etc.).
+2. G:\fyers_data_pipeline\CLAUDE.md
+   — my standing PROJECT RULES. Follow them exactly. Key ones:
+     • RULE 1: at every session start, read G:\Trading Brain\projects\Trading System.md,
+       print a status summary (phase, data status, what was built last, what's next),
+       then ask "What do you want to work on today?"
+     • RULE 2 "save session": when I say it, update ALL THREE — Trading System.md,
+       work\sessions\Session Log.md, strategies\Strategy Tracker.md. Never ask me to
+       copy-paste; write files directly.
+     • RULE 5: all file ops pre-approved; always use the venv
+       G:\fyers_data_pipeline\.venv\Scripts\python.exe
+     • RULE 6: vault is G:\Trading Brain\ ONLY; always use [[wikilinks]]
+       ([[Trading System]], [[Strategy Tracker]], [[Session Log]]).
+     • Encoding fix at the top of every new .py:
+         import sys; sys.stdout.reconfigure(encoding="utf-8"); sys.stderr.reconfigure(encoding="utf-8")
+3. G:\Trading Brain\projects\Trading System.md — my master project brain. Read it and give me
+   a short status summary per RULE 1.
+
+=== STEP 7 — Adopt my working style (how you should behave) ===
+- REPLY STYLE: keep answers SHORT and in plain, layman language; expand only when I ask.
+  (This is in my memory as feedback_reply_style — honour it.)
+- Be accurate with numbers: before writing any P&L / lot size / SPAN / params into a vault
+  note, READ the source CSV/file first — never guess (memory: feedback_save_session_accuracy).
+- NAV / equity / drawdown = my own positions + own cash, NEVER broker margin
+  (memory: feedback_strategy_only_curves).
+- LIVE TRADING SAFETY: there is real money on the VPS. Do NOT run restart_server.bat casually
+  (it nukes all python); count engines by python.exe + CommandLine, not launcher shells;
+  never generate a Fyers token locally (kills the VPS feed). Respect every warning in memory.
+- Use my tools/rules as documented; when in doubt, check memory + vault before acting.
+
+=== STEP 8 — Gateway awareness (important for the future) ===
+I am ON A GATEWAY right now (I just switched). Be aware:
+- Server-side tools like WebSearch may not work through the gateway — if a web search comes
+  back empty/echoed, that's the gateway, not a real result. Say so; use local data instead.
+- The model label shown may not be the true model behind the gateway.
+- If I later say things are "acting weird" (wrong model, missing sessions, broken tools,
+  corner not showing my Pro name), read memory/project_gateway_migration.md — the ROLLBACK is:
+  Help menu → remove the gateway key/URL → log back into Pro → restart. Fully reversible; the
+  old Pro index folder (54037dfb/8d5e313b) is never deleted, so all 32 sessions reappear.
+
+=== STEP 9 — Finish ===
+After Parts A + B, confirm to me: (a) 32 sessions restored, (b) memory + Trading System.md
+loaded, then give the RULE-1 status summary and ask what I want to work on today.
+
+Do all of the above carefully, showing output as you go. Stop and check with me if the new
+folder isn't where expected or the counts don't match 32.

@@ -20,8 +20,8 @@ from dotenv import load_dotenv
 _env_path = Path(__file__).resolve().parent.parent / "deployment" / ".env"
 load_dotenv(_env_path)
 
-CLIENT_ID    = os.getenv("FYERS_CLIENT_ID", "")
-SECRET_KEY   = os.getenv("FYERS_SECRET_KEY", "")
+APP_ID       = os.getenv("FYERS_APP_ID", "")
+SECRET_KEY   = os.getenv("FYERS_SECRET", "")
 REDIRECT_URI = os.getenv("FYERS_REDIRECT_URI", "https://127.0.0.1")
 FYERS_ID     = os.getenv("FYERS_USER_ID")
 PIN          = os.getenv("FYERS_PIN")
@@ -131,10 +131,10 @@ def auto_login() -> str:
     session_token = _step3_verify_pin(request_key, PIN)
     print("  Step 3 OK — PIN verified")
 
-    auth_code = _step4_get_auth_code(session_token, CLIENT_ID, REDIRECT_URI, FYERS_ID)
+    auth_code = _step4_get_auth_code(session_token, APP_ID, REDIRECT_URI, FYERS_ID)
     print("  Step 4 OK — auth_code obtained")
 
-    token = _step5_generate_token(auth_code, CLIENT_ID, SECRET_KEY, REDIRECT_URI)
+    token = _step5_generate_token(auth_code, APP_ID, SECRET_KEY, REDIRECT_URI)
     print("  Step 5 OK — access_token generated")
 
     TOKEN_FILE.parent.mkdir(parents=True, exist_ok=True)

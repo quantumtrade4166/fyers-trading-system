@@ -161,6 +161,14 @@ try:
 except Exception as _e:                                    # pragma: no cover
     print(f"[btcvwap] router NOT loaded: {type(_e).__name__}: {_e}", flush=True)
 
+# BTC cross-exchange spread monitor (Delta vs Binance, READ-ONLY). Same isolation:
+# crypto/btc_arbitrage/main.py publishes files, this router only reads them.
+try:
+    from deployment.btc_arb_api import router as _btcarb_router
+    app.include_router(_btcarb_router)
+except Exception as _e:                                    # pragma: no cover
+    print(f"[btcarb] router NOT loaded: {type(_e).__name__}: {_e}", flush=True)
+
 # Nifty Directional Pivot (PAPER). Same isolation as BTC: a separate engine process
 # publishes files, this router only reads them.
 try:

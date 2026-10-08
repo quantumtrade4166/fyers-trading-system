@@ -82,3 +82,26 @@ live_trading_options/delta_btc/logs/
 # Backed up to private Google Drive every 10 min + a daily dated archive. NEVER git.
 deployment/dualmom_live_state/
 deployment/dualmom_kite_state/
+
+# --- Data, logs and local files never go to GitHub (added 2026-10-09) ---
+# Market data (re-downloadable or backed up to Google Drive instead)
+*.parquet
+Bhavcopy/
+Bitcoin options data/
+ETF data/
+Nifty 500 Daily Fyers/
+Nifty fno 2021-26/
+# Logs and scratch
+*.log
+logs/
+scratchpad/
+scratch_*.csv
+# Editor / tool folders
+.obsidian/
+.idea/
+.tmp.driveupload/
+node_modules/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+$null

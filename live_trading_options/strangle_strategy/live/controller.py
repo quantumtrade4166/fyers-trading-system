@@ -161,6 +161,25 @@ class LiveController:
                 # min late (the 15:14/15:15 candle closes at ~15:19-15:20). _flatten already
                 # stops the trigger for the day, so the candle-close path can't double-fire.
                 self._flatten("time square-off")
+        # Orphaned naked short: the strategy believes it is flat (no tracked open cycle,
+        # trigger not in-position) yet a REAL short is still on the broker book — e.g. an
+        # exit leg whose buy-back would not fill. NEVER leave it naked: keep covering it
+        # off fresh depth, throttled, until the book is flat. (The killed case is handled
+        # by the kill-retry branch above, so this only catches a missed NORMAL exit.)
+        if (self.is_live_armed() and not self._seeding and not self.guard.killed
+                and self._open is None and not self.trigger.in_pos):
+            orphans = [s for s in (self.ce, self.pe) if self.ledger.open_short_real(s) > 0]
+            if orphans:
+                import time as _t
+                if _t.monotonic() - self._last_flatten_try >= 2.0:
+                    self._last_flatten_try = _t.monotonic()
+                    for s in orphans:
+                        print(f"  [live] {self.index} orphan naked short {s} — covering off depth", flush=True)
+                        audit.log(self.index, "ORPHAN_COVER", sym=s,
+                                  held=self.ledger.open_short_real(s))
+                        self._close_leg(s, self.guard.max_cycles, "orphan_cover",
+                                        self.ledger.open_short_real(s))
+                    self.persist()
         if self._trades_allowed:
             self.trigger.on_tick(combined, hm)
         self._write_tick(combined)             # real-time P&L / price for the Live tab
@@ -363,34 +382,34 @@ class LiveController:
             self.events.append({"t": self._hm, "type": "entry_order_failed",
                                 "cycle": cycle, "error": msg, "margin": margin})
             audit.log(self.index, "ORDER_FAILED", cyc=cycle, error=msg, margin=margin)
+            # A leg may have FILLED before the rejection aborted its fill-poll, so the
+            # LOCAL ledger cannot be trusted here — the 2026-10-05 incident sold a 22800
+            # CE, had the PE rejected on margin, and `_flatten` read the stale ledger
+            # (CE still "pending") and covered nothing, leaving the CE naked all day.
+            # Fail safe ALWAYS re-reads the broker and closes whatever is really short,
+            # for BOTH a margin halt and any other rejection.
             if margin:
-                # Out of funds: close EVERYTHING this strategy still holds, not just a
-                # qty imbalance. check_naked() only sees a lopsided book, so a fully
-                # matched short pair would have been left running on a broker account
-                # that has already refused an order.
                 self.margin_halt = msg[:300]
                 self.guard.kill(f"margin shortfall: {msg}")
-                self._flatten(f"margin shortfall — {msg}")
+                self._fail_safe_flatten(f"margin shortfall — {msg}")
             else:
-                naked = self.guard.check_naked(self.ce, self.pe)
-                if naked:
-                    self._cover_naked(naked, cycle, "entry failed mid-leg")
                 self.guard.kill(f"entry order failed: {msg}")
+                self._fail_safe_flatten(f"entry order failed — {msg}")
             self.trigger.done = True
             self.persist()
             return
-        # LIVE: a leg that never completed (even after retries) = failed entry. Cover the
-        # leg that DID fill so we're never left naked, then stop for the day.
+        # LIVE: a leg that never completed (even after retries) = failed entry. A leg we
+        # believe is unfilled may actually have filled at the broker (a lost/late poll),
+        # so verify against the broker and close anything really short — never trust the
+        # local book when we are about to walk away.
         if live and (ce_fill is None or pe_fill is None):
             print(f"  [live] {self.index} ENTRY INCOMPLETE cyc{cycle}: ce={ce_fill} pe={pe_fill} "
-                  f"— covering filled leg + stopping", flush=True)
+                  f"— verifying with broker + closing", flush=True)
             self.events.append({"t": self._hm, "type": "entry_incomplete",
                                 "cycle": cycle, "ce": ce_fill, "pe": pe_fill})
             audit.log(self.index, "ENTRY_INCOMPLETE", cyc=cycle, ce=ce_fill, pe=pe_fill)
-            naked = self.guard.check_naked(self.ce, self.pe)
-            if naked:
-                self._cover_naked(naked, cycle, "entry leg would not fill")
             self.guard.kill("entry incomplete — a leg would not fill")
+            self._fail_safe_flatten("entry incomplete — a leg would not fill")
             self.trigger.done = True
             self.persist()
             return
@@ -460,6 +479,71 @@ class LiveController:
                       real_covered=(ce_out is not None or pe_out is not None))
         self.persist()
 
+    def _broker_open_shorts(self) -> dict | None:
+        """Real short qty per leg as the BROKER reports it (THIS strategy's tagged fills,
+        netted) — NOT the local ledger. The authoritative 'are we actually flat?' check.
+
+        Returns {sym: qty>0} for legs still short, {} when the broker confirms flat, or
+        None when the broker could not be read (caller must NOT assume flat)."""
+        if not (self.kite and self.kite_syms):
+            return {}
+        from live import kite_executor as kx
+        try:
+            fills = kx.strategy_fills(self.kite)
+        except Exception:
+            return None
+        ts_to_fy = {v["tradingsymbol"]: fy for fy, v in self.kite_syms.items()}
+        net: dict[str, int] = {}
+        for f in fills:
+            fy = ts_to_fy.get(f.get("tradingsymbol"))
+            if fy not in (self.ce, self.pe):
+                continue
+            q = int(f.get("qty") or 0)
+            net[fy] = net.get(fy, 0) + (q if f.get("side") == SELL else -q)
+        return {s: q for s, q in net.items() if q > 0}
+
+    def _fail_safe_flatten(self, reason: str):
+        """Close EVERYTHING this strategy really holds, CONFIRMED against the broker.
+
+        Used when an entry fails mid-leg (margin / reject / incomplete): a leg may have
+        FILLED while the engine only recorded it pending, so trusting the local ledger
+        would leave that leg naked (the 2026-10-05 margin incident). So we (1) rebuild the
+        book from the broker's own fills, (2) flatten every real short, then (3) re-read
+        the BROKER and keep covering until it confirms flat — because a naked short is
+        never acceptable. If the broker can't be read or can't be confirmed flat, we raise
+        a loud, auditable alarm rather than silently assume we are safe."""
+        import time as _t
+        # 1) learn the truth: rebuild the ledger from the broker's real fills (retry a
+        #    just-filled leg that may not be visible in the order book for a moment).
+        for _ in range(3):
+            truth = self._broker_open_shorts()
+            self.reconcile_broker()
+            if truth is not None:
+                break
+            _t.sleep(1.0)
+        # 2) book + cover whatever is really short (persistent, depth-driven _close_leg).
+        self._flatten(reason)
+        # 3) verify against the broker; resync + cover again until confirmed flat.
+        for attempt in range(5):
+            self.reconcile_broker()                 # keep the ledger == broker for the cover
+            still = self._broker_open_shorts()
+            if still == {}:
+                audit.log(self.index, "FAILSAFE_FLAT", reason=reason[:120], attempt=attempt + 1)
+                print(f"  [live] {self.index} fail-safe: broker confirms FLAT", flush=True)
+                return
+            if still is None:                       # couldn't read — wait and retry
+                _t.sleep(1.0)
+                continue
+            audit.log(self.index, "FAILSAFE_COVER", attempt=attempt + 1, shorts=still)
+            print(f"  [live] {self.index} fail-safe: broker still short {still} — covering", flush=True)
+            for sym, q in still.items():
+                self._close_leg(sym, self.guard.max_cycles, "failsafe_cover", q)
+            _t.sleep(0.5)
+        final = self._broker_open_shorts()
+        audit.log(self.index, "FAILSAFE_UNCONFIRMED", shorts=final, reason=reason[:120])
+        print(f"  [live] {self.index} *** FAIL-SAFE COULD NOT CONFIRM FLAT: {final} — CHECK BROKER ***",
+              flush=True)
+
     def _cover_naked(self, naked, cycle, reason):
         sym, units = naked
         self.events.append({"t": self._hm, "type": "naked_cover", "symbol": sym,
@@ -487,7 +571,10 @@ class LiveController:
                 self.events.append({"t": self._hm, "type": "skip_buy_no_short",
                                     "symbol": sym, "kind": kind})
                 return self.marks.get(sym)
-            qty = min(qty, held)
+            # A BUY closes a short, and a short must NEVER be left naked. Unlike an
+            # entry leg (which may give up and cover the other side), a close keeps
+            # re-pricing off LIVE depth and lifting offers until the real short is flat.
+            return self._close_leg(sym, cycle, kind, min(qty, held))
         if live:
             return self._place_live(sym, side, cycle, kind, qty)
         # paper: simulated fill at the current LTP of this leg
@@ -507,6 +594,16 @@ class LiveController:
     _MKT_BUF = 0.30
     # escalating marketable buffers for retrying a laggard leg (fill harder each try)
     _RETRY_BUFS = (0.30, 0.60, 0.90)
+
+    # Closing a short is not allowed to fail. Each retry re-reads the LIVE order book
+    # and reaches further THROUGH it (more cushion ticks) so a leg whose premium is
+    # running away — exactly the leg an exit on a directional move produces — still gets
+    # lifted. Kept to a few in-call tries (each blocks the tick loop while it polls);
+    # the tick-loop naked guard keeps re-covering across ticks until flat, so overall
+    # persistence is unbounded without one long stall.
+    _CLOSE_CUSHIONS = (2, 6, 15)          # depth cushion in TICKS, per attempt
+    _CLOSE_BUFS = (0.30, 0.60, 0.90)      # mark-multiple fallback when depth unreadable
+    _CLOSE_POLL_S = 3.0                   # seconds to wait for each attempt's fill
 
     def _product_for(self, sym: str, side: str) -> str:
         """Which product this order must use.
@@ -686,6 +783,72 @@ class LiveController:
             except Exception as e:
                 print(f"  [live] {self.index} cancel after no-fill failed: {e}", flush=True)
         return fill
+
+    def _close_leg(self, sym: str, cycle: int, kind: str, qty: int) -> float:
+        """Persistently BUY back one short leg, re-pricing off LIVE depth each attempt
+        and reaching further through the book until the real short is flat.
+
+        A short leg must never be abandoned naked. A plain exit prices a marketable
+        limit once and, if the premium has jumped (the directional move that triggers
+        the exit is the very thing that runs the short-side leg up), it can miss the
+        fill — the old behaviour then left that leg open until a human hit Kill. Here
+        every retry reads the order book afresh and lifts deeper into the offers;
+        anything still short when the in-call tries are spent is picked up by the
+        tick-loop naked guard, which keeps calling this until the book shows flat."""
+        from live import kite_executor as kx
+        import time
+        ks = self.kite_syms[sym]
+        last_fill = None
+        for attempt in range(len(self._CLOSE_CUSHIONS)):
+            held = self.ledger.open_short_real(sym)
+            if held <= 0:                               # already covered — done
+                return last_fill if last_fill is not None else self.marks.get(sym)
+            want = min(qty, held)
+            price = self._limit_price(sym, BUY, buf=self._CLOSE_BUFS[attempt],
+                                      cushion_ticks=self._CLOSE_CUSHIONS[attempt])
+            oid = kx.place_limit_verified(self.kite, ks["tradingsymbol"], ks["exchange"],
+                                          BUY, want, price, self._product_for(sym, BUY))
+            audit.log(self.index, "ORDER_PLACED", cyc=cycle, side=BUY, sym=ks["tradingsymbol"],
+                      qty=want, limit=round(price, 2), kind=kind, oid=oid, attempt=attempt + 1)
+            self.ledger.record(Order(oid, sym, BUY, want, cycle, kind))
+            filled = False
+            deadline = time.monotonic() + self._CLOSE_POLL_S
+            while time.monotonic() < deadline:
+                st = kx.order_status(self.kite, oid)
+                self.ledger.update_fill(oid, st["status"], st.get("filled_qty"),
+                                        st.get("avg_price"), st.get("fill_time"))
+                if st["status"] == "COMPLETE":
+                    last_fill = st.get("avg_price")
+                    self._last_fill_time[sym] = st.get("fill_time")
+                    audit.log(self.index, "ORDER_COMPLETE", cyc=cycle, side=BUY,
+                              sym=ks["tradingsymbol"], avg=last_fill,
+                              fill_time=st.get("fill_time"), oid=oid)
+                    filled = True
+                    break
+                if st["status"] in ("REJECTED", "CANCELLED"):
+                    audit.log(self.index, "ORDER_" + st["status"], cyc=cycle, side=BUY,
+                              sym=ks["tradingsymbol"], oid=oid)
+                    break
+                time.sleep(0.5)
+            if filled:
+                continue                                # loop re-checks held; returns when flat
+            # not filled (or only partial) — cancel the resting remainder, re-price harder
+            try:
+                kx.cancel(self.kite, oid)
+                self.ledger.update_fill(oid, "CANCELLED")
+            except Exception:
+                pass
+            self.events.append({"t": self._hm, "type": "close_retry", "symbol": sym,
+                                "attempt": attempt + 1, "kind": kind})
+            print(f"  [live] {self.index} {kind} {sym} not filled — re-pricing off "
+                  f"depth, attempt {attempt + 1}", flush=True)
+        held = self.ledger.open_short_real(sym)
+        if held > 0:
+            audit.log(self.index, "CLOSE_INCOMPLETE", cyc=cycle, sym=ks["tradingsymbol"], held=held)
+            print(f"  [live] {self.index} {kind} {sym} STILL SHORT {held} after "
+                  f"{len(self._CLOSE_CUSHIONS)} tries — tick guard will keep covering",
+                  flush=True)
+        return last_fill if last_fill is not None else self.marks.get(sym)
 
     # ── state for the Live tab ────────────────────────────────────────────
     def snapshot(self) -> dict:

@@ -154,7 +154,9 @@ def main():
     cleaned_n = 0
     for jf in glob.glob(os.path.join(orgdir, "local_*.json")):
         try:
-            cid = json.load(open(jf, encoding="utf-8")).get("cliSessionId")
+            # utf-8-sig so a BOM-prefixed index file (the desktop app writes some) is
+            # read cleanly instead of being mis-flagged as corrupt and deleted.
+            cid = json.load(open(jf, encoding="utf-8-sig")).get("cliSessionId")
             if cid:
                 existing.add(cid)
             else:

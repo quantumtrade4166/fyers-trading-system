@@ -39,6 +39,13 @@ TAG = ke.TAG_PREFIX                                   # unique-per-order tags sh
 
 
 class KotakController:
+    # Order-tag prefix used for EVERY order this mirror places AND for the
+    # reconciliation lookup — the two MUST match or a restart can't find its own
+    # fills. Bhaiya = "vwsk"; the Rohit subclass overrides this to "vwsk2" so the
+    # two Kotak accounts' orders never share a tag prefix. (Was previously the
+    # module-level TAG, which left Rohit placing orders under the wrong tag.)
+    tag_prefix = TAG
+
     def __init__(self, index, date_str, ce_sym, pe_sym, dte, *, lot_size, lots,
                  max_cycles, mtm_stop, entry_cutoff, square_off,
                  kotak=None, kotak_syms=None):
@@ -121,9 +128,9 @@ class KotakController:
         self._check_control()
         self._hm = hm
         if ce_ltp is not None:
-            self.marks[self.ce] = ce_ltp
+            self.marks[self.ce] = float(ce_ltp)
         if pe_ltp is not None:
-            self.marks[self.pe] = pe_ltp
+            self.marks[self.pe] = float(pe_ltp)
         if self.ledger.open_shorts():
             breached, _ = self.guard.check_mtm(self.marks)
             if breached:
@@ -136,6 +143,22 @@ class KotakController:
                     self._flatten("still short after kill — retrying")
             elif self.guard.must_square_off(self._now()):
                 self._flatten("time square-off")
+        # Orphaned naked short: the mirror believes it is flat (no open cycle, trigger not
+        # in-position) yet a REAL short is still on the Kotak book — e.g. an exit leg whose
+        # buy-back would not fill. NEVER leave it naked: keep covering off fresh depth,
+        # throttled, until the book is flat. (The killed case is the branch above.)
+        if (self.is_live_armed() and not self._seeding and not self.guard.killed
+                and self._open is None and not self.trigger.in_pos):
+            orphans = [s for s in (self.ce, self.pe) if self.ledger.open_short_real(s) > 0]
+            if orphans and _time.monotonic() - self._last_flatten_try >= 2.0:
+                self._last_flatten_try = _time.monotonic()
+                for s in orphans:
+                    print(f"  [kotak] {self.index} orphan naked short {s} — covering off depth", flush=True)
+                    audit.log(self.index, "KOTAK_ORPHAN_COVER", sym=s,
+                              held=self.ledger.open_short_real(s))
+                    self._close_leg(s, self.guard.max_cycles, "orphan_cover",
+                                    self.ledger.open_short_real(s))
+                self.persist()
         if self._trades_allowed:
             self.trigger.on_tick(combined, hm)
         self._write_tick(combined)
@@ -201,7 +224,7 @@ class KotakController:
             pass
         ts_to_fy = {v["trading_symbol"]: fy for fy, v in self.kotak_syms.items()}
         try:
-            fills = ke.strategy_fills(self.kotak, tag_prefix=TAG)
+            fills = ke.strategy_fills(self.kotak, tag_prefix=self.tag_prefix)
         except Exception as e:
             audit.log(self.index, "KOTAK_RECONCILE_FAIL", error=str(e))
             return
@@ -415,7 +438,9 @@ class KotakController:
             if held <= 0:
                 self.events.append({"t": self._hm, "type": "skip_buy_no_short", "symbol": sym, "kind": kind})
                 return self.marks.get(sym)
-            qty = min(qty, held)
+            # A BUY closes a short, which must NEVER be left naked — keep re-pricing off
+            # LIVE depth and lifting deeper until the real short is flat (mirror of Zerodha).
+            return self._close_leg(sym, cycle, kind, min(qty, held))
         if live:
             return self._place_live(sym, side, cycle, kind, qty)
         # paper: simulated fill at the leg's current mark
@@ -430,6 +455,15 @@ class KotakController:
 
     # marketable buffers: initial fire + escalating retries for a laggard leg (fill harder each try)
     _RETRY_BUFS = (0.30, 0.60, 0.90)
+
+    # Closing a short is not allowed to fail. Each retry re-reads Kotak's LIVE book and
+    # reaches further THROUGH it (more cushion ticks, clamped to the LPP band) so a leg
+    # whose premium is running away still gets lifted. A few in-call tries (each blocks the
+    # tick loop while polling); the tick-loop orphan guard keeps covering across ticks until
+    # flat, so overall persistence is unbounded without one long stall.
+    _CLOSE_CUSHIONS = (2, 6, 15)          # depth cushion in TICKS, per attempt
+    _CLOSE_BUFS = (0.30, 0.60, 0.90)      # mark-multiple fallback when depth unreadable
+    _CLOSE_POLL_S = 3.0                   # seconds to wait for each attempt's fill
 
     @staticmethod
     def _k_filled(status) -> bool:
@@ -458,7 +492,7 @@ class KotakController:
             raise RuntimeError(f"no Kotak client/contract for {sym}")
         price = self._leg_price(sym, side, qty, self._RETRY_BUFS[0])
         oid = ke.place_limit(self.kotak, ks["trading_symbol"], ks["exchange_segment"],
-                             side, qty, price, tag=TAG)
+                             side, qty, price, tag=self.tag_prefix)
         self.ledger.record(Order(oid, sym, side, qty, cycle, kind))
         audit.log(self.index, "KOTAK_ORDER_PLACED", cyc=cycle, side=side,
                   sym=ks["trading_symbol"], qty=qty, oid=oid, limit=price)
@@ -510,16 +544,69 @@ class KotakController:
             _time.sleep(0.7)
         return None, None
 
+    def _close_leg(self, sym, cycle, kind, qty):
+        """Persistently BUY back one short leg, re-pricing off Kotak's LIVE depth each attempt
+        (reaching deeper through the book, clamped to the LPP band) until the real short is flat.
+
+        A short must never be abandoned naked. _place_live fires a close once and, if the
+        premium jumped (the directional move that triggers the exit runs the short-side leg
+        up), it can miss the fill — the old behaviour left that leg open until a human hit
+        Kill. Here every retry reads the book afresh and lifts deeper; anything still short
+        when the in-call tries are spent is swept by the tick-loop orphan guard. Mirror of the
+        Zerodha controller's _close_leg, using Kotak's own depth/poll/cancel helpers."""
+        ks = self.kotak_syms.get(sym)
+        if not (self.kotak and ks):
+            raise RuntimeError(f"no Kotak client/contract for {sym}")
+        last_fill = None
+        for attempt in range(len(self._CLOSE_CUSHIONS)):
+            held = self.ledger.open_short_real(sym)
+            if held <= 0:                                   # already covered — done
+                return last_fill if last_fill is not None else self.marks.get(sym)
+            want = min(qty, held)
+            price = self._leg_price(sym, BUY, want, self._CLOSE_BUFS[attempt],
+                                    cushion_ticks=self._CLOSE_CUSHIONS[attempt])
+            oid = ke.place_limit(self.kotak, ks["trading_symbol"], ks["exchange_segment"],
+                                 BUY, want, price, tag=self.tag_prefix)
+            self.ledger.record(Order(oid, sym, BUY, want, cycle, kind))
+            audit.log(self.index, "KOTAK_ORDER_PLACED", cyc=cycle, side=BUY,
+                      sym=ks["trading_symbol"], qty=want, oid=oid, limit=price, attempt=attempt + 1)
+            fill, ft = self._poll_fill(oid, seconds=self._CLOSE_POLL_S)
+            if fill is not None:
+                ft = ft or dt.datetime.now().strftime("%H:%M:%S")
+                self.ledger.update_fill(oid, COMPLETE, filled_qty=want, avg_price=fill, fill_time=ft)
+                self._last_fill_time[sym] = ft
+                audit.log(self.index, "KOTAK_ORDER_COMPLETE", cyc=cycle, side=BUY,
+                          sym=ks["trading_symbol"], avg=fill, oid=oid)
+                last_fill = fill
+                continue                                    # loop re-checks held; returns when flat
+            raced = self._settle_unfilled(oid, sym, want)   # cancel; book a cancel-race fill
+            if raced is not None:
+                audit.log(self.index, "KOTAK_ORDER_COMPLETE", cyc=cycle, side=BUY,
+                          sym=ks["trading_symbol"], avg=raced, oid=oid, note="filled in cancel race")
+                last_fill = raced
+                continue
+            self.events.append({"t": self._hm, "type": "close_retry", "symbol": sym,
+                                "attempt": attempt + 1, "kind": kind})
+            print(f"  [kotak] {self.index} {kind} {sym} not filled — re-pricing off "
+                  f"depth, attempt {attempt + 1}", flush=True)
+        held = self.ledger.open_short_real(sym)
+        if held > 0:
+            audit.log(self.index, "KOTAK_CLOSE_INCOMPLETE", cyc=cycle, sym=ks["trading_symbol"], held=held)
+            print(f"  [kotak] {self.index} {kind} {sym} STILL SHORT {held} after "
+                  f"{len(self._CLOSE_CUSHIONS)} tries — tick guard will keep covering", flush=True)
+        return last_fill if last_fill is not None else self.marks.get(sym)
+
     # ── two-leg live entry: fire BOTH shorts together, retry a laggard, cancel unfilled ──
-    def _leg_price(self, sym, side, qty, buf):
+    def _leg_price(self, sym, side, qty, buf, cushion_ticks=2):
         """Marketable price for one leg, read FRESH off Kotak's live order book (depth) each call
         and clamped inside the LPP band — so a retry re-prices off the current market instead of
         blindly walking past the exchange band (the 2026-09-10 SENSEX PE rejections). Falls back
-        to the mark-based estimate only if the quote can't be read."""
+        to the mark-based estimate only if the quote can't be read. A bigger `cushion_ticks`
+        reaches deeper through the book — used by _close_leg to escalate a stuck cover."""
         ks = self.kotak_syms.get(sym) or {}
         fb = ke.marketable_limit(self.marks.get(sym), side, buf)
         return ke.marketable_price(self.kotak, ks.get("token"), ks.get("exchange_segment"),
-                                   side, qty, fallback=fb)
+                                   side, qty, fallback=fb, cushion_ticks=cushion_ticks)
 
     def _fire_leg(self, sym, side, cycle, kind, buf):
         """Place ONE marketable leg immediately (no wait) and record it. Price is depth-derived
@@ -527,7 +614,7 @@ class KotakController:
         ks = self.kotak_syms[sym]
         price = self._leg_price(sym, side, self.qty, buf)
         oid = ke.place_limit(self.kotak, ks["trading_symbol"], ks["exchange_segment"],
-                             side, self.qty, price, tag=TAG)
+                             side, self.qty, price, tag=self.tag_prefix)
         self.ledger.record(Order(oid, sym, side, self.qty, cycle, kind))
         audit.log(self.index, "KOTAK_ORDER_PLACED", cyc=cycle, side=side,
                   sym=ks["trading_symbol"], qty=self.qty, oid=oid, limit=price)

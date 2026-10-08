@@ -300,7 +300,11 @@ def order_status(client, order_id: str) -> dict:
             if str(_dig(o, *_OID_KEYS)) == str(order_id):
                 return {"status": _dig(o, *_STATUS_KEYS),
                         "filled_qty": int(_dig(o, *_FILLED_KEYS) or 0),
-                        "avg_price": _dig(o, *_AVG_KEYS),
+                        # Kotak returns prices as STRINGS ("32.0"). Left uncoerced, the
+                        # ledger's `avg_price * qty` sum does str*int then 0+str and raises
+                        # "unsupported operand type(s) for +: 'int' and 'str'" on every tick
+                        # after a fill (and round(str) -> "__round__"). Coerce at the boundary.
+                        "avg_price": _f(_dig(o, *_AVG_KEYS)),
                         "fill_time": _dig(o, *_TIME_KEYS)}
     except Exception:
         pass
@@ -327,7 +331,8 @@ def strategy_fills(client, tag_prefix: str = TAG_PREFIX) -> list:
             continue
         out.append({"trading_symbol": _dig(o, *_SYM_KEYS), "side": _dig(o, *_SIDE_KEYS),
                     "qty": int(_dig(o, *_FILLED_KEYS) or _dig(o, *_QTY_KEYS) or 0),
-                    "avg_price": _dig(o, *_AVG_KEYS), "order_id": str(_dig(o, *_OID_KEYS)),
+                    "avg_price": _f(_dig(o, *_AVG_KEYS)),   # Kotak sends prices as strings — coerce
+                    "order_id": str(_dig(o, *_OID_KEYS)),
                     "fill_time": _dig(o, *_TIME_KEYS)})
     return out
 

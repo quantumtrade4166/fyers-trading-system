@@ -19,6 +19,7 @@ import pytz
 
 from deployment.brokers.zerodha_adapter import ZerodhaAdapter
 from deployment.brokers.jainam_adapter import JainamAdapter
+from deployment.brokers.kotak_adapter import KotakBhaiyaAdapter, KotakRohitAdapter
 
 # Fyers intentionally excluded — not used for placing orders.
 # Zerodha is always polled. XTS/Jainam is TIME-GATED: it conflicts with the user's
@@ -26,8 +27,14 @@ from deployment.brokers.jainam_adapter import JainamAdapter
 # 15:30 IST (market close) — by then AlgoMate is done for the day. A same-day force flag
 # (deployment/xts_force_today.json) lets us turn it on earlier for an ad-hoc EOD video;
 # the flag auto-expires next day so XTS never disturbs AlgoMate during live trading.
-_ZERODHA = ZerodhaAdapter()
-_JAINAM  = JainamAdapter()
+#
+# Kotak (Bhaiya + Rohit) is read from the tick-engine's own snapshot files — no second
+# Kotak login, no session conflict. They're always included so the Terminal tab shows
+# Kotak positions + P&L whenever the engine has written a snapshot.
+_ZERODHA   = ZerodhaAdapter()
+_JAINAM    = JainamAdapter()
+_KOTAK     = KotakBhaiyaAdapter()
+_KOTAK_ROH = KotakRohitAdapter()
 
 IST            = pytz.timezone("Asia/Kolkata")
 XTS_LIVE_AFTER = dtime(15, 30)     # IST — XTS auto-goes-live at market close
@@ -53,7 +60,8 @@ def _xts_active() -> bool:
 
 
 def _active_adapters() -> list:
-    adapters = [_ZERODHA]
+    # Kotak (Bhaiya + Rohit) always included — read from engine snapshots, no login.
+    adapters = [_ZERODHA, _KOTAK, _KOTAK_ROH]
     if _xts_active():
         adapters.append(_JAINAM)
     return adapters

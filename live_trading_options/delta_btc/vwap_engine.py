@@ -1,9 +1,14 @@
 """
-vwap_engine.py — BTC VWAP Strangle, both versions on one feed. PAPER ONLY.
-=========================================================================
+vwap_engine.py — BTC VWAP Strangle, every version on one feed.
+=============================================================
 
     ist_day      09:30 -> 17:10 IST, today's expiry
     full_expiry  17:35 -> 17:10 IST next day, tomorrow's expiry
+    ist_live     "Vwap New Paper": split-leg exits (vwap/split_book.py), PAPER forever
+    ist_cap      "Vwap 1.5x Paper": the same rules + the busted leg out the moment the
+                 combined premium reaches 1.5x VWAP (vwap_cap_mult), PAPER only
+    ist_delta    "Vwap New Delta Ex": the same rules, PAPER until armed via
+                 data/vwap_state/live_control_ist_delta.json (dashboard), then LIVE
 
 The NIFTY/SENSEX Vwap Strangle rules on Delta Exchange BTC daily options:
 strikes with combined premium <= 100, 5-min combined candles + VWAP, sell on a
@@ -43,6 +48,7 @@ from core.shared import singleton, now_ist, LOGS
 from core.api import btc_options, btc_option_tickers
 from core.chain import LiveChain
 from vwap.book import VwapBook, atomic_write
+from vwap.split_book import SplitVwapBook
 
 PORT_BTC_VWAP_ENGINE = 47657
 
@@ -125,8 +131,12 @@ def main():
         return
 
     names = [n for n, v in PARAMS["versions"].items() if v.get("enabled", True)]
-    books = {n: VwapBook(n, PARAMS, ROOT, log=log) for n in names}
-    log(f"BTC VWAP engine start — PAPER ONLY, versions {names}, poll {POLL}s")
+    # split_legs versions use SplitVwapBook; only one with live_capable (ist_delta)
+    # can ever trade LIVE, once armed from its control file
+    books = {n: (SplitVwapBook if PARAMS["versions"][n].get("split_legs") else VwapBook)(
+        n, PARAMS, ROOT, log=log) for n in names}
+    log(f"BTC VWAP engine start — versions {names}, poll {POLL}s "
+        f"(live-capable: {[n for n, b in books.items() if getattr(b, 'live_capable', False)]})")
     for b in books.values():
         s = b.s
         log(f"  {b.name}: {s.start:%H:%M}->{s.square_off:%H:%M} cutoff {s.cutoff:%H:%M} "
@@ -212,6 +222,11 @@ def write_tick(books, feed):
         for n, b in books.items():
             out["versions"][n] = {
                 "status": b.status, "last": b.last, "mtm": b.mtm(),
+                "mode": getattr(b, "mode", "paper"),
+                # split books: net P&L after ALL charges (fees + GST, open legs at the
+                # buy-back ask less the estimated exit fee) next to the price P&L
+                "net_mtm": (round(b.realized() + b.unrealized(), 4) if hasattr(b, "charges") else None),
+                "charges": (b.charges() if hasattr(b, "charges") else None),
                 "realized": b.realized(), "in_pos": b.pos is not None,
                 "vwap": b.builder.live_vwap() if b.builder else None,
                 "pending": b.trigger.pending if b.trigger else None,
