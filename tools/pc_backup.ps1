@@ -9,6 +9,11 @@
 # the good copy from Drive. Google Drive keeps earlier versions of overwritten files.
 
 $ErrorActionPreference = 'Continue'
+
+# Only one backup at a time (the first full copy can take longer than 30 minutes).
+$mutex = New-Object System.Threading.Mutex($false, 'Global\JarvisPcBackupToDrive')
+if (-not $mutex.WaitOne(0)) { exit 0 }
+
 $destRoot = 'D:\My Drive\PC Backup'
 $status = Join-Path $destRoot 'pc_backup_status.json'
 $log = Join-Path $destRoot 'pc_backup_log.txt'
