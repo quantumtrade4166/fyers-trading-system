@@ -33,7 +33,17 @@ import hashlib
 import urllib.parse
 from pathlib import Path
 
+import socket
+
 import requests
+import urllib3.util.connection as _urllib3_connection
+
+# Delta API keys are IP-whitelisted, and only IPv4 addresses are whitelisted. A home PC
+# with IPv6 reaches Delta over a (rotating) IPv6 address and gets
+# "ip_not_whitelisted_for_api_key", so signed requests are forced onto IPv4.
+# Set DELTA_ALLOW_IPV6=1 to turn this off.
+if os.environ.get("DELTA_ALLOW_IPV6") != "1":
+    _urllib3_connection.allowed_gai_family = lambda: socket.AF_INET
 
 BASE = "https://api.india.delta.exchange"
 TESTNET = "https://cdn-ind.testnet.deltaex.org"
