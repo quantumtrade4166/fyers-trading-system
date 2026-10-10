@@ -6198,10 +6198,14 @@ function bvRender(d) {
   document.getElementById('bv-strikes').textContent = p ? `${p.ce} CE / ${p.pe} PE` : '—';
   document.getElementById('bv-expiry').textContent = p ? `exp ${d.expiry} · ±${p.distance} from ATM ${p.atm} · picked @ ${bvN(p.combined)}` : '';
   const trades = d.trades || [];
+  // Realized = price P&L of the closed trades (sell - buy back); net = after the fees
+  // Delta charged. The card used to show the net figure under "Realized".
   const real = trades.reduce((s, t) => s + (t.net_usd || 0), 0);
+  const grossReal = trades.reduce((s, t) => s + (t.gross_usd || 0), 0);
   const re = document.getElementById('bv-real');
-  re.textContent = '$' + bvN(real); re.className = 'text-xl font-bold tabular-nums ' + bvCls(real);
-  document.getElementById('bv-stop').textContent = d.stop_reason || '';
+  re.textContent = '$' + bvN(grossReal); re.className = 'text-xl font-bold tabular-nums ' + bvCls(grossReal);
+  const realNote = trades.length ? `net $${bvN(real)} after $${bvN(grossReal - real)} fees` : '';
+  document.getElementById('bv-stop').textContent = [realNote, d.stop_reason].filter(Boolean).join(' · ');
   const pos = d.live ? d.position : null;
   const badge = document.getElementById('bv-mode-badge');
   const isLiveMode = d.mode === 'live';
