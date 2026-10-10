@@ -70,6 +70,8 @@ class SplitVwapBook(VwapBook):
         self.margin_halt = False
         self._ctl_at = 0.0
         self._client = None
+        # the owner's size / stop from the dashboard (control file), if set
+        self._apply_size(None, self._read_control())
 
     # ── state ────────────────────────────────────────────────────────────
     def _reset(self):
@@ -113,11 +115,39 @@ class SplitVwapBook(VwapBook):
             d["kill"] = False
         return d
 
+    def _apply_size(self, now, d):
+        """Contracts per leg and the MTM stop the owner set on the dashboard
+        ("contracts" / "mtm_stop_usd" in the control file; absent = the config value).
+        Called only while no cycle is running (and at start-up), so a change never
+        resizes a cycle in progress -- it takes effect at the next session start.
+        Exits never use this: every leg is bought back at its own recorded qty."""
+        try:
+            c = int(d["contracts"]) if d.get("contracts") is not None else None
+            m = float(d["mtm_stop_usd"]) if d.get("mtm_stop_usd") is not None else None
+        except (TypeError, ValueError):
+            return
+        changed = {}
+        if c is not None and c >= 1 and c != self.s.contracts:
+            changed["contracts"] = self.s.contracts = c
+        if m is not None and m > 0 and m != self.s.mtm_stop:
+            changed["mtm_stop_usd"] = self.s.mtm_stop = m
+        if not changed:
+            return
+        if self.mode == "paper":
+            self.exec = PaperExec(self.s.contracts)
+        if now is None:
+            self.log_line(f"[{self.name}] size from control file: {self.s.contracts} contracts/leg, "
+                          f"stop -${self.s.mtm_stop:g}")
+        else:
+            self.audit(now, "SIZE", contracts=self.s.contracts, mtm_stop_usd=self.s.mtm_stop)
+
     def _apply_control(self, now, chain):
         if time.monotonic() - self._ctl_at < 3:
             return
         self._ctl_at = time.monotonic()
         d = self._read_control()
+        if not self.active:
+            self._apply_size(now, d)
         want = "live" if (d.get("mode") == "live" and self.live_capable) else "paper"
         if want != self.mode and not self._open():
             if want == "live":

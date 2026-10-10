@@ -1295,6 +1295,14 @@
       <button onclick="bvControl('paper')" class="px-3 py-1 rounded text-xs font-semibold bg-slate-700 hover:bg-slate-600 text-white">PAPER</button>
       <button onclick="bvControl('kill')" class="px-3 py-1 rounded text-xs font-semibold bg-black hover:bg-slate-900 text-rose-400 border border-rose-600">KILL</button>
       <span class="text-[10px] text-slate-500">ARM / PAPER take effect when flat · KILL closes every open leg now and stops for today</span>
+      <span class="flex items-center gap-1 text-[11px] text-slate-300">
+        <input id="bv-qty" type="number" min="1" step="1" oninput="this.dataset.dirty=1"
+               class="w-20 bg-[#151a26] text-slate-200 rounded px-1 py-0.5 border border-[#2d3748] tabular-nums"> contracts/leg · stop −$
+        <input id="bv-stop" type="number" min="1" step="1" oninput="this.dataset.dirty=1"
+               class="w-16 bg-[#151a26] text-slate-200 rounded px-1 py-0.5 border border-[#2d3748] tabular-nums">
+        <button onclick="bvSaveSize()" class="px-2 py-0.5 rounded text-xs font-semibold bg-slate-700 hover:bg-slate-600 text-white">SAVE</button>
+        <span id="bv-size-note" class="text-[10px] text-slate-500"></span>
+      </span>
     </div>
     <div id="bv-banner" class="mb-3 px-3 py-2 rounded text-xs bg-slate-800/60 border border-slate-700/60 text-slate-300"></div>
 
@@ -6405,11 +6413,44 @@ function bvShowControl(d) {
       btn.className = 'px-3 py-1 rounded text-xs font-semibold ' + (running ? 'bg-rose-700 text-white ring-2 ring-rose-400'
         : (armed ? 'bg-amber-500 text-black' : 'bg-rose-600 hover:bg-rose-500 text-white'));
     }
+    // size / stop: what the next session uses; never overwrite a box being edited
+    const sz = x.size || {};
+    bvSize = sz;
+    const q = document.getElementById('bv-qty'), st = document.getElementById('bv-stop');
+    if (q && !q.dataset.dirty && document.activeElement !== q && sz.contracts != null) q.value = sz.contracts;
+    if (st && !st.dataset.dirty && document.activeElement !== st && sz.mtm_stop_usd != null) st.value = sz.mtm_stop_usd;
+    const cur = sz.current || {}, note = document.getElementById('bv-size-note');
+    if (note) note.textContent = (cur.contracts != null && (cur.contracts !== sz.contracts || cur.mtm_stop_usd !== sz.mtm_stop_usd))
+      ? `now ${cur.contracts} / −$${cur.mtm_stop_usd} · next session ${sz.contracts} / −$${sz.mtm_stop_usd}`
+      : 'changes apply from the next session start (09:30 IST)';
   }).catch(() => {});
 }
 
+let bvSize = null;
+
+async function bvSaveSize() {
+  const q = document.getElementById('bv-qty'), st = document.getElementById('bv-stop');
+  const c = parseInt(q.value, 10), m = parseFloat(st.value);
+  const maxC = (bvSize && bvSize.max_contracts) || 2000, maxM = (bvSize && bvSize.max_stop_usd) || 500;
+  if (!(c >= 1 && c <= maxC)) { alert(`Contracts must be 1-${maxC}`); return; }
+  if (!(m >= 1 && m <= maxM)) { alert(`Stop must be $1-$${maxM}`); return; }
+  if (!confirm(`Vwap New Delta Ex: ${c} contracts per leg, stop -$${m}.\n\nApplies from the NEXT session start (09:30 IST) — a cycle already running keeps its size. Save?`)) return;
+  try {
+    const r = await (await fetch('/api/btcvwap/control', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'size', contracts: c, mtm_stop_usd: m }) })).json();
+    if (!r.ok) { alert(r.reason || 'failed'); return; }
+    delete q.dataset.dirty; delete st.dataset.dirty;
+    bvRefreshState();
+  } catch (e) { alert('save failed: ' + e); }
+}
+
 async function bvControl(action) {
-  const msg = { arm: 'ARM Vwap New Delta Ex for LIVE trading on Delta Exchange with REAL MONEY? 500 contracts per leg, 200x leverage, stop -$35.',
+  if (action === 'arm') {        // the real size, not a remembered one
+    try { bvSize = (await (await fetch('/api/btcvwap/control', { cache: 'no-store' })).json()).size || bvSize; } catch (e) {}
+  }
+  const qty = bvSize && bvSize.contracts != null ? bvSize.contracts : '?';
+  const stp = bvSize && bvSize.mtm_stop_usd != null ? bvSize.mtm_stop_usd : '?';
+  const msg = { arm: `ARM Vwap New Delta Ex for LIVE trading on Delta Exchange with REAL MONEY? ${qty} contracts per leg, 200x leverage, stop -$${stp}.`,
                 paper: 'Switch Vwap New Delta Ex back to PAPER (takes effect when flat)?',
                 kill: 'KILL: buy back every open leg NOW and stop trading for today?' }[action];
   if (!confirm(msg)) return;

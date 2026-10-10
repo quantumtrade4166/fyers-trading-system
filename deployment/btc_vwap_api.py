@@ -197,11 +197,30 @@ def _ctl_file():
     return STATE / f"live_control_{LIVE_VERSION}.json"
 
 
+# Size limits for the dashboard's size/stop boxes (Delta wallet ~$1.2k on 2026-10-10;
+# 1000 contracts/leg used ~$860 margin at 200x).
+MAX_CONTRACTS = 2000
+MAX_STOP_USD = 500.0
+
+
+def _config_size():
+    """ist_delta's contracts / stop from config/vwap_parameters.json (the default when
+    the dashboard has not set its own)."""
+    v = ((_read(BTC / "config" / "vwap_parameters.json", {}) or {}).get("versions") or {}).get(LIVE_VERSION) or {}
+    return {"contracts": v.get("contracts"), "mtm_stop_usd": v.get("mtm_stop_usd")}
+
+
 @router.get("/control")
 def control():
     d = _read(_ctl_file(), {"mode": "paper", "kill": False}) or {}
     live = _live(LIVE_VERSION) or {}
-    return {"ok": True, "version": LIVE_VERSION, "control": d,
+    cfg = _config_size()
+    # what the NEXT session will use; the running cycle keeps what it started with
+    size = {"contracts": d.get("contracts") or cfg["contracts"],
+            "mtm_stop_usd": d.get("mtm_stop_usd") or cfg["mtm_stop_usd"],
+            "config": cfg, "max_contracts": MAX_CONTRACTS, "max_stop_usd": MAX_STOP_USD,
+            "current": (live.get("params") or {})}
+    return {"ok": True, "version": LIVE_VERSION, "control": d, "size": size,
             "engine_mode": live.get("mode"), "status": live.get("status"),
             "open_legs": [t for t, l in (live.get("legs") or {}).items() if l]}
 
@@ -209,17 +228,34 @@ def control():
 @router.post("/control")
 def set_control(body: dict = Body(...)):
     """{"action": "arm" | "paper" | "kill"} for ist_delta only. The engine applies a
-    mode change only while flat; a kill closes every open leg at once."""
+    mode change only while flat; a kill closes every open leg at once.
+    {"action": "size", "contracts": n, "mtm_stop_usd": x} sets the size and stop for
+    the NEXT session (the engine applies it only while no cycle is running)."""
     action = str(body.get("action") or "").lower()
     d = _read(_ctl_file(), {"mode": "paper", "kill": False}) or {}
+    # a KILL from an earlier day is already void for the engine; re-dating the file
+    # below must not bring it back to life
+    if d.get("kill") and str(d.get("updated") or "")[:10] != _now().date().isoformat():
+        d["kill"] = False
     if action == "arm":
         d.update(mode="live", kill=False)
     elif action == "paper":
         d.update(mode="paper")
     elif action == "kill":
         d.update(kill=True)
+    elif action == "size":
+        try:
+            c = int(body.get("contracts"))
+            m = float(body.get("mtm_stop_usd"))
+        except (TypeError, ValueError):
+            return {"ok": False, "reason": "contracts and stop must be numbers"}
+        if not 1 <= c <= MAX_CONTRACTS:
+            return {"ok": False, "reason": f"contracts must be 1-{MAX_CONTRACTS}"}
+        if not 1 <= m <= MAX_STOP_USD:
+            return {"ok": False, "reason": f"stop must be $1-${MAX_STOP_USD:g}"}
+        d.update(contracts=c, mtm_stop_usd=m)
     else:
-        return {"ok": False, "reason": "action must be arm, paper or kill"}
+        return {"ok": False, "reason": "action must be arm, paper, kill or size"}
     d["updated"] = _now().isoformat(timespec="seconds")
     d["by"] = "dashboard"
     STATE.mkdir(parents=True, exist_ok=True)
