@@ -105,3 +105,8 @@ node_modules/
 *.sqlite-shm
 *.sqlite-wal
 $null
+
+# DualMom paper runtime state (written by the live app; a code deploy must never overwrite it)
+deployment/dualmom_paper.json
+deployment/dualmom_paper_equity.json
+deployment/dualmom_signal_log.json
