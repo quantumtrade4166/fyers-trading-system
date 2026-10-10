@@ -69,9 +69,9 @@
       "entry_cutoff": "16:25",
       "square_off": "17:10",
       "combined_threshold": 100,
-      "contracts": 500,
+      "contracts": 1000,
       "max_entries": 4,
-      "mtm_stop_usd": 35,
+      "mtm_stop_usd": 70,
       "stop_basis": "price",
       "split_legs": true,
       "fallback_last_pair": false
@@ -79,6 +79,7 @@
   },
 
   "_size_note_20261004": "User 2026-10-04: paper versions ist_live + ist_cap at 1000 contracts / -$70 stop; the live ist_delta stays 500 / -$35.",
+  "_size_note_20261010": "User 2026-10-10 (08:4x IST, before the session): live ist_delta doubled to 1000 contracts / -$70 stop (same stop per contract as before; margin ~$860 of ~$1,160).",
   "_ist_live_note": "User rules 2026-10-03: D version (busted leg out, kept leg exits on its own 5-min close above its own VWAP, re-sell only the missing leg), max 4 entries, 500 contracts/leg, stop -$35 on PRICE P&L only (open legs at mark, no fees/spread). ist_live = 'Vwap New Paper': the same rules kept PAPER forever as the reference (2026-10-04). ist_delta = 'Vwap New Delta Ex': identical rules, the only live-capable version — PAPER until armed from the dashboard or tools/vwap_live_control.py (data/vwap_state/live_control_ist_delta.json).",
 
   "_rules_note": "Identical to the NSE Vwap Strangle. Strikes: once at session start, first same-distance-from-ATM CE+PE pair whose combined MARK <= combined_threshold, fixed for the whole cycle. Candles: 5-min combined premium (CE mark + PE mark sampled at the same instant), VWAP = cumulative sum(typical*volume)/sum(volume), typical=(H+L+C)/3, volume = CE+PE traded contracts in that 5 min, resets each cycle. ENTRY: a red candle closing below VWAP arms a sell trigger at low-1; it fills the instant combined premium trades to it; next candle cancels (close above VWAP) or replaces (fresh red-below-VWAP at its new low-1). EXIT: any candle closing above VWAP -> buy back at market. One position at a time, max_entries fills per cycle, no entry after entry_cutoff, flatten at square_off. MTM stop: cycle MTM <= -mtm_stop_usd flattens and stops for the cycle.",
