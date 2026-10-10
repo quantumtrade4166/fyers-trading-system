@@ -49,12 +49,30 @@ Get-ScheduledTask | Where-Object { $_.TaskPath -eq '\' } | ForEach-Object {
     try { Export-ScheduledTask -TaskName $_.TaskName | Set-Content (Join-Path $taskDir ($_.TaskName + '.xml')) -Encoding unicode } catch { }
 }
 
+# Copy from a Volume Shadow Copy (a frozen point-in-time view of C:), never from the live
+# files: robocopy holding a file open made the engines' atomic state writes fail with
+# PermissionError (seen every 10 min on TICK.json, 2026-10-10). Falls back to live files
+# only if the snapshot cannot be made.
+$base = 'C:'
+$shadowLink = 'C:\vss_backup_view'
+$shadow = $null
+try {
+    if (Test-Path $shadowLink) { cmd /c rmdir "$shadowLink" | Out-Null }
+    $res = (Get-WmiObject -List Win32_ShadowCopy).Create('C:\', 'ClientAccessible')
+    if ($res.ReturnValue -ne 0) { throw "Create returned $($res.ReturnValue)" }
+    $shadow = Get-WmiObject Win32_ShadowCopy | Where-Object { $_.ID -eq $res.ShadowID }
+    cmd /c mklink /d "$shadowLink" "$($shadow.DeviceObject)\" | Out-Null
+    if (Test-Path "$shadowLink\trading") { $base = $shadowLink } else { throw 'shadow view not readable' }
+} catch {
+    Log "shadow copy unavailable ($_) - copying live files"
+}
+
 $common = @('.venv', 'venv', '.git', 'node_modules', '__pycache__', '.pytest_cache', '.mypy_cache', '.ruff_cache')
 $jobs = @(
-    @{ Name = 'trading'; Src = 'C:\trading'; XD = $common },
-    @{ Name = 'jarvis'; Src = 'C:\jarvis'; XD = $common + @('C:\jarvis\pgdata', 'C:\jarvis\data\pgdata') },
-    @{ Name = 'cloudflared'; Src = 'C:\Users\Administrator\.cloudflared'; XD = @() },
-    @{ Name = 'cloudflared_service'; Src = 'C:\Windows\System32\config\systemprofile\.cloudflared'; XD = @() }
+    @{ Name = 'trading'; Src = "$base\trading"; XD = $common },
+    @{ Name = 'jarvis'; Src = "$base\jarvis"; XD = $common + @("$base\jarvis\pgdata", "$base\jarvis\data\pgdata") },
+    @{ Name = 'cloudflared'; Src = "$base\Users\Administrator\.cloudflared"; XD = @() },
+    @{ Name = 'cloudflared_service'; Src = "$base\Windows\System32\config\systemprofile\.cloudflared"; XD = @() }
 )
 
 $results = @()
@@ -88,6 +106,9 @@ if (-not (Test-Path $snap)) {
         Where-Object { $_.Name -match '^\d{4}-\d{2}-\d{2}$' -and [datetime]$_.Name -lt (Get-Date).AddDays(-30) } |
         ForEach-Object { Remove-Item $_.FullName -Recurse -Force -EA SilentlyContinue; Log "snapshot $($_.Name) expired" }
 }
+
+if (Test-Path $shadowLink) { cmd /c rmdir "$shadowLink" | Out-Null }
+if ($shadow) { try { $shadow.Delete() } catch { Log "could not delete shadow copy $($shadow.ID): $_" } }
 
 $allOk = -not ($results | Where-Object { -not $_.ok })
 $state = @{ last_run = (Get-Date).ToString('o'); ok = $allOk; jobs = $results; host = $env:COMPUTERNAME }
