@@ -6243,8 +6243,24 @@ function bvRender(d) {
       `now <span class="${bvCls(now)}">$${bvN(now)}</span> · high <span class="text-emerald-400">$${bvN(hi)}</span> · low <span class="text-rose-400">$${bvN(lo)}</span>`;
   } else document.getElementById('bv-eq-stats').textContent = 'no MTM samples yet';
 
+  // Fit once per version/day -- but only once the chart is actually visible. A fit made while
+  // the tab was still hidden (width 0) zoomed out to the minimum bar spacing and squashed the
+  // candles into a sliver at the right edge (Full expiry, 2026-10-10). Also re-fit whenever
+  // the view is wildly wider than the data.
   const fitKey = bvVersion + '|' + (d.date || '');
-  if (candles.length && bvFitted !== fitKey) { bvFitted = fitKey; bvChart.timeScale().fitContent(); bvEqChart.timeScale().fitContent(); }
+  const bvW = document.getElementById('bv-chart').clientWidth;
+  const bvLr = bvChart.timeScale().getVisibleLogicalRange();
+  const bvSquashed = bvLr && candles.length && (bvLr.to - bvLr.from) > candles.length * 3 + 30;
+  if (candles.length && bvW > 0 && (bvFitted !== fitKey || bvSquashed)) {
+    bvFitted = fitKey;
+    // explicit range, one frame later: set right after setData it kept the previous
+    // version's span (39 bars) and showed only the last 42 of IST day's 91 candles
+    const n = candles.length;
+    requestAnimationFrame(() => {
+      try { bvChart.timeScale().setVisibleLogicalRange({ from: -0.5, to: n - 0.5 + 3 }); } catch (e) {}
+      try { bvEqChart.timeScale().fitContent(); } catch (e) {}
+    });
+  }
 
   // one row per trade: closed ones, plus the OPEN one valued at the live buy-back
   const rows = trades.map(t => ({ ...t, open: false }));
