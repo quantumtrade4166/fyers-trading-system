@@ -35,7 +35,7 @@
   </Triggers>
   <Actions Context="Author">
     <Exec>
-      <Command>C:\Users\Administrator\Desktop\start_cloudflared.bat</Command>
+      <Command>C:\trading\fyers_data_pipeline\deployment\vps_tasks\start_cloudflared.bat</Command>
     </Exec>
   </Actions>
 </Task>

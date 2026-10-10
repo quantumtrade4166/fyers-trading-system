@@ -10,7 +10,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $root "logs") | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 
 $vps  = "Administrator@144.79.166.103"
-$R    = "C:/Users/Administrator/Desktop/fyers_data_pipeline_git"
+$R    = "C:/trading/fyers_data_pipeline"
 
 function Remote-PS([string]$script) {
     $script = "`$ProgressPreference = 'SilentlyContinue'`n" + $script
@@ -26,7 +26,7 @@ if ($a -ne 0 -or $LASTEXITCODE -ne 0) { Write-Host "COPY FAILED - nothing change
 
 Write-Host "`n2. Voiding the wrong 'September done' record (0 of 40 filled)..."
 Remote-PS @'
-$st = "C:\Users\Administrator\Desktop\fyers_data_pipeline_git\deployment\dualmom_live_state"
+$st = "C:\trading\fyers_data_pipeline\deployment\dualmom_live_state"
 $f  = Join-Path $st "month_gate.json"
 if (Test-Path $f) { Move-Item $f (Join-Path $st "month_gate_VOID_20260915_all40_rejected.json") -Force; "voided month_gate.json" }
 else { "no month_gate.json - nothing to void" }
@@ -43,7 +43,7 @@ $ok = $false
 for ($i = 1; $i -le 12; $i++) {
     Start-Sleep -Seconds 10
     $s = Remote-PS @'
-$R = "C:\Users\Administrator\Desktop\fyers_data_pipeline_git"
+$R = "C:\trading\fyers_data_pipeline"
 try { $st = (Invoke-WebRequest http://127.0.0.1:8010/api/dualmom/live/status -UseBasicParsing -TimeoutSec 60).Content } catch { $st = "not up yet" }
 $gate = Test-Path "$R\deployment\dualmom_live_state\month_gate.json"
 $tagfix = [bool](Select-String -Path "$R\deployment\dualmom_live\kotak_equity.py" -Pattern "def unique_tag" -Quiet)

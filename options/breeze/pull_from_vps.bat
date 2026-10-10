@@ -10,7 +10,7 @@ REM  Safe to run any time - scp overwrites whole parquet files, and
 REM  the downloader rewrites them atomically on the VPS side.
 REM ============================================================
 set VPS=Administrator@144.79.166.103
-set VPS_DIR=C:/Users/Administrator/Desktop/fyers_data_pipeline_git/data/BREEZE_OPTIONS
+set VPS_DIR=C:/trading/fyers_data_pipeline/data/BREEZE_OPTIONS
 set LOCAL_DIR=G:\fyers_data_pipeline\data\BREEZE_OPTIONS
 
 echo ================================

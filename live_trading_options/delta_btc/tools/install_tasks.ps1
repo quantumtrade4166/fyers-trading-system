@@ -24,7 +24,7 @@
 #   local:  powershell -ExecutionPolicy Bypass -File `
 #             G:\fyers_data_pipeline\live_trading_options\delta_btc\tools\install_tasks.ps1
 #   VPS:    powershell -ExecutionPolicy Bypass -File `
-#             C:\Users\Administrator\Desktop\fyers_data_pipeline_git\live_trading_options\delta_btc\tools\install_tasks.ps1
+#             C:\trading\fyers_data_pipeline\live_trading_options\delta_btc\tools\install_tasks.ps1
 #
 #   ... -Remove     to delete both tasks
 #   ... -Status     to show what is installed and running
@@ -37,7 +37,7 @@ param(
 $ErrorActionPreference = "Stop"
 # Derived from this script's own location, never hardcoded: the same file has to
 # work on the local G: drive and on the VPS under
-# C:\Users\Administrator\Desktop\fyers_data_pipeline_git. A hardcoded G:\ path is
+# C:\trading\fyers_data_pipeline. A hardcoded G:\ path is
 # how a deploy "succeeds" and then quietly runs nothing.
 $root = Split-Path -Parent $PSScriptRoot
 

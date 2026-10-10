@@ -12,5 +12,5 @@ REM The script writes the log ITSELF, in UTF-8, via --log. Do NOT redirect with
 REM > or >> from a shell: PowerShell 5.1 writes UTF-16 and cmd writes UTF-8, and a
 REM log that receives both becomes unreadable from the first mixed byte on.
 
-cd /d C:\Users\Administrator\Desktop\fyers_data_pipeline_git
+cd /d C:\trading\fyers_data_pipeline
 .venv\Scripts\python.exe -u live_trading_options\delta_neutral\tools\preflight.py --log logs\dn_preflight.log

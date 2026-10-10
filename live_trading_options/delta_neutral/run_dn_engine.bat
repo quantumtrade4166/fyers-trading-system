@@ -30,7 +30,7 @@ REM Delay uses ping because `timeout` fails without a console (scheduled task).
 REM To STOP the engine for good use live_trading_options\tools\restart_dn.ps1 -Stop;
 REM killing only the python process now just gets it relaunched.
 
-cd /d C:\Users\Administrator\Desktop\fyers_data_pipeline_git
+cd /d C:\trading\fyers_data_pipeline
 set /a TRIES=0
 :run
 .venv\Scripts\python.exe -u live_trading_options\delta_neutral\engine.py >> logs\dn_engine.log 2>&1

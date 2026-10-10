@@ -1,6 +1,6 @@
 @echo off
 title Kite Dry Test - Vwap Strangle
-cd /d C:\Users\Administrator\Desktop\fyers_data_pipeline_git
+cd /d C:\trading\fyers_data_pipeline
 echo ============================================================
 echo  Kite order-placement DRY TEST
 echo  Places a far-below-market BUY limit (will NOT fill), then

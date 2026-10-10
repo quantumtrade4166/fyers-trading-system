@@ -39,7 +39,7 @@ TOKEN_PATH = ROOT / "config" / "access_token.txt"
 APP_ID     = "W09OMXQB8J-100"
 
 VPS_TOKEN  = ("Administrator@144.79.166.103:"
-              "C:/Users/Administrator/Desktop/fyers_data_pipeline_git/config/access_token.txt")
+              "C:/trading/fyers_data_pipeline/config/access_token.txt")
 
 START_YEAR        = 2005
 END_YEAR          = 2026

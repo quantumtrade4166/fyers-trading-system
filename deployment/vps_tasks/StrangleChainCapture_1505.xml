@@ -38,7 +38,7 @@
   </Triggers>
   <Actions Context="Author">
     <Exec>
-      <Command>C:\Users\Administrator\Desktop\fyers_data_pipeline_git\strangle_system\deploy\run_chain_collector_vps.bat</Command>
+      <Command>C:\trading\fyers_data_pipeline\strangle_system\deploy\run_chain_collector_vps.bat</Command>
     </Exec>
   </Actions>
 </Task>

@@ -2,7 +2,7 @@
 # Runs as Administrator (Google Drive G: is per-user) every 10 min via task VPSBackupToDrive.
 # Backs up ONLY irreplaceable data + secrets; code/venv/caches are excluded (code is on GitHub).
 $ErrorActionPreference='SilentlyContinue'
-$repo='C:\Users\Administrator\Desktop\fyers_data_pipeline_git'
+$repo='C:\trading\fyers_data_pipeline'
 $dest='G:\My Drive\VPS Backup'
 $td="$dest\Trade Data"; $cfg="$dest\Config"
 New-Item -ItemType Directory -Force -Path $td,$cfg | Out-Null

@@ -3,7 +3,7 @@ import sys, os, subprocess, pathlib
 sys.stdout.reconfigure(encoding="utf-8", errors="surrogatepass")
 
 BASE = pathlib.Path(r"G:\fyers_data_pipeline")
-REMOTE_REPO = r"C:\Users\Administrator\Desktop\fyers_data_pipeline_git"
+REMOTE_REPO = r"C:\trading\fyers_data_pipeline"
 
 files = [
     r"live_trading_options\strangle_strategy\live\kotak_controller.py",

@@ -3,7 +3,7 @@ setlocal
 set VPS=Administrator@144.79.166.103
 
 echo [1/2] Pushing dualmom_live_api.py...
-scp -o BatchMode=yes "%~dp0deployment\dualmom_live_api.py" "%VPS%:C:/Users/Administrator/Desktop/fyers_data_pipeline_git/deployment/dualmom_live_api.py"
+scp -o BatchMode=yes "%~dp0deployment\dualmom_live_api.py" "%VPS%:C:/trading/fyers_data_pipeline/deployment/dualmom_live_api.py"
 if errorlevel 1 (
     echo SCP FAILED
     pause

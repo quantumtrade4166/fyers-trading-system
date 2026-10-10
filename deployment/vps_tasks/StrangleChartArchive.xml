@@ -38,7 +38,7 @@
   </Triggers>
   <Actions Context="Author">
     <Exec>
-      <Command>C:\Users\Administrator\Desktop\fyers_data_pipeline_git\live_trading_options\strangle_strategy\deploy\run_daily_archive_vps.bat</Command>
+      <Command>C:\trading\fyers_data_pipeline\live_trading_options\strangle_strategy\deploy\run_daily_archive_vps.bat</Command>
     </Exec>
   </Actions>
 </Task>

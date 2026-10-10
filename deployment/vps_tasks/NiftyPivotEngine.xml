@@ -46,7 +46,7 @@
   </Triggers>
   <Actions Context="Author">
     <Exec>
-      <Command>C:\Users\Administrator\Desktop\fyers_data_pipeline_git\live_trading_options\nifty_pivot\run_pivot_engine.bat</Command>
+      <Command>C:\trading\fyers_data_pipeline\live_trading_options\nifty_pivot\run_pivot_engine.bat</Command>
     </Exec>
   </Actions>
 </Task>

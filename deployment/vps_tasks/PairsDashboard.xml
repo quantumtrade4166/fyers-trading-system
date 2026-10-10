@@ -34,7 +34,7 @@
   </Triggers>
   <Actions Context="Author">
     <Exec>
-      <Command>C:\Users\Administrator\Desktop\start_dashboard.bat</Command>
+      <Command>C:\trading\fyers_data_pipeline\deployment\vps_tasks\start_dashboard.bat</Command>
     </Exec>
   </Actions>
 </Task>

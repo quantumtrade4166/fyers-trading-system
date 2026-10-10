@@ -24,7 +24,7 @@ import subprocess
 from options.breeze.config import ENV_PATH, _load_env
 
 VPS = "Administrator@144.79.166.103"
-VPS_ENV = r"C:\Users\Administrator\Desktop\fyers_data_pipeline_git\deployment\.env"
+VPS_ENV = r"C:\trading\fyers_data_pipeline\deployment\.env"
 
 KEYS = [
     ("BREEZE_API_KEY",     "Breeze API key",           False),

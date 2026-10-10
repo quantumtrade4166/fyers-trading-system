@@ -5,7 +5,7 @@ import pathlib
 VPS = "Administrator@144.79.166.103"
 KEY = str(pathlib.Path.home() / ".ssh" / "id_rsa")
 
-REMOTE_ROOT = r"C:\Users\Administrator\Desktop\fyers_data_pipeline_git"
+REMOTE_ROOT = r"C:\trading\fyers_data_pipeline"
 
 FILES = [
     (

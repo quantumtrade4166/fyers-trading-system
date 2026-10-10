@@ -3,9 +3,9 @@ sys.stdout.reconfigure(encoding="utf-8", errors="surrogatepass")
 
 files = [
     (r"G:\fyers_data_pipeline\live_trading_options\strangle_strategy\live\control_flags.py",
-     r"C:\Users\Administrator\Desktop\fyers_data_pipeline_git\live_trading_options\strangle_strategy\live\control_flags.py"),
+     r"C:\trading\fyers_data_pipeline\live_trading_options\strangle_strategy\live\control_flags.py"),
     (r"G:\fyers_data_pipeline\deployment\static\index.html",
-     r"C:\Users\Administrator\Desktop\fyers_data_pipeline_git\deployment\static\index.html"),
+     r"C:\trading\fyers_data_pipeline\deployment\static\index.html"),
 ]
 
 for local, remote in files:

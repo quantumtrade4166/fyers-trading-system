@@ -2,10 +2,10 @@
 REM Start Nasdaq 100 download on VPS as a background task
 REM This script runs the Python downloader, logs output, and stays alive
 
-cd /d "C:\Users\Administrator\Desktop\fyers_data_pipeline_git"
+cd /d "C:\trading\fyers_data_pipeline"
 
 REM Use full path to venv Python
-set PYTHON=C:\Users\Administrator\Desktop\fyers_data_pipeline_git\.venv\Scripts\python.exe
+set PYTHON=C:\trading\fyers_data_pipeline\.venv\Scripts\python.exe
 
 REM Create logs directory if missing
 if not exist "forex\logs" mkdir forex\logs

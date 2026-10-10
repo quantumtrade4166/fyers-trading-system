@@ -19,7 +19,7 @@ REM there is never a second engine.)
 REM Delay uses ping because `timeout` fails without a console (scheduled task).
 REM To stop it for good: end the task FIRST, then the python process - killing only
 REM the python now just gets it relaunched.
-cd /d C:\Users\Administrator\Desktop\fyers_data_pipeline_git
+cd /d C:\trading\fyers_data_pipeline
 set /a TRIES=0
 :run
 .venv\Scripts\python.exe live_trading_options\strangle_strategy\live_tick_engine.py >> logs\strangle_v2.log 2>&1

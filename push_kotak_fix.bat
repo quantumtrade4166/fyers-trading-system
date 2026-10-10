@@ -6,7 +6,7 @@ set "SSH=ssh -o BatchMode=yes -o ConnectTimeout=20 Administrator@144.79.166.103"
 set "SCP=scp -o BatchMode=yes"
 
 echo Pushing dualmom_live_api.py to VPS...
-%SCP% "G:\fyers_data_pipeline\deployment\dualmom_live_api.py" "Administrator@144.79.166.103:C:/Users/Administrator/Desktop/fyers_data_pipeline_git/deployment/dualmom_live_api.py"
+%SCP% "G:\fyers_data_pipeline\deployment\dualmom_live_api.py" "Administrator@144.79.166.103:C:/trading/fyers_data_pipeline/deployment/dualmom_live_api.py"
 if errorlevel 1 (
     echo *** SCP FAILED ***
     pause

@@ -5,7 +5,7 @@
 # there holding the single-instance lock, so the keep-alive task could not start a
 # replacement. Nothing traded for three hours. This kills it from outside when its
 # heartbeat file goes stale, which is the one failure its own watchdog cannot see.
-$d    = "C:\Users\Administrator\Desktop\fyers_data_pipeline_git\live_trading_options\delta_btc"
+$d    = "C:\trading\fyers_data_pipeline\live_trading_options\delta_btc"
 $tick = "$d\data\live_state\TICK.json"
 $log  = "$d\logs\watchdog.log"
 $stale = 6      # minutes

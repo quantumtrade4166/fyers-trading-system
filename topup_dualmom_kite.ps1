@@ -26,7 +26,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $root "logs") | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 
 $vps = "Administrator@144.79.166.103"
-$R   = "C:/Users/Administrator/Desktop/fyers_data_pipeline_git"
+$R   = "C:/trading/fyers_data_pipeline"
 
 function Remote-PS([string]$script) {
     $script = "`$ProgressPreference = 'SilentlyContinue'`n" + $script
@@ -89,7 +89,7 @@ Write-Host "   copied"
 
 Write-Host "`n2. Tests on the VPS..."
 $t = Remote-PS @'
-Set-Location C:\Users\Administrator\Desktop\fyers_data_pipeline_git
+Set-Location C:\trading\fyers_data_pipeline
 foreach ($m in 'deployment.dualmom_kite.tests.test_kite','deployment.dualmom_live.tests.test_offline','deployment.dualmom_live.tests.test_ledger','deployment.dualmom_live.tests.test_source_ip') {
   $last = (.venv\Scripts\python.exe -m $m 2>&1 | Select-String 'passed, \d+ failed' | Select-Object -Last 1)
   if (-not $last) { $last = 'NO RESULT LINE' }
@@ -104,9 +104,9 @@ Write-Host "`n3. Task fix, Drive backup, today's bad Kotak readings..."
 Remote-PS @'
 schtasks /Create /TN DualMomService /XML C:\Users\Administrator\DualMomService16.xml /F
 Remove-Item C:\Users\Administrator\DualMomService16.xml -Force
-$py = 'C:\Users\Administrator\Desktop\fyers_data_pipeline_git\.venv\Scripts\python.exe'
-& $py C:\Users\Administrator\Desktop\fyers_data_pipeline_git\deployment\vps_tasks\fix_intraday_20260921.py
-& $py C:\Users\Administrator\Desktop\fyers_data_pipeline_git\deployment\vps_tasks\patch_backup_kite.py
+$py = 'C:\trading\fyers_data_pipeline\.venv\Scripts\python.exe'
+& $py C:\trading\fyers_data_pipeline\deployment\vps_tasks\fix_intraday_20260921.py
+& $py C:\trading\fyers_data_pipeline\deployment\vps_tasks\patch_backup_kite.py
 '@ | ForEach-Object { Write-Host "   $_" }
 
 Write-Host "`n4. Restarting the DualMom service only..."

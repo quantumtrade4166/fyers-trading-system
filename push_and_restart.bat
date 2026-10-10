@@ -4,7 +4,7 @@ setlocal
 
 set VPS=Administrator@144.79.166.103
 set SRC=%~dp0deployment\dualmom_live_api.py
-set DEST=C:/Users/Administrator/Desktop/fyers_data_pipeline_git/deployment/dualmom_live_api.py
+set DEST=C:/trading/fyers_data_pipeline/deployment/dualmom_live_api.py
 
 echo Pushing fix...
 scp -o BatchMode=yes "%SRC%" "%VPS%:%DEST%"

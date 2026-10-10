@@ -40,7 +40,7 @@
   </Triggers>
   <Actions Context="Author">
     <Exec>
-      <Command>"C:\Users\Administrator\Desktop\fyers_data_pipeline_git\start_dualmom_service.bat"</Command>
+      <Command>"C:\trading\fyers_data_pipeline\start_dualmom_service.bat"</Command>
     </Exec>
   </Actions>
 </Task>

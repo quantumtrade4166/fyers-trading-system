@@ -14,7 +14,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $root "logs") | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 
 $vps  = "Administrator@144.79.166.103"
-$dest = "C:/Users/Administrator/Desktop/fyers_data_pipeline_git/deployment/dualmom_live/"
+$dest = "C:/trading/fyers_data_pipeline/deployment/dualmom_live/"
 
 function Remote-PS([string]$script) {
     $script = "`$ProgressPreference = 'SilentlyContinue'`n" + $script

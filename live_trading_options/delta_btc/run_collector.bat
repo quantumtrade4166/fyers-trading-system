@@ -9,7 +9,7 @@ REM  cannot be bought back at any price.
 REM
 REM  Paths are derived from THIS FILE's location (%~dp0 -> ...\delta_btc\), so
 REM  the same script works on the local G: drive and on the VPS under
-REM  C:\Users\Administrator\Desktop\fyers_data_pipeline_git. Hardcoding G:\ here
+REM  C:\trading\fyers_data_pipeline. Hardcoding G:\ here
 REM  is what would make the deploy silently do nothing on the VPS.
 REM
 REM  Needs pandas + pyarrow in the venv (the engine does not — it is pure stdlib).

@@ -39,7 +39,7 @@
   </Triggers>
   <Actions Context="Author">
     <Exec>
-      <Command>C:\Users\Administrator\Desktop\fyers_auto_login.bat</Command>
+      <Command>C:\trading\fyers_data_pipeline\deployment\vps_tasks\fyers_auto_login.bat</Command>
     </Exec>
   </Actions>
 </Task>

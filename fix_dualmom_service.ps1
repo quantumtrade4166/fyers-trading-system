@@ -12,7 +12,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $root "logs") | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 
 $vps = "Administrator@144.79.166.103"
-$R   = "C:/Users/Administrator/Desktop/fyers_data_pipeline_git"
+$R   = "C:/trading/fyers_data_pipeline"
 
 function Remote-PS([string]$script) {
     $script = "`$ProgressPreference = 'SilentlyContinue'`n" + $script
@@ -33,7 +33,7 @@ if (-not $ok) { Write-Host "COPY FAILED - stop here, tell Claude."; Stop-Transcr
 
 Write-Host "`n2. Tests on the VPS..."
 Remote-PS @'
-Set-Location C:\Users\Administrator\Desktop\fyers_data_pipeline_git
+Set-Location C:\trading\fyers_data_pipeline
 .venv\Scripts\python.exe -m deployment.dualmom_live.tests.test_offline 2>&1 | Select-Object -Last 1
 .venv\Scripts\python.exe -m deployment.dualmom_live.tests.test_source_ip 2>&1 | Select-Object -Last 1
 '@
@@ -46,7 +46,7 @@ Remove-Item C:\Users\Administrator\DualMomService16.xml -Force
 
 Write-Host "`n4. Removing today's wrong readings (margin counted as cash)..."
 Remote-PS @'
-C:\Users\Administrator\Desktop\fyers_data_pipeline_git\.venv\Scripts\python.exe C:\Users\Administrator\Desktop\fyers_data_pipeline_git\deployment\vps_tasks\fix_intraday_20260921.py
+C:\trading\fyers_data_pipeline\.venv\Scripts\python.exe C:\trading\fyers_data_pipeline\deployment\vps_tasks\fix_intraday_20260921.py
 '@
 
 Write-Host "`n5. Restarting the DualMom service only..."

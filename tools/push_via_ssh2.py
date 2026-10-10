@@ -2,7 +2,7 @@ import sys, subprocess, pathlib, shlex
 sys.stdout.reconfigure(encoding="utf-8", errors="surrogatepass")
 
 base = pathlib.Path(r"G:\fyers_data_pipeline")
-remote_repo = r"C:\Users\Administrator\Desktop\fyers_data_pipeline_git"
+remote_repo = r"C:\trading\fyers_data_pipeline"
 
 files = [
     r"live_trading_options\strangle_strategy\live\control_flags.py",

@@ -26,7 +26,7 @@ SOURCE_DIR = PROJECT_ROOT / "data" / "NSE_NIFTY_OPTIONS"
 OUT_PATH = DATA_DIR / "nifty_spot_daily.csv"
 
 VPS = "Administrator@144.79.166.103"
-VPS_DIR = "C:/Users/Administrator/Desktop/fyers_data_pipeline_git/data/BREEZE_OPTIONS"
+VPS_DIR = "C:/trading/fyers_data_pipeline/data/BREEZE_OPTIONS"
 
 
 def export() -> pd.DataFrame:

@@ -9,7 +9,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $root "logs") | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 
 $vps = "Administrator@144.79.166.103"
-$R   = "C:/Users/Administrator/Desktop/fyers_data_pipeline_git"
+$R   = "C:/trading/fyers_data_pipeline"
 
 function Remote-PS([string]$script) {
     $enc = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
@@ -35,7 +35,7 @@ foreach ($c in $copies) {
 # ---------------------------------------------------------------------------
 Write-Host "`n2. Verifying files on VPS..."
 $verify = Remote-PS @'
-$root = 'C:/Users/Administrator/Desktop/fyers_data_pipeline_git'
+$root = 'C:/trading/fyers_data_pipeline'
 $files = @(
     "$root/live_trading_options/strangle_strategy/live/control_flags.py",
     "$root/deployment/static/index.html"
@@ -58,7 +58,7 @@ $verify | ForEach-Object { Write-Host "   $_" }
 # ---------------------------------------------------------------------------
 Write-Host "`n3. Restarting dashboard (loads new code)..."
 $restart = Remote-PS @'
-$root = 'C:/Users/Administrator/Desktop/fyers_data_pipeline_git'
+$root = 'C:/trading/fyers_data_pipeline'
 $py = "$root/.venv/Scripts/python.exe"
 $ctl = Join-Path $root 'deployment\vps_tasks\restart_server.bat'
 if (Test-Path $ctl) {

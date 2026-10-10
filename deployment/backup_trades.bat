@@ -4,7 +4,7 @@ echo  VPS Trade Data Backup
 echo ================================
 set BACKUP_DIR=G:\fyers_data_pipeline\deployment\backups
 set VPS=Administrator@144.79.166.103
-set VPS_DIR=C:/Users/Administrator/Desktop/fyers_data_pipeline_git/deployment
+set VPS_DIR=C:/trading/fyers_data_pipeline/deployment
 
 echo Backing up positions.json...
 scp "%VPS%:%VPS_DIR%/positions.json" "%BACKUP_DIR%\positions.json"

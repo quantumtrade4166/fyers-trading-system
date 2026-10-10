@@ -17,7 +17,7 @@ REM  becomes the limit. That is deliberate: the documented cap has not
 REM  been tested, and this is how we find the real one.
 REM ===================================================================
 
-cd /d C:\Users\Administrator\Desktop\fyers_data_pipeline_git
+cd /d C:\trading\fyers_data_pipeline
 
 echo [%date% %time%] Breeze auto-login...
 .venv\Scripts\python.exe -m options.breeze.auto_login

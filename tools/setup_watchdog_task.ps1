@@ -1,7 +1,7 @@
 # tools/setup_watchdog_task.ps1 -- (re)register the DashboardWatchdog scheduled task (VPS).
 # Runs the watchdog every 1 minute as SYSTEM. Idempotent (-Force). Run once after deploy.
 # ASCII only (PowerShell 5.1).
-$script = 'C:\Users\Administrator\Desktop\fyers_data_pipeline_git\tools\dashboard_watchdog.ps1'
+$script = 'C:\trading\fyers_data_pipeline\tools\dashboard_watchdog.ps1'
 
 $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
     -Argument "-NoProfile -ExecutionPolicy Bypass -File $script"

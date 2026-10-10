@@ -12,8 +12,8 @@
 $ErrorActionPreference = 'SilentlyContinue'
 
 $Url         = 'http://localhost:8000/api/version'
-$Restarter   = 'C:\Users\Administrator\Desktop\restart_server.bat'
-$LogDir      = 'C:\Users\Administrator\Desktop\fyers_data_pipeline_git\logs'
+$Restarter   = 'C:\trading\fyers_data_pipeline\deployment\restart_server.bat'
+$LogDir      = 'C:\trading\fyers_data_pipeline\logs'
 $Log         = Join-Path $LogDir 'watchdog.log'
 $FailFile    = Join-Path $LogDir 'watchdog_fails.txt'
 $LastRestart = Join-Path $LogDir 'watchdog_last_restart.txt'

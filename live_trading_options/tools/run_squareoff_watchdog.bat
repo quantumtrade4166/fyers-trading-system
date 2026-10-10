@@ -13,5 +13,5 @@ REM Read logs\squareoff_watchdog.log after any day that ended oddly.
 REM The script writes the log ITSELF, in UTF-8, via --log. Do NOT redirect with
 REM > or >> from a shell — mixing PowerShell's UTF-16 with cmd's UTF-8 corrupts it.
 
-cd /d C:\Users\Administrator\Desktop\fyers_data_pipeline_git
+cd /d C:\trading\fyers_data_pipeline
 .venv\Scripts\python.exe -u live_trading_options\tools\squareoff_watchdog.py --log logs\squareoff_watchdog.log
