@@ -1,4 +1,4 @@
-import sys, subprocess, pathlib
+﻿import sys, subprocess, pathlib
 sys.stdout.reconfigure(encoding="utf-8", errors="surrogatepass")
 
 files = [
@@ -13,7 +13,7 @@ for local, remote in files:
     # Write via SSH + python stdin
     proc = subprocess.run(
         ["ssh", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=10",
-         "Administrator@144.79.166.103",
+         "Administrator@103.49.131.58",
          "python -c \"import sys; sys.stdout.reconfigure(encoding='utf-8',errors='surrogatepass'); "
          "f=open(r'" + remote + "','w',encoding='utf-8'); "
          "f.write(sys.stdin.read()); f.close(); print('OK')\""],

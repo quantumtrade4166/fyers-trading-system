@@ -1,4 +1,4 @@
-"""One-shot credential setup for the Breeze headless login.
+﻿"""One-shot credential setup for the Breeze headless login.
 
 Prompts for the account login, writes it to the local deployment/.env, then
 mirrors the BREEZE_* lines to the VPS .env over ssh.
@@ -23,7 +23,7 @@ import subprocess
 
 from options.breeze.config import ENV_PATH, _load_env
 
-VPS = "Administrator@144.79.166.103"
+VPS = "Administrator@103.49.131.58"
 VPS_ENV = r"C:\trading\fyers_data_pipeline\deployment\.env"
 
 KEYS = [

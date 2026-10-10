@@ -1,4 +1,4 @@
-"""
+﻿"""
 rebuild_nifty500_fyers.py
 Rebuild the Nifty 500 daily OHLCV dataset from the Fyers History API.
 
@@ -38,7 +38,7 @@ OUT_DIR    = ROOT / "Nifty 500 Daily Fyers"
 TOKEN_PATH = ROOT / "config" / "access_token.txt"
 APP_ID     = "W09OMXQB8J-100"
 
-VPS_TOKEN  = ("Administrator@144.79.166.103:"
+VPS_TOKEN  = ("Administrator@103.49.131.58:"
               "C:/trading/fyers_data_pipeline/config/access_token.txt")
 
 START_YEAR        = 2005

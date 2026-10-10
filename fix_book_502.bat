@@ -1,6 +1,6 @@
-@echo off
+﻿@echo off
 setlocal
-set VPS=Administrator@144.79.166.103
+set VPS=Administrator@103.49.131.58
 
 echo [1/2] Pushing dualmom_live_api.py...
 scp -o BatchMode=yes "%~dp0deployment\dualmom_live_api.py" "%VPS%:C:/trading/fyers_data_pipeline/deployment/dualmom_live_api.py"

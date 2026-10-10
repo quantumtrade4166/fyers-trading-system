@@ -1,4 +1,4 @@
-import sys, subprocess, pathlib
+﻿import sys, subprocess, pathlib
 sys.stdout.reconfigure(encoding="utf-8", errors="surrogatepass")
 
 base = pathlib.Path(r"G:\fyers_data_pipeline")
@@ -29,7 +29,7 @@ for rel in files:
     )
     proc = subprocess.run(
         ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "-o", "ServerAliveInterval=5",
-         "Administrator@144.79.166.103",
+         "Administrator@103.49.131.58",
          "python -c \"" + remote_script2.replace('"', '\\\\\"') + "\""],
         input=data,
         capture_output=True,

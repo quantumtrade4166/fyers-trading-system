@@ -1,4 +1,4 @@
-import sys, os, subprocess, pathlib
+﻿import sys, os, subprocess, pathlib
 
 sys.stdout.reconfigure(encoding="utf-8", errors="surrogatepass")
 
@@ -44,7 +44,7 @@ remote_script = "\n".join(parts)
 
 # Pipe to SSH
 proc = subprocess.run(
-    ["ssh", "-o", "BatchMode=yes", "Administrator@144.79.166.103", "python -"],
+    ["ssh", "-o", "BatchMode=yes", "Administrator@103.49.131.58", "python -"],
     input=remote_script,
     capture_output=True,
     text=True,

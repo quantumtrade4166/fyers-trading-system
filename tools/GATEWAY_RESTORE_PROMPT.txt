@@ -1,4 +1,4 @@
-You are Claude Code running on my Windows PC in the project G:\fyers_data_pipeline. I just
+﻿You are Claude Code running on my Windows PC in the project G:\fyers_data_pipeline. I just
 switched this machine's Claude to a third-party API gateway, which reset the app to a NEW
 account identity, so my Claude Code sidebar went EMPTY. My sessions are NOT lost — only the
 sidebar index is pointing at a new, empty folder. Your job has TWO parts:
@@ -20,7 +20,7 @@ were not written down as rules. They are now. Follow them exactly, before improv
 
 1. VPS ACCESS (this is the big one — it made the last gateway run unusable):
    - The VPS is 144.79.166.103 (Windows, user Administrator). There is REAL MONEY running on it.
-   - DO NOT drive the VPS with many separate `ssh Administrator@144.79.166.103 "cmd"` round-trips.
+   - DO NOT drive the VPS with many separate `ssh Administrator@103.49.131.58 "cmd"` round-trips.
      Each one is a fresh SSH handshake; dozens in a burst trip the server's connection throttle
      (errors: kex_exchange_identification, banner exchange, Connection reset/closed/timed out,
      then Permission denied). The last gateway run fired 47 / 266 / 834 ssh calls in single

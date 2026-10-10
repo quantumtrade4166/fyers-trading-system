@@ -1,4 +1,4 @@
-# DualMom on Kite - BUY-ONLY TOP-UP to the Rs 6,20,000 capital (22-Sep request).
+﻿# DualMom on Kite - BUY-ONLY TOP-UP to the Rs 6,20,000 capital (22-Sep request).
 #
 # Nothing is ever SOLD. Only the shortfalls vs the target basket are bought
 # (the 4 names Zerodha rejected on 22-Sep + small top-ups from 6.0L -> 6.2L).
@@ -25,7 +25,7 @@ $log  = Join-Path $root "logs\topup_dualmom_kite.txt"
 New-Item -ItemType Directory -Force -Path (Join-Path $root "logs") | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 
-$vps = "Administrator@144.79.166.103"
+$vps = "Administrator@103.49.131.58"
 $R   = "C:/trading/fyers_data_pipeline"
 
 function Remote-PS([string]$script) {

@@ -1,4 +1,4 @@
-# Switch DualMom LIVE on the VPS (Kotak Rohit, UCC 15P56).
+﻿# Switch DualMom LIVE on the VPS (Kotak Rohit, UCC 15P56).
 # Copies the armed config + the tag fix, restarts ONLY the DualMom service
 # (the dashboard and the strangle are not touched), then shows the live status.
 #
@@ -13,7 +13,7 @@ $log  = Join-Path $root "logs\dualmom_arm_output.txt"
 New-Item -ItemType Directory -Force -Path (Join-Path $root "logs") | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 
-$vps  = "Administrator@144.79.166.103"
+$vps  = "Administrator@103.49.131.58"
 $dest = "C:/trading/fyers_data_pipeline/deployment/dualmom_live/"
 
 function Remote-PS([string]$script) {

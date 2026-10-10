@@ -1,4 +1,4 @@
-# Fix for the 2026-09-15 DualMom Deploy: all 40 orders rejected ("error from core").
+﻿# Fix for the 2026-09-15 DualMom Deploy: all 40 orders rejected ("error from core").
 # Cause: every order reused the tag "dualmom"; Kotak treats the tag as the client
 # order id and rejects repeats. This copies the unique-tag fix + safer month
 # recording, voids the wrong "September done" record, restarts ONLY the DualMom
@@ -9,7 +9,7 @@ $log  = Join-Path $root "logs\dualmom_fix_output.txt"
 New-Item -ItemType Directory -Force -Path (Join-Path $root "logs") | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 
-$vps  = "Administrator@144.79.166.103"
+$vps  = "Administrator@103.49.131.58"
 $R    = "C:/trading/fyers_data_pipeline"
 
 function Remote-PS([string]$script) {

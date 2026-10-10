@@ -1,4 +1,4 @@
-# DualMom service fix (21-Sep-2026)
+﻿# DualMom service fix (21-Sep-2026)
 #  - cash no longer counts Kotak's margin-on-holdings (NAV showed 17.2L / +72%)
 #  - every Kotak call now has a timeout (a stuck call froze the whole page)
 #  - error text can't crash the endpoint
@@ -11,7 +11,7 @@ $log  = Join-Path $root "logs\fix_dualmom_service.txt"
 New-Item -ItemType Directory -Force -Path (Join-Path $root "logs") | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 
-$vps = "Administrator@144.79.166.103"
+$vps = "Administrator@103.49.131.58"
 $R   = "C:/trading/fyers_data_pipeline"
 
 function Remote-PS([string]$script) {

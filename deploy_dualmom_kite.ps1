@@ -1,4 +1,4 @@
-# DualMom on the MAIN Kite account - install + Rs 6,00,000 deployment.
+﻿# DualMom on the MAIN Kite account - install + Rs 6,00,000 deployment.
 #
 #  1. copies the code to the VPS (also carries today's Kotak fixes)
 #  2. runs the tests ON THE VPS - stops if any fail
@@ -19,7 +19,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $root "logs") | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 
 $CAPITAL = 600000
-$vps = "Administrator@144.79.166.103"
+$vps = "Administrator@103.49.131.58"
 $R   = "C:/trading/fyers_data_pipeline"
 
 function Remote-PS([string]$script) {

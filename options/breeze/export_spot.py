@@ -1,4 +1,4 @@
-"""Extract the daily NIFTY spot series into a small CSV.
+﻿"""Extract the daily NIFTY spot series into a small CSV.
 
 The downloader needs one number per trading day — the spot — to centre its
 ATM+/-N strike window. It normally reads that from
@@ -25,7 +25,7 @@ from options.breeze.config import DATA_DIR, PROJECT_ROOT
 SOURCE_DIR = PROJECT_ROOT / "data" / "NSE_NIFTY_OPTIONS"
 OUT_PATH = DATA_DIR / "nifty_spot_daily.csv"
 
-VPS = "Administrator@144.79.166.103"
+VPS = "Administrator@103.49.131.58"
 VPS_DIR = "C:/trading/fyers_data_pipeline/data/BREEZE_OPTIONS"
 
 

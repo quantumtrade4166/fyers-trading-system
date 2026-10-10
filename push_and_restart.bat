@@ -1,8 +1,8 @@
-@echo off
+﻿@echo off
 REM Push the latest dualmom_live_api.py and restart the DualMom service
 setlocal
 
-set VPS=Administrator@144.79.166.103
+set VPS=Administrator@103.49.131.58
 set SRC=%~dp0deployment\dualmom_live_api.py
 set DEST=C:/trading/fyers_data_pipeline/deployment/dualmom_live_api.py
 

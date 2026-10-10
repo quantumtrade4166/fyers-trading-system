@@ -1,4 +1,4 @@
-# Deploy strangle fixes to VPS - ONE SSH session, no reconnect storms.
+﻿# Deploy strangle fixes to VPS - ONE SSH session, no reconnect storms.
 #   Copies 2 changed files to VPS, restarts dashboard, verifies.
 #
 # Usage: powershell -ExecutionPolicy Bypass -File .\deploy_strangle_fix.ps1
@@ -8,7 +8,7 @@ $log  = Join-Path $root "logs\deploy_strangle_fix.txt"
 New-Item -ItemType Directory -Force -Path (Join-Path $root "logs") | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 
-$vps = "Administrator@144.79.166.103"
+$vps = "Administrator@103.49.131.58"
 $R   = "C:/trading/fyers_data_pipeline"
 
 function Remote-PS([string]$script) {

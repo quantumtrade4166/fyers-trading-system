@@ -1,4 +1,4 @@
-# DualMom: client ledger + live portfolio dashboard (equity & drawdown curves).
+﻿# DualMom: client ledger + live portfolio dashboard (equity & drawdown curves).
 # Copies the new/changed files, restarts ONLY the DualMom service (the dashboard
 # process and the strangle are not touched - index.html is a static file the open
 # page reloads by itself), then verifies against the live account.
@@ -8,7 +8,7 @@ $log  = Join-Path $root "logs\dualmom_portfolio_update.txt"
 New-Item -ItemType Directory -Force -Path (Join-Path $root "logs") | Out-Null
 Start-Transcript -Path $log -Force | Out-Null
 
-$vps = "Administrator@144.79.166.103"
+$vps = "Administrator@103.49.131.58"
 $R   = "C:/trading/fyers_data_pipeline"
 
 function Remote-PS([string]$script) {

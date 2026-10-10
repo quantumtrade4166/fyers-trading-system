@@ -1,8 +1,8 @@
-"""Deploy changed files to VPS via SSH stdin. Used after SSH cooldown."""
+﻿"""Deploy changed files to VPS via SSH stdin. Used after SSH cooldown."""
 import subprocess
 import pathlib
 
-VPS = "Administrator@144.79.166.103"
+VPS = "Administrator@103.49.131.58"
 KEY = str(pathlib.Path.home() / ".ssh" / "id_rsa")
 
 REMOTE_ROOT = r"C:\trading\fyers_data_pipeline"

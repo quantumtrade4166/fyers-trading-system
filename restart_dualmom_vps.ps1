@@ -1,7 +1,7 @@
-# Restart only the DualMom service on the VPS.
+﻿# Restart only the DualMom service on the VPS.
 # Strangle/DN/dashboard all run in other processes - they are NOT touched.
 $ErrorActionPreference = "Continue"
-$vps = "Administrator@144.79.166.103"
+$vps = "Administrator@103.49.131.58"
 
 $script = @'
 $p = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*deployment.dualmom_service*' }
