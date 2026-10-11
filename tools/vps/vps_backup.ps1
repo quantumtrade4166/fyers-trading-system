@@ -36,6 +36,20 @@ function Save-Status($state) {
 $prev = $null
 if (Test-Path $status) { try { $prev = Get-Content $status -Raw | ConvertFrom-Json } catch { } }
 
+# Self-heal: if the Google Drive app has closed or crashed, start it again and wait for G:.
+# (This task runs inside Administrator's session, which is where Drive has to run.)
+if (-not (Test-Path 'G:\My Drive')) {
+    if (-not (Get-Process GoogleDriveFS -EA SilentlyContinue)) {
+        $launch = 'C:\Program Files\Google\Drive File Stream\launch.bat'
+        if (Test-Path $launch) {
+            Log 'Google Drive was not running - starting it'
+            Start-Process -FilePath $launch -WindowStyle Hidden
+        }
+    }
+    foreach ($i in 1..36) { if (Test-Path 'G:\My Drive') { break }; Start-Sleep 5 }
+    if (Test-Path 'G:\My Drive') { Log 'Google Drive is back - continuing' }
+}
+
 if (-not (Test-Path 'G:\My Drive')) {
     Log 'Google Drive (G:) not mounted - is Administrator logged on and Drive running?'
     Save-Status @{ last_run = (Get-Date).ToString('o'); ok = $false; error = 'drive_not_mounted'; last_ok = $prev.last_ok }
