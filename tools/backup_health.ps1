@@ -19,7 +19,7 @@ $vaultLag = if ($vaultNewest -and $backupNewest) { [math]::Max(0, ($vaultNewest 
 $checks = @(
     @{ name = 'PC project + JARVIS -> Google Drive'; age = StatusAge "$drive\PC Backup\pc_backup_status.json"; max = 2 },
     @{ name = 'Code -> GitHub';                      age = StatusAge "$drive\PC Backup\code_autosave_status.json"; max = 30 },
-    @{ name = 'VPS -> Google Drive';                 age = AgeHours "$drive\VPS Backup\vps_backup_log.txt"; max = 1 },
+    @{ name = 'VPS -> Google Drive';                 age = StatusAge "$drive\VPS Backup\vps_backup_status.json"; max = 1 },   # new VPS (2026-10-11) writes a status file
     @{ name = 'JARVIS database backups';             age = AgeHours ((Get-ChildItem "$drive\JARVIS_backups" -Filter *.jvbak -ErrorAction SilentlyContinue | Sort-Object LastWriteTime | Select-Object -Last 1).FullName); max = 30 },
     @{ name = 'Obsidian vault -> Google Drive';      age = $vaultLag; max = 1 }
 )
