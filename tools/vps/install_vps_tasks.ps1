@@ -5,8 +5,9 @@
 # per-task XML exports carried the old machine's user SID and Desktop paths.
 #
 # Not here: VPSBackupToDrive (tools/vps/vps_step2_backup.ps1 -- installed FIRST),
-# CloudflaredTunnel (needs the tunnel token), JARVIS (its own installer), and the BTC VWAP
-# engine (runs on the home PC since 2026-10-10 -- moving it back is a deliberate decision).
+# CloudflaredTunnel (tools/vps/setup_tunnel.ps1), JARVIS (its own installer), and the
+# BTC history download window (BTCHistoryDownloadStart/Stop, tools/vps/btc_history_window.ps1).
+# BTC VWAP's live version stays as armed in its control file -- this never arms anything.
 param([switch]$EnableDualMom)
 
 $ErrorActionPreference = 'Stop'
@@ -63,6 +64,18 @@ Add-Task 'StrangleChartArchive' "$repo\live_trading_options\strangle_strategy\de
 & "$repo\live_trading_options\delta_btc\tools\install_watchdog.ps1"       # DeltaBTCWatchdog
 & "$repo\live_trading_options\delta_btc\tools\install_recorder_task.ps1"  # LiquidityRecorder
 & "$repo\crypto\btc_arbitrage\tools\install_task.ps1"                     # BtcArbMonitor
+& "$repo\live_trading_options\delta_btc\tools\install_vwap_task.ps1"      # DeltaBTCVwapEngine (back on the VPS 2026-10-10)
+
+# Those installers register under the logged-on user, so each engine opened a console window
+# on the desktop and stopped if the user signed out. Run them as SYSTEM instead (hidden,
+# session 0, no logon needed). Running processes keep the old principal until restarted.
+foreach ($t in 'BtcArbMonitor', 'DeltaBTCCollector', 'DeltaBTCEngine', 'DeltaBTCVwapEngine', 'LiquidityRecorder') {
+    $task = Get-ScheduledTask $t -EA SilentlyContinue
+    if (-not $task) { continue }
+    $trig = @($task.Triggers | Where-Object { $_.CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger' })
+    Set-ScheduledTask -TaskName $t -Principal $system -Trigger $trig | Out-Null
+    "   $t -> SYSTEM (hidden)"
+}
 
 ''
 Get-ScheduledTask | Where-Object { $_.TaskPath -eq '\' } | Sort-Object TaskName |
