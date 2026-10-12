@@ -188,6 +188,9 @@
     <button class="tab-btn" id="tab-ndp" onclick="switchTab('ndp')">
       📐 Nifty Directional Pivot
     </button>
+    <button class="tab-btn" id="tab-stdir" onclick="switchTab('stdir')">
+      🧭 Nifty ST Directional
+    </button>
     <button class="tab-btn" id="tab-terminal" onclick="switchTab('terminal')">
       💼 Terminal
     </button>
@@ -1543,6 +1546,11 @@
     </div>
   </div>
 
+  <div id="page-stdir" style="display:none">
+    <iframe id="stdir-frame" title="Nifty ST Directional"
+            style="width:100%;height:calc(100vh - 110px);min-height:900px;border:0;display:block"></iframe>
+  </div>
+
   <div id="page-ndp" style="display:none">
 
     <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
@@ -1792,7 +1800,8 @@ function switchTab(tab) {
   if (tab === 'btcvwap') { bvInit(); bvStartPoll(); } else { bvStopPoll(); }
   if (tab === 'btcarb') { setTimeout(() => { baInit(); baStartPoll(); }, 0); } else { baStopPoll(); }
   if (tab === 'ndp') { ndpInit(); ndpStartPoll(); } else { ndpStopPoll(); }
-  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'btcvwap', 'btcarb', 'ndp', 'terminal'].forEach(t => {
+  if (tab === 'stdir') { const f = document.getElementById('stdir-frame'); if (f && !f.src) f.src = '/static/stdir.html'; }
+  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'btcvwap', 'btcarb', 'ndp', 'stdir', 'terminal'].forEach(t => {
     const pg = document.getElementById('page-' + t);
     if (pg) pg.style.display = (t === tab) ? '' : 'none';
     const btn = document.getElementById('tab-' + t);

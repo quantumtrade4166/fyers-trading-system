@@ -177,6 +177,13 @@ try:
 except Exception as _e:                                    # pragma: no cover
     print(f"[ndp] router NOT loaded: {type(_e).__name__}: {_e}", flush=True)
 
+# Nifty ST Directional (PAPER). Separate engine process publishes files; read-only router.
+try:
+    from deployment.stdir_api import router as _stdir_router
+    app.include_router(_stdir_router)
+except Exception as _e:                                    # pragma: no cover
+    print(f"[stdir] router NOT loaded: {type(_e).__name__}: {_e}", flush=True)
+
 # ── tiny thread-safe TTL cache ───────────────────────────────────────────────
 # The pair-signal compute is ~0.5-3s. Running it on the event loop froze EVERY request
 # (a 16-byte /api/version took 2.3s). We (a) run it in a thread so it never blocks the loop

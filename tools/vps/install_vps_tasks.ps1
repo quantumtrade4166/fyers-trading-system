@@ -49,6 +49,7 @@ Add-Task 'FyersAutoLogin'      "$repo\deployment\vps_tasks\fyers_auto_login.bat"
 Add-Task 'ZerodhaAutoLogin'    "$repo\deployment\vps_tasks\zerodha_auto_login.bat" $null @(Daily '09:00') 10
 Add-Task 'StrangleMorningFlag' "$repo\strangle_system\deploy\run_decision_flag_vps.bat" $null @(Daily '09:10') 30
 Add-Task 'NiftyPivotEngine'    "$repo\live_trading_options\nifty_pivot\run_pivot_engine.bat" $null @(Daily '09:10')
+Add-Task 'NiftyStDirEngine'    "$repo\live_trading_options\nifty_st_directional\run_stdir_engine.bat" $null @(Daily '09:10')
 Add-Task 'DeltaNeutralPreflight' "$repo\live_trading_options\delta_neutral\run_dn_preflight.bat" $null @(Daily '09:15') 10
 Add-Task 'DeltaNeutralEngine'  "$repo\live_trading_options\delta_neutral\run_dn_engine.bat" $null @(Daily '09:20')
 Add-Task 'StrangleV2Engine'    "$repo\live_trading_options\strangle_strategy\deploy\run_v2_engine_vps.bat" $null @(Daily '09:20')

@@ -223,6 +223,11 @@ def _strangle_intraday():
         _ensure_ndp_running()
     except Exception as e:
         print(f"  [scheduler] ensure_ndp failed: {e}")
+    # Nifty ST Directional (paper) — independent of every engine above
+    try:
+        _ensure_stdir_running()
+    except Exception as e:
+        print(f"  [scheduler] ensure_stdir failed: {e}")
 
 
 _V2_PS_FILTER = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' "
@@ -372,6 +377,36 @@ def _ensure_ndp_running():
         subprocess.run(["schtasks", "/Run", "/TN", "NiftyPivotEngine"],
                        capture_output=True, timeout=20)
         print(f"  [scheduler] NDP {'restart' if stalled else 'start'} (running={running}, tick_gap={gap})")
+
+
+_STDIR_PS_FILTER = ("Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'python.exe' "
+                    "-and $_.CommandLine -like '*nifty_st_directional*engine*' }")
+
+
+def _ensure_stdir_running():
+    """Keep the Nifty ST Directional paper engine alive 09:10-15:20 IST. Staleness
+    from TICK.json, which its writer thread rewrites every second."""
+    import datetime, subprocess
+    from pathlib import Path
+    import pytz
+    now = datetime.datetime.now(pytz.timezone("Asia/Kolkata"))
+    if not (now.weekday() < 5 and (9, 10) <= (now.hour, now.minute) <= (15, 20)):
+        return
+    tick = (Path(__file__).parent.parent / "live_trading_options" / "nifty_st_directional"
+            / "data" / "live_state" / "TICK.json")
+    r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                        f"({_STDIR_PS_FILTER} | Measure-Object).Count"],
+                       capture_output=True, text=True, timeout=20)
+    running = (r.stdout.strip() or "0") != "0"
+    gap = (datetime.datetime.now().timestamp() - tick.stat().st_mtime) if tick.exists() else None
+    stalled = running and now.time() >= datetime.time(9, 14) and (gap is None or gap > 120)
+    if (not running) or stalled:
+        if stalled:
+            subprocess.run(["powershell", "-NoProfile", "-Command",
+                            f"{_STDIR_PS_FILTER} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force }}"],
+                           capture_output=True, timeout=20)
+        subprocess.run(["schtasks", "/Run", "/TN", "NiftyStDirEngine"], capture_output=True, timeout=20)
+        print(f"  [scheduler] STDIR {'restart' if stalled else 'start'} (running={running}, tick_gap={gap})")
 
 
 def _start_feed():

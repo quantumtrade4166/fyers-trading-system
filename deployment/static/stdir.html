@@ -1,0 +1,447 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Nifty ST Directional</title>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0b1120; --card: #111a2e; --line: #1e293b; --muted: #64748b; --text: #cbd5e1;
+    --hi: #f1f5f9; --pos: #22c55e; --neg: #f43f5e; --warn: #f59e0b; --acc: #38bdf8;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { padding: 14px 16px 40px; max-width: 1600px; margin: 0 auto; }
+  .num { font-variant-numeric: tabular-nums; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .between { justify-content: space-between; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  @media (max-width: 1100px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .lbl { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .big { font-size: 26px; font-weight: 700; color: var(--hi); }
+  .mid { font-size: 15px; font-weight: 600; color: var(--hi); }
+  .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .sub b { color: var(--text); font-weight: 500; }
+  .pos { color: var(--pos) !important; } .neg { color: var(--neg) !important; }
+  .pill { padding: 3px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .05em;
+          background: #1e293b; color: #94a3b8; text-transform: uppercase; }
+  .pill.live { background: #052e16; color: #4ade80; } .pill.stale { background: #3f1d0b; color: #fb923c; }
+  .pill.bull { background: #052e16; color: #4ade80; } .pill.bear { background: #3b0a14; color: #fb7185; }
+  .pill.paper { background: #1e1b4b; color: #a5b4fc; }
+  h1 { font-size: 16px; margin: 0; color: var(--hi); }
+  .banner { margin: 10px 0; padding: 8px 12px; border-radius: 8px; border: 1px solid #78350f;
+            background: #1c1305; color: #fbbf24; font-size: 12px; display: none; }
+  .sect { margin-top: 12px; }
+  .sect-h { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; gap: 8px; flex-wrap: wrap; }
+  .sect-h .t { font-weight: 600; color: var(--hi); }
+  .tip { font: 11px ui-monospace, Consolas, monospace; color: #94a3b8; min-height: 16px; }
+  select, button { background: #0f172a; color: var(--text); border: 1px solid #334155; border-radius: 6px;
+                   padding: 4px 8px; font-size: 12px; cursor: pointer; }
+  button.on { border-color: var(--acc); color: var(--acc); }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; font-weight: 500; color: var(--muted); font-size: 10px; text-transform: uppercase;
+       letter-spacing: .06em; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 6px 8px; border-bottom: 1px solid #172033; white-space: nowrap; }
+  td.r, th.r { text-align: right; }
+  .scroll { overflow-x: auto; }
+  .log { max-height: 320px; overflow-y: auto; font: 11px/1.7 ui-monospace, Consolas, monospace; }
+  .log .k { display: inline-block; min-width: 150px; color: #94a3b8; }
+  .k-entry_fill, .k-exit_fill { color: var(--hi) !important; font-weight: 600; }
+  .k-spot_reversal { color: var(--warn) !important; }
+  .k-ERROR, .k-ABORT, .k-BLOCKED { color: var(--neg) !important; }
+  .empty { color: var(--muted); padding: 18px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="row between">
+    <div class="row" style="gap:16px">
+      <div>
+        <h1>Nifty ST Directional</h1>
+        <div class="sub">spot ST(10,3) bias · option ref-low entry · option ST(10,3) exit · 15:15 square-off</div>
+      </div>
+      <span class="pill paper">paper</span>
+      <span id="bias" class="pill">—</span>
+    </div>
+    <div class="row">
+      <div style="text-align:right">
+        <div class="lbl">NIFTY</div>
+        <div id="spot" class="mid num">—</div>
+      </div>
+      <div class="sub" style="text-align:right;margin:0">
+        <div>expiry <b id="expiry">—</b></div>
+        <div>size <b id="size">—</b></div>
+      </div>
+      <select id="date"></select>
+      <span id="status" class="pill">—</span>
+    </div>
+  </div>
+
+  <div id="banner" class="banner"></div>
+
+  <div class="grid sect">
+    <div class="card">
+      <div class="lbl">Day MTM (net of charges)</div>
+      <div id="day-net" class="big num">—</div>
+      <div class="sub">gross <b id="day-gross" class="num">—</b> · realized <b id="day-real" class="num">—</b>
+        · open <b id="day-open" class="num">—</b> · trades <b id="day-trades">—</b></div>
+    </div>
+    <div class="card">
+      <div class="lbl">Position</div>
+      <div id="pos" class="mid num">flat</div>
+      <div id="pos-sub" class="sub"></div>
+    </div>
+    <div class="card">
+      <div class="lbl">Setup (next entry)</div>
+      <div id="setup" class="mid num">—</div>
+      <div id="setup-sub" class="sub"></div>
+    </div>
+    <div class="card">
+      <div class="lbl">Paper equity</div>
+      <div id="equity" class="big num">—</div>
+      <div class="sub">since start <b id="ret" class="num">—</b> · days <b id="days-n">—</b>
+        · max DD <b id="maxdd" class="num">—</b></div>
+    </div>
+  </div>
+
+  <div class="card sect">
+    <div class="sect-h"><span class="t">MTM — <span id="mtm-date">—</span></span>
+      <span class="sub" id="mtm-sum" style="margin:0"></span></div>
+    <div id="mtm-chart" style="height:200px"></div>
+  </div>
+
+  <div class="card sect">
+    <div class="sect-h"><span class="t">NIFTY 5-min · Supertrend(10,3) · reversals</span>
+      <span id="spot-tip" class="tip"></span></div>
+    <div id="spot-chart" style="height:380px"></div>
+  </div>
+
+  <div class="card sect">
+    <div class="sect-h">
+      <span class="t">Option 5-min · own Supertrend · reference low — <span id="opt-label">—</span></span>
+      <span id="panel-btns" class="row" style="gap:6px"></span>
+    </div>
+    <div id="opt-tip" class="tip"></div>
+    <div id="opt-chart" style="height:320px"></div>
+  </div>
+
+  <div class="card sect">
+    <div class="sect-h"><span class="t">Trades</span><span class="sub" style="margin:0">gross = (sell − buy) × qty · net after STT, exchange, SEBI, stamp, GST, brokerage</span></div>
+    <div class="scroll"><table>
+      <thead><tr><th>#</th><th>contract</th><th>origin</th><th>signal</th><th>sell</th><th class="r">price</th>
+        <th>buy back</th><th class="r">price</th><th>reason</th><th class="r">gross</th><th class="r">charges</th><th class="r">net</th></tr></thead>
+      <tbody id="trades"></tbody>
+    </table></div>
+  </div>
+
+  <div class="grid sect" style="grid-template-columns: minmax(0,1fr) minmax(0,1fr)">
+    <div class="card">
+      <div class="sect-h"><span class="t">Setups</span></div>
+      <div class="scroll"><table>
+        <thead><tr><th>id</th><th>made</th><th>contract</th><th class="r">spot</th><th class="r">ref low</th>
+          <th class="r">lowered</th><th>signal</th><th>status</th></tr></thead>
+        <tbody id="setups"></tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <div class="sect-h"><span class="t">Log</span></div>
+      <div id="log" class="log"></div>
+    </div>
+  </div>
+
+  <div class="card sect">
+    <div class="sect-h"><span class="t">Paper equity</span><span id="eq-sum" class="sub" style="margin:0"></span></div>
+    <div id="eq-chart" style="height:200px"></div>
+    <div class="scroll" style="margin-top:8px"><table>
+      <thead><tr><th>date</th><th class="r">trades</th><th class="r">wins</th><th class="r">gross</th>
+        <th class="r">charges</th><th class="r">net</th><th class="r">equity</th><th class="r">DD %</th></tr></thead>
+      <tbody id="days"></tbody>
+    </table></div>
+  </div>
+</div>
+
+<script>
+const LC = LightweightCharts;
+const $ = id => document.getElementById(id);
+let today = null, curDate = null, lastState = null, panelIdx = 0, fitKey = {};
+
+function money(v, dp = 0) {
+  if (v === null || v === undefined || isNaN(v)) return '—';
+  const s = Math.abs(v).toLocaleString('en-IN', { minimumFractionDigits: dp, maximumFractionDigits: dp });
+  return (v < 0 ? '−₹' : '₹') + s;
+}
+function signed(v, dp = 0) { return (v > 0 ? '+' : '') + money(v, dp); }
+function num(v, dp = 2) { return (v === null || v === undefined || isNaN(v)) ? '—' : Number(v).toFixed(dp); }
+function cls(el, v) { el.classList.remove('pos', 'neg'); if (v > 0) el.classList.add('pos'); else if (v < 0) el.classList.add('neg'); }
+function hhmm(t) { const d = new Date(t * 1000); return d.toISOString().slice(11, 16); }
+function tOnly(s) { return s ? String(s).slice(11, 19) : '—'; }
+function esc(s) { return String(s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+
+const base = {
+  layout: { background: { color: 'transparent' }, textColor: '#94a3b8', fontSize: 11 },
+  grid: { vertLines: { color: '#162036' }, horzLines: { color: '#162036' } },
+  rightPriceScale: { borderColor: '#1e293b' },
+  timeScale: { borderColor: '#1e293b', timeVisible: true, secondsVisible: false },
+  localization: { timeFormatter: t => hhmm(t) },
+  crosshair: { mode: LC.CrosshairMode.Normal },
+};
+function mk(id, extra = {}) {
+  const el = $(id);
+  const c = LC.createChart(el, { ...base, ...extra, width: el.clientWidth, height: el.clientHeight });
+  new ResizeObserver(() => c.applyOptions({ width: el.clientWidth })).observe(el);
+  return c;
+}
+
+// charts
+const mtmChart = mk('mtm-chart');
+const mtmSeries = mtmChart.addBaselineSeries({
+  baseValue: { type: 'price', price: 0 }, lineWidth: 2,
+  topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,.25)', topFillColor2: 'rgba(34,197,94,.02)',
+  bottomLineColor: '#f43f5e', bottomFillColor1: 'rgba(244,63,94,.02)', bottomFillColor2: 'rgba(244,63,94,.25)',
+  priceFormat: { type: 'custom', formatter: v => money(v) },
+});
+const candleOpts = { upColor: '#22c55e', downColor: '#f43f5e', borderVisible: false,
+                     wickUpColor: '#22c55e', wickDownColor: '#f43f5e' };
+const lineOpts = { lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false };
+
+const spotChart = mk('spot-chart');
+const spotCandle = spotChart.addCandlestickSeries(candleOpts);
+const spotUp = spotChart.addLineSeries({ ...lineOpts, color: '#22c55e' });
+const spotDn = spotChart.addLineSeries({ ...lineOpts, color: '#f43f5e' });
+
+const optChart = mk('opt-chart');
+const optCandle = optChart.addCandlestickSeries(candleOpts);
+const optUp = optChart.addLineSeries({ ...lineOpts, color: '#22c55e' });
+const optDn = optChart.addLineSeries({ ...lineOpts, color: '#f43f5e' });
+const refSeries = [0, 1, 2].map(() => optChart.addLineSeries({
+  color: '#38bdf8', lineWidth: 2, lineStyle: LC.LineStyle.Dashed, lineType: LC.LineType.WithSteps,
+  priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }));
+
+function stSplit(candles) {
+  const up = [], dn = [];
+  for (const c of candles) {
+    if (c.st === null) { up.push({ time: c.time }); dn.push({ time: c.time }); continue; }
+    if (c.dir === 1) { up.push({ time: c.time, value: c.st }); dn.push({ time: c.time }); }
+    else { dn.push({ time: c.time, value: c.st }); up.push({ time: c.time }); }
+  }
+  return [up, dn];
+}
+function tipFor(chart, series, stU, stD, tipEl) {
+  chart.subscribeCrosshairMove(p => {
+    if (!p || !p.time) { tipEl.textContent = ''; return; }
+    const c = p.seriesData.get(series); if (!c) return;
+    const u = p.seriesData.get(stU), d = p.seriesData.get(stD);
+    const st = (u && u.value !== undefined) ? u.value : (d && d.value !== undefined ? d.value : null);
+    tipEl.textContent = `${hhmm(p.time)}  O ${num(c.open)}  H ${num(c.high)}  L ${num(c.low)}  C ${num(c.close)}  ST ${num(st)}`;
+  });
+}
+tipFor(spotChart, spotCandle, spotUp, spotDn, $('spot-tip'));
+tipFor(optChart, optCandle, optUp, optDn, $('opt-tip'));
+
+// ── data ────────────────────────────────────────────────────────────────
+async function getJSON(u) { const r = await fetch(u, { cache: 'no-store' }); return r.json(); }
+function isToday() { return curDate && curDate === today; }
+
+async function loadDates() {
+  const r = await getJSON('/api/stdir/dates');
+  today = r.today;
+  const ds = r.dates.includes(r.today) ? r.dates : [r.today, ...r.dates];
+  const sel = $('date');
+  const keep = curDate && ds.includes(curDate) ? curDate : ds[0];
+  sel.innerHTML = ds.map(d => `<option value="${d}">${d}${d === r.today ? ' (today)' : ''}</option>`).join('');
+  sel.value = keep; curDate = keep;
+}
+$('date').onchange = () => { curDate = $('date').value; panelIdx = 0; fitKey = {}; refreshAll(); };
+
+async function loadTick() {
+  if (!isToday()) return;
+  const d = await getJSON('/api/stdir/tick');
+  if (!d.ok) { $('status').textContent = 'no engine'; $('status').className = 'pill stale'; return; }
+  $('spot').textContent = num(d.spot);
+  const st = $('status');
+  st.textContent = d.stale ? 'stale' : d.status; st.className = 'pill ' + (d.stale ? 'stale' : (d.status === 'live' ? 'live' : ''));
+  if (d.date !== today) {        // engine has not run today yet: show nothing as "live"
+    const ban = $('banner'); ban.style.display = 'block';
+    ban.textContent = `Engine has not started today (${d.reason || 'no data'}). It starts at 09:10 IST on market days.`;
+    return;
+  }
+  setBias(d.bias);
+  $('expiry').textContent = d.expiry || '—';
+  $('size').textContent = d.qty ? `${d.lots} lots · ${d.qty} qty` : '—';
+  renderDay(d.day); renderPos(d.position); renderSetup(d.setup);
+  $('equity').textContent = money(d.equity);
+  const ban = $('banner');
+  const msg = d.blocked ? `Trading blocked today: ${d.blocked}` : (d.stale ? `Engine not updating (${d.reason || 'last write ' + (d.age ?? '?') + ' s ago'})` : '');
+  ban.style.display = msg ? 'block' : 'none'; ban.textContent = msg;
+}
+function setBias(b) {
+  const el = $('bias');
+  el.textContent = b ? (b === 'bull' ? 'bull · sell PE' : 'bear · sell CE') : 'no bias yet';
+  el.className = 'pill ' + (b || '');
+}
+function renderDay(m) {
+  if (!m) return;
+  $('day-net').textContent = signed(m.day_net); cls($('day-net'), m.day_net);
+  $('day-gross').textContent = signed(m.day_gross); $('day-real').textContent = signed(m.realized_net);
+  $('day-open').textContent = signed(m.open_net); $('day-trades').textContent = m.trades;
+}
+function renderPos(p) {
+  if (!p) { $('pos').textContent = 'flat'; $('pos-sub').textContent = ''; return; }
+  $('pos').innerHTML = `SELL ${p.qty} × ${p.strike} ${p.opt_type} <span class="${p.net >= 0 ? 'pos' : 'neg'}">${signed(p.net)}</span>`;
+  $('pos-sub').innerHTML = `sold <b>${num(p.entry_price)}</b> at <b>${tOnly(p.entry_ts)}</b> · LTP <b>${num(p.ltp)}</b> · exp <b>${p.expiry}</b>`;
+}
+function renderSetup(s) {
+  if (!s) { $('setup').textContent = '—'; $('setup-sub').textContent = ''; return; }
+  $('setup').textContent = `${s.strike} ${s.opt} · ${s.status}${s.pending ? ' (pending)' : ''}`;
+  $('setup-sub').innerHTML = `ref low <b>${num(s.ref_low)}</b> (from ${s.ref_candle || '—'} candle, lowered ${s.updates}×)` +
+    (s.signal ? ` · signal <b>${s.signal}</b>` : ` · enter when a 5-min close &lt; ${num(s.ref_low)}`);
+}
+
+async function loadState() {
+  const d = await getJSON('/api/stdir/state?date=' + curDate);
+  if (!d.ok) {
+    lastState = null;
+    spotCandle.setData([]); spotUp.setData([]); spotDn.setData([]);
+    optCandle.setData([]); optUp.setData([]); optDn.setData([]); refSeries.forEach(s => s.setData([]));
+    $('trades').innerHTML = `<tr><td colspan="12" class="empty">${esc(d.reason || 'no data')}</td></tr>`;
+    $('setups').innerHTML = ''; $('log').innerHTML = '';
+    return;
+  }
+  lastState = d;
+  if (!isToday()) {
+    $('expiry').textContent = d.expiry; $('size').textContent = `${d.lots} lots · ${d.qty} qty`;
+    setBias(d.bias); renderDay(d.day); renderPos(d.position);
+    $('status').textContent = 'history'; $('status').className = 'pill';
+    $('banner').style.display = d.blocked ? 'block' : 'none';
+    if (d.blocked) $('banner').textContent = `Trading was blocked that day: ${d.blocked}`;
+    const last = (d.setups || []).slice(-1)[0]; renderSetup(last ? { ...last } : null);
+  }
+  // spot
+  spotCandle.setData(d.spot_candles.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
+  const [su, sd] = stSplit(d.spot_candles); spotUp.setData(su); spotDn.setData(sd);
+  spotCandle.setMarkers((d.reversals || []).map(r => ({
+    time: r.time, position: r.to === 'bull' ? 'belowBar' : 'aboveBar', shape: 'circle',
+    color: r.to === 'bull' ? '#22c55e' : '#f43f5e', text: r.to === 'bull' ? '→ bull' : '→ bear' })));
+  if (fitKey.spot !== curDate && d.spot_candles.length) { spotChart.timeScale().fitContent(); fitKey.spot = curDate; }
+  // option panels
+  const panels = d.panels || [];
+  if (panelIdx >= panels.length) panelIdx = 0;
+  $('panel-btns').innerHTML = panels.map((p, i) =>
+    `<button class="${i === panelIdx ? 'on' : ''}" onclick="panelIdx=${i};loadState()">${p.label} · ${p.role}</button>`).join('');
+  const p = panels[panelIdx];
+  if (!p) {
+    $('opt-label').textContent = 'no contract yet';
+    optCandle.setData([]); optUp.setData([]); optDn.setData([]); refSeries.forEach(s => s.setData([]));
+  } else {
+    $('opt-label').textContent = `${p.symbol || p.label} (exp ${p.expiry})${p.ltp ? ' · LTP ' + num(p.ltp) : ''}`;
+    optCandle.setData(p.candles.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
+    const [ou, od] = stSplit(p.candles); optUp.setData(ou); optDn.setData(od);
+    refSeries.forEach((s, i) => {
+      const r = p.refs[p.refs.length - 1 - i];
+      const pts = r ? dedupe(r.points) : [];
+      s.setData(pts);
+    });
+    optCandle.setMarkers(p.markers.slice().sort((a, b) => a.time - b.time).map(m => m.kind === 'sell'
+      ? { time: m.time, position: 'aboveBar', shape: 'arrowDown', color: '#f43f5e', text: 'SELL ' + num(m.price) }
+      : { time: m.time, position: 'belowBar', shape: 'arrowUp', color: '#22c55e', text: 'BUY ' + num(m.price) + (m.reason === 'square_off_1515' ? ' 15:15' : '') }));
+    const k = curDate + p.label;
+    if (fitKey.opt !== k && p.candles.length) { optChart.timeScale().fitContent(); fitKey.opt = k; }
+  }
+  renderTrades(d.trades || []); renderSetups(d.setups || []); renderLog(d.events || []);
+}
+function dedupe(pts) {           // lightweight-charts needs strictly increasing times
+  const m = new Map(); for (const x of pts) m.set(x.time, x.value);
+  return [...m.entries()].sort((a, b) => a[0] - b[0]).map(([time, value]) => ({ time, value }));
+}
+function renderTrades(ts) {
+  if (!ts.length) { $('trades').innerHTML = '<tr><td colspan="12" class="empty">no trades yet</td></tr>'; return; }
+  $('trades').innerHTML = ts.map(t => {
+    const open = t.exit_price === null || t.exit_price === undefined;
+    const net = t.net;
+    return `<tr>
+      <td>${esc(t.trade_id.split('-').pop())}</td>
+      <td>${t.strike} ${t.opt_type} <span class="sub">${t.expiry}</span></td>
+      <td>${t.origin}${t.pending_while_open ? ' · pending' : ''}</td>
+      <td>${tOnly(t.signal_ts)} <span class="sub">close ${num(t.signal_close)} &lt; ${num(t.signal_ref)}</span></td>
+      <td>${tOnly(t.entry_ts)}</td><td class="r num">${num(t.entry_price)}</td>
+      <td>${open ? '<span class="pill live">open</span>' : tOnly(t.exit_ts)}</td>
+      <td class="r num">${open ? num(t.ltp) + ' <span class="sub">ltp</span>' : num(t.exit_price)}</td>
+      <td>${open ? '—' : (t.exit_reason === 'option_st' ? `close ${num(t.exit_close)} &gt; ST ${num(t.exit_st)}` : '15:15 square-off')}${t.catchup_fill ? ' · catch-up' : ''}</td>
+      <td class="r num ${t.gross >= 0 ? 'pos' : 'neg'}">${signed(t.gross)}</td>
+      <td class="r num">${money(t.charges)}</td>
+      <td class="r num ${net >= 0 ? 'pos' : 'neg'}"><b>${signed(net)}</b></td></tr>`;
+  }).join('');
+}
+function renderSetups(ss) {
+  $('setups').innerHTML = ss.slice().reverse().map(s => `<tr>
+    <td>${esc(s.id.split('-').pop())}</td><td>${s.created} <span class="sub">${s.origin}</span></td>
+    <td>${s.strike} ${s.opt}</td><td class="r num">${num(s.spot)}</td>
+    <td class="r num">${num(s.ref_low)} <span class="sub">from ${num(s.ref_initial)}</span></td>
+    <td class="r">${s.updates}</td><td>${s.signal || '—'}${s.pending ? ' · pending' : ''}</td>
+    <td>${s.status}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">no setup yet</td></tr>';
+}
+function renderLog(ev) {
+  const el = $('log');
+  const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 30;
+  el.innerHTML = ev.map(e => `<div><span class="k k-${esc(e.kind)}">${e.t} ${esc(e.kind)}</span>${esc(e.msg)}</div>`).join('');
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+async function loadMtm() {
+  const d = await getJSON('/api/stdir/mtm?date=' + curDate);
+  $('mtm-date').textContent = curDate;
+  const m = new Map();
+  for (const r of d.rows) if (r.time) m.set(r.time, r.net);
+  const pts = [...m.entries()].sort((a, b) => a[0] - b[0]).map(([time, value]) => ({ time, value }));
+  mtmSeries.setData(pts);
+  if (pts.length) {
+    const vals = pts.map(p => p.value);
+    $('mtm-sum').innerHTML = `now <b class="${vals[vals.length-1] >= 0 ? 'pos' : 'neg'}">${signed(vals[vals.length-1])}</b> · high <b>${signed(Math.max(...vals))}</b> · low <b>${signed(Math.min(...vals))}</b>`;
+    if (fitKey.mtm !== curDate) { mtmChart.timeScale().fitContent(); fitKey.mtm = curDate; }
+  } else { $('mtm-sum').textContent = 'no samples yet'; }
+}
+
+const eqChart = mk('eq-chart', { timeScale: { borderColor: '#1e293b', timeVisible: false } , localization: {} });
+const eqSeries = eqChart.addBaselineSeries({ lineWidth: 2,
+  topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,.2)', topFillColor2: 'rgba(34,197,94,.02)',
+  bottomLineColor: '#f43f5e', bottomFillColor1: 'rgba(244,63,94,.02)', bottomFillColor2: 'rgba(244,63,94,.2)' });
+async function loadDaily() {
+  const d = await getJSON('/api/stdir/daily');
+  eqSeries.applyOptions({ baseValue: { type: 'price', price: d.capital } });
+  eqSeries.setData(d.curve.map(c => ({ time: c.date, value: c.equity })));
+  eqChart.timeScale().fitContent();
+  const s = d.summary;
+  $('ret').textContent = (s.return_pct >= 0 ? '+' : '') + num(s.return_pct) + '%';
+  cls($('ret'), s.return_pct);
+  $('days-n').textContent = s.sessions; $('maxdd').textContent = num(s.max_dd_pct) + '%';
+  if (!isToday()) $('equity').textContent = money(s.equity);
+  $('eq-sum').innerHTML = `capital ${money(d.capital)} · net <b class="${s.net >= 0 ? 'pos' : 'neg'}">${signed(s.net)}</b> · ${s.trades} trades (${s.wins} won) · charges ${money(s.charges)}`;
+  $('days').innerHTML = d.days.map(r => `<tr><td>${r.date}</td><td class="r">${r.trades}</td><td class="r">${r.wins}</td>
+    <td class="r num">${signed(r.gross)}</td><td class="r num">${money(r.charges)}</td>
+    <td class="r num ${r.net >= 0 ? 'pos' : 'neg'}">${signed(r.net)}</td><td class="r num">${money(r.equity_close)}</td>
+    <td class="r num">${num(r.drawdown_pct)}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">no paper days yet</td></tr>';
+}
+
+async function refreshAll() {
+  try { await loadState(); } catch (e) { console.error(e); }
+  try { await loadMtm(); } catch (e) { console.error(e); }
+  try { await loadTick(); } catch (e) { console.error(e); }
+  try { await loadDaily(); } catch (e) { console.error(e); }
+}
+(async () => {
+  try { await loadDates(); } catch (e) { console.error(e); }
+  await refreshAll();
+  setInterval(() => { if (!document.hidden) loadTick().catch(console.error); }, 1000);
+  setInterval(() => { if (!document.hidden && isToday()) loadState().catch(console.error); }, 3000);
+  setInterval(() => { if (!document.hidden && isToday()) loadMtm().catch(console.error); }, 5000);
+  setInterval(() => { if (!document.hidden) loadDaily().catch(console.error); }, 60000);
+  setInterval(() => { loadDates().catch(console.error); }, 300000);
+})();
+</script>
+</body>
+</html>
