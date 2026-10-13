@@ -412,3 +412,66 @@ def test_costs_and_lot_size():
     assert r.cost_brokerage == 40.0 and r.cost_slippage == pytest.approx(65.0)
     assert r.net_pnl == pytest.approx(r.gross_pnl - r.cost_total)
     assert r.cost_total > r.cost_brokerage + r.cost_stt
+
+
+# optional breakeven stop -------------------------------------------------------
+class FakeMinutes(Fake):
+    """Fake + 1-minute bars: {(contract, 'HH:MM'): (open, high, low, close)}; default
+    flat at 30: between the 25-pt trigger (sold at 50) and the cost, so it never fires."""
+
+    def __init__(self, minutes=None, **kw):
+        super().__init__(**kw)
+        self.minutes = minutes or {}
+
+    def minute_bars(self, day, contract, start, end):
+        rows = []
+        for m in pd.date_range(start, end, freq="1min", inclusive="left"):
+            o, h, l, c = self.minutes.get((contract, m.strftime("%H:%M")), (30, 30, 30, 30))
+            rows.append({"datetime": m, "open": o, "high": h, "low": l, "close": c})
+        return pd.DataFrame(rows)
+
+
+def be_cfg(points):
+    return Config(breakeven_after_points=points)
+
+
+def test_breakeven_arms_then_exits_at_cost():
+    # sold at 50 (fill) at 09:25; 09:27 low 24 (= 50 - 26) arms; 09:41 high 51 -> out at 50
+    f = FakeMinutes(opts={PE(): {"09:20": {"low": 95, "close": 95}}},
+                    minutes={(PE(), "09:27"): (40, 41, 24, 30), (PE(), "09:41"): (45, 51, 44, 50)})
+    f.fills[(PE(), "09:25")] = 50.0
+    r = run_day(DAY, f, be_cfg(25))
+    tr = r["trades"][0]
+    assert tr["exit_reason"] == "breakeven_stop" and tr["exit_price"] == 50.0
+    assert tr["exit_ts"] == T("09:41") and tr["be_armed_ts"] == T("09:27")
+
+
+def test_breakeven_not_reached_keeps_normal_rules():
+    f = FakeMinutes(opts={PE(): {"09:20": {"low": 95, "close": 95}}},
+                    minutes={(PE(), "09:27"): (40, 41, 26, 30), (PE(), "09:41"): (45, 60, 44, 50)})
+    f.fills[(PE(), "09:25")] = 50.0
+    tr = run_day(DAY, f, be_cfg(25))["trades"][0]
+    assert tr["exit_reason"] == "square_off_1515" and tr["be_armed_ts"] is None
+
+
+def test_breakeven_same_minute_touching_both_is_not_a_stop():
+    f = FakeMinutes(opts={PE(): {"09:20": {"low": 95, "close": 95}}},
+                    minutes={(PE(), "09:27"): (40, 55, 20, 30)})
+    f.fills[(PE(), "09:25")] = 50.0
+    tr = run_day(DAY, f, be_cfg(25))["trades"][0]
+    assert tr["be_armed_ts"] == T("09:27") and tr["exit_reason"] == "square_off_1515"
+
+
+def test_breakeven_gap_fills_at_open():
+    f = FakeMinutes(opts={PE(): {"09:20": {"low": 95, "close": 95}}},
+                    minutes={(PE(), "09:27"): (40, 41, 20, 30), (PE(), "09:50"): (58, 60, 57, 59)})
+    f.fills[(PE(), "09:25")] = 50.0
+    tr = run_day(DAY, f, be_cfg(25))["trades"][0]
+    assert tr["exit_reason"] == "breakeven_stop" and tr["exit_price"] == 58.0
+
+
+def test_breakeven_off_by_default():
+    f = FakeMinutes(opts={PE(): {"09:20": {"low": 95, "close": 95}}},
+                    minutes={(PE(), "09:27"): (40, 41, 20, 30), (PE(), "09:41"): (45, 60, 44, 50)})
+    f.fills[(PE(), "09:25")] = 50.0
+    assert run_day(DAY, f, Config())["trades"][0]["exit_reason"] == "square_off_1515"

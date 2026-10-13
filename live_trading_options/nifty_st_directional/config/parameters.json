@@ -10,6 +10,7 @@
   "strike_step": 50,
   "band_strikes": 10,
   "switch_sessions_left": 2,
+  "breakeven_after_points": 25,
   "history_sessions": 4,
 
   "nse_holidays": ["2026-10-20", "2026-12-25"],
@@ -19,6 +20,7 @@
     "fills": "Paper fill = option LTP at the decision moment (candle close + ~1.5 s). Backtest equivalent: open of the next 1-minute bar.",
     "costs": "net = gross - statutory charges (backtesting/options_pivot_intraday/costs.py). No slippage added on paper fills.",
     "holidays": "Used only to count sessions left to an expiry (2-sessions rule). 20-Oct is confirmed by Breeze listing the 19-Oct expiry. ADD the Nov-2026 Diwali/Guru Nanak dates from the NSE circular before those weeks.",
-    "lot_size": "From Kite's instrument dump at start-up, never hardcoded."
+    "lot_size": "From Kite's instrument dump at start-up, never hardcoded.",
+    "breakeven": "Added 12-Oct (owner): once the option trades 25 pts below the sell price, stop at the sell price; checked on every tick. null = off. Backtest: --breakeven 25 (1-min bars)."
   }
 }

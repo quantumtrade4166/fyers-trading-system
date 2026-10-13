@@ -23,7 +23,8 @@ sys.stderr.reconfigure(encoding="utf-8")
 import numpy as np
 import pandas as pd
 
-from backtesting.options_st_directional.candles import to_5min, supertrend  # noqa: F401
+from backtesting.options_st_directional.candles import (  # noqa: F401
+    to_5min, supertrend, clean_index_closing_auction)
 from backtesting.options_credit_spread.expiry_calendar import ExpiryCalendar
 from options.breeze.config import DATA_DIR
 
@@ -44,7 +45,7 @@ class BreezeProvider:
 
         spot1 = pd.read_parquet(INDEX_PATH)
         spot1["datetime"] = pd.to_datetime(spot1["datetime"])
-        self.spot1 = spot1.sort_values("datetime")
+        self.spot1 = clean_index_closing_auction(spot1.sort_values("datetime"))
         days = sorted(self.spot1["datetime"].dt.strftime("%Y-%m-%d").unique())
         future = pd.bdate_range(pd.Timestamp(days[-1]) + pd.Timedelta(days=1),
                                 periods=40).strftime("%Y-%m-%d")
@@ -130,6 +131,13 @@ class BreezeProvider:
             self.missing.append((day, contract, f"{len(gaps)} empty 5-min candles"))
         self._opt5[key] = c5
         return c5
+
+    def minute_bars(self, day: str, contract, start, end) -> pd.DataFrame:
+        """1-minute bars of a contract with start <= minute < end."""
+        df = self._bars(day, contract)
+        if df.empty:
+            return df
+        return df[(df["datetime"] >= pd.Timestamp(start)) & (df["datetime"] < pd.Timestamp(end))]
 
     # ---------- execution ----------
     def fill(self, day: str, contract, ts):

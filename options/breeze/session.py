@@ -66,13 +66,28 @@ def load_token(allow_stale: bool = False) -> str:
     return token
 
 
-def get_client(allow_stale: bool = False):
-    """Return an authenticated BreezeConnect client."""
+def get_client(allow_stale: bool = False, auto_login: bool = True):
+    """Return an authenticated BreezeConnect client.
+
+    A missing, old-dated or server-expired token triggers ONE headless login
+    (options/breeze/auto_login.py, TOTP) and a retry, so no backtest ever waits
+    for a manual browser login. A failing auto-login still raises loudly.
+    """
     from breeze_connect import BreezeConnect
 
     api_key, api_secret = get_credentials()
+    try:
+        client = BreezeConnect(api_key=api_key)
+        client.generate_session(api_secret=api_secret, session_token=load_token(allow_stale))
+        return client
+    except Exception as exc:
+        if not auto_login:
+            raise
+        print(f"  [breeze] session unusable ({str(exc)[:80]}) -- logging in headlessly")
+    from options.breeze.auto_login import login
+    save_token(login())
     client = BreezeConnect(api_key=api_key)
-    client.generate_session(api_secret=api_secret, session_token=load_token(allow_stale))
+    client.generate_session(api_secret=api_secret, session_token=load_token())
     return client
 
 

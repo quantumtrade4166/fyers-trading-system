@@ -227,7 +227,8 @@ def control():
 
 @router.post("/control")
 def set_control(body: dict = Body(...)):
-    """{"action": "arm" | "paper" | "kill"} for ist_delta only. The engine applies a
+    """{"action": "arm" | "paper" | "kill" | "adopt"} for ist_delta only. "adopt" =
+    COPY PAPER -> LIVE: sell the open paper legs live now and carry on live. The engine applies a
     mode change only while flat; a kill closes every open leg at once.
     {"action": "size", "contracts": n, "mtm_stop_usd": x} sets the size and stop for
     the NEXT session (the engine applies it only while no cycle is running)."""
@@ -243,6 +244,15 @@ def set_control(body: dict = Body(...)):
         d.update(mode="paper")
     elif action == "kill":
         d.update(kill=True)
+    elif action == "adopt":
+        # COPY PAPER -> LIVE: arm, and ask the engine to sell the open PAPER legs live
+        # now (one request per press, identified by this timestamp)
+        live = _live(LIVE_VERSION) or {}
+        if not [t for t, l in (live.get("legs") or {}).items() if l]:
+            return {"ok": False, "reason": "no open paper position to copy"}
+        if live.get("mode") == "live":
+            return {"ok": False, "reason": "already live"}
+        d.update(mode="live", kill=False, adopt=_now().isoformat(timespec="seconds"))
     elif action == "size":
         try:
             c = int(body.get("contracts"))
@@ -255,7 +265,7 @@ def set_control(body: dict = Body(...)):
             return {"ok": False, "reason": f"stop must be $1-${MAX_STOP_USD:g}"}
         d.update(contracts=c, mtm_stop_usd=m)
     else:
-        return {"ok": False, "reason": "action must be arm, paper, kill or size"}
+        return {"ok": False, "reason": "action must be arm, paper, kill, adopt or size"}
     d["updated"] = _now().isoformat(timespec="seconds")
     d["by"] = "dashboard"
     STATE.mkdir(parents=True, exist_ok=True)

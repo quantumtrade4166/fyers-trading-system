@@ -419,6 +419,84 @@ setm(bkp, 40, 40, D(2026, 10, 3, 14, 0, 1))
 check("paper reference never goes live", bkp.mode == "paper" and not bkp.live_capable)
 dc.DeltaClient = orig
 
+# ── COPY PAPER -> LIVE (adopt) ────────────────────────────────────────────
+def adopt_book():
+    """A live-capable book holding a PAPER strangle, then armed with an adopt request."""
+    fc.__init__()
+    b, tmpa = new_book()
+    setm(b, 40, 40, D(2026, 10, 13, 10, 0, 1))
+    setm(b, 40, 40, D(2026, 10, 13, 10, 6))
+    fire(b, D(2026, 10, 13, 10, 6, 1))                 # paper entry, both legs
+    return b, tmpa
+
+
+def press_adopt(b, tmpa, when, client):
+    (tmpa / "data" / "vwap_state" / "live_control_ist_live.json").write_text(json.dumps(
+        {"mode": "live", "kill": False, "adopt": dt.date.today().isoformat() + "T10:07:00",
+         "updated": dt.date.today().isoformat()}))
+    dc.DeltaClient = lambda *a, **k: client
+    b._ctl_at = 0
+    setm(b, 40, 40, when)
+    dc.DeltaClient = orig
+
+
+ba, ta = adopt_book()
+check("adopt: paper position before", ba.mode == "paper" and ba.legs["CE"] and ba.legs["PE"])
+paper_sell = (ba.legs["CE"]["sell"], ba.legs["PE"]["sell"])
+ca = FakeClient()
+press_adopt(ba, ta, D(2026, 10, 13, 10, 7), ca)
+check("adopt: book is LIVE", ba.mode == "live" and ba.exec.live)
+check("adopt: both legs sold on Delta at the paper size", ca.pos.get(ce_pid) == -500 and ca.pos.get(pe_pid) == -500)
+check("adopt: legs carry the real fills + mode live", ba.legs["CE"]["mode"] == "live"
+      and ba.legs["CE"]["adopted_from_paper"] == paper_sell[0] and ba.legs["CE"]["orders"])
+check("adopt: entry count unchanged (strategy continues)", ba.trigger.entries == 1)
+check("adopt: today's live P&L starts fresh, paper legs archived",
+      ba.trades == [] and len(ba.paper_before_adopt) == 2
+      and all("copied to LIVE" in t["exit_reason"] for t in ba.paper_before_adopt))
+n_orders = len(ca.orders)
+setm(ba, 40, 40, D(2026, 10, 13, 10, 8))
+check("adopt: one press = one copy (no repeat)", len(ca.orders) == n_orders)
+ba._close_all(D(2026, 10, 13, 10, 9), fc, "t")
+check("adopt: later exits go to Delta", ca.pos.get(ce_pid) == 0 and ca.pos.get(pe_pid) == 0)
+
+# single KEPT leg in paper -> only that leg is copied, kept state carried over
+bk1, tk1 = adopt_book()
+bk1._exit_signal(1, "close above VWAP")                # paper split: one leg kept
+kept = [t for t in ("CE", "PE") if bk1.legs[t]]
+check("adopt(kept): paper has one kept leg", len(kept) == 1 and bk1.legs[kept[0]]["kept"])
+ck = FakeClient()
+press_adopt(bk1, tk1, D(2026, 10, 13, 10, 7), ck)
+pid_k = ce_pid if kept[0] == "CE" else pe_pid
+check("adopt(kept): only the kept leg sold live", ck.pos.get(pid_k) == -500 and len(ck.pos) == 1)
+check("adopt(kept): still a kept leg, now live", bk1.legs[kept[0]]["kept"] and bk1.legs[kept[0]]["mode"] == "live")
+
+# PE fills only 60% per try -> equalized, both legs equal and live
+bp, tp = adopt_book()
+cp = FakeClient(); cp.fill_ratio = {pe_pid: 0.6}
+press_adopt(bp, tp, D(2026, 10, 13, 10, 7), cp)
+q = bp.legs["PE"]["qty"] if bp.legs["PE"] else None
+check("adopt(part): equal live legs", bp.mode == "live" and bp.legs["CE"]["qty"] == q
+      and cp.pos.get(ce_pid) == -q and cp.pos.get(pe_pid) == -q)
+
+# PE fills nothing -> CE bought back, book stays PAPER with its paper legs
+bf, tf = adopt_book()
+cf = FakeClient(); cf.fill_ratio = {pe_pid: 0.0}
+press_adopt(bf, tf, D(2026, 10, 13, 10, 7), cf)
+check("adopt(fail): Delta flat again", cf.pos.get(ce_pid, 0) == 0 and cf.pos.get(pe_pid, 0) == 0)
+check("adopt(fail): still paper with the paper legs", bf.mode == "paper"
+      and bf.legs["CE"] and bf.legs["CE"]["mode"] == "paper")
+
+# a request from an earlier day is ignored
+bo, to = adopt_book()
+co = FakeClient()
+(to / "data" / "vwap_state" / "live_control_ist_live.json").write_text(json.dumps(
+    {"mode": "live", "adopt": "2026-01-01T10:00:00"}))
+dc.DeltaClient = lambda *a, **k: co
+bo._ctl_at = 0
+setm(bo, 40, 40, D(2026, 10, 13, 10, 7))
+dc.DeltaClient = orig
+check("adopt: stale request ignored", not co.orders and bo.mode == "paper")
+
 # control file arms live only while flat
 bk5, tmp5 = new_book()
 setm(bk5, 40, 40, D(2026, 10, 3, 14, 0, 1))

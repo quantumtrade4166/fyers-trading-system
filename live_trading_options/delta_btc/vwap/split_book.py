@@ -79,6 +79,7 @@ class SplitVwapBook(VwapBook):
         self.legs = {"CE": None, "PE": None}
         self.leg_builders = None
         self._leg_closed = {}
+        self.paper_before_adopt = []
 
     def _open(self):
         return [t for t in LEGS if self.legs.get(t)]
@@ -165,6 +166,15 @@ class SplitVwapBook(VwapBook):
                 self.exec = PaperExec(self.s.contracts)
                 self.mode = "paper"
                 self.audit(now, "MODE", mode="paper")
+        # COPY PAPER -> LIVE (dashboard button, 2026-10-13): armed while the book holds
+        # a PAPER position -> sell the same open legs live now and carry on live.
+        # One request per press (its timestamp), today's only, never after a stop/KILL.
+        adopt = str(d.get("adopt") or "")
+        if (adopt and adopt != getattr(self, "_adopt_done", None) and want == "live"
+                and self.mode == "paper" and self._open() and chain is not None
+                and adopt[:10] == dt.date.today().isoformat()):
+            self._adopt_done = adopt
+            self._adopt(now, chain)
         if d.get("kill") and self.trigger is not None and not self.trigger.done:
             self.stop_reason = "KILL pressed"
             self.trigger.done = True
@@ -172,6 +182,108 @@ class SplitVwapBook(VwapBook):
             self.status = "killed"
             self.audit(now, "KILL")
             self._close_all(now, chain, "KILL")
+
+    def _adopt(self, now, chain):
+        """Turn the open PAPER legs into real ones: sell each open leg's qty live at
+        once (parallel IOC limits off the book, never below 90% of the leg's mark),
+        then hand the legs to the live executor with Delta's fills. Kept-leg state,
+        entry numbers and the day's entry count carry on, so the strategy behaves
+        normally from here. The paper part of the day is closed in the records at
+        the current mark (mode=paper) and today's P&L / stop restart from the live
+        fills. Under half a leg filled -> buy back what sold, stay paper."""
+        if self.trigger is None or self.trigger.done or self.margin_halt:
+            self.audit(now, "ADOPT_REFUSED", reason="cycle stopped / done / margin halt")
+            return
+        open_t = self._open()
+        if any(self.legs[t].get("exit_pending") for t in open_t):
+            self.audit(now, "ADOPT_REFUSED", reason="a paper leg is mid-exit")
+            return
+        try:
+            from live.delta_client import DeltaClient
+            self._client = self._client or DeltaClient()
+            live_ex = LiveExec(self._client, self.live_cfg, log=self.log_line)
+        except Exception as e:
+            self.audit(now, "ADOPT_REFUSED", reason=f"no Delta client: {e}")
+            return
+        paper_legs = {t: dict(self.legs[t]) for t in open_t}
+        marks = {t: self._mark(t) for t in open_t}
+        self.audit(now, "ADOPT_START", legs={t: {"qty": l["qty"], "paper_sell": l["sell"],
+                                                  "mark": marks[t], "kept": l.get("kept")}
+                                               for t, l in paper_legs.items()})
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=len(open_t)) as ex:
+            futs = {t: ex.submit(live_ex.execute, chain, paper_legs[t]["strike"], t, "sell",
+                                 int(paper_legs[t]["qty"]), "adopt",
+                                 floor=(marks[t] or 0) * 0.90, tag=f"A{t}")
+                    for t in open_t}
+            fills = {t: f.result() for t, f in futs.items()}
+        got = {t: int(f["filled"]) for t, f in fills.items()}
+        least = min(got.values())
+        need_min = max(1, min(int(paper_legs[t]["qty"]) for t in open_t) // 2)
+        if least < need_min or any(f.get("margin") for f in fills.values()):
+            prev_mode, prev_exec = self.mode, self.exec
+            self.mode, self.exec = "live", live_ex          # unwinds must hit Delta
+            stuck = False
+            for t, f in fills.items():
+                if f["filled"]:
+                    left = self._unwind(now, chain, t, int(f["filled"]), f, paper_legs[t]["n"],
+                                        paper_legs[t].get("trigger"), register=False)
+                    if left > 0:
+                        # a REAL short we could not buy back: it replaces the paper leg
+                        # and the book stays LIVE so its exit is retried on Delta
+                        stuck = True
+                        self.legs[t] = dict(paper_legs[t], qty=left, sell=f["price"], mode="live",
+                                            sell_fee=0, exit_pending="unwind (copy failed)")
+            if stuck:
+                self._sync_pos()
+                self.audit(now, "ADOPT_FAILED", filled=got, note="unwind incomplete — staying LIVE")
+                self.write_state(now)
+                return
+            self.mode, self.exec = prev_mode, prev_exec
+            self.audit(now, "ADOPT_FAILED", filled=got,
+                       errors={t: f.get("error") for t, f in fills.items()},
+                       note="nothing adopted, still paper")
+            return
+        if len(open_t) == 2:
+            for t, f in fills.items():
+                extra = int(f["filled"]) - least
+                if extra > 0:
+                    self.mode, self.exec = "live", live_ex
+                    left = self._unwind(now, chain, t, extra, dict(f), paper_legs[t]["n"],
+                                        paper_legs[t].get("trigger"), register=False)
+                    f["fee"] = (f.get("fee") or 0) * least / max(int(f["filled"]), 1)
+                    f["filled"] = least + left
+        # 1) close the paper legs in the records at the current mark (paper P&L)
+        for t, l in paper_legs.items():
+            mk = marks[t] or l["sell"]
+            self.mode = "paper"
+            self._record_leg_trade(now, chain, l, int(l["qty"]), mk, self._fee_q(mk, l["qty"], chain),
+                                   "copied to LIVE (paper leg closed at mark)", {})
+        # 2) today's live book starts here: paper trades leave the live P&L / stop
+        self.paper_before_adopt = (getattr(self, "paper_before_adopt", None) or []) + self.trades
+        self.trades = []
+        self.stop_reason = None
+        # 3) the legs become the real fills
+        self.mode, self.exec = "live", live_ex
+        for t, f in fills.items():
+            l = paper_legs[t]
+            c = chain.contract(l["strike"], t) or {}
+            self.legs[t] = dict(l, symbol=c.get("symbol") or l.get("symbol"),
+                                product_id=c.get("product_id") or l.get("product_id"),
+                                qty=int(f["filled"]), sell=round(f["price"], 4),
+                                sell_time=self._now_str(now),
+                                sell_fee=round(f.get("fee") or 0, 6), mode="live",
+                                exit_pending=None, entry_mark=marks[t],
+                                entry_slip=round(f["price"] - marks[t], 4) if marks[t] else None,
+                                entry_ms=f.get("ms"), orders=f.get("orders"),
+                                adopted_from_paper=l["sell"])
+        self._sync_pos()
+        self.audit(now, "ADOPT", mode="live",
+                   legs={t: {"qty": self.legs[t]["qty"], "live_sell": self.legs[t]["sell"],
+                             "paper_sell": paper_legs[t]["sell"], "kept": self.legs[t].get("kept")}
+                         for t in fills})
+        self.audit(now, "MODE", mode="live", via="adopt")
+        self.write_state(now)
 
     # ── engine entry point ───────────────────────────────────────────────
     def on_poll(self, now, get_chain):
@@ -690,6 +802,8 @@ class SplitVwapBook(VwapBook):
              "late_start": self.late_start, "builder": self.builder.to_dict(),
              "trigger": self.trigger.to_dict(), "pos": self.pos, "trades": self.trades,
              "stop_reason": self.stop_reason, "mode": self.mode, "margin_halt": self.margin_halt,
+             "adopt_done": getattr(self, "_adopt_done", None),
+             "paper_before_adopt": getattr(self, "paper_before_adopt", None) or [],
              "legs": {t: (ser(l) if l else None) for t, l in self.legs.items()},
              "leg_builders": {t: b.to_dict() for t, b in (self.leg_builders or {}).items()}}
         atomic_write(self._state_file(), json.dumps(d, default=str))
@@ -711,6 +825,8 @@ class SplitVwapBook(VwapBook):
         for b in self.leg_builders.values():
             b.cur = None
         self.margin_halt = bool(d.get("margin_halt"))
+        self._adopt_done = d.get("adopt_done")
+        self.paper_before_adopt = d.get("paper_before_adopt") or []
         self.trigger.in_pos = bool((d.get("trigger") or {}).get("in_pos"))
         saved_mode = d.get("mode", "paper")
         if saved_mode == "live" and self._open() and self.live_capable:
@@ -766,6 +882,7 @@ class SplitVwapBook(VwapBook):
                   "price_mtm": self.price_mtm(), "net_mtm": round(self.realized() + self.unrealized(), 4),
                   "charges": self.charges(), "gst_rate": self.gst_rate,
                   "margin_halt": self.margin_halt, "stop_basis": self.stop_basis,
+                  "paper_before_adopt": getattr(self, "paper_before_adopt", None) or [],
                   "leg_vwap": {t: (b.live_vwap() if b else None)
                                for t, b in (self.leg_builders or {}).items()}})
         return d

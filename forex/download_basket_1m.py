@@ -20,6 +20,7 @@ Run: python forex/download_basket_1m.py
 """
 
 import json
+import os
 import subprocess
 import time
 import logging
@@ -42,7 +43,8 @@ logger = logging.getLogger(__name__)
 
 FOREX_DIR   = Path(__file__).parent
 STAGING_DIR = FOREX_DIR / "_staging_basket"
-OUTPUT_ROOT = Path("H:/My Drive/Dukascopy_1m")
+# PC default: Google Drive. The VPS keeps it in the repo: set DUKASCOPY_1M_DIR.
+OUTPUT_ROOT = Path(os.getenv("DUKASCOPY_1M_DIR", "H:/My Drive/Dukascopy_1m"))
 MANIFEST    = FOREX_DIR / "basket_manifest.json"
 
 TIMEFRAME = "m1"
@@ -140,12 +142,29 @@ def convert(csv: Path, inst: str, y: int, m: int) -> int:
     return len(df)
 
 
+def recent_keys(n: int) -> set:
+    """The last n calendar months incl. the current one (always partial)."""
+    y, m, out = date.today().year, date.today().month, set()
+    for _ in range(n):
+        out.add(f"{y:04d}-{m:02d}")
+        m, y = (12, y - 1) if m == 1 else (m - 1, y)
+    return out
+
+
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--refresh-recent", type=int, default=0,
+                    help="re-download the last N months even if stored (daily update: 2)")
+    args = ap.parse_args()
     if not OUTPUT_ROOT.parent.exists():
         logger.error(f"Google Drive not mounted: {OUTPUT_ROOT.parent}")
         sys.exit(1)
 
     man = load_manifest()
+    for inst in man:                          # partial months fetched earlier
+        for k in recent_keys(args.refresh_recent):
+            man[inst].pop(k, None)
     months = list(month_range(START_YEAR, START_MONTH))
     logger.info(f"Basket: {len(BASKET)} instruments x {len(months)} months, 1-minute bars")
 

@@ -37,11 +37,13 @@ def main():
     ap.add_argument("--lots", type=int, default=Config.lots)
     ap.add_argument("--capital", type=float, default=Config.capital)
     ap.add_argument("--slippage", type=float, default=Config.slippage_points)
+    ap.add_argument("--breakeven", type=float, default=None,
+                    help="OPTIONAL: stop to cost once premium is this many points in favour")
     ap.add_argument("--tag", default=Config.tag)
     ap.add_argument("--no-day-charts", action="store_true")
     a = ap.parse_args()
     cfg = Config(start=a.start, end=a.end, lots=a.lots, capital=a.capital,
-                 slippage_points=a.slippage, tag=a.tag)
+                 slippage_points=a.slippage, breakeven_after_points=a.breakeven, tag=a.tag)
 
     out = RESULTS / cfg.tag
     (out / "days").mkdir(parents=True, exist_ok=True)

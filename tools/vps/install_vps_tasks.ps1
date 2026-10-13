@@ -61,6 +61,7 @@ Add-Task 'StrangleChartArchive' "$repo\live_trading_options\strangle_strategy\de
 
 # ---- per-strategy installers (they own their task definitions) ------------------------------
 & "$repo\tools\setup_watchdog_task.ps1"                                   # DashboardWatchdog
+& "$repo\tools\vps\data_tasks\install_data_tasks.ps1"                     # daily market-data downloads
 & "$repo\live_trading_options\delta_btc\tools\install_tasks.ps1"          # DeltaBTCCollector + DeltaBTCEngine (paper)
 & "$repo\live_trading_options\delta_btc\tools\install_watchdog.ps1"       # DeltaBTCWatchdog
 & "$repo\live_trading_options\delta_btc\tools\install_recorder_task.ps1"  # LiquidityRecorder

@@ -15,6 +15,7 @@ stay logged in (locked is fine) for H:\\ to remain mounted.
 Run: .venv\\Scripts\\python.exe forex/download_xauusd_1s.py
 """
 
+import os
 import subprocess
 import time
 import logging
@@ -39,7 +40,8 @@ logger = logging.getLogger(__name__)
 
 FOREX_DIR    = Path(__file__).parent
 STAGING_DIR  = FOREX_DIR / "_staging"
-OUTPUT_DIR   = Path("H:/My Drive/XAUUSD_1s_Data")
+# PC default: Google Drive. The VPS keeps it in the repo: set XAUUSD_1S_DIR.
+OUTPUT_DIR   = Path(os.getenv("XAUUSD_1S_DIR", "H:/My Drive/XAUUSD_1s_Data"))
 
 INSTRUMENT   = "xauusd"
 TIMEFRAME    = "s1"
@@ -152,11 +154,20 @@ def download_month(year: int, month: int) -> dict:
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--refresh-recent", type=int, default=0,
+                    help="re-download the last N months even if stored (daily update: 2)")
+    args = ap.parse_args()
     if not OUTPUT_DIR.parent.exists():
         logger.error(f"Google Drive path not found: {OUTPUT_DIR.parent} — is Drive mounted at H:?")
         sys.exit(1)
 
     manifest = mfst.load_manifest()
+    y, m = date.today().year, date.today().month
+    for _ in range(args.refresh_recent):       # the current month is always partial
+        manifest["months"].pop(mfst.month_key(y, m), None)
+        m, y = (12, y - 1) if m == 1 else (m - 1, y)
     months = list(month_range(START_YEAR, START_MONTH))
     logger.info(f"XAUUSD 1s backfill: {len(months)} months, {START_YEAR}-{START_MONTH:02d} -> present")
 

@@ -56,7 +56,8 @@ sys.path.insert(0, str(REPO))
 
 from backtesting.options_st_directional.engine import DayMachine          # noqa: E402
 from backtesting.options_st_directional.config import Config              # noqa: E402
-from backtesting.options_st_directional.candles import to_5min, supertrend  # noqa: E402
+from backtesting.options_st_directional.candles import (  # noqa: E402
+    to_5min, supertrend, clean_index_closing_auction)
 from backtesting.options_pivot_intraday.costs import statutory_costs      # noqa: E402
 
 PARAMS = json.loads((ROOT / "config" / "parameters.json").read_text(encoding="utf-8"))
@@ -210,6 +211,8 @@ class LiveProvider:
         e = self.e
         with e.lock:
             f = e.spot_book.frame(self._until())
+        # TradingView convention: no index candles after 15:10 on auction days
+        f = clean_index_closing_auction(f) if not f.empty else f
         c5 = supertrend(to_5min(f), e.cfg.st_period, e.cfg.st_mult)
         if c5.empty:
             return c5
@@ -484,8 +487,8 @@ class Engine:
         try:
             self.kws.subscribe(tokens)
             opt = [t for t in tokens if t != self.spot_token]
-            if opt:
-                self.kws.set_mode(self.kws.MODE_LTP, opt)
+            if opt:      # FULL: carries last_trade_time, needed to drop stale snapshots
+                self.kws.set_mode(self.kws.MODE_FULL, opt)
             if self.spot_token in tokens:
                 self.kws.set_mode(self.kws.MODE_LTP, [self.spot_token])
             self.subscribed.update(tokens)
@@ -507,14 +510,20 @@ class Engine:
                         tok, lp = t.get("instrument_token"), t.get("last_price")
                         if tok is None or lp is None:
                             continue
-                        self.tick(int(tok), float(lp), now)
+                        self.tick(int(tok), float(lp), now, t.get("last_trade_time"))
                     except Exception as e:
                         print(f"  [stdir] tick skipped: {e}", flush=True)
         except Exception as e:
             print(f"  [stdir] on_ticks error: {e}", flush=True)
 
-    def tick(self, tok: int, lp: float, now: dt.datetime):
-        """One price update (also used by sim_test). Caller holds the lock."""
+    def tick(self, tok: int, lp: float, now: dt.datetime, last_trade_time=None):
+        """One price update (also used by sim_test). Caller holds the lock.
+
+        An option's first tick at 09:15 is Kite's snapshot of the PREVIOUS
+        session's last price (12-Oct: 22550 CE showed 204.90 while the first
+        real trade was 240.05). Counted as a trade it fakes the 09:15 candle's
+        open/low -- the initial reference low -- and the option Supertrend. So
+        option ticks whose last trade is before today's open are ignored."""
         in_session = MKT_OPEN <= now.time() < MKT_CLOSE
         if tok == self.spot_token:
             self.spot, self.spot_at = lp, time.monotonic()
@@ -525,6 +534,14 @@ class Engine:
                     self.first_tick_seen = True
                     self.event("FEED", f"first NIFTY tick {lp:.2f}")
             return
+        if last_trade_time is not None:
+            try:
+                ltt = pd.Timestamp(last_trade_time).tz_localize(None)                     if pd.Timestamp(last_trade_time).tzinfo else pd.Timestamp(last_trade_time)
+                if ltt < pd.Timestamp(dt.datetime.combine(now.date(), MKT_OPEN)):
+                    self.stale_ticks = getattr(self, "stale_ticks", 0) + 1
+                    return
+            except Exception:
+                pass
         self.ltp[tok] = (lp, time.monotonic(), now)
         if in_session:
             book = self.books.get(tok)
@@ -573,11 +590,49 @@ class Engine:
             t += dt.timedelta(minutes=5)
         return out
 
+    def breakeven_tick(self, now):
+        """Stop to cost, tick by tick (parameters.json `breakeven_after_points`).
+
+        Same rule as the backtest's optional breakeven (backtested on 1-minute bars):
+        once the option has traded `x` points below our sell price the stop sits at
+        the sell price; a later tick at/above it buys back at that tick's price.
+        Arming and the stop are separate ticks, so one tick can never do both."""
+        x = self.p.get("breakeven_after_points")
+        pos = self.machine.position
+        if not x or pos is None or self.machine.done:
+            return
+        row = self.instr.get(self.contract_key(pos["contract"]))
+        v = self.ltp.get(row["token"]) if row else None
+        if v is None or v[2] <= pd.Timestamp(pos["entry_ts"]).to_pydatetime():
+            return                                   # no tick since we sold
+        px, entry = float(v[0]), float(pos["entry_price"])
+        tick_ts = pd.Timestamp(v[2])
+        if pos.get("be_last_tick") == tick_ts:
+            return                                   # this tick was already evaluated
+        pos["be_last_tick"] = tick_ts
+        with self.mlock:
+            n_ev = len(self.machine.events)
+            if pos.get("be_armed_ts") is None:
+                if px <= entry - x:
+                    pos["be_armed_ts"] = tick_ts
+                    self.machine.log(tick_ts, "breakeven_armed", None, pos, ltp=px,
+                                     trigger=round(entry - x, 2), stop=entry)
+            elif px >= entry:
+                self.machine.log(tick_ts, "breakeven_stop", None, pos, ltp=px, stop=entry,
+                                 armed=pos["be_armed_ts"].strftime("%H:%M:%S"))
+                self.machine.close_trade(pos, tick_ts, px, "breakeven_stop", tick_ts)
+                self.machine.last_closed = tick_ts
+                self.machine.position = None
+            if len(self.machine.events) > n_ev:
+                self._after_bar(n_ev)
+
     def step(self):
         """Hand every newly completed candle to the machine, in order."""
         now = self.clock()
         if self.blocked_reason:
             return
+        if now.time() < dt.time(15, 15):
+            self.breakeven_tick(now)
         for t in self.labels():
             key = t.strftime("%H:%M")
             if key in self.processed:

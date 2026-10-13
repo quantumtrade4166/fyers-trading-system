@@ -35,6 +35,12 @@ class Config:
     fill_search_min: int = 5
     slippage_points: float = 0.0           # per order (entry and exit each), charged as a cost
 
+    # OPTIONAL extension (off in the baseline): once the premium has fallen
+    # `breakeven_after_points` below the sell price, a stop sits at the sell price.
+    # Checked on 1-minute bars; a minute that touches both levels counts as NOT armed
+    # yet (worst case); fill = the sell price, or the minute's open if it gapped past.
+    breakeven_after_points: float | None = None
+
     tag: str = "BASELINE"
 
     def to_dict(self):

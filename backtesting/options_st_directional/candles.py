@@ -40,3 +40,23 @@ def supertrend(c5: pd.DataFrame, period: int, mult: float) -> pd.DataFrame:
     c5.iloc[: period - 1, c5.columns.get_loc("st")] = np.nan
     c5.iloc[: period - 1, c5.columns.get_loc("st_dir")] = 0
     return c5
+
+
+# NSE equity closing auction (NIFTY index, from 2026-08-03): the index stops
+# ticking during the 15:15 minute and prints the official close at ~15:29:50.
+# TradingView's NIFTY 5-min chart has NO candles after 15:10 on these days, and
+# its Supertrend(10,3) is computed without them. Verified 13-Oct against 1,440
+# TradingView candles (11-Sep..12-Oct): dropping index minutes >= 15:15 gives
+# 100% direction agreement and 32/32 identical flips (ST within 3 pts). Keeping
+# them -- raw Breeze holds junk there -- matched only 18/32 flips.
+CLOSING_AUCTION_FROM = "2026-08-03"
+
+
+def clean_index_closing_auction(one_min: pd.DataFrame, start: str = CLOSING_AUCTION_FROM) -> pd.DataFrame:
+    """Drop index minutes from 15:15 on closing-auction days (TradingView convention).
+    For the INDEX only -- options trade normally until 15:30."""
+    df = one_min.copy()
+    df["datetime"] = pd.to_datetime(df["datetime"])
+    hm = df["datetime"].dt.strftime("%H:%M")
+    day = df["datetime"].dt.strftime("%Y-%m-%d")
+    return df[~((day >= start) & (hm >= "15:15"))].reset_index(drop=True)

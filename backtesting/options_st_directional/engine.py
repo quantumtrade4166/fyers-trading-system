@@ -165,7 +165,7 @@ class DayMachine:
             "entry_ts": fill_ts, "entry_price": price,
             "exit_signal_ts": None, "exit_ts": None, "exit_price": None,
             "exit_reason": None, "exit_close": None, "exit_st": None,
-            "anomalies": "", "contract": s.contract,
+            "anomalies": "", "contract": s.contract, "be_armed_ts": None,
         }
         s.status = "executed"
         self.trades.append(tr)
@@ -179,6 +179,34 @@ class DayMachine:
             tr["anomalies"] = (tr["anomalies"] + "; " + note).strip("; ")
         self.log(fill_ts, "exit_fill", None, tr, price=price, reason=reason)
 
+    # ---------- optional breakeven stop ----------
+    def breakeven_check(self, t, T):
+        """Walk the open position's 1-minute bars inside candle t (minutes t..T)."""
+        pos, x = self.position, getattr(self.cfg, "breakeven_after_points", None)
+        if pos is None or not x:
+            return
+        bars = self.provider.minute_bars(self.day, pos["contract"], t, T)
+        if bars is None or bars.empty:
+            return
+        entry = float(pos["entry_price"])
+        for r in bars.itertuples():
+            m = pd.Timestamp(r.datetime)
+            if m < pd.Timestamp(pos["entry_ts"]).floor("min"):
+                continue
+            if pos.get("be_armed_ts") is not None:
+                if float(r.high) >= entry:
+                    px = max(entry, float(r.open))          # gapped past the stop
+                    self.log(m, "breakeven_stop", None, pos, minute=m.time(), stop=entry,
+                             fill=px, armed=pos["be_armed_ts"].time())
+                    self.close_trade(pos, m, px, "breakeven_stop", m)
+                    self.last_closed = m
+                    self.position = None
+                    return
+            elif float(r.low) <= entry - x:
+                pos["be_armed_ts"] = m                       # active from the NEXT minute
+                self.log(m, "breakeven_armed", None, pos, minute=m.time(),
+                         low=float(r.low), trigger=round(entry - x, 2))
+
     # ---------- the clock ----------
     def on_close(self, t) -> bool:
         """Process completed candle t (decisions at T = t + 5 min).
@@ -189,6 +217,7 @@ class DayMachine:
         T = t + self.step
         if t < self.first:
             return True
+        self.breakeven_check(t, T)
         if T >= self.sq:
             # the 15:10 candle closes at 15:15: flat, nothing new
             self.square_off()

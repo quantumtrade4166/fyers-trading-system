@@ -478,6 +478,12 @@ class LiveController:
             audit.log(self.index, "SQUAREOFF", reason=reason, ce=ce_out, pe=pe_out,
                       real_covered=(ce_out is not None or pe_out is not None))
         self.persist()
+        # Never trust our OWN book that we are flat — CONFIRM against the broker and keep
+        # covering any real short until the broker agrees. The 2026-10-12 Delta-Neutral
+        # overnight carry came from an engine marking a leg closed that never executed at
+        # the broker. Applies to EVERY flatten: MTM-stop, kill, and the 15:14 square-off.
+        if self.is_live_armed() and not self._seeding:
+            self._verify_flat_with_broker(reason)
 
     def _broker_open_shorts(self) -> dict | None:
         """Real short qty per leg as the BROKER reports it (THIS strategy's tagged fills,
@@ -513,36 +519,42 @@ class LiveController:
         never acceptable. If the broker can't be read or can't be confirmed flat, we raise
         a loud, auditable alarm rather than silently assume we are safe."""
         import time as _t
-        # 1) learn the truth: rebuild the ledger from the broker's real fills (retry a
-        #    just-filled leg that may not be visible in the order book for a moment).
+        # learn the truth: rebuild the ledger from the broker's real fills (retry a
+        # just-filled leg that may not be visible in the order book for a moment), then
+        # flatten — _flatten itself now CONFIRMS flat against the broker before believing it.
         for _ in range(3):
             truth = self._broker_open_shorts()
             self.reconcile_broker()
             if truth is not None:
                 break
             _t.sleep(1.0)
-        # 2) book + cover whatever is really short (persistent, depth-driven _close_leg).
         self._flatten(reason)
-        # 3) verify against the broker; resync + cover again until confirmed flat.
+
+    def _verify_flat_with_broker(self, reason: str):
+        """Confirm against the BROKER that we are actually flat, covering any real short until
+        it agrees — the local book is NEVER trusted to mean 'flat'. The 2026-10-12 overnight
+        carry came from an engine marking a leg closed that never executed at the broker. If the
+        broker can't be read, treat it as UNKNOWN and keep retrying (never conclude flat); if it
+        still can't be confirmed, raise a loud FAILSAFE_UNCONFIRMED alarm rather than assume safety."""
+        import time as _t
         for attempt in range(5):
             self.reconcile_broker()                 # keep the ledger == broker for the cover
             still = self._broker_open_shorts()
             if still == {}:
-                audit.log(self.index, "FAILSAFE_FLAT", reason=reason[:120], attempt=attempt + 1)
-                print(f"  [live] {self.index} fail-safe: broker confirms FLAT", flush=True)
+                audit.log(self.index, "BROKER_FLAT_CONFIRMED", reason=reason[:120], attempt=attempt + 1)
                 return
-            if still is None:                       # couldn't read — wait and retry
+            if still is None:                       # couldn't read the broker — never assume flat
                 _t.sleep(1.0)
                 continue
-            audit.log(self.index, "FAILSAFE_COVER", attempt=attempt + 1, shorts=still)
-            print(f"  [live] {self.index} fail-safe: broker still short {still} — covering", flush=True)
+            audit.log(self.index, "VERIFY_COVER", attempt=attempt + 1, shorts=still)
+            print(f"  [live] {self.index} broker still short {still} — covering", flush=True)
             for sym, q in still.items():
-                self._close_leg(sym, self.guard.max_cycles, "failsafe_cover", q)
+                self._close_leg(sym, self.guard.max_cycles, "verify_cover", q)
             _t.sleep(0.5)
         final = self._broker_open_shorts()
         audit.log(self.index, "FAILSAFE_UNCONFIRMED", shorts=final, reason=reason[:120])
-        print(f"  [live] {self.index} *** FAIL-SAFE COULD NOT CONFIRM FLAT: {final} — CHECK BROKER ***",
-              flush=True)
+        print(f"  [live] {self.index} *** COULD NOT CONFIRM FLAT: {final} — CHECK BROKER ***", flush=True)
+        self.persist()
 
     def _cover_naked(self, naked, cycle, reason):
         sym, units = naked

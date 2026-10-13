@@ -25,6 +25,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
 import argparse
+import os
 import json
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -500,7 +501,11 @@ class Downloader:
                 subset=["datetime", "expiry", "strike_price", "option_type"],
                 keep="last",
             ).sort_values(["datetime", "expiry", "strike_price", "option_type"])
-            chunk.to_parquet(path, index=False, compression="snappy")
+            # write-then-swap: a run killed mid-write (12/13-Oct, 2-h job limit) left a
+            # truncated year file -- every cached contract-day of that year unreadable
+            tmp = path.with_suffix(".parquet.tmp")
+            chunk.to_parquet(tmp, index=False, compression="snappy")
+            os.replace(tmp, path)
             print(f"    [flush] {_display(path)} -> {len(chunk):,} rows")
 
         self.rows_written += len(df)

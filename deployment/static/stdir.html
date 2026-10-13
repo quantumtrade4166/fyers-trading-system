@@ -293,7 +293,9 @@ function renderDay(m) {
 function renderPos(p) {
   if (!p) { $('pos').textContent = 'flat'; $('pos-sub').textContent = ''; return; }
   $('pos').innerHTML = `SELL ${p.qty} × ${p.strike} ${p.opt_type} <span class="${p.net >= 0 ? 'pos' : 'neg'}">${signed(p.net)}</span>`;
-  $('pos-sub').innerHTML = `sold <b>${num(p.entry_price)}</b> at <b>${tOnly(p.entry_ts)}</b> · LTP <b>${num(p.ltp)}</b> · exp <b>${p.expiry}</b>`;
+  const be = p.be_armed_ts ? ` · <b class="pos">stop at cost ${num(p.entry_price)} (armed ${tOnly(p.be_armed_ts)})</b>`
+                          : ` · stop to cost once LTP ≤ <b>${num(p.entry_price - 25)}</b>`;
+  $('pos-sub').innerHTML = `sold <b>${num(p.entry_price)}</b> at <b>${tOnly(p.entry_ts)}</b> · LTP <b>${num(p.ltp)}</b> · exp <b>${p.expiry}</b>` + be;
 }
 function renderSetup(s) {
   if (!s) { $('setup').textContent = '—'; $('setup-sub').textContent = ''; return; }
@@ -348,7 +350,7 @@ async function loadState() {
     });
     optCandle.setMarkers(p.markers.slice().sort((a, b) => a.time - b.time).map(m => m.kind === 'sell'
       ? { time: m.time, position: 'aboveBar', shape: 'arrowDown', color: '#f43f5e', text: 'SELL ' + num(m.price) }
-      : { time: m.time, position: 'belowBar', shape: 'arrowUp', color: '#22c55e', text: 'BUY ' + num(m.price) + (m.reason === 'square_off_1515' ? ' 15:15' : '') }));
+      : { time: m.time, position: 'belowBar', shape: 'arrowUp', color: '#22c55e', text: 'BUY ' + num(m.price) + (m.reason === 'square_off_1515' ? ' 15:15' : m.reason === 'breakeven_stop' ? ' cost-stop' : '') }));
     const k = curDate + p.label;
     if (fitKey.opt !== k && p.candles.length) { optChart.timeScale().fitContent(); fitKey.opt = k; }
   }
@@ -371,7 +373,7 @@ function renderTrades(ts) {
       <td>${tOnly(t.entry_ts)}</td><td class="r num">${num(t.entry_price)}</td>
       <td>${open ? '<span class="pill live">open</span>' : tOnly(t.exit_ts)}</td>
       <td class="r num">${open ? num(t.ltp) + ' <span class="sub">ltp</span>' : num(t.exit_price)}</td>
-      <td>${open ? '—' : (t.exit_reason === 'option_st' ? `close ${num(t.exit_close)} &gt; ST ${num(t.exit_st)}` : '15:15 square-off')}${t.catchup_fill ? ' · catch-up' : ''}</td>
+      <td>${open ? '—' : (t.exit_reason === 'option_st' ? `close ${num(t.exit_close)} &gt; ST ${num(t.exit_st)}` : t.exit_reason === 'breakeven_stop' ? 'stop at cost' : '15:15 square-off')}${t.catchup_fill ? ' · catch-up' : ''}</td>
       <td class="r num ${t.gross >= 0 ? 'pos' : 'neg'}">${signed(t.gross)}</td>
       <td class="r num">${money(t.charges)}</td>
       <td class="r num ${net >= 0 ? 'pos' : 'neg'}"><b>${signed(net)}</b></td></tr>`;

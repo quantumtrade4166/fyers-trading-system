@@ -30,7 +30,7 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-ROOT    = Path(r"G:\fyers_data_pipeline")
+ROOT    = Path(__file__).resolve().parents[3]      # repo root (PC G:\..., VPS C:\trading\...)
 OUT_DIR = ROOT / "Bhavcopy"
 INDEX   = ROOT / "Nifty 500 Daily Fyers" / "_NIFTY50_INDEX.parquet"
 
@@ -138,6 +138,12 @@ def main():
 
     idx = pd.read_parquet(INDEX, columns=["close"])
     days = idx.loc[args.start:args.end].index if args.end else idx.loc[args.start:].index
+    # The index file is not maintained daily (the VPS daily task saw "0 of 0 days").
+    # Past its last date, try every weekday up to yesterday: an exchange holiday has
+    # no file, comes back 404 and is simply reported as a failed day.
+    end = pd.Timestamp(args.end) if args.end else pd.Timestamp.today().normalize() - pd.Timedelta(days=1)
+    after = pd.bdate_range(max(idx.index.max() + pd.Timedelta(days=1), pd.Timestamp(args.start)), end)
+    days = days.append(after)
     OUT_DIR.mkdir(exist_ok=True)
 
     todo = []

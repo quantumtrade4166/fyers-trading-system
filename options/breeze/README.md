@@ -91,7 +91,7 @@ regardless, so a successful login does **not** prove the key is right.
 
 ## Daily login (manual — no headless flow exists)
 
-Tokens expire every day, and Breeze has no TOTP login like `auth/auto_login.py`.
+Tokens expire every day. `session.get_client()` now renews them itself via the headless TOTP login in `auto_login.py` (verified 2026-10-12), so no manual login is needed.
 
 ```bash
 python -m options.breeze.session --login       # prints the URL
