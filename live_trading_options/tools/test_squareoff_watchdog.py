@@ -16,7 +16,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from squareoff_watchdog import own_net_shorts, broker_shorts, to_close
+from squareoff_watchdog import own_net, broker_net, to_close, BUY, SELL
 
 PASS = FAIL = 0
 
@@ -55,27 +55,27 @@ print("\n  -- own_net_shorts: only OUR completed orders count --")
 
 k = Stub([order("NIFTY24100CE", "SELL", 520, "dnstrangle")],
          [position("NIFTY24100CE", -520)])
-check("a completed short is ours", own_net_shorts(k)["NIFTY24100CE"]["qty"], 520)
+check("a completed short is ours", own_net(k)["NIFTY24100CE"]["qty"], 520)
 
 k = Stub([order("NIFTY24100CE", "SELL", 520, "dnstrangle"),
           order("NIFTY24100CE", "BUY", 520, "dnstrangle")], [])
-check("sold then bought back -> not short", own_net_shorts(k), {})
+check("sold then bought back -> not short", own_net(k), {})
 
 k = Stub([order("NIFTY24100CE", "SELL", 520, "dnstrangle", status="REJECTED")], [])
-check("a REJECTED order moves nothing", own_net_shorts(k), {})
+check("a REJECTED order moves nothing", own_net(k), {})
 
 k = Stub([order("NIFTY24100CE", "SELL", 520, "26090101100001783")],
          [position("NIFTY24100CE", -520)])
-check("an untagged (manual) short is NOT ours", own_net_shorts(k), {})
+check("an untagged (manual) short is NOT ours", own_net(k), {})
 
 k = Stub([order("NIFTY24150CE", "SELL", 520, "vwstrangle"),
           order("NIFTY23950PE", "SELL", 520, "vwstrangle")], [])
-check("both VWAP legs are ours", sorted(own_net_shorts(k)), ["NIFTY23950PE", "NIFTY24150CE"])
+check("both VWAP legs are ours", sorted(own_net(k)), ["NIFTY23950PE", "NIFTY24150CE"])
 
 k = Stub([order("NIFTY24100CE", "SELL", 520, "dnstrangle"),
           order("NIFTY24100CE", "SELL", 260, "dnstrangle"),
           order("NIFTY24100CE", "BUY", 260, "dnstrangle")], [])
-check("partial cover nets correctly", own_net_shorts(k)["NIFTY24100CE"]["qty"], 520)
+check("partial cover nets correctly", own_net(k)["NIFTY24100CE"]["qty"], 520)
 
 
 print("\n  -- to_close: ours AND actually open, capped by the broker --")
@@ -93,7 +93,7 @@ k = Stub(
 jobs = {j["tradingsymbol"]: j for j in to_close(k)}
 check("closes exactly our two legs", sorted(jobs), ["NIFTY23950PE", "NIFTY24150CE"])
 check("leaves the manual short alone", "NIFTY24100CE" in jobs, False)
-check("leaves the manual long alone", "NIFTY24700CE" in jobs, False)
+check("still leaves the MANUAL long alone (not our tag)", "NIFTY24700CE" in jobs, False)
 check("uses the product the position is REALLY in", jobs["NIFTY24150CE"]["product"], "MIS")
 
 # ours per our orders, but the broker says it is already gone
@@ -113,15 +113,18 @@ check("never buys back more than OUR book says", to_close(k)[0]["qty"], 260)
 # a long position is never "closed"
 k = Stub([order("NIFTY24700CE", "BUY", 1040, "dnstrangle")],
          [position("NIFTY24700CE", 1040)])
-check("a LONG is never squared off by this", to_close(k), [])
+check("a LONG left by a double-close IS now closed", 
+      [(j["tradingsymbol"], j["qty"], j["side"]) for j in to_close(k)],
+      [("NIFTY24700CE", 1040, SELL)])
 
 
 print("\n  -- broker_shorts --")
 k = Stub([], [position("A", -100, "NRML"), position("B", 50, "MIS"),
               position("C", 0, "NRML")])
-b = broker_shorts(k)
-check("only shorts are listed", sorted(b), ["A"])
-check("quantity is positive magnitude", b["A"]["qty"], 100)
+b = broker_net(k)
+check("both directions are listed", sorted(b), ["A", "B"])
+check("a short is POSITIVE", b["A"]["qty"], 100)
+check("a long is NEGATIVE", b["B"]["qty"], -50)
 check("product is carried through", b["A"]["product"], "NRML")
 
 
@@ -136,8 +139,8 @@ class Broken:
         raise RuntimeError("api down")
 
 
-check("unreadable order book -> empty, no crash", own_net_shorts(Broken()), {})
-check("unreadable positions -> empty, no crash", broker_shorts(Broken()), {})
+check("unreadable order book -> empty, no crash", own_net(Broken()), {})
+check("unreadable positions -> empty, no crash", broker_net(Broken()), {})
 check("to_close survives both", to_close(Broken()), [])
 
 print(f"\n  {PASS} passed, {FAIL} failed")

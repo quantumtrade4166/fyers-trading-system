@@ -968,19 +968,142 @@ _real = (_ex_mod.kx.cancel, _ex_mod.kx.order_status)
 _ex_mod.kx.cancel = lambda kite, oid: None
 _ex_mod.kx.order_status = lambda kite, oid: {"status": _seq["s"].pop(0) if len(_seq["s"]) > 1
                                              else _seq["s"][0]}
-check("CANCEL PENDING then CANCELLED counts as cancelled", _ex.cancel_stop(_leg), True)
+check("CANCEL PENDING then CANCELLED -> cancelled", _ex.cancel_stop(_leg), "cancelled")
 
 _seq["s"] = ["COMPLETE"]
-check("a stop that filled during the race also counts (leg already covered)",
-      _ex.cancel_stop(_leg), True)
+check("a stop that FILLED during the race is reported as filled, not cancelled",
+      _ex.cancel_stop(_leg), "filled")
 
 import time as _tm
 _seq["s"] = ["TRIGGER PENDING"]
 _t0 = _tm.monotonic()
-check("a stop still resting after the wait is a real failure", _ex.cancel_stop(_leg), False)
+check("a stop still resting after the wait is UNKNOWN", _ex.cancel_stop(_leg), "unknown")
 check("and it gives up in bounded time", _tm.monotonic() - _t0 < 6, True)
 _ex_mod.kx.cancel, _ex_mod.kx.order_status = _real
 _ex.set_live(False)
+
+# -- the 2026-10-12 double-close: a stop that fires as we decide to cover -------
+# NIFTY PE 22250 was short 390 with its stop at 50. At 11:13 the premium hit 50.45,
+# so the exchange stop fired at the same moment max-loss decided to cover. cancel_stop
+# reported success ("cancelled OR filled"), the cover bought the same 390 again, and one
+# short became a LONG 390 that the book believed was flat. It carried overnight on NRML
+# (the 15:20 watchdog only hunts shorts) and cost ~Rs15.7k the next morning.
+from live.executor import Fill as _F3
+from live.position import Leg as _L3
+
+print("\n  [a stop firing during the cover must not cause a second buy]")
+_c = new_ctrl(dte=0)
+_c.executor.kite = object()
+_c.executor.set_live(True)
+_leg3 = _L3(PE, 22250, "NIFTY22250PE", 390)
+_leg3.mark_filled("o-open", 21.7, "10:00:00")
+_leg3.mark_protected("SL-9", 50, True, 52.0, "10:00:01")
+_c.position.set_leg(_leg3)
+
+_buys = {"n": 0}
+_c.executor.buy = lambda leg, mark, kind="exit", urgency=1.0: (
+    _buys.__setitem__("n", _buys["n"] + 1) or _F3("should-not-happen", 50.45, "11:13:20"))
+_c.executor.cancel_stop = lambda leg: _c.executor.STOP_FILLED
+_c.executor.stop_fill = lambda leg: _F3("SL-9", 50.0, "11:13:19")
+
+_px = _c._cover(_leg3, "max loss hit (-10374.0 <= -10000.0)")
+check("NO second buy was placed", _buys["n"], 0)
+check("the leg is closed at the STOP's fill", _px, 50.0)
+check("and booked as a stop loss", _c.position.pe.exit_reason, "stop loss")
+check("logged as a stop hit, not a cover", len(evs(_c, "stop_hit")), 1)
+check("the stop-hit note says why", "NOT covering again" in (evs(_c, "stop_hit")[0].get("note") or ""), True)
+
+print("\n  [an unreadable stop state must not be covered blind]")
+_c2 = new_ctrl(dte=0)
+_c2.executor.kite = object()
+_c2.executor.set_live(True)
+_leg4 = _L3(PE, 22250, "NIFTY22250PE", 390)
+_leg4.mark_filled("o-open", 21.7, "10:00:00")
+_leg4.mark_protected("SL-9", 50, True, 52.0, "10:00:01")
+_c2.position.set_leg(_leg4)
+_buys2 = {"n": 0}
+_c2.executor.buy = lambda leg, mark, kind="exit", urgency=1.0: (
+    _buys2.__setitem__("n", _buys2["n"] + 1) or _F3("x", 50.0, "11:13:20"))
+_c2.executor.cancel_stop = lambda leg: _c2.executor.STOP_UNKNOWN
+check("refused to buy while the stop state is unknown", _c2._cover(_leg4, "max loss"), None)
+check("really placed nothing", _buys2["n"], 0)
+check("the leg is left OPEN for the retry loop", _c2.position.pe.is_live, True)
+check("and it is logged", len(evs(_c2, "stop_cancel_unconfirmed")), 1)
+
+
+# -- the broker, not our book, decides whether we are flat ---------------------
+print("\n  [_broker_net reads the broker's own truth]")
+
+
+class _BK:
+    """Minimal broker: our own tagged fills."""
+    def __init__(self, fills, raise_it=False):
+        self._f, self._raise = fills, raise_it
+
+    def orders(self):
+        if self._raise:
+            raise RuntimeError("api.kite.trade timed out")
+        return self._f
+
+
+def _f(ts, side, qty, px, ex="NFO"):
+    return {"tag": "dnstrangle", "status": "COMPLETE", "tradingsymbol": ts, "exchange": ex,
+            "transaction_type": side, "filled_quantity": qty, "quantity": qty,
+            "average_price": px, "order_id": ts + side, "order_timestamp": "10:00:00",
+            "order_type": "LIMIT"}
+
+
+def _bn(fills, raise_it=False):
+    c = new_ctrl(dte=0)
+    c.executor.kite = _BK(fills, raise_it)
+    c.executor.set_live(True)
+    return c, c._broker_net()
+
+
+_, _net = _bn([_f("P1", "SELL", 390, 21.7)])
+check("an open short reads as POSITIVE", _net, {"P1": 390})
+_, _net = _bn([_f("P1", "SELL", 390, 21.7), _f("P1", "BUY", 390, 50.0)])
+check("sold then covered reads as flat", _net, {})
+_, _net = _bn([_f("P1", "SELL", 390, 21.7), _f("P1", "BUY", 390, 50.0), _f("P1", "BUY", 390, 50.45)])
+check("covered TWICE reads as a LONG (negative) — the 12-Oct case", _net, {"P1": -390})
+_, _net = _bn([_f("S1", "SELL", 20, 40.0, ex="BFO")])
+check("the other index's exchange is ignored", _net, {})
+_, _net = _bn([], raise_it=True)
+check("a broker that cannot be read is UNKNOWN (None), never flat", _net, None)
+
+
+print("\n  [_verify_flat_with_broker]")
+_v = new_ctrl(dte=0)
+_v.executor.kite = _BK([_f("P1", "SELL", 390, 21.7), _f("P1", "BUY", 390, 50.0)])
+_v.executor.set_live(True)
+check("broker agrees we are flat", _v._verify_flat_with_broker("square-off"), True)
+check("confirmation is logged", len(evs(_v, "broker_flat_confirmed")), 1)
+check("no alarm", _v.unconfirmed, None)
+
+# an over-cover (long) must be sold back out
+_v2 = new_ctrl(dte=0)
+_v2.executor.kite = _BK([_f("P1", "SELL", 390, 21.7), _f("P1", "BUY", 390, 50.0),
+                         _f("P1", "BUY", 390, 50.45)])
+_v2.executor.set_live(True)
+_strays = []
+_v2._close_stray = lambda ts, qty, side, reason: _strays.append((ts, qty, side))
+check("a stray LONG is closed, not ignored", _v2._verify_flat_with_broker("square-off"), False)
+check("and it is SOLD back out", _strays[0][:3], ("P1", 390, "SELL"))
+
+# the broker unreadable for every round -> alarm, never 'flat'
+_v3 = new_ctrl(dte=0)
+_v3.executor.kite = _BK([], raise_it=True)
+_v3.executor.set_live(True)
+check("unreadable broker is never called flat", _v3._verify_flat_with_broker("square-off", rounds=2), False)
+check("the alarm is raised", bool(_v3.unconfirmed), True)
+check("and logged loudly", len(evs(_v3, "failsafe_unconfirmed")), 1)
+check("the snapshot carries it", bool(_v3.snapshot().get("unconfirmed")), True)
+
+# while unconfirmed, the day may NOT be declared done
+_v3.position = _v3.position.__class__()
+_v3.stuck = {}
+_v3.done = (_v3.position.is_flat and not _v3.stuck and _v3.unconfirmed is None)
+check("done stays False while the broker is unconfirmed", _v3.done, False)
 
 print(f"\n  {PASS} passed, {FAIL} failed")
 sys.exit(1 if FAIL else 0)

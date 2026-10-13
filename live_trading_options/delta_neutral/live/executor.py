@@ -244,13 +244,31 @@ class Executor:
             time.sleep(0.3)
         return False, limit
 
-    def cancel_stop(self, leg) -> bool:
-        """Cancel a leg's resting stop before covering it deliberately. A stop left
-        behind after the leg is closed would fire later and open a NEW naked long."""
+    # cancel_stop outcomes — the caller MUST treat these differently
+    STOP_CANCELLED = "cancelled"   # gone; it is safe to place our own cover
+    STOP_FILLED = "filled"         # it already covered the leg — do NOT buy again
+    STOP_UNKNOWN = "unknown"       # could not confirm; buying could double-cover
+
+    def cancel_stop(self, leg) -> str:
+        """Cancel a leg's resting stop before covering it deliberately, and say WHAT
+        happened. A stop left behind after the leg is closed would fire later and open
+        a NEW naked long.
+
+        This returns a THREE-way answer, and that distinction is the whole point.
+        It used to return True for "cancelled OR already filled", and the caller then
+        placed its own cover regardless. On 2026-10-12 the NIFTY PE premium crossed its
+        own stop (50) at the same moment max-loss decided to cover at 50.45: the exchange
+        stop filled, the cancel reported success, and the cover bought the same 390 again.
+        One short, two buys -> a LONG 390 the book believed was flat. It carried overnight
+        (NRML is not auto-squared-off, and the 15:20 watchdog only looked for shorts) and
+        cost ~Rs15.7k the next morning.
+
+        UNKNOWN is NOT an error to shrug at either: if we cannot see whether the stop is
+        gone, placing a cover risks the same double-fill, so the caller must retry instead."""
         if leg.sl_order_id is None:
-            return True
+            return self.STOP_CANCELLED
         if not self.is_live or str(leg.sl_order_id).startswith("paper"):
-            return True
+            return self.STOP_CANCELLED
         try:
             kx.cancel(self.kite, leg.sl_order_id)
         except Exception:
@@ -267,10 +285,12 @@ class Executor:
         deadline = time.monotonic() + 4.0
         while True:
             st = kx.order_status(self.kite, leg.sl_order_id)
-            if st["status"] in ("CANCELLED", "REJECTED", "COMPLETE"):
-                return True
+            if st["status"] == "COMPLETE":
+                return self.STOP_FILLED          # the exchange already covered this leg
+            if st["status"] in ("CANCELLED", "REJECTED"):
+                return self.STOP_CANCELLED
             if time.monotonic() >= deadline:
-                return False
+                return self.STOP_UNKNOWN         # still resting / unreadable
             time.sleep(0.25)
 
     def stop_fill(self, leg) -> Fill | None:

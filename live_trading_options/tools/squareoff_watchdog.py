@@ -13,7 +13,8 @@ This runs as its OWN scheduled task at 15:20, in its OWN process, with its own
 Kite session. It does not import either engine and does not care whether they
 are alive. It asks one question:
 
-    does this account still hold a SHORT that one of MY strategies opened?
+    does this account still hold ANYTHING that one of MY strategies opened?
+    (a short, or a LONG left behind by a double-close — both carry on NRML)
 
 and if so, buys it back and keeps trying until the broker confirms it is gone.
 
@@ -87,10 +88,15 @@ def log(msg: str):
 
 
 # ── what WE are short, from our own orders ────────────────────────────────
-def own_net_shorts(kite) -> dict:
-    """{tradingsymbol: {qty, exchange, tag}} for every symbol our tags are net
-    SHORT in today. Only COMPLETE orders count — a rejected or pending order
-    never moved anything."""
+def own_net(kite) -> dict:
+    """{tradingsymbol: {qty, exchange, tag}} for every symbol our tags hold a net
+    position in today — **+ short, - long**. Only COMPLETE orders count; a rejected
+    or pending order never moved anything.
+
+    It used to return shorts only. That blind spot carried a position overnight on
+    2026-10-12: a leg was closed twice (the exchange stop fired as the engine also
+    covered), leaving a LONG 390 that this watchdog could not see and NRML does not
+    auto-square-off. A stray long is real money at risk just like a short."""
     net = {}
     try:
         orders = kite.orders() or []
@@ -109,18 +115,19 @@ def own_net_shorts(kite) -> dict:
             continue
         row = net.setdefault(ts, {"qty": 0, "exchange": o.get("exchange"), "tag": tag})
         row["qty"] += qty if o.get("transaction_type") == SELL else -qty
-    return {ts: r for ts, r in net.items() if r["qty"] > 0}
+    return {ts: r for ts, r in net.items() if r["qty"] != 0}
 
 
-def broker_shorts(kite) -> dict:
-    """{tradingsymbol: {qty, product, exchange}} — what the account is REALLY
-    short right now, and crucially in WHICH product. The buy-back must match it:
-    a BUY in the wrong product does not close the short, it opens a long."""
+def broker_net(kite) -> dict:
+    """{tradingsymbol: {qty, product, exchange}} — what the account REALLY holds
+    right now (**+ short, - long**), and crucially in WHICH product. The closing
+    order must match it: an order in the wrong product does not close anything, it
+    opens a second position beside it."""
     out = {}
     try:
         for p in (kite.positions() or {}).get("net", []):
             q = int(p.get("quantity") or 0)
-            if q < 0:
+            if q != 0:
                 out[p["tradingsymbol"]] = {"qty": -q, "product": p.get("product"),
                                            "exchange": p.get("exchange")}
     except Exception as e:
@@ -129,19 +136,23 @@ def broker_shorts(kite) -> dict:
 
 
 def to_close(kite) -> list:
-    """The intersection: shorts that are BOTH ours and actually open.
+    """The intersection: positions that are BOTH ours and actually open, either way.
 
-    Capped by the broker's real quantity, so a stale or double-counted order can
-    never make us buy back more than exists."""
-    mine, live = own_net_shorts(kite), broker_shorts(kite)
+    Capped by the broker's real quantity and by our own, so a stale or double-counted
+    order can never make us trade more than exists. `side` is what closes it: BUY for
+    a short, SELL for a long."""
+    mine, live = own_net(kite), broker_net(kite)
     jobs = []
     for ts, row in mine.items():
         b = live.get(ts)
         if not b:
             continue                                   # already flat — nothing to do
-        qty = min(row["qty"], b["qty"])
+        if (row["qty"] > 0) != (b["qty"] > 0):
+            continue                                   # broker disagrees on direction
+        qty = min(abs(row["qty"]), abs(b["qty"]))
         if qty > 0:
             jobs.append({"tradingsymbol": ts, "qty": qty,
+                         "side": BUY if row["qty"] > 0 else SELL,
                          "exchange": b.get("exchange") or row.get("exchange"),
                          "product": b.get("product"), "tag": row["tag"]})
     return jobs
@@ -149,9 +160,11 @@ def to_close(kite) -> list:
 
 # ── closing one ───────────────────────────────────────────────────────────
 def close_one(kite, job, cushion: int, dry: bool) -> bool:
-    """Buy one short back. True once the broker confirms a COMPLETE fill."""
+    """Close one position — BUY back a short, SELL out a long. True once the broker
+    confirms a COMPLETE fill."""
     ts, ex, qty = job["tradingsymbol"], job["exchange"], job["qty"]
-    price = kx.marketable_price(kite, ex, ts, BUY, qty, fallback=None,
+    side = job.get("side", BUY)
+    price = kx.marketable_price(kite, ex, ts, side, qty, fallback=None,
                                 cushion_ticks=cushion)
     if price is None:
         q = kx.quote_book(kite, ex, ts) or {}
@@ -159,20 +172,20 @@ def close_one(kite, job, cushion: int, dry: bool) -> bool:
         if not ltp:
             log(f"{ts}: no price at all — cannot size a limit, will retry")
             return False
-        price = round(ltp * 2, 1)                      # last resort, still a LIMIT
+        price = round(ltp * (2 if side == BUY else 0.5), 1)   # last resort, still a LIMIT
     if dry:
-        log(f"DRY-RUN would BUY {qty} {ts} @ {price} product={job['product']} "
+        log(f"DRY-RUN would {side} {qty} {ts} @ {price} product={job['product']} "
             f"cushion={cushion}")
         return False
     try:
-        oid = kx.place_limit_verified(kite, ts, ex, BUY, qty, price,
+        oid = kx.place_limit_verified(kite, ts, ex, side, qty, price,
                                       job["product"], job["tag"])
     except Exception as e:
         log(f"{ts}: order REJECTED — {type(e).__name__}: {e}")
         audit.log(ts, "WATCHDOG_REJECTED", system="watchdog", error=str(e)[:200],
                   qty=qty, price=price, product=job["product"])
         return False
-    log(f"{ts}: BUY {qty} @ {price} product={job['product']} oid={oid}")
+    log(f"{ts}: {side} {qty} @ {price} product={job['product']} oid={oid}")
     deadline = time.monotonic() + FILL_WAIT
     while time.monotonic() < deadline:
         st = kx.order_status(kite, oid)
@@ -216,9 +229,10 @@ def main():
         log("nothing open that belongs to a strategy — clean")
         return 0
 
-    log(f"{len(jobs)} strategy short(s) STILL OPEN after square-off:")
+    log(f"{len(jobs)} strategy position(s) STILL OPEN after square-off:")
     for j in jobs:
-        log(f"    {j['tradingsymbol']} qty={j['qty']} product={j['product']} tag={j['tag']}")
+        log(f"    {j['tradingsymbol']} qty={j['qty']} close-by={j.get('side', BUY)} "
+            f"product={j['product']} tag={j['tag']}")
     audit.log("ALL", "WATCHDOG_FOUND_OPEN", system="watchdog", count=len(jobs),
               detail="; ".join(f"{j['tradingsymbol']}x{j['qty']}" for j in jobs))
 
@@ -245,9 +259,10 @@ def main():
     # Out of rounds and still short. Say so as loudly as a log file can: this is
     # an NRML position that will carry overnight unless a human acts.
     log("=" * 70)
-    log("STILL SHORT AFTER EVERY ATTEMPT — CLOSE THESE BY HAND NOW:")
+    log("STILL OPEN AFTER EVERY ATTEMPT — CLOSE THESE BY HAND NOW:")
     for j in left:
-        log(f"    {j['tradingsymbol']} qty={j['qty']} product={j['product']}")
+        log(f"    {j['tradingsymbol']} qty={j['qty']} close-by={j.get('side', BUY)} "
+            f"product={j['product']}")
     log("NRML does not auto-square-off. These WILL carry overnight.")
     log("=" * 70)
     audit.log("ALL", "WATCHDOG_FAILED", system="watchdog", count=len(left),

@@ -145,6 +145,9 @@ class DNController:
         # try to cover, so a leg left behind is a naked short with nothing watching
         # it. Retried every tick, at a rising price, until the broker confirms.
         self.margin_halt = None                  # broker message, if funds ran out
+        # set when the BROKER could not be confirmed flat. While this is set the day
+        # is never 'done' and the tab shows an alarm — we do not assume safety.
+        self.unconfirmed: dict | None = None
         self._sized_from_control = False         # first control read always sizes
         self.stuck: dict[str, str] = {}
         self.stuck_attempts = 0
@@ -241,7 +244,8 @@ class DNController:
             self._flatten(reason)
         # A failed cover leaves the leg live and registered in `self.stuck`; the day
         # is NOT over until the retry loop actually gets us out.
-        self.done = self.position.is_flat and not self.stuck
+        self.done = (self.position.is_flat and not self.stuck
+                     and self.unconfirmed is None)
 
     def restore_paper(self) -> bool:
         """Bring the PAPER book back exactly where it was, from its own snapshot.
@@ -524,7 +528,8 @@ class DNController:
             if not self.done and not self.stuck:
                 self._flatten("15:14 square-off")
             # `done` means the position is genuinely gone, not merely attempted.
-            self.done = self.position.is_flat and not self.stuck
+            self.done = (self.position.is_flat and not self.stuck
+                     and self.unconfirmed is None)
             self._write_tick()
             return
 
@@ -793,9 +798,27 @@ class DNController:
         `urgency` scales the mark the limit ladder is priced off, so repeated
         attempts bid progressively higher. It stays a LIMIT at every level: Zerodha
         rejects MARKET orders on options, so "escalate to market" is not available."""
-        if not self.executor.cancel_stop(leg):
-            self._log("stop_cancel_failed", side=leg.opt_type, strike=leg.strike,
-                      order=leg.sl_order_id)
+        # What happened to the resting stop decides whether we may buy AT ALL.
+        state = self.executor.cancel_stop(leg)
+        if state == self.executor.STOP_FILLED:
+            # The exchange stop fired while we were deciding to cover. The leg is
+            # ALREADY closed; buying now would buy the same quantity a second time and
+            # leave a LONG. That is the 2026-10-12 overnight carry (~Rs15.7k).
+            f = self.executor.stop_fill(leg)
+            px = (f.price if f and f.price is not None else leg.sl_trigger)
+            leg.mark_stopped(px, (f.time if f else None) or self._hm())
+            self._log("stop_hit", side=leg.opt_type, strike=leg.strike,
+                      trigger=leg.sl_trigger, limit=leg.sl_limit, fill=px,
+                      order=leg.sl_order_id,
+                      note="stop filled during the cover race — NOT covering again")
+            return px
+        if state == self.executor.STOP_UNKNOWN:
+            # Cannot see whether the stop is gone. Buying could double-cover, so do
+            # nothing this tick; the caller leaves the leg OPEN and retries.
+            self._log("stop_cancel_unconfirmed", side=leg.opt_type, strike=leg.strike,
+                      order=leg.sl_order_id, reason=reason,
+                      note="stop state unknown — refusing to cover until it is clear")
+            return None
         # the mark is now only the FALLBACK for when the book cannot be read; the
         # real price comes from the depth, so urgency goes to the executor instead
         # of being baked into an inflated mark
@@ -851,7 +874,8 @@ class DNController:
         if not self.stuck:
             self._log("flatten_complete", attempts=self.stuck_attempts)
             self.stuck_attempts = 0
-            self.done = True
+            # only the broker may end the day
+            self.done = self._verify_flat_with_broker("stuck legs finally covered")
 
     # ── the three window actions ─────────────────────────────────────────
     def _run_window(self, key: str):
@@ -997,6 +1021,118 @@ class DNController:
         self._log("entry_aborted", reason=reason)
         self.persist()
 
+    # ── the broker is the only authority on what we hold ─────────────────
+    def _broker_net(self) -> dict | None:
+        """Net position per contract as the BROKER reports it, from THIS strategy's
+        own tagged fills on this index's exchange.
+
+        `{tradingsymbol: qty}` where **+ is still SHORT** and **- is a LONG we should
+        not have** (an over-cover). `{}` means the broker confirms flat. **None means
+        the broker could not be read — the caller must NOT conclude anything.**
+
+        Our own record is never good enough here. On 2026-10-12 the book said flat
+        while the account actually held a long 390 PE, because one short had been
+        closed twice; nothing ever asked the broker, so it carried overnight."""
+        if not self.executor.broker_ready:
+            return {}
+        from live.broker import kite_executor as kx
+        try:
+            fills = kx.strategy_fills(self.executor.kite, self.executor.tag)
+        except Exception as e:
+            self._log("broker_read_failed", error=f"{type(e).__name__}: {e}"[:160],
+                      note="cannot confirm what we hold — treating as UNKNOWN")
+            return None
+        ex = self.executor.exchange
+        net: dict[str, int] = {}
+        for f in fills:
+            if (f.get("exchange") or ex) != ex:
+                continue
+            ts, q = f.get("tradingsymbol"), int(f.get("qty") or 0)
+            if not ts or q <= 0:
+                continue
+            net[ts] = net.get(ts, 0) + (q if f.get("side") == "SELL" else -q)
+        return {t: q for t, q in net.items() if q != 0}
+
+    def _verify_flat_with_broker(self, reason: str, rounds: int = 5):
+        """Confirm with the BROKER that we really hold nothing, and fix it if we do.
+
+        The hard rule: never believe our own book about being flat. Three outcomes
+        are handled, and all three used to be mishandled:
+          - still SHORT  -> cover it (the stuck loop keeps at it every tick)
+          - gone LONG    -> we over-covered; SELL the excess back out
+          - unreadable   -> UNKNOWN: retry, and if it still cannot be confirmed raise
+                            a loud alarm instead of quietly calling the day done.
+        Kite timing out at square-off is exactly when this matters most, so a read
+        failure is retried rather than taken as 'nothing there'."""
+        import time as _t
+        for attempt in range(1, rounds + 1):
+            net = self._broker_net()
+            if net == {}:
+                self.unconfirmed = None
+                self._log("broker_flat_confirmed", reason=reason[:120], attempt=attempt)
+                return True
+            if net is None:
+                _t.sleep(1.0)
+                continue
+            shorts = {t: q for t, q in net.items() if q > 0}
+            longs = {t: -q for t, q in net.items() if q < 0}
+            self._log("broker_not_flat", attempt=attempt, shorts=shorts, longs=longs,
+                      reason=reason[:90])
+            for ts, q in shorts.items():
+                leg = self._leg_for_symbol(ts)
+                if leg is not None and leg.is_live:
+                    self.stuck[leg.opt_type] = reason        # the tick loop keeps covering
+                else:
+                    self._close_stray(ts, q, "BUY", reason)
+            for ts, q in longs.items():
+                self._close_stray(ts, q, "SELL", reason)     # undo an over-cover
+            _t.sleep(0.5)
+
+        final = self._broker_net()
+        self.unconfirmed = {"reason": reason[:120], "net": final, "at": self._hm()}
+        self._log("failsafe_unconfirmed", net=final, reason=reason[:120],
+                  note="COULD NOT CONFIRM FLAT AT THE BROKER — CHECK THE TERMINAL")
+        print(f"  [dn] {self.index} *** COULD NOT CONFIRM FLAT: {final} — CHECK BROKER ***",
+              flush=True)
+        self.persist()
+        return False
+
+    def _leg_for_symbol(self, tradingsymbol: str):
+        for side in (CE, PE):
+            leg = self.position.leg(side)
+            if leg is not None and leg.tradingsymbol == tradingsymbol:
+                return leg
+        return None
+
+    def _close_stray(self, tradingsymbol: str, qty: int, side: str, reason: str):
+        """Close a position the broker shows but our book does not account for —
+        either direction. A stray LONG is just as wrong as a stray short: it is real
+        money at risk that nothing else watches (the 15:20 watchdog only hunts
+        shorts), and on NRML it carries overnight."""
+        from live.broker import kite_executor as kx
+        product = self._broker_product(tradingsymbol) or self.product
+        try:
+            price = kx.marketable_price(self.executor.kite, self.executor.exchange,
+                                        tradingsymbol, side, qty, fallback=None,
+                                        cushion_ticks=6)
+            if price is None:
+                book = kx.quote_book(self.executor.kite, self.executor.exchange, tradingsymbol)
+                ltp = (book or {}).get("ltp")
+                if not ltp:
+                    self._log("stray_no_price", symbol=tradingsymbol, side=side, qty=qty)
+                    return
+                price = round(ltp * (2 if side == "BUY" else 0.5), 1)
+            oid = kx.place_limit_verified(self.executor.kite, tradingsymbol,
+                                          self.executor.exchange, side, qty, price,
+                                          product, self.executor.tag)
+        except Exception as e:
+            self._log("stray_close_failed", symbol=tradingsymbol, side=side, qty=qty,
+                      error=f"{type(e).__name__}: {e}"[:140])
+            return
+        self._log("stray_closed", symbol=tradingsymbol, side=side, qty=qty,
+                  price=price, product=product, order=oid, reason=reason[:90],
+                  note="position the broker held that our book did not")
+
     # ── end of day / kill ────────────────────────────────────────────────
     def _flatten(self, reason: str):
         for side in (CE, PE):
@@ -1008,6 +1144,10 @@ class DNController:
                       note="STILL SHORT at the broker — retrying every tick until filled")
         else:
             self._log("flatten", reason=reason, realized=self.position.realized())
+        # Our own book saying "flat" means nothing. Ask the broker, fix whatever it
+        # really holds (short OR an over-covered long), and never conclude flat from
+        # a read that failed.
+        self._verify_flat_with_broker(reason)
         self._record_equity()
         self.persist()
 
@@ -1175,7 +1315,7 @@ class DNController:
             "index": self.index, "date": self.date, "dte": self.dte,
             "book": "paper" if self.shadow else "live",
             "stuck": sorted(self.stuck), "stuck_attempts": self.stuck_attempts,
-            "margin_halt": self.margin_halt,
+            "margin_halt": self.margin_halt, "unconfirmed": self.unconfirmed,
             "expiry": str(self.expiry), "mode": self.mode,
             "armed": self.executor.is_live, "broker_ready": self.executor.broker_ready,
             "trades_allowed": self.trades_allowed, "killed": self.killed,
