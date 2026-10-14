@@ -47,19 +47,26 @@ class Config:
         return asdict(self)
 
 
-# NIFTY lot size by trade date. Only sizes verified for the periods this project
-# trades are listed; an earlier date raises instead of guessing.
-LOT_SIZE_SCHEDULE = [
-    ("2024-11-20", 75),
-    ("2025-12-30", 65),
+# NIFTY lot size by CONTRACT EXPIRY (a revision applies to newly listed contracts;
+# existing ones keep their size until they expire). From the NSE revisions:
+#   50 -> 25: first weekly 02-May-2024 (effective 26-Apr-2024)
+#   25 -> 75: last weekly with 25 = 19-Dec-2024, monthly 26-Dec-2024; first 75 = 02-Jan-2025
+#   75 -> 65: last weekly with 75 = 23-Dec-2025, monthly 30-Dec-2025; first 65 = 06-Jan-2026
+# Expiries before 2024 are not configured and raise instead of guessing.
+LOT_SIZE_BY_EXPIRY = [
+    ("2024-01-01", 50),
+    ("2024-04-26", 25),
+    ("2024-12-27", 75),
+    ("2025-12-31", 65),
 ]
 
 
-def lot_size(date_str: str) -> int:
+def lot_size(expiry) -> int:
+    e = str(expiry)[:10]
     size = None
-    for eff, n in LOT_SIZE_SCHEDULE:
-        if date_str >= eff:
+    for eff, n in LOT_SIZE_BY_EXPIRY:
+        if e >= eff:
             size = n
     if size is None:
-        raise ValueError(f"NIFTY lot size not configured for {date_str}")
+        raise ValueError(f"NIFTY lot size not configured for expiry {e}")
     return size

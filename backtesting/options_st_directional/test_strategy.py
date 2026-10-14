@@ -398,10 +398,13 @@ def test_signal_at_1515_is_not_entered():
 
 # 22 ---------------------------------------------------------------------------
 def test_costs_and_lot_size():
-    assert lot_size("2026-09-02") == 65 and lot_size("2025-06-02") == 75
+    assert lot_size("2026-09-08") == 65 and lot_size("2025-06-03") == 75
+    assert lot_size("2024-04-25") == 50 and lot_size("2024-05-02") == 25
+    assert lot_size("2024-12-26") == 25 and lot_size("2025-01-02") == 75
+    assert lot_size("2025-12-30") == 75 and lot_size("2026-01-06") == 65
     with pytest.raises(ValueError):
-        lot_size("2023-01-02")
-    tr = pd.DataFrame([{"date": DAY, "entry_price": 100.0, "exit_price": 80.0,
+        lot_size("2023-01-05")
+    tr = pd.DataFrame([{"date": DAY, "expiry": "2026-09-08", "entry_price": 100.0, "exit_price": 80.0,
                         "entry_ts": T("09:25"), "exit_ts": T("10:00"),
                         "exit_signal_ts": T("10:00"), "exit_reason": "option_st",
                         "pending_while_open": False}])

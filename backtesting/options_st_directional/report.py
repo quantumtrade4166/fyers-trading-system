@@ -27,7 +27,7 @@ def add_pnl(trades: pd.DataFrame, cfg) -> pd.DataFrame:
     df = trades.copy()
     if df.empty:
         return df
-    df["lot_size"] = df["date"].map(lot_size)
+    df["lot_size"] = df["expiry"].map(lot_size)          # by contract expiry, not trade date
     df["lots"] = cfg.lots
     df["qty"] = df["lot_size"] * cfg.lots
     df["points"] = df["entry_price"] - df["exit_price"]
