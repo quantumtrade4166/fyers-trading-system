@@ -66,47 +66,44 @@ def _mobile_variants(m: str) -> list:
     return [x for x in out if x and not (x in seen or seen.add(x))]
 
 
-def login(verbose: bool = True, *, rohit: bool = False):
+def login(verbose: bool = True, *, rohit: bool = False, d: bool = False):
     """Return a logged-in NeoAPI client, or raise RuntimeError. Never places an order.
 
-    By default logs in the Bhaiya account (KOTAK_CONSUMER_KEY, etc.).
-    Pass rohit=True for Rohit's account (KOTAK_CONSUMER_KEY_ROHIT, etc.).
+    Account is chosen by the env-key SUFFIX so each Kotak account is fully independent:
+      - default  -> Bhaiya  (KOTAK_CONSUMER_KEY, ...)
+      - rohit    -> Rohit   (KOTAK_CONSUMER_KEY_ROHIT, ...)
+      - d        -> Kotak D (KOTAK_CONSUMER_KEY_D, ...)
 
     Tries the mobile number with/without the +91 country code so a wrong guess there
     can't block the whole integration."""
     from neo_api_client import NeoAPI
 
-    if rohit:
-        req = tuple(k + _ROHIT_SUFFIX for k in _REQUIRED)
-    else:
-        req = _REQUIRED
-
-    creds = {k: os.getenv(k) for k in req}
-    missing = [k for k, v in creds.items() if not v]
+    sfx = "_ROHIT" if rohit else "_D" if d else ""
+    acct = "Rohit" if rohit else "Kotak D" if d else "Bhaiya"
+    creds = {k: os.getenv(k + sfx) for k in _REQUIRED}
+    missing = [k + sfx for k, v in creds.items() if not v]
     if missing:
-        acct = "Rohit" if rohit else "Bhaiya"
         raise RuntimeError(f"Kotak {acct} .env missing: " + ", ".join(missing)
-                           + f"  (add them to deployment/.env)")
+                           + "  (add them to deployment/.env)")
 
     last = None
-    for mob in _mobile_variants(creds["KOTAK_MOBILE" if not rohit else "KOTAK_MOBILE_ROHIT"]):
+    for mob in _mobile_variants(creds["KOTAK_MOBILE"]):
         try:
             client = NeoAPI(environment="prod", access_token=None, neo_fin_key=None,
-                            consumer_key=creds["KOTAK_CONSUMER_KEY" if not rohit else "KOTAK_CONSUMER_KEY_ROHIT"])
-            r1 = client.totp_login(mobile_number=mob, ucc=creds["KOTAK_UCC" if not rohit else "KOTAK_UCC_ROHIT"],
-                                   totp=_totp_now(creds["KOTAK_TOTP_SECRET" if not rohit else "KOTAK_TOTP_SECRET_ROHIT"]))
+                            consumer_key=creds["KOTAK_CONSUMER_KEY"])
+            r1 = client.totp_login(mobile_number=mob, ucc=creds["KOTAK_UCC"],
+                                   totp=_totp_now(creds["KOTAK_TOTP_SECRET"]))
             if not _ok(r1):
                 last = f"totp_login: {r1.get('error')}"
                 if verbose:
                     print(f"  [kotak] totp_login failed (mobile={mob}): {r1.get('error')}", flush=True)
                 continue
-            r2 = client.totp_validate(mpin=creds["KOTAK_MPIN" if not rohit else "KOTAK_MPIN_ROHIT"])
+            r2 = client.totp_validate(mpin=creds["KOTAK_MPIN"])
             if not _ok(r2):
                 last = f"totp_validate: {r2.get('error')}"
                 if verbose:
                     print(f"  [kotak] totp_validate failed: {r2.get('error')}", flush=True)
                 continue
-            acct = "Rohit" if rohit else "Bhaiya"
             if verbose:
                 print(f"  [kotak] login OK {acct} (mobile={mob})", flush=True)
             return client
@@ -114,7 +111,7 @@ def login(verbose: bool = True, *, rohit: bool = False):
             last = f"{type(e).__name__}: {e}"
             if verbose:
                 print(f"  [kotak] login error (mobile={mob}): {last}", flush=True)
-    raise RuntimeError(f"Kotak login failed: {last}")
+    raise RuntimeError(f"Kotak {acct} login failed: {last}")
 
 
 if __name__ == "__main__":

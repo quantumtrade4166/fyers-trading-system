@@ -71,6 +71,7 @@ class IndexBook:
         self.controller = None         # Zerodha live/paper-live controller (attached only if enabled)
         self.controller_kotak = None   # INDEPENDENT Kotak Bhaiya mirror controller
         self.controller_kotak_rohit = None  # INDEPENDENT Kotak Rohit mirror controller (3rd broker)
+        self.controller_kotak_d = None  # INDEPENDENT Kotak D mirror controller (4th broker)
         # resume support: if the engine restarts mid-day, the bucket that was still
         # forming before the restart is restored here and CONTINUED from live ticks
         # (its true bucket-open / high / low are preserved, never reset to V1).
@@ -129,7 +130,8 @@ class IndexBook:
             _hm = now.strftime("%H:%M")
             for _ctrl, _bk in ((self.controller, "live"),
                                (self.controller_kotak, "kotak"),
-                               (self.controller_kotak_rohit, "kotak_rohit")):
+                               (self.controller_kotak_rohit, "kotak_rohit"),
+                               (self.controller_kotak_d, "kotak_d")):
                 if _ctrl is not None:
                     try:
                         _ctrl.on_tick(comb, self.ltp[self.ce_sym], self.ltp[self.pe_sym], _hm)

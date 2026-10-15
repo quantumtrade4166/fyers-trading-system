@@ -29,7 +29,7 @@ from options.breeze.throttle import Throttle
 
 CALENDAR = PROJECT_ROOT / "data" / "NSE_NIFTY_OPTIONS" / "expiry_calendar.csv"
 INDEX_PATH = DATA_DIR / "NIFTY" / "index_1min.parquet"
-OFFSETS = [0, -1, 1]          # Tuesday, then Monday, then Wednesday
+OFFSETS = [0, -1, 1, 2]       # Tuesday, Monday, Wednesday, then THURSDAY (the expiry day before Sep-2025)
 
 
 def _iso(d):
