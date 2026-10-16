@@ -20,6 +20,7 @@ function Add-DataTask($name, $bat, $trigger, $limitMin) {
 Add-DataTask 'DataNiftyStocks5m'  'dl_nifty_stocks.bat'  (New-ScheduledTaskTrigger -Weekly -DaysOfWeek $weekdays -At '15:45') 60
 Add-DataTask 'DataNiftyOptions1m' 'dl_nifty_options.bat' (New-ScheduledTaskTrigger -Weekly -DaysOfWeek $weekdays -At '15:55') 90
 Add-DataTask 'DataBhavcopy'       'dl_bhavcopy.bat'      (New-ScheduledTaskTrigger -Weekly -DaysOfWeek $weekdays -At '19:30') 30
+Add-DataTask 'DataStDirBacktest'  'dl_stdir_backtest.bat' (New-ScheduledTaskTrigger -Weekly -DaysOfWeek $weekdays -At '16:30') 60
 Add-DataTask 'DataDukascopy1m'    'dl_dukascopy_1m.bat'  (New-ScheduledTaskTrigger -Daily -At '21:00') 180
 Add-DataTask 'DataXauusd1s'       'dl_xauusd_1s.bat'     (New-ScheduledTaskTrigger -Daily -At '22:30') 240
 

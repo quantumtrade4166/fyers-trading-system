@@ -311,18 +311,27 @@ fire(bl, D(2026, 10, 3, 12, 13))
 check("half entry unwound: flat on Delta", cl.pos.get(ce_pid, 0) == 0 and cl.pos.get(pe_pid, 0) == 0)
 check("half entry unwound: flat in book", bl.legs["CE"] is None and bl.legs["PE"] is None)
 
-# part-fill: PE fills only 60% -> CE trimmed to match, equal strangle kept, never lopsided
+def fresh(b):
+    """Reset the day's unwind cap between scenarios on the same test book."""
+    b.unwinds_today = 0
+    b.trigger.done = False
+    b.stop_reason = None
+
+
+# part-fill: PE fills only 60% per try -> the entry is COMPLETED (fix 2026-10-16),
+# not trimmed or unwound: 300 + 120 + 48 = 468 first, then the completion round
+fresh(bl)
 cl.fill_ratio = {pe_pid: 0.6}
 n_tr = len(bl.trades)
 fire(bl, D(2026, 10, 3, 12, 13, 30))
-# (IOC retries fill 60% of what is left each time: 300 + 120 + 48 = 468)
-q = bl.legs["PE"]["qty"] if bl.legs["PE"] else None
-check("part-fill: both legs equal size", bl.legs["CE"] and bl.legs["PE"]
-      and bl.legs["CE"]["qty"] == q and 250 <= q < 500)
+# (the fake fills int(60%) so the very last contract never fills: 499 -> trim 1)
+q = bl.legs["PE"]["qty"] if bl.legs["PE"] else 0
+check("part-fill: completed (>= 495 of 500), legs equal", bl.legs["CE"] and q >= 495
+      and bl.legs["CE"]["qty"] == q)
 check("part-fill: Delta short equal", cl.pos.get(ce_pid) == -q and cl.pos.get(pe_pid) == -q)
-check("part-fill: trimmed contracts booked as an unwind trade",
-      len(bl.trades) == n_tr + 1 and bl.trades[-1]["exit_reason"].startswith("unwind")
-      and bl.trades[-1]["contracts"] == 500 - q)
+check("part-fill: at most a tiny trim, no full unwind",
+      all(t["contracts"] <= 5 for t in bl.trades[n_tr:]))
+
 check("entry slippage + latency recorded", bl.legs["CE"]["entry_mark"] is not None
       and bl.legs["CE"]["entry_ms"] is not None)
 cl.fill_ratio = {}
@@ -336,6 +345,7 @@ pl = bl._chart_payload(D(2026, 10, 3, 12, 14))
 check("payload has CE + PE leg candles with VWAP", set(pl.get("leg_candles", {})) == {"CE", "PE"}
       and pl["leg_candles"]["CE"]["candles"] and "vwap" in pl["leg_candles"]["CE"]["candles"][-1])
 
+fresh(bl)
 # COMBINED pre-check (fix 2026-10-06): the 06-Oct case — one leg's bid is under its
 # old per-leg share of the floor but the COMBINED book clears it -> both legs sold
 bg, _ = live_book(FakeClient())
@@ -344,8 +354,8 @@ fc.__init__()
 setm(bg, 40, 40, D(2026, 10, 6, 9, 30, 1))
 setm(bg, 50, 20, D(2026, 10, 6, 9, 36))
 BID_RATIO["PE"] = 0.90                                 # PE bid 18.0 vs mark 20
-bg.trigger.pending = {"trigger": 70.0, "signal": "x"}  # floor 66.5; old PE share 19.0 > 18.0
-bg.on_sample(D(2026, 10, 6, 9, 36, 1), 50, 20, gc)
+bg.trigger.pending = {"trigger": 69.0, "signal": "x"}  # floor 65.55 (+2% cushion 66.86 <= book 67.5); old PE share 18.7 > 18.0
+bg.on_sample(D(2026, 10, 6, 9, 36, 1), 49.4, 19.6, gc)   # combined 69.0 touches the trigger
 check("guard: combined book clears floor -> BOTH legs sold (old per-leg guard refused PE)",
       bg.legs["CE"] and bg.legs["PE"] and cg.pos.get(ce_pid) == -500 and cg.pos.get(pe_pid) == -500)
 check("guard: no unwind trade booked", not any("unwind" in t["exit_reason"] for t in bg.trades))
@@ -365,7 +375,86 @@ BID_RATIO.clear()
 fc.spot = 85000.0
 check("fee incl GST matches Delta ledger", abs(bl._fee_q(50.0, 500, fc) - 1.0325) < 1e-6)
 
+# ── 15-Oct replays: book MOVES between the pre-check and the order ────────
+BOOK_SEQ = {}
+_ob_plain = le.orderbook
+
+
+def _ob_seq(sym):
+    k = _key(sym)
+    q = BOOK_SEQ.get(k[1])
+    if q:
+        px = q.pop(0) if len(q) > 1 else q[0]
+        return {"buy": [{"price": str(px), "size": 100000}],
+                "sell": [{"price": str(round(px * 1.02, 1)), "size": 100000}]}
+    return _ob_plain(sym)
+
+
+le.orderbook = _ob_seq
+# 09:40:28 — trigger 85.92 (floor 81.63). PE sold 57.0; the CE book was 27.1 at the
+# check and 26.0 when its order went (old leg floor 26.55 -> CE refused -> PE unwound,
+# −$7.83). Now: the CE miss is COMPLETED off the fresh book.
+fc.__init__()
+c15 = FakeClient()
+b15, _ = live_book(c15)
+setm(b15, 27.6, 57.6, D(2026, 10, 15, 9, 30, 1))
+setm(b15, 27.6, 57.6, D(2026, 10, 15, 9, 36))
+BOOK_SEQ.update({"CE": [27.1, 26.0], "PE": [57.6, 57.6]})
+b15.trigger.pending = {"trigger": 85.9215, "signal": "x"}
+b15.on_sample(D(2026, 10, 15, 9, 36, 28), 27.6, 57.6, gc)
+check("15-Oct 09:40:28 replay: strangle COMPLETED, no unwind",
+      b15.legs["CE"] and b15.legs["PE"] and c15.pos.get(ce_pid) == -500 and c15.pos.get(pe_pid) == -500
+      and not any("unwind" in t["exit_reason"] for t in b15.trades))
+check("15-Oct 09:40:28 replay: combined fill within trigger -10%",
+      b15.legs["CE"]["sell"] + b15.legs["PE"]["sell"] >= 85.9215 * 0.90)
+b15._close_all(D(2026, 10, 15, 9, 36, 40), fc, "t")
+
+# 09:45:34 — trigger 84.02 (floor 79.82, needs 81.42 with the 2% cushion). Books CE 26.0
+# + PE 53.5 = 79.5: under floor + cushion -> NOTHING is sent (was: PE sold then unwound
+# −$7.50), the signal stays armed and no entry is used.
+c15.orders.clear()
+b15.trigger.in_pos = False
+e0 = b15.trigger.entries
+BOOK_SEQ.update({"CE": [26.0], "PE": [53.5]})
+b15.trigger.pending = {"trigger": 84.0158, "signal": "y"}
+b15.on_sample(D(2026, 10, 15, 9, 37), 26.5, 54.0, gc)
+check("15-Oct 09:45:34 replay: books too close to the floor -> nothing sent", not c15.orders)
+check("15-Oct 09:45:34 replay: still armed, no entry used",
+      b15.trigger.pending and b15.trigger.entries == e0)
+
+# 09:39:56 — trigger 87.03 (floor 82.68, needs 84.33). PE book 56.0 + CE 27.0 = 83.0
+# -> nothing sent (was: CE sold then unwound −$4.31).
+BOOK_SEQ.update({"CE": [27.0], "PE": [56.0]})
+b15.trigger.pending = {"trigger": 87.0273, "signal": "z"}
+b15.on_sample(D(2026, 10, 15, 9, 37, 30), 27.5, 56.5, gc)
+check("15-Oct 09:39:56 replay: nothing sent, no unwind", not c15.orders)
+
+# a leg that truly cannot fill (book vanishes) is still unwound — never a lone leg
+c16 = FakeClient(); c16.fill_ratio = {pe_pid: 0.0}
+b16, _ = live_book(c16)
+fc.__init__()
+BOOK_SEQ.clear()
+setm(b16, 40, 40, D(2026, 10, 16, 9, 30, 1))
+setm(b16, 40, 40, D(2026, 10, 16, 9, 36))
+fire(b16, D(2026, 10, 16, 9, 36, 1))
+check("unfillable leg: completion tried, then unwound to flat",
+      c16.pos.get(ce_pid, 0) == 0 and c16.pos.get(pe_pid, 0) == 0
+      and b16.legs["CE"] is None and b16.legs["PE"] is None
+      and sum(1 for o in c16.orders if o[0] == "sell" and o[1] == pe_pid) > 3)
+check("unwind counted", b16.unwinds_today == 1 and not b16.trigger.done)
+# jumpy day: a 2nd failed entry hits the cap -> no more entries today
+b16.trigger.in_pos = False
+fire(b16, D(2026, 10, 16, 9, 37))
+check("2 unwinds -> entries stopped for the day", b16.unwinds_today == 2 and b16.trigger.done
+      and "unwinds today" in (b16.stop_reason or ""))
+n_ord = len(c16.orders)
+b16.trigger.pending = {"trigger": 80.0, "signal": "w"}
+b16.on_sample(D(2026, 10, 16, 9, 38), 40, 40, gc)
+check("after the cap: no further orders", len(c16.orders) == n_ord)
+le.orderbook = _ob_plain
+
 # margin refusal stops entries for the day
+fresh(bl)
 cl.fill_ratio = {}
 cl.margin_fail = {ce_pid}
 fire(bl, D(2026, 10, 3, 12, 14))

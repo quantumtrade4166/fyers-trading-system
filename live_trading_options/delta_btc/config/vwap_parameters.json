@@ -115,6 +115,12 @@
     "leverage": 200,
     "_leverage_note": "Order leverage set on each contract before its first sell (Delta default seen 100x). User 2026-10-04: isolated margin, 200x -> ~$860 for 1000 CE + 1000 PE; 500+500 ~ $430.",
     "entry_attempts": 3,
+    "entry_cushion_pct": 2.0,
+    "leg_slip_pct": 2.0,
+    "complete_attempts": 3,
+    "complete_floor_pct": 10.0,
+    "max_unwinds_per_day": 2,
+    "_unwind_fix_note": "2026-10-16 after 15-Oct (3 entries + $19.64 lost to unwinds, same as 04/06-Oct): send only if the two books clear the 5% floor by entry_cushion_pct more; each leg may give up leg_slip_pct of its own book; a half-filled entry is COMPLETED (complete_attempts rounds, combined fill >= trigger x (1 - complete_floor_pct)) before any unwind; after max_unwinds_per_day unwinds no new entries that day.",
     "entry_buffer_pct": 1.0,
     "exit_buffers_pct": [2, 5, 10, 25],
     "exit_market_fallback": true

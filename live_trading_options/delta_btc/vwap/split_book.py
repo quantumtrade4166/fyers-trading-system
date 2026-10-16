@@ -80,6 +80,7 @@ class SplitVwapBook(VwapBook):
         self.leg_builders = None
         self._leg_closed = {}
         self.paper_before_adopt = []
+        self.unwinds_today = 0
 
     def _open(self):
         return [t for t in LEGS if self.legs.get(t)]
@@ -526,18 +527,23 @@ class SplitVwapBook(VwapBook):
                     sweeps[t] = LE._sweep_price(bk.get("buy"), target)[0]
                 except Exception:
                     sweeps[t] = None
+            # FIX 2026-10-16 (the 06-Oct fix was not enough: 15-Oct lost 3 entries and
+            # −$19.64 the same way). The books must clear the floor by a real CUSHION
+            # (entry_cushion_pct), not by cents, or nothing is sent.
+            cushion = floor_comb * self.live_cfg.get("entry_cushion_pct", 2.0) / 100.0
             if any(v is None for v in sweeps.values()) or \
-                    sum(sweeps.values()) + kept_val < floor_comb:
+                    sum(sweeps.values()) + kept_val < floor_comb + cushion:
                 if (now - (self._last_reject or dt.datetime.min)).total_seconds() > 60:
                     self._last_reject = now
                     self.audit(now, "fill_rejected", n=n, trigger=round(trigger, 2),
                                book={t: v for t, v in sweeps.items()},
                                kept_val=round(kept_val, 2), floor=round(floor_comb, 2),
-                               reason="combined book below the slippage floor — nothing sent, still armed")
+                               cushion=round(cushion, 2),
+                               reason="combined book not clear of the floor + cushion — nothing sent, still armed")
                 return "retry"
-            headroom = sum(sweeps.values()) + kept_val - floor_comb
-            ssum = sum(sweeps.values()) or 1.0
-            floors = {t: max(0.0, sweeps[t] - headroom * sweeps[t] / ssum) for t in need}
+            # each leg may give up leg_slip_pct of its own book price — not a few cents
+            leg_slip = self.live_cfg.get("leg_slip_pct", 2.0) / 100.0
+            floors = {t: sweeps[t] * (1 - leg_slip) for t in need}
             from concurrent.futures import ThreadPoolExecutor
             with ThreadPoolExecutor(max_workers=len(need)) as ex:
                 futs = {t: ex.submit(self.exec.execute, chain, self._strike(t), t, "sell",
@@ -545,6 +551,9 @@ class SplitVwapBook(VwapBook):
                         for t in need}
                 fills = {t: f.result() for t, f in futs.items()}
             margin = any(f.get("margin") for f in fills.values())
+            if not margin and len(need) == 2 and any(f["filled"] for f in fills.values()):
+                fills = self._complete_entry(now, chain, fills, target, trigger, kept_val, n)
+                margin = any(f.get("margin") for f in fills.values())
             got = {t: int(f["filled"]) for t, f in fills.items()}
             least = min(got.values())
             usable = least >= max(1, target // 2) and not margin
@@ -560,6 +569,16 @@ class SplitVwapBook(VwapBook):
                     self.status = "margin halt"
                 self.audit(now, "entry_failed", n=n, filled=got, margin=margin,
                            errors={t: f.get("error") for t, f in fills.items()})
+                if sold:
+                    self.unwinds_today = getattr(self, "unwinds_today", 0) + 1
+                    cap = int(self.live_cfg.get("max_unwinds_per_day", 2))
+                    if self.unwinds_today >= cap and not self.trigger.done:
+                        self.trigger.done = True
+                        self.trigger.pending = None
+                        self.stop_reason = (f"{self.unwinds_today} unwinds today — entries stopped "
+                                            f"to stop paying charges")
+                        self.status = "stopped (unwinds)"
+                        self.audit(now, "UNWIND_CAP", unwinds=self.unwinds_today, cap=cap)
                 if not sold and not margin:
                     return "retry"                # nothing sold: the signal stays armed
                 return False
@@ -598,6 +617,49 @@ class SplitVwapBook(VwapBook):
                    combined=self.pos["entry_combined"])
         self.write_state(now)
         return True
+
+    def _complete_entry(self, now, chain, fills, target, trigger, kept_val, n):
+        """One leg sold, the other missed (15-Oct: by $0.10). FINISH the strangle
+        instead of paying spread + fees twice to undo it: re-read the missed leg's
+        book and sell what is left, up to `complete_attempts` rounds (each round is
+        LiveExec's own 3 IOC tries off a fresh book), as long as the COMBINED fill
+        stays within complete_floor_pct of the trigger. Returns the merged fills."""
+        tries = int(self.live_cfg.get("complete_attempts", 3))
+        wide = float(self.live_cfg.get("complete_floor_pct", 10.0)) / 100.0
+        for t in list(fills):
+            other = [o for o in fills if o != t][0]
+            for k in range(tries):
+                f, fo = fills[t], fills[other]
+                left = target - int(f["filled"])
+                if left <= 0 or not fo["filled"] or f.get("margin"):
+                    break
+                sold_other = fo["price"] or 0.0
+                floor_t = max(0.0, trigger * (1 - wide) - sold_other - kept_val)
+                self.audit(now, "entry_complete_try", leg=t, attempt=k + 1, left=left,
+                           other_sold=sold_other, floor=round(floor_t, 2))
+                r = self.exec.execute(chain, self._strike(t), t, "sell", left,
+                                      f"complete#{n}", floor=floor_t, tag=f"C{t}{n}")
+                fills[t] = self._merge_fill(f, r)
+                if r.get("margin"):
+                    fills[t]["margin"] = True
+                    break
+                if int(fills[t]["filled"]) < target:
+                    time.sleep(0.3)
+        done = {t: int(f["filled"]) for t, f in fills.items()}
+        self.audit(now, "entry_completed" if min(done.values()) >= target else "entry_complete_short",
+                   n=n, filled=done, prices={t: f["price"] for t, f in fills.items()})
+        return fills
+
+    @staticmethod
+    def _merge_fill(a, b):
+        fa, fb = int(a.get("filled") or 0), int(b.get("filled") or 0)
+        tot = fa + fb
+        px = ((a["price"] or 0) * fa + (b["price"] or 0) * fb) / tot if tot else None
+        return dict(a, filled=tot, price=round(px, 6) if px is not None else None,
+                    fee=round((a.get("fee") or 0) + (b.get("fee") or 0), 6),
+                    orders=(a.get("orders") or []) + (b.get("orders") or []),
+                    ms=(a.get("ms") or 0) + (b.get("ms") or 0),
+                    ok=b.get("ok") or a.get("ok"), error=b.get("error"))
 
     def _target_qty(self):
         """Contracts per leg for an entry: a re-sold leg matches the kept leg's size
@@ -803,6 +865,7 @@ class SplitVwapBook(VwapBook):
              "trigger": self.trigger.to_dict(), "pos": self.pos, "trades": self.trades,
              "stop_reason": self.stop_reason, "mode": self.mode, "margin_halt": self.margin_halt,
              "adopt_done": getattr(self, "_adopt_done", None),
+             "unwinds_today": getattr(self, "unwinds_today", 0),
              "paper_before_adopt": getattr(self, "paper_before_adopt", None) or [],
              "legs": {t: (ser(l) if l else None) for t, l in self.legs.items()},
              "leg_builders": {t: b.to_dict() for t, b in (self.leg_builders or {}).items()}}
@@ -826,6 +889,7 @@ class SplitVwapBook(VwapBook):
             b.cur = None
         self.margin_halt = bool(d.get("margin_halt"))
         self._adopt_done = d.get("adopt_done")
+        self.unwinds_today = int(d.get("unwinds_today") or 0)
         self.paper_before_adopt = d.get("paper_before_adopt") or []
         self.trigger.in_pos = bool((d.get("trigger") or {}).get("in_pos"))
         saved_mode = d.get("mode", "paper")

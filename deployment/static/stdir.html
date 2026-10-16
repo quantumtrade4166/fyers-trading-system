@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Nifty ST Directional</title>
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
   :root {
     --bg: #0b1120; --card: #111a2e; --line: #1e293b; --muted: #64748b; --text: #cbd5e1;
@@ -163,6 +164,22 @@
       <tbody id="days"></tbody>
     </table></div>
   </div>
+
+  <div class="card sect">
+    <div class="sect-h"><span class="t">Paper vs backtest — net P&amp;L per day</span>
+      <span id="cmp-sum" class="sub" style="margin:0"></span></div>
+    <div class="sub" style="margin:0 0 8px">paper = live ticks during the day · backtest = the same rules re-run after the close on ICICI 1-min data (same lots, same stop-to-cost)</div>
+    <div style="display:flex;gap:16px;font-size:11px;color:var(--muted);margin-bottom:6px">
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#38bdf8"></span>Paper (live)</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#a78bfa"></span>Backtest (after close)</span>
+    </div>
+    <div style="position:relative;height:260px"><canvas id="cmp-chart" role="img" aria-label="Paper versus backtest net P&amp;L per day">Paper and backtest net profit per trading day.</canvas></div>
+    <div class="scroll" style="margin-top:8px"><table>
+      <thead><tr><th>date</th><th class="r">paper net</th><th class="r">backtest net</th><th class="r">difference</th>
+        <th class="r">trades (paper / bt)</th><th>backtest trades</th></tr></thead>
+      <tbody id="cmp-rows"></tbody>
+    </table></div>
+  </div>
 </div>
 
 <script>
@@ -211,37 +228,56 @@ const lineOpts = { lineWidth: 2, priceLineVisible: false, lastValueVisible: fals
 
 const spotChart = mk('spot-chart');
 const spotCandle = spotChart.addCandlestickSeries(candleOpts);
-const spotUp = spotChart.addLineSeries({ ...lineOpts, color: '#22c55e' });
-const spotDn = spotChart.addLineSeries({ ...lineOpts, color: '#f43f5e' });
+const spotST = stLines(spotChart);
 
 const optChart = mk('opt-chart');
 const optCandle = optChart.addCandlestickSeries(candleOpts);
-const optUp = optChart.addLineSeries({ ...lineOpts, color: '#22c55e' });
-const optDn = optChart.addLineSeries({ ...lineOpts, color: '#f43f5e' });
+const optST = stLines(optChart);
 const refSeries = [0, 1, 2].map(() => optChart.addLineSeries({
   color: '#38bdf8', lineWidth: 2, lineStyle: LC.LineStyle.Dashed, lineType: LC.LineType.WithSteps,
   priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false }));
 
-function stSplit(candles) {
-  const up = [], dn = [];
-  for (const c of candles) {
-    if (c.st === null) { up.push({ time: c.time }); dn.push({ time: c.time }); continue; }
-    if (c.dir === 1) { up.push({ time: c.time, value: c.st }); dn.push({ time: c.time }); }
-    else { dn.push({ time: c.time, value: c.st }); up.push({ time: c.time }); }
-  }
-  return [up, dn];
+// Supertrend drawn as one line per same-direction run. A single red + a single
+// green series joined the dots across the other colour's stretch (16-Oct: a red
+// diagonal from 09:50 to 14:20) -- whitespace does not break a line series here.
+function stLines(chart) {
+  const pool = [];
+  const byTime = new Map();
+  return {
+    byTime,
+    set(candles) {
+      byTime.clear();
+      const runs = [];
+      for (const c of candles) {
+        if (c.st === null || c.st === undefined || !c.dir) continue;
+        byTime.set(c.time, c.st);
+        const last = runs[runs.length - 1];
+        if (last && last.dir === c.dir && last.end === c.prev) { last.pts.push({ time: c.time, value: c.st }); last.end = c.time; }
+        else runs.push({ dir: c.dir, pts: [{ time: c.time, value: c.st }], end: c.time });
+      }
+      while (pool.length < runs.length) pool.push(chart.addLineSeries({ ...lineOpts }));
+      pool.forEach((ser, k) => {
+        const r = runs[k];
+        if (!r) { ser.setData([]); return; }
+        ser.applyOptions({ color: r.dir === 1 ? '#22c55e' : '#f43f5e' });
+        ser.setData(r.pts);
+      });
+    },
+  };
 }
-function tipFor(chart, series, stU, stD, tipEl) {
+function withPrev(candles) {        // mark each candle's predecessor so runs never bridge a gap
+  return candles.map((c, i) => ({ ...c, prev: i ? candles[i - 1].time : null }));
+}
+function tipFor(chart, series, st, tipEl) {
   chart.subscribeCrosshairMove(p => {
     if (!p || !p.time) { tipEl.textContent = ''; return; }
     const c = p.seriesData.get(series); if (!c) return;
-    const u = p.seriesData.get(stU), d = p.seriesData.get(stD);
-    const st = (u && u.value !== undefined) ? u.value : (d && d.value !== undefined ? d.value : null);
-    tipEl.textContent = `${hhmm(p.time)}  O ${num(c.open)}  H ${num(c.high)}  L ${num(c.low)}  C ${num(c.close)}  ST ${num(st)}`;
+    const v = st.byTime.get(p.time);
+    tipEl.textContent = `${hhmm(p.time)}  O ${num(c.open)}  H ${num(c.high)}  L ${num(c.low)}  C ${num(c.close)}  ST ${num(v)}`;
   });
 }
-tipFor(spotChart, spotCandle, spotUp, spotDn, $('spot-tip'));
-tipFor(optChart, optCandle, optUp, optDn, $('opt-tip'));
+tipFor(spotChart, spotCandle, spotST, $('spot-tip'));
+tipFor(optChart, optCandle, optST, $('opt-tip'));
 
 // ── data ────────────────────────────────────────────────────────────────
 async function getJSON(u) { const r = await fetch(u, { cache: 'no-store' }); return r.json(); }
@@ -308,8 +344,8 @@ async function loadState() {
   const d = await getJSON('/api/stdir/state?date=' + curDate);
   if (!d.ok) {
     lastState = null;
-    spotCandle.setData([]); spotUp.setData([]); spotDn.setData([]);
-    optCandle.setData([]); optUp.setData([]); optDn.setData([]); refSeries.forEach(s => s.setData([]));
+    spotCandle.setData([]); spotST.set([]);
+    optCandle.setData([]); optST.set([]); refSeries.forEach(s => s.setData([]));
     $('trades').innerHTML = `<tr><td colspan="12" class="empty">${esc(d.reason || 'no data')}</td></tr>`;
     $('setups').innerHTML = ''; $('log').innerHTML = '';
     return;
@@ -325,7 +361,7 @@ async function loadState() {
   }
   // spot
   spotCandle.setData(d.spot_candles.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
-  const [su, sd] = stSplit(d.spot_candles); spotUp.setData(su); spotDn.setData(sd);
+  spotST.set(withPrev(d.spot_candles));
   spotCandle.setMarkers((d.reversals || []).map(r => ({
     time: r.time, position: r.to === 'bull' ? 'belowBar' : 'aboveBar', shape: 'circle',
     color: r.to === 'bull' ? '#22c55e' : '#f43f5e', text: r.to === 'bull' ? '→ bull' : '→ bear' })));
@@ -338,11 +374,11 @@ async function loadState() {
   const p = panels[panelIdx];
   if (!p) {
     $('opt-label').textContent = 'no contract yet';
-    optCandle.setData([]); optUp.setData([]); optDn.setData([]); refSeries.forEach(s => s.setData([]));
+    optCandle.setData([]); optST.set([]); refSeries.forEach(s => s.setData([]));
   } else {
     $('opt-label').textContent = `${p.symbol || p.label} (exp ${p.expiry})${p.ltp ? ' · LTP ' + num(p.ltp) : ''}`;
     optCandle.setData(p.candles.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
-    const [ou, od] = stSplit(p.candles); optUp.setData(ou); optDn.setData(od);
+    optST.set(withPrev(p.candles));
     refSeries.forEach((s, i) => {
       const r = p.refs[p.refs.length - 1 - i];
       const pts = r ? dedupe(r.points) : [];
@@ -429,11 +465,50 @@ async function loadDaily() {
     <td class="r num">${num(r.drawdown_pct)}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">no paper days yet</td></tr>';
 }
 
+let cmpChart = null;
+async function loadCompare() {
+  const d = await getJSON('/api/stdir/compare');
+  const rows = d.rows || [];
+  const labels = rows.map(r => r.date.slice(5));
+  const data = {
+    labels,
+    datasets: [
+      { label: 'Paper (live)', data: rows.map(r => r.paper_net), backgroundColor: '#38bdf8', borderRadius: 3 },
+      { label: 'Backtest (after close)', data: rows.map(r => r.bt_net), backgroundColor: '#a78bfa', borderRadius: 3 },
+    ],
+  };
+  const opts = {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    plugins: { legend: { display: false },
+      tooltip: { callbacks: { title: i => rows[i[0].dataIndex].date,
+        label: c => ` ${c.dataset.label}: ${c.parsed.y === null ? 'not run yet' : signed(c.parsed.y)}` } } },
+    scales: {
+      x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 } } },
+      y: { grid: { color: '#162036' }, ticks: { color: '#94a3b8', font: { size: 11 },
+        callback: v => (v < 0 ? '−₹' : '₹') + (Math.abs(v) / 1000).toFixed(0) + 'k' } },
+    },
+  };
+  if (!cmpChart) cmpChart = new Chart($('cmp-chart'), { type: 'bar', data, options: opts });
+  else { cmpChart.data = data; cmpChart.update(); }
+  const s = d.summary || {};
+  $('cmp-sum').innerHTML = s.days ? `${s.days} day(s) · paper <b>${signed(s.paper_net)}</b> · backtest <b>${signed(s.bt_net)}</b> · difference <b class="${s.diff >= 0 ? 'pos' : 'neg'}">${signed(s.diff)}</b>` : 'no backtested days yet';
+  $('cmp-rows').innerHTML = rows.slice().reverse().map(r => {
+    const det = (r.bt_detail || []).map(t => `${t.strike}${t.opt} ${t.entry}→${t.exit} ${num(t.entry_price)}→${num(t.exit_price)} ${t.reason === 'breakeven_stop' ? 'cost-stop' : t.reason === 'option_st' ? 'ST exit' : '15:15'}`).join('<br>');
+    return `<tr><td>${r.date}</td>
+      <td class="r num ${r.paper_net >= 0 ? 'pos' : 'neg'}">${r.paper_net === null ? '—' : signed(r.paper_net)}</td>
+      <td class="r num ${r.bt_net >= 0 ? 'pos' : 'neg'}">${r.bt_net === null ? 'pending' : signed(r.bt_net)}</td>
+      <td class="r num ${r.diff >= 0 ? 'pos' : 'neg'}">${r.diff === null ? '—' : signed(r.diff)}</td>
+      <td class="r">${r.paper_trades ?? '—'} / ${r.bt_trades ?? '—'}</td>
+      <td class="sub" style="white-space:normal">${det || '—'}</td></tr>`;
+  }).join('') || '<tr><td colspan="6" class="empty">no days yet</td></tr>';
+}
+
 async function refreshAll() {
   try { await loadState(); } catch (e) { console.error(e); }
   try { await loadMtm(); } catch (e) { console.error(e); }
   try { await loadTick(); } catch (e) { console.error(e); }
   try { await loadDaily(); } catch (e) { console.error(e); }
+  try { await loadCompare(); } catch (e) { console.error(e); }
 }
 (async () => {
   try { await loadDates(); } catch (e) { console.error(e); }
@@ -442,6 +517,7 @@ async function refreshAll() {
   setInterval(() => { if (!document.hidden && isToday()) loadState().catch(console.error); }, 3000);
   setInterval(() => { if (!document.hidden && isToday()) loadMtm().catch(console.error); }, 5000);
   setInterval(() => { if (!document.hidden) loadDaily().catch(console.error); }, 60000);
+  setInterval(() => { if (!document.hidden) loadCompare().catch(console.error); }, 300000);
   setInterval(() => { loadDates().catch(console.error); }, 300000);
 })();
 </script>

@@ -122,3 +122,27 @@ def daily():
 def dates():
     out = sorted({p.name[:10] for p in STATE.glob("????-??-??_STATE.json")}, reverse=True)
     return {"ok": True, "dates": out, "today": _now().date().isoformat()}
+
+
+@router.get("/compare")
+def compare():
+    """Paper (live ticks) vs after-market backtest of the same day, per day."""
+    paper = _read(RESULTS / "daily.json", {}) or {}
+    bt = _read(RESULTS / "backtest_daily.json", {}) or {}
+    rows = []
+    for d in sorted(set(paper) | set(bt)):
+        p, b = paper.get(d), bt.get(d)
+        rows.append({
+            "date": d,
+            "paper_net": p.get("net") if p else None, "paper_gross": p.get("gross") if p else None,
+            "paper_trades": p.get("trades") if p else None,
+            "bt_net": b.get("net") if b else None, "bt_gross": b.get("gross") if b else None,
+            "bt_trades": b.get("trades") if b else None, "bt_detail": b.get("detail", []) if b else [],
+            "diff": round(p["net"] - b["net"], 2) if (p and b) else None,
+        })
+    both = [r for r in rows if r["diff"] is not None]
+    return {"ok": True, "rows": rows,
+            "summary": {"days": len(both),
+                        "paper_net": round(sum(r["paper_net"] for r in both), 2),
+                        "bt_net": round(sum(r["bt_net"] for r in both), 2),
+                        "diff": round(sum(r["diff"] for r in both), 2)}}
