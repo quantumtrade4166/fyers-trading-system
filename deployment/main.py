@@ -184,6 +184,38 @@ try:
 except Exception as _e:                                    # pragma: no cover
     print(f"[stdir] router NOT loaded: {type(_e).__name__}: {_e}", flush=True)
 
+# Strategy Builder — PROXY to its own process (live_trading_options/strategy_builder,
+# port 47674), same reasoning as DualMom: restart it any time without touching this app.
+_SB_BASE = os.getenv("STRATEGY_BUILDER_URL", "http://127.0.0.1:47674")
+
+
+@app.api_route("/api/sb/{path:path}", methods=["GET", "POST"])
+async def _strategy_builder_proxy(path: str, request: _Request):
+    url = f"{_SB_BASE}/api/sb/{path}"
+    body = await request.body()
+    qs = str(request.url.query)
+
+    def _call():
+        if request.method == "POST":
+            return _requests.post(url, data=body, timeout=30,
+                                  headers={"Content-Type": "application/json"})
+        return _requests.get(url + (f"?{qs}" if qs else ""), timeout=30)
+
+    try:
+        r = await asyncio.to_thread(_call)
+    except _requests.exceptions.ConnectionError:
+        return _JSONResponse(status_code=503, content={
+            "ok": False, "error": f"Strategy Builder service is not running at {_SB_BASE}. "
+                                  f"Start it: python -m live_trading_options.strategy_builder.service"})
+    except Exception as _e:
+        return _JSONResponse(status_code=502, content={
+            "ok": False, "error": f"Strategy Builder proxy: {type(_e).__name__}: {_e}"})
+    try:
+        return _JSONResponse(status_code=r.status_code, content=r.json())
+    except ValueError:
+        return _JSONResponse(status_code=502, content={
+            "ok": False, "error": f"Strategy Builder returned non-JSON: {r.text[:200]}"})
+
 # ── tiny thread-safe TTL cache ───────────────────────────────────────────────
 # The pair-signal compute is ~0.5-3s. Running it on the event loop froze EVERY request
 # (a 16-byte /api/version took 2.3s). We (a) run it in a thread so it never blocks the loop

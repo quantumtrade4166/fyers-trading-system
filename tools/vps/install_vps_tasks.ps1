@@ -37,6 +37,7 @@ $psArgs = { param($f) "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -F
 Add-Task 'PairsDashboard'      "$repo\deployment\vps_tasks\start_dashboard.bat" $null @(Boot) -Restart
 Add-Task 'VPSHealthHeartbeat'  $ps (& $psArgs "$repo\deployment\vps_tasks\vps_heartbeat.ps1") @(Every 5) 4
 Add-Task 'DualMomService'      "$repo\start_dualmom_service.bat" $null @((Boot), (Every 5)) -Restart
+Add-Task 'StrategyBuilder'     "$repo\live_trading_options\strategy_builder\run_builder.bat" $null @((Boot), (Every 5)) -Restart
 if (-not $EnableDualMom) {
     # Live money (Kotak + Kite). Stays OFF until the owner has whitelisted the new VPS IP at
     # both brokers -- otherwise it would retry failing logins every 5 minutes.

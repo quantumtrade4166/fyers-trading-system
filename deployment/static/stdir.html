@@ -169,11 +169,20 @@
     <div class="sect-h"><span class="t">Paper vs backtest — net P&amp;L per day</span>
       <span id="cmp-sum" class="sub" style="margin:0"></span></div>
     <div class="sub" style="margin:0 0 8px">paper = live ticks during the day · backtest = the same rules re-run after the close on ICICI 1-min data (same lots, same stop-to-cost)</div>
-    <div style="display:flex;gap:16px;font-size:11px;color:var(--muted);margin-bottom:6px">
-      <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#38bdf8"></span>Paper (live)</span>
-      <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#a78bfa"></span>Backtest (after close)</span>
+    <div style="display:flex;flex-wrap:wrap;gap:16px;font-size:11px;color:var(--muted);margin-bottom:6px">
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#22c55e"></span><span style="width:10px;height:10px;border-radius:2px;background:#f43f5e;margin-left:-3px"></span>Paper (live): profit / loss</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#3b82f6"></span><span style="width:10px;height:10px;border-radius:2px;background:#f59e0b;margin-left:-3px"></span>Backtest (after close): profit / loss</span>
     </div>
     <div style="position:relative;height:260px"><canvas id="cmp-chart" role="img" aria-label="Paper versus backtest net P&amp;L per day">Paper and backtest net profit per trading day.</canvas></div>
+    <div class="sect-h" style="margin-top:16px"><span class="t">Cumulative net P&amp;L — paper vs backtest</span>
+      <span id="cmp-cum-sum" class="sub" style="margin:0"></span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:16px;font-size:11px;color:var(--muted);margin-bottom:6px">
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:16px;height:3px;background:#22c55e"></span>Paper (live)</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:16px;height:0;border-top:2px dashed #3b82f6"></span>Backtest (after close)</span>
+    </div>
+    <div style="position:relative;height:240px"><canvas id="cmp-cum" role="img" aria-label="Cumulative net P&amp;L of paper and backtest">Cumulative paper and backtest profit.</canvas></div>
+    <div class="sub" style="margin:12px 0 6px">Drawdown from each curve's running peak (₹)</div>
+    <div style="position:relative;height:160px"><canvas id="cmp-dd" role="img" aria-label="Drawdown of paper and backtest">Paper and backtest drawdowns.</canvas></div>
     <div class="scroll" style="margin-top:8px"><table>
       <thead><tr><th>date</th><th class="r">paper net</th><th class="r">backtest net</th><th class="r">difference</th>
         <th class="r">trades (paper / bt)</th><th>backtest trades</th></tr></thead>
@@ -465,7 +474,56 @@ async function loadDaily() {
     <td class="r num">${num(r.drawdown_pct)}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">no paper days yet</td></tr>';
 }
 
-let cmpChart = null;
+let cmpChart = null, cumChart = null, ddChart2 = null;
+function axisRs(v) {               // ₹ axis labels that stay readable at any size
+  const a = Math.abs(v), sg = v < 0 ? '−₹' : '₹';
+  if (a >= 100000) return sg + (a / 100000).toFixed(a % 100000 ? 1 : 0) + 'L';
+  if (a >= 10000) return sg + (a / 1000).toFixed(0) + 'k';
+  if (a >= 1000) return sg + (a / 1000).toFixed(1) + 'k';
+  return sg + a.toFixed(0);
+}
+function cumOf(vals) {             // running total; a day without a value carries nothing
+  let s = 0, seen = false;
+  return vals.map(v => { if (v === null || v === undefined) return seen ? s : null; seen = true; s += v; return Math.round(s); });
+}
+function ddOfCum(c) {
+  let pk = 0;
+  return c.map(v => { if (v === null) return null; pk = Math.max(pk, v); return Math.round(v - pk); });
+}
+function lineChart(el, datasets, labels, rows, yMax0) {
+  return new Chart(el, {
+    type: 'line', data: { labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false, animation: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: false },
+        tooltip: { callbacks: { title: i => rows[i[0].dataIndex].date,
+          label: c => ` ${c.dataset.label}: ${c.parsed.y === null ? '—' : signed(c.parsed.y)}` } } },
+      scales: {
+        x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 } } },
+        y: { max: yMax0 ? 0 : undefined, grid: { color: '#162036' }, ticks: { color: '#94a3b8', font: { size: 11 },
+          callback: axisRs } },
+      },
+    },
+  });
+}
+function drawCumulative(rows) {
+  const labels = rows.map(r => r.date.slice(5));
+  const pc = cumOf(rows.map(r => r.paper_net)), bc = cumOf(rows.map(r => r.bt_net));
+  const pd = ddOfCum(pc), bd = ddOfCum(bc);
+  const line = (label, data, color, dash, fill) => ({ label, data, borderColor: color, borderWidth: 2,
+    borderDash: dash ? [6, 4] : [], pointRadius: 3, pointHoverRadius: 5, pointBackgroundColor: color,
+    tension: 0, spanGaps: true, fill: fill || false, backgroundColor: fill ? color + '33' : undefined });
+  const cumSets = [line('Paper (live)', pc, '#22c55e'), line('Backtest (after close)', bc, '#3b82f6', true)];
+  const ddSets = [line('Paper drawdown', pd, '#f43f5e', false, 'origin'), line('Backtest drawdown', bd, '#f59e0b', true)];
+  if (!cumChart) cumChart = lineChart($('cmp-cum'), cumSets, labels, rows, false);
+  else { cumChart.data = { labels, datasets: cumSets }; cumChart.options.plugins.tooltip.callbacks.title = i => rows[i[0].dataIndex].date; cumChart.update(); }
+  if (!ddChart2) ddChart2 = lineChart($('cmp-dd'), ddSets, labels, rows, true);
+  else { ddChart2.data = { labels, datasets: ddSets }; ddChart2.options.plugins.tooltip.callbacks.title = i => rows[i[0].dataIndex].date; ddChart2.update(); }
+  const last = a => { for (let i = a.length - 1; i >= 0; i--) if (a[i] !== null) return a[i]; return null; };
+  const mn = a => Math.min(0, ...a.filter(v => v !== null));
+  $('cmp-cum-sum').innerHTML = `paper <b class="${last(pc) >= 0 ? 'pos' : 'neg'}">${signed(last(pc))}</b> (max DD ${signed(mn(pd))}) · backtest <b class="${last(bc) >= 0 ? 'pos' : 'neg'}">${signed(last(bc))}</b> (max DD ${signed(mn(bd))})`;
+}
 async function loadCompare() {
   const d = await getJSON('/api/stdir/compare');
   const rows = d.rows || [];
@@ -473,8 +531,10 @@ async function loadCompare() {
   const data = {
     labels,
     datasets: [
-      { label: 'Paper (live)', data: rows.map(r => r.paper_net), backgroundColor: '#38bdf8', borderRadius: 3 },
-      { label: 'Backtest (after close)', data: rows.map(r => r.bt_net), backgroundColor: '#a78bfa', borderRadius: 3 },
+      { label: 'Paper (live)', data: rows.map(r => r.paper_net), borderRadius: 3,
+        backgroundColor: rows.map(r => (r.paper_net ?? 0) < 0 ? '#f43f5e' : '#22c55e') },
+      { label: 'Backtest (after close)', data: rows.map(r => r.bt_net), borderRadius: 3,
+        backgroundColor: rows.map(r => (r.bt_net ?? 0) < 0 ? '#f59e0b' : '#3b82f6') },
     ],
   };
   const opts = {
@@ -485,11 +545,12 @@ async function loadCompare() {
     scales: {
       x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 } } },
       y: { grid: { color: '#162036' }, ticks: { color: '#94a3b8', font: { size: 11 },
-        callback: v => (v < 0 ? '−₹' : '₹') + (Math.abs(v) / 1000).toFixed(0) + 'k' } },
+        callback: axisRs } },
     },
   };
   if (!cmpChart) cmpChart = new Chart($('cmp-chart'), { type: 'bar', data, options: opts });
   else { cmpChart.data = data; cmpChart.update(); }
+  drawCumulative(rows);
   const s = d.summary || {};
   $('cmp-sum').innerHTML = s.days ? `${s.days} day(s) · paper <b>${signed(s.paper_net)}</b> · backtest <b>${signed(s.bt_net)}</b> · difference <b class="${s.diff >= 0 ? 'pos' : 'neg'}">${signed(s.diff)}</b>` : 'no backtested days yet';
   $('cmp-rows').innerHTML = rows.slice().reverse().map(r => {
@@ -517,7 +578,7 @@ async function refreshAll() {
   setInterval(() => { if (!document.hidden && isToday()) loadState().catch(console.error); }, 3000);
   setInterval(() => { if (!document.hidden && isToday()) loadMtm().catch(console.error); }, 5000);
   setInterval(() => { if (!document.hidden) loadDaily().catch(console.error); }, 60000);
-  setInterval(() => { if (!document.hidden) loadCompare().catch(console.error); }, 300000);
+  setInterval(() => { if (!document.hidden) loadCompare().catch(console.error); }, 60000);
   setInterval(() => { loadDates().catch(console.error); }, 300000);
 })();
 </script>

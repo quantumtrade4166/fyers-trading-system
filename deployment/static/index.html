@@ -191,6 +191,9 @@
     <button class="tab-btn" id="tab-stdir" onclick="switchTab('stdir')">
       🧭 Nifty ST Directional
     </button>
+    <button class="tab-btn" id="tab-builder" onclick="switchTab('builder')">
+      🧩 Strategy Builder
+    </button>
     <button class="tab-btn" id="tab-terminal" onclick="switchTab('terminal')">
       💼 Terminal
     </button>
@@ -1547,6 +1550,11 @@
     </div>
   </div>
 
+  <div id="page-builder" style="display:none">
+    <iframe id="builder-frame" title="Strategy Builder"
+            style="width:100%;height:calc(100vh - 110px);min-height:860px;border:0;display:block"></iframe>
+  </div>
+
   <div id="page-stdir" style="display:none">
     <iframe id="stdir-frame" title="Nifty ST Directional"
             style="width:100%;height:calc(100vh - 110px);min-height:900px;border:0;display:block"></iframe>
@@ -1802,7 +1810,8 @@ function switchTab(tab) {
   if (tab === 'btcarb') { setTimeout(() => { baInit(); baStartPoll(); }, 0); } else { baStopPoll(); }
   if (tab === 'ndp') { ndpInit(); ndpStartPoll(); } else { ndpStopPoll(); }
   if (tab === 'stdir') { const f = document.getElementById('stdir-frame'); if (f && !f.src) f.src = '/static/stdir.html'; }
-  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'btcvwap', 'btcarb', 'ndp', 'stdir', 'terminal'].forEach(t => {
+  if (tab === 'builder') { const f = document.getElementById('builder-frame'); if (f && !f.src) f.src = '/static/builder.html'; }
+  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'btcvwap', 'btcarb', 'ndp', 'stdir', 'builder', 'terminal'].forEach(t => {
     const pg = document.getElementById('page-' + t);
     if (pg) pg.style.display = (t === tab) ? '' : 'none';
     const btn = document.getElementById('tab-' + t);
