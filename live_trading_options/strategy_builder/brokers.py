@@ -42,6 +42,10 @@ ACCOUNTS = [
     {"id": "kotak_rohit", "name": "Kotak Rohit", "kind": "kotak", "suffix": "_ROHIT"},
     {"id": "kotak_p", "name": "Kotak P", "kind": "kotak", "suffix": "_D"},
 ]
+# Parked = shown on the page, never logged in. Kotak P parked 2026-10-17: Kotak's v2 API answers
+# "consumer key is not linked to <UCC>" although Trademate logs in with the same details.
+PARKED = {"kotak_p"}
+KOTAK_MAX_TRIES = 10            # failed Kotak logins per day before the retry loop gives up
 
 
 def today_ist() -> str:
@@ -90,6 +94,10 @@ class Account:
         self.funds = None
         self.at = None
         self.lock = threading.RLock()    # one order flow per account at a time
+        self.parked = spec["id"] in PARKED
+        self.tries_day, self.tries, self.last_try = None, 0, 0.0
+        if self.parked:
+            self.status, self.error = "parked", "parked — not logging in"
 
     def has_creds(self) -> bool:
         if self.kind == "kite":
@@ -98,6 +106,13 @@ class Account:
 
     def login(self):
         with self.lock:
+            if self.parked:
+                self.status, self.error, self.client = "parked", "parked — not logging in", None
+                return False
+            if self.tries_day != today_ist():
+                self.tries_day, self.tries = today_ist(), 0
+            self.tries += 1
+            self.last_try = time.time()
             if not self.has_creds():
                 self.status, self.error, self.client = "no_creds", "credentials not in deployment/.env", None
                 return False
@@ -107,6 +122,8 @@ class Account:
                     c.profile()
                 else:
                     c = kotak_login(self.suffix)
+                # a new day's session -> new day's contract list (weekly expiries are added daily)
+                (kx._instr_cache if self.kind == "kite" else ke._scrip_cache).clear()
                 self.client, self.day, self.status, self.error = c, today_ist(), "logged_in", None
                 self.at = dt.datetime.now(IST).strftime("%H:%M:%S")
                 self.refresh_funds()
@@ -141,7 +158,7 @@ class Account:
     def public(self) -> dict:
         return {"id": self.id, "name": self.name, "kind": self.kind, "status": self.status,
                 "error": self.error, "funds": self.funds, "since": self.at,
-                "today": self.day == today_ist()}
+                "today": self.day == today_ist(), "parked": self.parked}
 
 
 class BrokerHub:
@@ -159,20 +176,32 @@ class BrokerHub:
 
     def login_all(self):
         for a in self.accounts.values():
+            if a.parked:
+                continue
             if a.has_creds():
                 a.login()
             else:
                 a.status, a.error = "no_creds", "credentials not in deployment/.env"
 
     def _loop(self):
-        """Log everyone in after 09:02 IST on weekdays, once per day; refresh funds every 5 min."""
-        done_day = None
+        """Weekdays 09:02-15:30 IST: any account not logged in for TODAY retries every 2 min
+        (a late 09:00 Kite token must not leave Zerodha out all day). Kotak stops after
+        KOTAK_MAX_TRIES failures a day so a bad key cannot hammer Kotak. Funds every 5 min."""
         last_funds = 0.0
         while not self._stop.is_set():
             n = dt.datetime.now(IST)
-            if n.weekday() < 5 and n.time() >= dt.time(9, 2) and done_day != n.date():
-                self.login_all()
-                done_day = n.date()
+            if n.weekday() < 5 and dt.time(9, 2) <= n.time() <= dt.time(15, 30):
+                for a in self.accounts.values():
+                    if a.parked or (a.status == "logged_in" and a.day == today_ist()):
+                        continue
+                    if not a.has_creds():
+                        a.status, a.error = "no_creds", "credentials not in deployment/.env"
+                        continue
+                    tries = a.tries if a.tries_day == today_ist() else 0
+                    if a.kind == "kotak" and tries >= KOTAK_MAX_TRIES:
+                        continue
+                    if time.time() - a.last_try >= 120:
+                        a.login()
             if time.time() - last_funds > 300:
                 for a in self.accounts.values():
                     if a.status == "logged_in" and a.day == today_ist():

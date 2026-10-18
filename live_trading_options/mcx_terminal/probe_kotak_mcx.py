@@ -37,6 +37,9 @@ sys.path.insert(0, str(ROOT / "live_trading_options" / "strangle_strategy"))
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 NAMES = ("CRUDEOIL", "GOLDM", "SILVERM")
 STRIKES_EACH_SIDE = 10
+SUFFIX = sys.argv[sys.argv.index("--suffix") + 1] if "--suffix" in sys.argv else "_D"
+SUFFIX = "" if SUFFIX == "NONE" else SUFFIX
+LOGIN_ONLY = "--login-only" in sys.argv
 SECS = int(sys.argv[sys.argv.index("--secs") + 1]) if "--secs" in sys.argv else 45
 STAMP = dt.datetime.now(IST).strftime("%Y%m%d_%H%M%S")
 LOGS = ROOT / "logs"
@@ -81,17 +84,24 @@ def kotak_p_login():
     from neo_api_client import NeoAPI
     load_dotenv(ROOT / "deployment" / ".env")
     req = ("KOTAK_CONSUMER_KEY", "KOTAK_MOBILE", "KOTAK_UCC", "KOTAK_MPIN", "KOTAK_TOTP_SECRET")
-    cr = {k: os.getenv(k + "_D") for k in req}
-    missing = [k + "_D" for k, v in cr.items() if not v]
+    cr = {k: os.getenv(k + SUFFIX) for k in req}
+    missing = [k + SUFFIX for k, v in cr.items() if not v]
     if missing:
         raise RuntimeError("missing in deployment/.env: " + ", ".join(missing))
-    m = cr["KOTAK_MOBILE"].strip()
-    bare = m.lstrip("+")[-10:]
+    m = cr["KOTAK_MOBILE"].strip().strip('"').strip("'")
+    bare = "".join(ch for ch in m if ch.isdigit())[-10:]
+    # describe the stored value's SHAPE only (never the digits)
+    step("1_login", mobile_shape="".join("9" if ch.isdigit() else ch for ch in cr["KOTAK_MOBILE"]))
     last = None
-    for mob in dict.fromkeys([m, "+91" + bare, bare]):
+    attempts = []
+    for label, mob in (("as stored", m), ("+91 + 10 digits", "+91" + bare), ("10 digits", bare)):
+        if any(a[1] == mob for a in attempts):
+            continue
         c = NeoAPI(environment="prod", access_token=None, neo_fin_key=None, consumer_key=cr["KOTAK_CONSUMER_KEY"])
         r1 = c.totp_login(mobile_number=mob, ucc=cr["KOTAK_UCC"],
                           totp=pyotp.TOTP(cr["KOTAK_TOTP_SECRET"].strip().replace(" ", "")).now())
+        attempts.append((label, mob, str(r1)[:200] if (not isinstance(r1, dict) or r1.get("error")) else "ok"))
+        step("1_login", attempts=[(a[0], a[2]) for a in attempts])
         if not isinstance(r1, dict) or r1.get("error"):
             last = f"totp_login: {str(r1)[:160]}"
             continue
@@ -352,6 +362,8 @@ def main():
     print(f"Kotak P MCX probe — {n:%a %d-%b %H:%M} IST — MCX {'OPEN' if mcx_open else 'CLOSED (expect no ticks)'}\n")
     try:
         c = login()
+        if LOGIN_ONLY:
+            return
         keep, m = scrip_master(c)
 
         toks, depth = [], []

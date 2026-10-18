@@ -956,12 +956,13 @@ function renderBrokerRows() {
   $('brokerList').innerHTML = S.brokers.map(b => {
     const ok = b.status === 'logged_in' && b.today, sel = S.dsel[b.id] || { on: false, mult: 1 };
     const pill = ok ? '<span class="pill live st">LOGGED IN</span>'
+      : b.status === 'parked' ? '<span class="pill st" title="parked — not logging in">PARKED</span>'
       : b.status === 'no_creds' ? '<span class="pill st" title="add its keys to deployment/.env on the VPS">NO KEYS</span>'
       : `<span class="pill stale st" title="${esc(b.error)}">LOGGED OUT</span>`;
     return `<div class="brk ${ok ? '' : 'dis'}" data-b="${b.id}">
       <input type="checkbox" data-f="on" ${ok && sel.on ? 'checked' : ''} ${ok ? '' : 'disabled'}>
       <span class="nm">${esc(b.name)}</span>${pill}
-      ${!ok && b.status !== 'no_creds' ? '<button data-f="login">Login</button>' : ''}
+      ${!ok && b.status !== 'no_creds' && b.status !== 'parked' ? '<button data-f="login">Login</button>' : ''}
       <span class="fund num">${b.funds != null ? 'funds ' + rs(b.funds) : ''}</span>
       <label class="mut">× <select data-f="mult" ${ok ? '' : 'disabled'}>${[1, 2, 3, 4, 5, 6, 8, 10].map(n => `<option ${n === sel.mult ? 'selected' : ''}>${n}</option>`).join('')}</select></label></div>`;
   }).join('');
