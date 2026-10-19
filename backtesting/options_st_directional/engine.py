@@ -133,6 +133,14 @@ class DayMachine:
             self.log(T, "reference_set", s, candle=t.time(), ref_low=low, late=True)
             return
         if close < s.ref_low:                      # Case A
+            if getattr(self.cfg, "rsi_filter", False):
+                spot = self.provider.spot_candles(self.day)
+                r = spot.loc[t, "rsi"] if (spot is not None and t in spot.index and "rsi" in spot) else float("nan")
+                ok = (r > 50) if s.opt_type == "PE" else (r < 50)
+                if pd.isna(r) or not ok:
+                    self.log(T, "signal_blocked_rsi", s, candle=t.time(), close=close,
+                             ref_low=s.ref_low, rsi=None if pd.isna(r) else round(float(r), 2))
+                    return
             s.status = "signalled"
             s.signal_candle_ts, s.signal_ts = t, T
             s.signal_close, s.signal_ref = close, s.ref_low
@@ -231,6 +239,16 @@ class DayMachine:
         d = int(srow["st_dir"]) if not pd.isna(srow["st_dir"]) else 0
 
         if self.bias is None:                      # initial bias (09:15 candle)
+            mx = getattr(self.cfg, "cpr_max_width", None)
+            if mx and not getattr(self, "cpr_checked", False):
+                self.cpr_checked = True
+                w = prov.prev_cpr_width(self.day)
+                self.cpr_width = w
+                if w is None or w > mx:
+                    self.log(T, "skipped_cpr", width=None if w is None else round(w, 2), max=mx)
+                    self.done = True
+                    return False
+                self.log(T, "cpr_ok", width=round(w, 2), max=mx)
             if d == 0:
                 self.log(T, "spot_st_not_ready", candle=t.time())
                 return True

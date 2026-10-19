@@ -154,6 +154,29 @@ class DeltaClient:
         (meta_data: amount_without_gst, gst), deposit, ..."""
         return self._request("GET", "/v2/wallet/transactions", params={"page_size": page_size}) or []
 
+    def transactions_all(self, since_iso=None, page_size=200, max_pages=60):
+        """Every wallet ledger row, newest first, following Delta's `after` cursor
+        (the plain `transactions()` only returns the first page). Stops once a page
+        reaches back past `since_iso` (UTC ISO string)."""
+        import urllib.parse
+        rows, after = [], None
+        for _ in range(max_pages):
+            p = {"page_size": page_size}
+            if after:
+                p["after"] = after
+            q = "?" + urllib.parse.urlencode(p)
+            path = "/v2/wallet/transactions"
+            r = self.s.get(self.base + path + q, headers=self._headers("GET", path, q, ""),
+                           timeout=self.timeout).json()
+            if not r.get("success", True):
+                raise DeltaAPIError(f"GET {path}: {r.get('error')}", code=(r.get("error") or {}).get("code"))
+            res = r.get("result") or []
+            rows += res
+            after = (r.get("meta") or {}).get("after")
+            if not after or not res or (since_iso and str(res[-1].get("created_at")) < since_iso):
+                break
+        return rows
+
     def raw_positions(self):
         return self._request("GET", "/v2/positions/margined") or []
 

@@ -60,3 +60,40 @@ def clean_index_closing_auction(one_min: pd.DataFrame, start: str = CLOSING_AUCT
     hm = df["datetime"].dt.strftime("%H:%M")
     day = df["datetime"].dt.strftime("%Y-%m-%d")
     return df[~((day >= start) & (hm >= "15:15"))].reset_index(drop=True)
+
+
+# ---------- filters shared by the backtest and the live paper engine ----------
+
+def session_hlc(one_min_day: pd.DataFrame):
+    """(High, Low, Close) of one index session from its 1-minute bars.
+    On closing-auction days (>= CLOSING_AUCTION_FROM) High/Low come from the
+    continuous session (< 15:15); Close is the last bar = the official close."""
+    df = one_min_day.sort_values("datetime")
+    if df.empty:
+        return None
+    day = pd.Timestamp(df["datetime"].iloc[0]).strftime("%Y-%m-%d")
+    hm = pd.to_datetime(df["datetime"]).dt.strftime("%H:%M")
+    sess = df[hm < "15:15"] if day >= CLOSING_AUCTION_FROM else df[hm <= "15:29"]
+    if sess.empty:
+        return None
+    return float(sess["high"].max()), float(sess["low"].min()), float(df["close"].iloc[-1])
+
+
+def cpr_width(h: float, l: float, c: float) -> float:
+    """|TC - BC| of the Central Pivot Range built from a session's H/L/C."""
+    p = (h + l + c) / 3.0
+    bc = (h + l) / 2.0
+    tc = 2.0 * p - bc
+    return abs(tc - bc)
+
+
+def add_rsi(c5: pd.DataFrame, period: int = 14) -> pd.DataFrame:
+    """Wilder RSI of the close (TradingView ta.rsi), as column 'rsi'."""
+    c5 = c5.copy()
+    d = c5["close"].diff()
+    up = d.clip(lower=0).ewm(alpha=1 / period, adjust=False).mean()
+    dn = (-d.clip(upper=0)).ewm(alpha=1 / period, adjust=False).mean()
+    rs = up / dn
+    c5["rsi"] = 100 - 100 / (1 + rs)
+    c5.iloc[:period, c5.columns.get_loc("rsi")] = np.nan
+    return c5

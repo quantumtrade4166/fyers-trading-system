@@ -58,7 +58,8 @@ def sim_day(day: str, bp: BreezeProvider, cfg: Config):
     eng = LE.Engine(clock=lambda: clock["now"])
     # core rules only: the live stop-to-cost works on ticks, the backtest's on 1-min
     # bars, so they are compared separately (see test below / --breakeven backtests)
-    eng.p = dict(eng.p, breakeven_after_points=None)
+    eng.p = dict(eng.p, breakeven_after_points=None, cpr_max_width=None)
+    eng.cfg.cpr_max_width = None
     eng.blocked_reason = None
     sel = bp.select_contract(day, None, 25000)
     eng.trade_expiry = sel["expiry"].date()

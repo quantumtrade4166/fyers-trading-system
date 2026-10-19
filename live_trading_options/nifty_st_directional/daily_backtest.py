@@ -42,6 +42,7 @@ PARAMS = json.loads((ROOT / "config" / "parameters.json").read_text(encoding="ut
 OUT = ROOT / "data" / "results" / "backtest_daily.json"
 CALENDAR = REPO / "data" / "NSE_NIFTY_OPTIONS" / "expiry_calendar.csv"
 BREAKEVEN_FROM = "2026-10-13"      # the paper engine got stop-to-cost (25) from this day
+CPR_FROM = "2026-10-19"            # ...and the CPR width filter from this day
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
 
@@ -101,8 +102,9 @@ def backtest(dates):
     out = json.loads(OUT.read_text(encoding="utf-8")) if OUT.exists() else {}
     for d in dates:
         be = PARAMS.get("breakeven_after_points") if d >= BREAKEVEN_FROM else None
+        cpr_max = PARAMS.get("cpr_max_width") if d >= CPR_FROM else None
         cfg = Config(start=d, end=d, lots=PARAMS["lots"], capital=PARAMS["capital"],
-                     breakeven_after_points=be, tag="DAILY")
+                     breakeven_after_points=be, cpr_max_width=cpr_max, tag="DAILY")
         prov = BD.BreezeProvider(cfg, verbose=False)
         if d not in prov.days_in_range(d, d):
             log(f"{d}: not a trading day in the index data -- skipped")
@@ -123,6 +125,8 @@ def backtest(dates):
                         "reason": t.exit_reason, "net": round(float(t.net_pnl), 2)}
                        for t in tr.itertuples()] if len(tr) else [],
             "gaps": len(prov.missing),
+            "cpr_width": round(prov.prev_cpr_width(d), 2) if prov.prev_cpr_width(d) is not None else None,
+            "cpr_skipped": any(e["event"] == "skipped_cpr" for e in r["events"]),
             "computed": dt.datetime.now(IST).strftime("%Y-%m-%d %H:%M"),
         }
         out[d] = row

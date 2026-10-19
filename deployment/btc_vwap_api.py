@@ -394,3 +394,96 @@ def broker(fresh: int = Query(0)):
            "recon": recon, "recon_ok": all(r["ok"] for r in recon)}
     _BROKER.update(at=_t.time(), data=out)
     return out
+
+
+
+# ── live P&L history: Delta's own ledger, every fee + GST (2026-10-19) ───
+# The truth for "what the live strategy made": Delta's wallet ledger, BTC option
+# rows only (cashflow = premium in/out per fill, commission = fee incl. GST).
+# Our own book (trades.jsonl) is shown next to it as a check; it lost 04-07 Oct
+# with the old VPS, the ledger did not. Live since 2026-10-04.
+_LIVEPNL = {"at": 0.0, "data": None}
+LIVE_SINCE = "2026-10-04"
+
+
+@router.get("/live_pnl")
+def live_pnl(fresh: int = Query(0)):
+    import time as _t
+    if not fresh and _LIVEPNL["data"] and _t.time() - _LIVEPNL["at"] < 60:
+        return _LIVEPNL["data"]
+    try:
+        c = _delta_client()
+        rows = c.transactions_all(since_iso="2026-10-03T00:00:00")
+        pos_raw = c.raw_positions()
+    except Exception as e:
+        return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
+    days = {}
+    for t in rows:
+        md = t.get("meta_data") or {}
+        sym = str(md.get("product_symbol") or "")
+        if not (sym.startswith("C-BTC-") or sym.startswith("P-BTC-")):
+            continue
+        try:
+            d = dt.datetime.fromisoformat(str(t.get("created_at")).replace("Z", "+00:00")).astimezone(IST).date().isoformat()
+        except Exception:
+            continue
+        if d < LIVE_SINCE:
+            continue
+        x = days.setdefault(d, {"date": d, "cashflow": 0.0, "charges": 0.0, "gst": 0.0, "fills": 0})
+        a = _num(t.get("amount")) or 0.0
+        if t.get("transaction_type") == "cashflow":
+            x["cashflow"] += a
+            x["fills"] += 1
+        elif t.get("transaction_type") == "commission":
+            x["charges"] += a
+            x["gst"] += _num(md.get("gst")) or 0.0
+    # today's still-open legs at the cost to buy them back now (Delta's own number)
+    today = _now().date().isoformat()
+    open_cost = sum(_num(p.get("unrealized_cashflow")) or 0.0 for p in pos_raw
+                    if str(p.get("product_symbol") or "").startswith(("C-BTC-", "P-BTC-")))
+    if open_cost:
+        days.setdefault(today, {"date": today, "cashflow": 0.0, "charges": 0.0, "gst": 0.0, "fills": 0})
+    # our book per day, as a check
+    book = {}
+    for r in _jsonl(RESULTS / "trades.jsonl"):
+        if r.get("version") == LIVE_VERSION and r.get("mode") == "live":
+            d = str(r.get("cycle") or "")[:10]
+            book[d] = book.get(d, 0.0) + (r.get("net_usd") or 0.0)
+    out, cum, peak = [], 0.0, 0.0
+    for d in sorted(days):
+        x = days[d]
+        net = x["cashflow"] + x["charges"] + (open_cost if d == today else 0.0)
+        cum += net
+        peak = max(peak, cum)
+        out.append({"date": d, "net": round(net, 2), "gross": round(x["cashflow"] + (open_cost if d == today else 0.0), 2),
+                    "charges": round(-x["charges"], 2), "gst": round(-x["gst"], 2), "fills": x["fills"],
+                    "open": bool(d == today and open_cost), "cum": round(cum, 2), "dd": round(cum - peak, 2),
+                    "book": round(book[d], 2) if d in book else None,
+                    "book_ok": (abs(book[d] - (x["cashflow"] + x["charges"])) < 0.05) if d in book else None})
+    nets = [r["net"] for r in out]
+    stats = {"days": len(out), "net": round(sum(nets), 2),
+             "charges": round(sum(r["charges"] for r in out), 2), "gst": round(sum(r["gst"] for r in out), 2),
+             "gross": round(sum(r["gross"] for r in out), 2),
+             "win_days": sum(1 for v in nets if v > 0), "loss_days": sum(1 for v in nets if v < 0),
+             "best": max(nets) if nets else None, "worst": min(nets) if nets else None,
+             "avg": round(sum(nets) / len(nets), 2) if nets else None,
+             "max_dd": min((r["dd"] for r in out), default=0.0)}
+    # by day of week (crypto trades all 7): which weekday the strategy earns on
+    names = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+    wk = [{"day": n, "days": 0, "net": 0.0, "wins": 0, "charges": 0.0, "dates": []} for n in names]
+    for r in out:
+        w = wk[dt.date.fromisoformat(r["date"]).weekday()]
+        w["days"] += 1
+        w["net"] += r["net"]
+        w["charges"] += r["charges"]
+        w["wins"] += 1 if r["net"] > 0 else 0
+        w["dates"].append(r["date"])
+    for w in wk:
+        w["net"] = round(w["net"], 2)
+        w["charges"] = round(w["charges"], 2)
+        w["avg"] = round(w["net"] / w["days"], 2) if w["days"] else None
+    data = {"ok": True, "at": _now().strftime("%H:%M:%S"), "since": LIVE_SINCE, "days": out, "stats": stats,
+            "by_weekday": wk,
+            "source": "Delta wallet ledger — BTC option cashflow + commission (fees incl. 18% GST)"}
+    _LIVEPNL.update(at=_t.time(), data=data)
+    return data

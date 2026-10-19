@@ -41,6 +41,17 @@ SUFFIX = sys.argv[sys.argv.index("--suffix") + 1] if "--suffix" in sys.argv else
 SUFFIX = "" if SUFFIX == "NONE" else SUFFIX
 LOGIN_ONLY = "--login-only" in sys.argv
 SECS = int(sys.argv[sys.argv.index("--secs") + 1]) if "--secs" in sys.argv else 45
+# --hsm-ip IP: connect the price websocket (mlhsm) to this IP instead of what DNS says.
+# In-process only (no hosts file); TLS still checks the real host name.
+HSM_HOST = "mlhsm.kotaksecurities.com"
+HSM_IP = sys.argv[sys.argv.index("--hsm-ip") + 1] if "--hsm-ip" in sys.argv else None
+if HSM_IP:
+    import socket
+    _gai = socket.getaddrinfo
+
+    def _pinned(host, *a, **k):
+        return _gai(HSM_IP if host == HSM_HOST else host, *a, **k)
+    socket.getaddrinfo = _pinned
 STAMP = dt.datetime.now(IST).strftime("%Y%m%d_%H%M%S")
 LOGS = ROOT / "logs"
 LOGS.mkdir(exist_ok=True)
@@ -109,6 +120,8 @@ def kotak_p_login():
         if not isinstance(r2, dict) or r2.get("error"):
             last = f"totp_validate: {str(r2)[:160]}"
             continue
+        c.validate_resp = r2          # carries data.sid + data.feedUrl (the new market feed)
+        c.ucc = cr["KOTAK_UCC"]
         return c
     raise RuntimeError(last)
 
@@ -173,8 +186,7 @@ def scrip_master(c):
                    lot=c_lot, freeze=c_frz, tick=c_tick, inst=c_inst)
     step("2_scrip", column_map=mapping)
 
-    keep = [x for x in rows if x.get(c_name, "").upper() in NAMES or
-            any(x.get(c_trd, "").upper().startswith(n) for n in NAMES)]
+    keep = [x for x in rows if x.get(c_name, "").upper() in NAMES]
     with open(LOGS / f"mcx_scrip_{STAMP}.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=keys)
         w.writeheader()
@@ -182,7 +194,7 @@ def scrip_master(c):
 
     per = {}
     for n in NAMES:
-        mine = [x for x in keep if x.get(c_name, "").upper() == n or x.get(c_trd, "").upper().startswith(n)]
+        mine = [x for x in keep if x.get(c_name, "").upper() == n]
         opts = [x for x in mine if x.get(c_opt, "").upper() in ("CE", "PE")]
         futs = [x for x in mine if x.get(c_opt, "").upper() not in ("CE", "PE")]
         exps = sorted({x.get(c_exp) for x in opts}, key=lambda e: fnum(e) or 0)
@@ -203,7 +215,7 @@ def scrip_master(c):
 
 def nearest_chain(keep, m, name, ref_price):
     """Nearest-expiry options of `name`, ATM +/- N strikes (by the ref price)."""
-    opts = [x for x in keep if (x.get(m["name"], "").upper() == name or x.get(m["trd"], "").upper().startswith(name))
+    opts = [x for x in keep if x.get(m["name"], "").upper() == name
             and x.get(m["opt"], "").upper() in ("CE", "PE")]
     if not opts:
         return []
@@ -240,7 +252,7 @@ def rest_quotes(c, toks):
 
 
 def fut_price(c, keep, m, name):
-    futs = [x for x in keep if (x.get(m["name"], "").upper() == name or x.get(m["trd"], "").upper().startswith(name))
+    futs = [x for x in keep if x.get(m["name"], "").upper() == name
             and x.get(m["opt"], "").upper() not in ("CE", "PE")]
     if not futs:
         return None, None
@@ -389,4 +401,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    finally:
+        import os
+        sys.stdout.flush()
+        os._exit(0)          # the SDK's websocket threads would keep the process alive

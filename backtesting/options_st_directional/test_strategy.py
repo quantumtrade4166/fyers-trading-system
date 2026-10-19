@@ -55,7 +55,11 @@ class Fake:
         for t in GRID:
             c = self.spot.get(t.strftime("%H:%M"), c)
             close.append(c)
-        return pd.DataFrame({"close": close, "st": 0.0, "st_dir": d}, index=GRID)
+        rsi = [getattr(self, "rsi", {}).get(t.strftime("%H:%M"), getattr(self, "rsi_default", 55.0)) for t in GRID]
+        return pd.DataFrame({"close": close, "st": 0.0, "st_dir": d, "rsi": rsi}, index=GRID)
+
+    def prev_cpr_width(self, day):
+        return getattr(self, "cpr", 30.0)
 
     def select_contract(self, day, ts, spot):
         self.selections.append((ts, spot))
@@ -478,3 +482,32 @@ def test_breakeven_off_by_default():
                     minutes={(PE(), "09:27"): (40, 41, 20, 30), (PE(), "09:41"): (45, 60, 44, 50)})
     f.fills[(PE(), "09:25")] = 50.0
     assert run_day(DAY, f, Config())["trades"][0]["exit_reason"] == "square_off_1515"
+
+
+# optional CPR day filter + RSI entry filter -------------------------------------
+def test_cpr_wide_day_is_skipped():
+    f = Fake(opts={PE(): {"09:20": {"low": 95, "close": 95}}}); f.cpr = 80.0
+    r = run_day(DAY, f, Config(cpr_max_width=60))
+    assert not r["trades"] and not r["setups"] and ev(r, "skipped_cpr")
+
+
+def test_cpr_narrow_day_trades_normally():
+    f = Fake(opts={PE(): {"09:20": {"low": 95, "close": 95}}}); f.cpr = 60.0   # <= 60 trades
+    r = run_day(DAY, f, Config(cpr_max_width=60))
+    assert len(r["trades"]) == 1 and ev(r, "cpr_ok")
+
+
+def test_rsi_blocks_put_below_50_then_allows_later():
+    f = Fake(opts={PE(): {"09:20": {"low": 95, "close": 95}, "09:25": {"low": 94, "close": 94}}})
+    f.rsi = {"09:20": 45.0, "09:25": 58.0}
+    r = run_day(DAY, f, Config(rsi_filter=True))
+    assert ev(r, "signal_blocked_rsi")[0]["ts"] == T("09:25")
+    tr = r["trades"][0]
+    assert tr["signal_ts"] == T("09:30") and tr["signal_ref"] == 100     # reference low kept
+
+
+def test_rsi_call_needs_rsi_below_50():
+    f = Fake(opts={CE(): {"09:20": {"low": 95, "close": 95}}}); f.base_dir = -1; f.rsi_default = 62.0
+    assert not run_day(DAY, f, Config(rsi_filter=True))["trades"]
+    f.rsi_default = 41.0
+    assert len(run_day(DAY, f, Config(rsi_filter=True))["trades"]) == 1

@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from backtesting.options_st_directional.candles import (  # noqa: F401
-    to_5min, supertrend, clean_index_closing_auction)
+    to_5min, supertrend, clean_index_closing_auction, add_rsi, session_hlc, cpr_width)
 from backtesting.options_credit_spread.expiry_calendar import ExpiryCalendar
 from options.breeze.config import DATA_DIR
 
@@ -45,7 +45,8 @@ class BreezeProvider:
 
         spot1 = pd.read_parquet(INDEX_PATH)
         spot1["datetime"] = pd.to_datetime(spot1["datetime"])
-        self.spot1 = clean_index_closing_auction(spot1.sort_values("datetime"))
+        self.spot1_raw = spot1.sort_values("datetime")          # keeps the official close
+        self.spot1 = clean_index_closing_auction(self.spot1_raw)
         days = sorted(self.spot1["datetime"].dt.strftime("%Y-%m-%d").unique())
         future = pd.bdate_range(pd.Timestamp(days[-1]) + pd.Timedelta(days=1),
                                 periods=40).strftime("%Y-%m-%d")
@@ -56,8 +57,8 @@ class BreezeProvider:
         self.cal.set_trading_days(self.trading_days)
 
         # continuous spot Supertrend over the whole index history (warm-up included)
-        self.spot5 = supertrend(to_5min(self.spot1, cfg.timeframe_min),
-                                cfg.st_period, cfg.st_mult)
+        self.spot5 = add_rsi(supertrend(to_5min(self.spot1, cfg.timeframe_min),
+                                        cfg.st_period, cfg.st_mult), cfg.rsi_period)
         self._one_min: dict = {}
         self._opt5: dict = {}
         self.missing: list = []        # (date, contract, what)
@@ -69,6 +70,15 @@ class BreezeProvider:
     def prev_day(self, day: str, k: int = 1):
         i = self.trading_days.index(day)
         return self.trading_days[i - k] if i - k >= 0 else None
+
+    # ---------- CPR of the previous session ----------
+    def prev_cpr_width(self, day: str):
+        prev = self.prev_day(day)
+        if prev is None:
+            return None
+        bars = self.spot1_raw[self.spot1_raw["datetime"].dt.strftime("%Y-%m-%d") == prev]
+        hlc = session_hlc(bars)
+        return cpr_width(*hlc) if hlc else None
 
     # ---------- spot ----------
     def spot_candles(self, day: str) -> pd.DataFrame:

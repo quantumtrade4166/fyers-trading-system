@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCX Desk</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><span class="mark">◆</span> MCX<span class="dot">·</span>DESK</div>
+  <div class="tickers" id="tickers"></div>
+  <div class="right">
+    <div class="pnl" title="Session P&L: closed + open positions">
+      <span class="lbl">SESSION P&amp;L</span><span class="val mono" id="pnl">0.00</span>
+    </div>
+    <button class="btn danger" id="exitall" title="Cancel every open order and close every position">EXIT ALL</button>
+    <span class="badge paper" id="mode">PAPER</span>
+    <span class="pill" id="feed"><i class="led"></i><span id="feedtxt">connecting…</span></span>
+    <span class="pill mono" id="ping" title="Screen ↔ engine round trip">— ms</span>
+    <span class="clock mono" id="clock">--:--:--</span>
+  </div>
+</header>
+
+<section class="bar">
+  <div class="seg" id="inst"></div>
+  <label>Expiry <select id="expiry"></select></label>
+  <label>Strikes <select id="strikes"></select></label>
+  <div class="qty">
+    <span class="lbl">Qty</span>
+    <button class="sq" id="qminus" title="One lot less">−</button>
+    <select id="qty"></select>
+    <button class="sq" id="qplus" title="One lot more">+</button>
+    <span class="units mono" id="qunits"></span>
+  </div>
+  <div class="toggles">
+    <button class="tg" id="tg-kb" title="Arrow keys move over the prices · − sells · + or = buys">⌨ Keys</button>
+    <button class="tg" id="tg-qty" title="Ask for the quantity before every order">Ask qty</button>
+    <button class="tg" id="tg-px" title="Ask for a limit price before every order (empty = at the market)">Ask price</button>
+  </div>
+  <div class="spacer"></div>
+  <div class="und mono" id="und"></div>
+</section>
+
+<main class="chainwrap" id="chainwrap">
+  <table class="chain" id="chain">
+    <thead>
+      <tr class="side"><th colspan="7" class="ce">CALLS</th><th class="kh"></th><th colspan="7" class="pe">PUTS</th></tr>
+      <tr>
+        <th title="Open interest, lots">OI</th><th title="Volume today, lots">Vol</th><th>Bid</th><th>Ask</th><th>Chg%</th><th class="act"></th><th class="ltph">LTP</th>
+        <th class="kh">Strike</th>
+        <th class="ltph">LTP</th><th class="act"></th><th>Chg%</th><th>Bid</th><th>Ask</th><th title="Volume today, lots">Vol</th><th title="Open interest, lots">OI</th>
+      </tr>
+    </thead>
+    <tbody id="rows"><tr><td colspan="15" class="empty">Loading chain…</td></tr></tbody>
+  </table>
+</main>
+
+<section class="dock" id="dock">
+  <div class="dock-head">
+    <button class="dt on" data-p="pos">Positions <span id="npos">0</span></button>
+    <button class="dt" data-p="ord">Orders <span id="nord">0</span></button>
+    <div class="spacer"></div>
+    <div class="dock-tools" id="tools-pos">
+      <span class="lbl">Exit</span>
+      <button class="btn sm" data-frac="0.25">25%</button><button class="btn sm" data-frac="0.5">50%</button>
+      <button class="btn sm" data-frac="0.75">75%</button><button class="btn sm danger" data-frac="1">100%</button>
+    </div>
+    <div class="dock-tools" id="tools-ord" hidden>
+      <div class="seg small" id="ofilter">
+        <button class="on" data-f="all">All</button><button data-f="open">Open</button><button data-f="done">Done</button>
+      </div>
+      <button class="btn sm" id="cancelall">Cancel all open</button>
+    </div>
+  </div>
+  <div class="dock-body">
+    <table class="grid" id="pos-table">
+      <thead><tr><th class="l">Contract</th><th>Net</th><th>Avg</th><th>LTP</th><th>P&amp;L</th><th>Realized</th><th></th></tr></thead>
+      <tbody id="pos-rows"></tbody>
+    </table>
+    <table class="grid" id="ord-table" hidden>
+      <thead><tr><th class="l">Time</th><th class="l">Contract</th><th>Side</th><th>Qty</th><th>Filled</th><th>Limit</th><th>Avg</th><th class="l">Status</th><th class="l">Detail</th><th></th></tr></thead>
+      <tbody id="ord-rows"></tbody>
+    </table>
+  </div>
+</section>
+
+<footer class="foot mono">
+  <span id="f-sub">—</span><span id="f-age">—</span><span id="f-kb"></span><span id="f-msg"></span>
+</footer>
+
+<!-- order ticket (qty / price pop-up) -->
+<div class="modal" id="ticket" hidden>
+  <div class="ticket" id="ticket-box">
+    <div class="t-head"><span class="t-side" id="t-side">SELL</span><span class="t-sym mono" id="t-sym"></span></div>
+    <div class="t-quote mono" id="t-quote"></div>
+    <label class="t-row">Lots <input id="t-lots" type="number" min="1" step="1" class="mono"><span class="t-units mono" id="t-units"></span></label>
+    <label class="t-row" id="t-pxrow">Limit price <input id="t-px" type="number" step="0.05" class="mono" placeholder="empty = at the market"></label>
+    <div class="t-warn" id="t-warn"></div>
+    <div class="t-btns"><button class="btn" id="t-cancel">Cancel (Esc)</button><button class="btn go" id="t-go">Place (Enter)</button></div>
+    <div class="t-help">Enter places · Esc cancels · ↑ ↓ change by one lot</div>
+  </div>
+</div>
+<div class="toasts" id="toasts"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

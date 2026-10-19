@@ -146,3 +146,103 @@ def compare():
                         "paper_net": round(sum(r["paper_net"] for r in both), 2),
                         "bt_net": round(sum(r["bt_net"] for r in both), 2),
                         "diff": round(sum(r["diff"] for r in both), 2)}}
+
+
+# ── LIVE: Kotak D mirror controls (owner only — dashboard is behind Cloudflare Access) ──
+from fastapi import Body                                              # noqa: E402
+
+CONTROL_KD = STATE / "live_control_KOTAK_D.json"
+MAX_LOTS = 50
+
+
+def _kd_read() -> dict:
+    d = _read(CONTROL_KD, {}) or {}
+    return {"armed": bool(d.get("armed", False)), "lots": int(d.get("lots", 1) or 0),
+            "kill": bool(d.get("kill", False)), "updated": d.get("updated")}
+
+
+def _kd_write(**kw) -> dict:
+    d = _kd_read()
+    d.update(kw)
+    d["updated"] = _now().strftime("%Y-%m-%d %H:%M:%S")
+    STATE.mkdir(parents=True, exist_ok=True)
+    tmp = CONTROL_KD.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d), encoding="utf-8")
+    tmp.replace(CONTROL_KD)
+    return d
+
+
+def _kd_book_view(date: str):
+    """A past day's Kotak D book (results/{date}_kotak_d.json) in the same shape the
+    engine publishes live. Realized P&L from the day's own fills."""
+    b = _read(RESULTS / f"{date}_kotak_d.json")
+    if not b:
+        return None
+    fills = b.get("fills") or []
+    norm = []
+    for f in fills:
+        norm.append({"time": f.get("time") or str(f.get("fill_time") or "")[-8:],
+                     "side": f.get("side"), "symbol": f.get("symbol") or f.get("trading_symbol"),
+                     "qty": int(f.get("qty") or 0), "price": f.get("price", f.get("avg_price")),
+                     "order_id": f.get("order_id")})
+    sells = [f for f in norm if str(f["side"]).upper().startswith("S")]
+    buys = [f for f in norm if str(f["side"]).upper().startswith("B")]
+    sq, bq = sum(f["qty"] for f in sells), sum(f["qty"] for f in buys)
+    realized = 0.0
+    if sq and bq:
+        s_avg = sum(f["qty"] * float(f["price"] or 0) for f in sells) / sq
+        b_avg = sum(f["qty"] * float(f["price"] or 0) for f in buys) / bq
+        realized = (s_avg - b_avg) * min(sq, bq)
+    return {"position": b.get("pos"), "fills": norm, "halted": b.get("halted"),
+            "last_error": b.get("last_error"), "pending_exit": b.get("pending_exit"),
+            "realized_gross": round(realized, 2), "open_gross": 0.0, "day_gross": round(realized, 2),
+            "logged_in": None, "trades": min(len(sells), len(buys))}
+
+
+@router.get("/live")
+def live_status(date: str = Query(None)):
+    today = _now().date().isoformat()
+    if date and date != today:
+        return {"ok": True, "control": _kd_read(), "engine": _kd_book_view(date), "date": date,
+                "history": True}
+    t = _read(STATE / "TICK.json", {}) or {}
+    eng = t.get("live") if t.get("date") == today else None
+    return {"ok": True, "control": _kd_read(), "engine": eng, "engine_ts": t.get("ts"),
+            "engine_date": t.get("date"), "date": today, "history": False}
+
+
+@router.get("/live/dates")
+def live_dates():
+    """Days on which Kotak D actually traded (have fills), newest first, plus today."""
+    out = []
+    for f in RESULTS.glob("????-??-??_kotak_d.json"):
+        b = _read(f, {}) or {}
+        if b.get("fills"):
+            out.append(f.name[:10])
+    today = _now().date().isoformat()
+    return {"ok": True, "dates": sorted(set(out) | {today}, reverse=True), "today": today}
+
+
+@router.post("/live/control")
+def live_control(body: dict = Body(...)):
+    """{"armed": true|false, "lots": n} — either key optional. Lots apply to the NEXT entry."""
+    kw = {}
+    if "lots" in body:
+        try:
+            lots = int(body["lots"])
+        except Exception:
+            return {"ok": False, "error": "lots must be a whole number"}
+        if not 0 <= lots <= MAX_LOTS:
+            return {"ok": False, "error": f"lots must be 0..{MAX_LOTS}"}
+        kw["lots"] = lots
+    if "armed" in body:
+        kw["armed"] = bool(body["armed"])
+    if not kw:
+        return {"ok": False, "error": "nothing to change"}
+    return {"ok": True, "control": _kd_write(**kw)}
+
+
+@router.post("/live/kill")
+def live_kill():
+    """Buy back anything open on Kotak D now, disarm, no more entries today."""
+    return {"ok": True, "control": _kd_write(kill=True, armed=False)}

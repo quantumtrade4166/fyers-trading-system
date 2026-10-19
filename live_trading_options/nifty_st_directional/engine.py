@@ -57,7 +57,7 @@ sys.path.insert(0, str(REPO))
 from backtesting.options_st_directional.engine import DayMachine          # noqa: E402
 from backtesting.options_st_directional.config import Config              # noqa: E402
 from backtesting.options_st_directional.candles import (  # noqa: E402
-    to_5min, supertrend, clean_index_closing_auction)
+    to_5min, supertrend, clean_index_closing_auction, session_hlc, cpr_width)
 from backtesting.options_pivot_intraday.costs import statutory_costs      # noqa: E402
 
 PARAMS = json.loads((ROOT / "config" / "parameters.json").read_text(encoding="utf-8"))
@@ -219,6 +219,25 @@ class LiveProvider:
         c5 = c5[c5.index.strftime("%Y-%m-%d") == day]
         return c5[c5.index + pd.Timedelta(minutes=5) <= self._until()]
 
+    def prev_cpr_width(self, day):
+        """CPR width from the previous session in the warm-up history (Fyers REST:
+        on closing-auction days it is flat 15:15-15:29 with the official close last)."""
+        e = self.e
+        with e.lock:
+            hist = dict(e.spot_book.hist)
+        days = sorted({m.strftime("%Y-%m-%d") for m in hist if m.strftime("%Y-%m-%d") < day})
+        if not days:
+            return None
+        prev = days[-1]
+        rows = [(m, *b) for m, b in hist.items() if m.strftime("%Y-%m-%d") == prev]
+        df = pd.DataFrame(rows, columns=["datetime", "open", "high", "low", "close"])
+        hlc = session_hlc(df)
+        if not hlc:
+            return None
+        e.cpr_info = {"prev_session": prev, "high": round(hlc[0], 2), "low": round(hlc[1], 2),
+                      "close": round(hlc[2], 2), "width": round(cpr_width(*hlc), 2)}
+        return cpr_width(*hlc)
+
     def option_candles(self, day, contract):
         e = self.e
         key = e.contract_key(contract)
@@ -281,6 +300,7 @@ class Engine:
                           capital=self.p["capital"], margin_per_lot=self.p["margin_per_lot"],
                           strike_step=self.p["strike_step"],
                           switch_sessions_left=self.p["switch_sessions_left"],
+                          cpr_max_width=self.p.get("cpr_max_width"),
                           tag="LIVE_PAPER")
         self.kite = None
         self.kws = None
@@ -311,6 +331,9 @@ class Engine:
         self.recorded_exits: set = set()
         self.sys_events: list = []
         self.blocked_reason = None
+        self.cpr_info = None
+        self.live = None                 # KotakDLive (real orders) -- attached in main()
+        self._last_live = 0.0
         self.status = "starting"
         self._dirty = True
         self._last_mtm = 0.0
@@ -396,11 +419,24 @@ class Engine:
             self.fy = fc.get_client()
         return self.fy
 
+    _FYERS_GAP = 0.25                      # Fyers Standard plan allows 5 req/s -> stay at 4/s
+    _fyers_lock = threading.Lock()
+    _fyers_last = 0.0
+
+    def _fyers_pace(self):
+        """Space Fyers history calls >= 0.25 s apart (avoids the -360 rate-limit refusals)."""
+        with Engine._fyers_lock:
+            wait = Engine._fyers_last + self._FYERS_GAP - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            Engine._fyers_last = time.monotonic()
+
     def history(self, fyers_symbol: str, kite_token: int | None, sessions: int) -> pd.DataFrame:
         """Last `sessions` prior sessions + today's completed minutes, 1-min OHLC."""
         start = self.today - dt.timedelta(days=sessions * 2 + 6)
         cutoff = pd.Timestamp(self.clock()).floor("min")
         try:
+            self._fyers_pace()
             r = self._fyers().history({"symbol": fyers_symbol, "resolution": "1", "date_format": "1",
                                        "range_from": start.isoformat(), "range_to": self.date_str,
                                        "cont_flag": "1"})
@@ -625,10 +661,25 @@ class Engine:
                 self.machine.position = None
             if len(self.machine.events) > n_ev:
                 self._after_bar(n_ev)
+        if self.machine.position is None and pos is not None:
+            self.live_sync(force=True)           # cost-stop hit: buy back on Kotak D now
+
+    def live_sync(self, force=False):
+        """Mirror any paper position change onto Kotak D (live_kotak). Never raises."""
+        if self.live is None:
+            return
+        if not force and time.monotonic() - self._last_live < 1.0:
+            return
+        self._last_live = time.monotonic()
+        try:
+            self.live.sync()
+        except Exception as e:
+            self.event("ERROR", f"[KOTAK D] sync failed: {type(e).__name__}: {e}")
 
     def step(self):
         """Hand every newly completed candle to the machine, in order."""
         now = self.clock()
+        self.live_sync()                         # also on a CPR-skip day: KILL / owed buy-backs
         if self.blocked_reason:
             return
         if now.time() < dt.time(15, 15):
@@ -645,6 +696,7 @@ class Engine:
                     n_ev = len(self.machine.events)
                     self.machine.on_close(pd.Timestamp(t))
                     self._after_bar(n_ev)
+                self.live_sync(force=True)
             except Exception as e:
                 self.event("ERROR", f"bar {key} failed: {type(e).__name__}: {e}")
         if now.time() >= dt.time(15, 16) and not self.machine.done:
@@ -653,9 +705,14 @@ class Engine:
                 self.machine.square_off()
                 self._after_bar(n_ev)
             self.event("SYSTEM", "safety square-off (15:15 bar was not processed)")
+            self.live_sync(force=True)
 
     def _after_bar(self, n_ev):
         for e in self.machine.events[n_ev:]:
+            if e["event"] == "skipped_cpr":
+                ci = self.cpr_info or {}
+                self.blocked_reason = (f"CPR width {ci.get('width', '?')} > {self.p.get('cpr_max_width')} "
+                                       f"(from {ci.get('prev_session', 'previous session')}) -- no trades today")
             print(f"  [stdir] {pd.Timestamp(e['ts']).strftime('%H:%M:%S')} {e['event']} "
                   f"{e['setup_id'] or e['trade_id'] or ''} {e['detail']}", flush=True)
             append_jsonl(RESULTS / f"{self.date_str}_events.jsonl",
@@ -796,7 +853,9 @@ class Engine:
                  "position": pos, "day": m, "setup": self.setup_view(mach.setup),
                  "equity": round(self._prior_equity() + m["day_net"], 2), "capital": self.p["capital"],
                  "blocked": self.blocked_reason, "qty": self.qty, "lots": self.p["lots"],
-                 "expiry": str(self.trade_expiry),
+                 "expiry": str(self.trade_expiry), "cpr": self.cpr_info,
+                 "live": self.live.view() if self.live else None,
+                 "cpr_max": self.p.get("cpr_max_width"),
                  "last_bar": max(self.processed) if self.processed else None}
         write_json(STATE_DIR / "TICK.json", d)
         if self.first_tick_seen and time.monotonic() - self._last_mtm >= 5 \
@@ -867,6 +926,7 @@ class Engine:
                  "strategy": self.p["strategy_name"], "mode": "paper", "status": self.status,
                  "blocked": self.blocked_reason, "expiry": str(self.trade_expiry),
                  "expiry_reason": self.expiry_reason, "lot_size": self.lot_size,
+                 "cpr": self.cpr_info, "cpr_max": self.p.get("cpr_max_width"),
                  "lots": self.p["lots"], "qty": self.qty, "capital": self.p["capital"],
                  "bias": {1: "bull", -1: "bear"}.get(mach.bias),
                  "spot_candles": self._candles_json(spot5) if not spot5.empty else [],
@@ -972,6 +1032,13 @@ def main():
     for k in eng.band_keys():           # warm-up for the strikes a setup can pick
         eng.ensure_tracked(k)
     eng.restore()
+    try:
+        from live_trading_options.nifty_st_directional.live_kotak import KotakDLive
+        eng.live = KotakDLive(eng)
+        eng.live.reconcile()               # rebuild any open Kotak D short from our own orders
+        eng.event("SYSTEM", f"Kotak D live leg ready (armed={eng.live.ctrl['armed']}, lots={eng.live.ctrl['lots']})")
+    except Exception as e:
+        eng.event("ERROR", f"Kotak D live leg NOT available: {type(e).__name__}: {e}")
     eng.write_state()
     threading.Thread(target=eng.writer_loop, daemon=True, name="stdir-writer").start()
     eng.step_loop()

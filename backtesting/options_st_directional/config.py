@@ -41,6 +41,16 @@ class Config:
     # yet (worst case); fill = the sell price, or the minute's open if it gapped past.
     breakeven_after_points: float | None = None
 
+    # OPTIONAL day filter (off in the baseline): skip the whole day when the CPR
+    # built from the previous session is wider than this many points (|TC - BC|).
+    cpr_max_width: float | None = None
+
+    # OPTIONAL entry filter (off in the baseline): NIFTY 5-min RSI at the signal
+    # candle must agree -- sell PE only if RSI > 50, sell CE only if RSI < 50.
+    # A blocked candle is simply not entered; the setup keeps its reference low.
+    rsi_filter: bool = False
+    rsi_period: int = 14
+
     tag: str = "BASELINE"
 
     def to_dict(self):

@@ -42,9 +42,9 @@ ACCOUNTS = [
     {"id": "kotak_rohit", "name": "Kotak Rohit", "kind": "kotak", "suffix": "_ROHIT"},
     {"id": "kotak_p", "name": "Kotak P", "kind": "kotak", "suffix": "_D"},
 ]
-# Parked = shown on the page, never logged in. Kotak P parked 2026-10-17: Kotak's v2 API answers
-# "consumer key is not linked to <UCC>" although Trademate logs in with the same details.
-PARKED = {"kotak_p"}
+# Parked = shown on the page, never logged in. (Kotak P was parked 17-Oct for a key not linked to
+# its UCC; un-parked 19-Oct once the owner saved a working key.)
+PARKED: set = set()
 KOTAK_MAX_TRIES = 10            # failed Kotak logins per day before the retry loop gives up
 
 

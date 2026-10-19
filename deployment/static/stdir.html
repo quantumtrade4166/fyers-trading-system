@@ -43,6 +43,8 @@
   select, button { background: #0f172a; color: var(--text); border: 1px solid #334155; border-radius: 6px;
                    padding: 4px 8px; font-size: 12px; cursor: pointer; }
   button.on { border-color: var(--acc); color: var(--acc); }
+  .vw { border: 0; background: transparent; color: #94a3b8; padding: 4px 12px; border-radius: 6px; font-weight: 500; }
+  .vw.on { background: #6366f1; color: #fff; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
   th { text-align: left; font-weight: 500; color: var(--muted); font-size: 10px; text-transform: uppercase;
        letter-spacing: .06em; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
@@ -78,6 +80,10 @@
         <div>expiry <b id="expiry">—</b></div>
         <div>size <b id="size">—</b></div>
       </div>
+      <span class="row" style="gap:4px;background:#0f172a;border:1px solid #1e293b;border-radius:8px;padding:3px">
+        <button id="vw-paper" class="vw on" onclick="setView('paper')">Paper</button>
+        <button id="vw-live" class="vw" onclick="setView('live')">Live — Kotak D <span id="vw-dot" style="display:none;color:#f43f5e">●</span></button>
+      </span>
       <select id="date"></select>
       <span id="status" class="pill">—</span>
     </div>
@@ -85,7 +91,7 @@
 
   <div id="banner" class="banner"></div>
 
-  <div class="grid sect">
+  <div data-view="paper" class="grid sect">
     <div class="card">
       <div class="lbl">Day MTM (net of charges)</div>
       <div id="day-net" class="big num">—</div>
@@ -110,28 +116,54 @@
     </div>
   </div>
 
-  <div class="card sect">
+  <div data-view="live" class="card sect" id="live-card" style="border-color:#7f1d1d">
+    <div class="sect-h">
+      <span class="t">LIVE — Kotak D <span id="lv-pill" class="pill">—</span></span>
+      <span id="lv-controls" class="row" style="gap:8px">
+        <span class="sub" style="margin:0">lots</span>
+        <input id="lv-lots" type="number" min="0" max="50" step="1" style="width:64px;background:#0f172a;color:var(--hi);border:1px solid #334155;border-radius:6px;padding:4px 6px">
+        <button onclick="lvSaveLots()">save lots</button>
+        <button id="lv-arm" onclick="lvArm(true)" style="border-color:#16a34a;color:#4ade80">ARM LIVE</button>
+        <button onclick="lvArm(false)">DISARM</button>
+        <button onclick="lvKill()" style="border-color:#b91c1c;color:#fb7185">KILL</button>
+      </span>
+    </div>
+    <div class="sub" style="margin:0 0 6px">Real NRML orders on Kotak D, copying every paper entry and exit at the lots set here. Arming affects the next paper entry only — an open paper trade is never chased. KILL buys back anything open and stops for the day.</div>
+    <div id="lv-hist" class="sub" style="margin:0 0 6px;color:#93c5fd;display:none"></div>
+    <div id="lv-msg" class="sub" style="margin:0 0 6px;color:#fbbf24"></div>
+    <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
+      <div><div class="lbl">Kotak D position</div><div id="lv-pos" class="mid num">flat</div><div id="lv-pos-sub" class="sub"></div></div>
+      <div><div class="lbl">Kotak D P&amp;L (gross)</div><div id="lv-pnl" class="mid num">—</div><div id="lv-pnl-sub" class="sub"></div></div>
+      <div><div class="lbl">Status</div><div id="lv-status" class="sub" style="margin:0"></div></div>
+    </div>
+    <div class="scroll" style="margin-top:8px"><table>
+      <thead><tr><th>time</th><th>side</th><th>contract</th><th class="r">qty</th><th class="r">price</th><th>order</th></tr></thead>
+      <tbody id="lv-fills"></tbody>
+    </table></div>
+  </div>
+
+  <div data-view="paper" class="card sect">
     <div class="sect-h"><span class="t">MTM — <span id="mtm-date">—</span></span>
       <span class="sub" id="mtm-sum" style="margin:0"></span></div>
     <div id="mtm-chart" style="height:200px"></div>
   </div>
 
   <div class="card sect">
-    <div class="sect-h"><span class="t">NIFTY 5-min · Supertrend(10,3) · reversals</span>
+    <div class="sect-h"><span class="t">NIFTY 5-min · Supertrend(10,3) · reversals <span class="sig-note sub" style="display:none;margin:0">— strategy signals (shared by paper and live)</span></span>
       <span id="spot-tip" class="tip"></span></div>
     <div id="spot-chart" style="height:380px"></div>
   </div>
 
   <div class="card sect">
     <div class="sect-h">
-      <span class="t">Option 5-min · own Supertrend · reference low — <span id="opt-label">—</span></span>
+      <span class="t">Option 5-min · own Supertrend · reference low — <span id="opt-label">—</span> <span class="sig-note sub" style="display:none;margin:0">— markers are the paper trades that live copies</span></span>
       <span id="panel-btns" class="row" style="gap:6px"></span>
     </div>
     <div id="opt-tip" class="tip"></div>
     <div id="opt-chart" style="height:320px"></div>
   </div>
 
-  <div class="card sect">
+  <div data-view="paper" class="card sect">
     <div class="sect-h"><span class="t">Trades</span><span class="sub" style="margin:0">gross = (sell − buy) × qty · net after STT, exchange, SEBI, stamp, GST, brokerage</span></div>
     <div class="scroll"><table>
       <thead><tr><th>#</th><th>contract</th><th>origin</th><th>signal</th><th>sell</th><th class="r">price</th>
@@ -155,7 +187,7 @@
     </div>
   </div>
 
-  <div class="card sect">
+  <div data-view="paper" class="card sect">
     <div class="sect-h"><span class="t">Paper equity</span><span id="eq-sum" class="sub" style="margin:0"></span></div>
     <div id="eq-chart" style="height:200px"></div>
     <div class="scroll" style="margin-top:8px"><table>
@@ -165,7 +197,7 @@
     </table></div>
   </div>
 
-  <div class="card sect">
+  <div data-view="paper" class="card sect">
     <div class="sect-h"><span class="t">Paper vs backtest — net P&amp;L per day</span>
       <span id="cmp-sum" class="sub" style="margin:0"></span></div>
     <div class="sub" style="margin:0 0 8px">paper = live ticks during the day · backtest = the same rules re-run after the close on ICICI 1-min data (same lots, same stop-to-cost)</div>
@@ -293,7 +325,7 @@ async function getJSON(u) { const r = await fetch(u, { cache: 'no-store' }); ret
 function isToday() { return curDate && curDate === today; }
 
 async function loadDates() {
-  const r = await getJSON('/api/stdir/dates');
+  const r = await getJSON(curView === 'live' ? '/api/stdir/live/dates' : '/api/stdir/dates');
   today = r.today;
   const ds = r.dates.includes(r.today) ? r.dates : [r.today, ...r.dates];
   const sel = $('date');
@@ -317,7 +349,8 @@ async function loadTick() {
   }
   setBias(d.bias);
   $('expiry').textContent = d.expiry || '—';
-  $('size').textContent = d.qty ? `${d.lots} lots · ${d.qty} qty` : '—';
+  $('size').textContent = (d.qty ? `${d.lots} lots · ${d.qty} qty` : '—') +
+    (d.cpr ? ` · CPR ${num(d.cpr.width, 1)} ${d.cpr_max && d.cpr.width > d.cpr_max ? '> ' + d.cpr_max + ' ✗ skip' : '≤ ' + (d.cpr_max ?? '') + ' ✓'}` : '');
   renderDay(d.day); renderPos(d.position); renderSetup(d.setup);
   $('equity').textContent = money(d.equity);
   const ban = $('banner');
@@ -474,6 +507,84 @@ async function loadDaily() {
     <td class="r num">${num(r.drawdown_pct)}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">no paper days yet</td></tr>';
 }
 
+// ── Paper / Live view toggle (like the strangle tab) ──
+let curView = 'paper';
+function setView(v, initial) {
+  curView = v;
+  document.querySelectorAll('[data-view]').forEach(el => { el.style.display = (el.dataset.view === v) ? '' : 'none'; });
+  document.querySelectorAll('.sig-note').forEach(el => { el.style.display = v === 'live' ? '' : 'none'; });
+  $('vw-paper').classList.toggle('on', v === 'paper');
+  $('vw-live').classList.toggle('on', v === 'live');
+  try { localStorage.setItem('stdir-view', v); } catch (e) {}
+  window.dispatchEvent(new Event('resize'));
+  if (!initial) {                       // each view keeps its own list of days
+    curDate = null; fitKey = {};
+    loadDates().then(refreshAll).catch(console.error);
+  }
+}
+
+// ── LIVE Kotak D panel ──
+async function postJSON(u, body) {
+  const r = await fetch(u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+  return r.json();
+}
+function lvMsg(t) { $('lv-msg').textContent = t || ''; }
+async function lvSaveLots() {
+  const v = parseInt($('lv-lots').value, 10);
+  if (isNaN(v) || v < 0 || v > 50) { lvMsg('Lots must be a whole number from 0 to 50.'); return; }
+  if (!confirm(`Set Kotak D lots to ${v}? (applies to the NEXT entry)`)) return;
+  const r = await postJSON('/api/stdir/live/control', { lots: v });
+  lvMsg(r.ok ? `Lots set to ${v}.` : 'Error: ' + r.error); loadLive();
+}
+async function lvArm(on) {
+  const lots = parseInt($('lv-lots').value, 10);
+  if (on && !confirm(`ARM LIVE on Kotak D with ${lots} lot(s)?\nReal NRML orders will copy the next paper entry.`)) return;
+  if (!on && !confirm('DISARM Kotak D? (an open Kotak D position is still closed by the strategy)')) return;
+  const r = await postJSON('/api/stdir/live/control', { armed: on });
+  lvMsg(r.ok ? (on ? 'ARMED.' : 'Disarmed.') : 'Error: ' + r.error); loadLive();
+}
+async function lvKill() {
+  if (!confirm('KILL Kotak D?\nBuys back anything open NOW, disarms, no more entries today.')) return;
+  const r = await postJSON('/api/stdir/live/kill', {});
+  lvMsg(r.ok ? 'KILL sent — the engine flattens within a second or two.' : 'Error: ' + r.error); loadLive();
+}
+let lvLotsTouched = false;
+document.addEventListener('input', e => { if (e.target && e.target.id === 'lv-lots') lvLotsTouched = true; });
+async function loadLive() {
+  const hist = curDate && today && curDate !== today;
+  const d = await getJSON('/api/stdir/live' + (hist ? '?date=' + curDate : ''));
+  const c = d.control || {}, e = d.engine || {};
+  $('lv-controls').style.display = hist ? 'none' : '';
+  $('lv-hist').style.display = hist ? '' : 'none';
+  $('lv-hist').textContent = hist ? `Showing Kotak D on ${curDate} (history). Controls act on today only — pick today to change them.` : '';
+  if (!lvLotsTouched) $('lv-lots').value = c.lots ?? 1;
+  const pill = $('lv-pill');
+  pill.textContent = c.armed ? 'ARMED · ' + c.lots + ' lot(s)' : 'disarmed';
+  pill.className = 'pill ' + (c.armed ? 'bear' : '');
+  $('vw-dot').style.display = c.armed ? '' : 'none';
+  const p = e.position;
+  if (p) {
+    $('lv-pos').innerHTML = `SHORT ${p.qty} × ${esc(p.symbol)}`;
+    $('lv-pos-sub').innerHTML = `sold avg <b>${num(p.avg)}</b> · LTP <b>${num(p.ltp)}</b> · paper ${esc(p.trade_id || '')}`;
+  } else { $('lv-pos').textContent = 'flat'; $('lv-pos-sub').textContent = ''; }
+  $('lv-pnl').textContent = e.day_gross === undefined ? '—' : signed(e.day_gross);
+  cls($('lv-pnl'), e.day_gross || 0);
+  $('lv-pnl-sub').innerHTML = e.day_gross === undefined ? '' : `realized <b>${signed(e.realized_gross)}</b> · open <b>${signed(e.open_gross)}</b> · charges not included`;
+  const st = [];
+  if (hist) st.push(d.engine ? `${d.engine.trades ?? 0} round trip(s) on ${curDate}` : `no Kotak D activity on ${curDate}`);
+  else if (!d.engine) st.push('engine not running (starts 09:10 IST on market days)');
+  else st.push(e.logged_in ? 'Kotak D session: <b class="pos">logged in</b>' : 'Kotak D session: not logged in yet' + (e.login_error ? ' — <span class="neg">' + esc(e.login_error) + '</span>' : ''));
+  if (e.halted) st.push('<span class="neg">halted: ' + esc(e.halted) + '</span>');
+  if (e.pending_exit) st.push('<span class="neg"><b>BUY-BACK PENDING</b> since ' + esc(e.pending_exit.since) + ' — retrying</span>');
+  if (e.last_error) st.push('last error: <span class="neg">' + esc(e.last_error) + '</span>');
+  if (c.updated) st.push('control updated ' + esc(c.updated));
+  $('lv-status').innerHTML = st.join('<br>');
+  const f = (e.fills || []).slice().reverse();
+  $('lv-fills').innerHTML = f.map(x => `<tr><td>${esc(x.time || '')}</td><td>${esc(String(x.side))}</td><td>${esc(x.symbol || x.trading_symbol || '')}</td>
+    <td class="r">${x.qty}</td><td class="r num">${num(x.price ?? x.avg_price)}</td><td class="sub">${esc(x.order_id || '')}</td></tr>`).join('')
+    || '<tr><td colspan="6" class="empty">no Kotak D fills today</td></tr>';
+}
+
 let cmpChart = null, cumChart = null, ddChart2 = null;
 function axisRs(v) {               // ₹ axis labels that stay readable at any size
   const a = Math.abs(v), sg = v < 0 ? '−₹' : '₹';
@@ -570,8 +681,12 @@ async function refreshAll() {
   try { await loadTick(); } catch (e) { console.error(e); }
   try { await loadDaily(); } catch (e) { console.error(e); }
   try { await loadCompare(); } catch (e) { console.error(e); }
+  try { await loadLive(); } catch (e) { console.error(e); }
 }
 (async () => {
+  let v0 = 'paper';
+  try { v0 = localStorage.getItem('stdir-view') || 'paper'; } catch (e) {}
+  setView(v0 === 'live' ? 'live' : 'paper', true);
   try { await loadDates(); } catch (e) { console.error(e); }
   await refreshAll();
   setInterval(() => { if (!document.hidden) loadTick().catch(console.error); }, 1000);
@@ -579,6 +694,7 @@ async function refreshAll() {
   setInterval(() => { if (!document.hidden && isToday()) loadMtm().catch(console.error); }, 5000);
   setInterval(() => { if (!document.hidden) loadDaily().catch(console.error); }, 60000);
   setInterval(() => { if (!document.hidden) loadCompare().catch(console.error); }, 60000);
+  setInterval(() => { if (!document.hidden) loadLive().catch(console.error); }, 2000);
   setInterval(() => { loadDates().catch(console.error); }, 300000);
 })();
 </script>

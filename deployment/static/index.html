@@ -1414,6 +1414,25 @@
         <div id="bv-log" class="text-[11px] font-mono text-slate-400" style="max-height:360px;overflow-y:auto"></div>
       </div>
     </div>
+    <div id="bv-perf-card" class="card p-4 mb-4 mt-4" style="display:none">
+      <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <div>
+          <div class="text-sm font-semibold text-slate-200">Live performance since go-live — <span class="text-emerald-400">net of every fee + GST</span></div>
+          <div class="text-[10px] text-slate-500">from Delta's own wallet ledger (BTC options: premium in/out + commission incl. 18% GST) · today includes open legs at Delta's buy-back cost · hover for each day</div>
+        </div>
+        <div id="bv-perf-at" class="text-[10px] text-slate-500"></div>
+      </div>
+      <div id="bv-perf-stats" class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-2 mb-3 text-xs tabular-nums"></div>
+      <div class="text-[11px] text-slate-400 mb-1">Cumulative net P&amp;L ($) <span id="bv-perf-tip" class="ml-2 text-slate-300"></span></div>
+      <div id="bv-perf-cum" style="height:240px" class="mb-3"></div>
+      <div class="text-[11px] text-slate-400 mb-1">Drawdown from peak ($)</div>
+      <div id="bv-perf-dd" style="height:150px" class="mb-3"></div>
+      <div class="text-[11px] text-slate-400 mb-1">Net P&amp;L per day ($)</div>
+      <div id="bv-perf-bars" style="height:230px"></div>
+      <div class="text-[11px] text-slate-400 mt-4 mb-1">Net P&amp;L by day of the week ($) <span class="text-slate-500">— total for each weekday · hover a bar for avg, wins, charges and the dates</span></div>
+      <div id="bv-perf-week" class="mb-2" style="height:230px"></div>
+      <div id="bv-perf-table" class="mt-3" style="overflow-x:auto"></div>
+    </div>
   </div>
 
   <!-- ══════════════════════════════════════════════════════════
@@ -6260,6 +6279,7 @@ function bvRender(d) {
   bvCandle.setMarkers(mk);
   bvRenderLegs(d, trades, pos);
   bvRenderBroker();
+  bvRenderPerf();
 
   // MTM of the day
   const pts = [], seen = new Set();
@@ -6374,6 +6394,124 @@ function bvRenderLegs(d, trades, pos) {
       (open ? (open.kept ? ' · <span class="text-amber-400 font-semibold">KEPT — exits on close above own VWAP</span>' : ' · <span class="text-rose-400">short</span>') : '');
     if (bvFitted && cs.length && g._fit !== bvFitted) { g._fit = bvFitted; g.ch.timeScale().fitContent(); }
   });
+}
+
+let bvPerf = null, bvPerfAt = 0, bvPerfRows = [], bvPerfWeek = [], bvPerfDaily = [];
+// Bar chart as SVG: ONE zero line for every bar, equal-width evenly spaced bars,
+// value printed on each bar, category + sub-label underneath, hover = <title>.
+function bvBarSvg(id, items) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  const W = Math.max(280, el.clientWidth || 600), H = el.clientHeight || 230;
+  const top = 18, bottom = 50, left = 6, right = 6;   // bottom: room for a loss label + the axis labels
+  const plotH = H - top - bottom;
+  const vals = items.map(i => i.value || 0);
+  const hi = Math.max(0, ...vals), lo = Math.min(0, ...vals);
+  const span = (hi - lo) || 1;
+  const y = v => top + (hi - v) / span * plotH;          // value -> pixel
+  const zero = y(0);
+  const n = Math.max(1, items.length), slot = (W - left - right) / n;
+  const bw = Math.min(46, slot * 0.62);
+  const fmt = v => (v >= 0 ? '+' : '−') + Math.abs(v).toFixed(2);
+  let g = '';
+  // light gridlines at the extremes
+  [hi, lo].forEach(v => { if (v) g += `<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="#1e2533" stroke-dasharray="3 3"/>`; });
+  items.forEach((it, i) => {
+    const cx = left + slot * i + slot / 2, v = it.value || 0;
+    const yv = y(v), h = Math.max(it.empty ? 0 : 1.5, Math.abs(yv - zero));
+    const col = it.empty ? '#334155' : (v >= 0 ? '#22c55e' : '#f43f5e');
+    const op = it.faded ? 0.5 : 1;
+    const by = v >= 0 ? zero - h : zero;
+    g += `<g><title>${(it.tip || '').replace(/"/g, '&quot;')}</title>
+      <rect x="${cx - bw / 2}" y="${by}" width="${bw}" height="${h}" fill="${col}" opacity="${op}" rx="2"/>
+      <rect x="${cx - slot / 2}" y="${top}" width="${slot}" height="${plotH}" fill="transparent"/>
+      ${it.empty ? '' : `<text x="${cx}" y="${v >= 0 ? by - 4 : by + h + 11}" text-anchor="middle" font-size="10" fill="${col}">${fmt(v)}</text>`}
+      <text x="${cx}" y="${H - 18}" text-anchor="middle" font-size="10" fill="#cbd5e1">${it.label}</text>
+      <text x="${cx}" y="${H - 6}" text-anchor="middle" font-size="9" fill="#64748b">${it.sub || ''}</text></g>`;
+  });
+  g += `<line x1="${left}" x2="${W - right}" y1="${zero}" y2="${zero}" stroke="#64748b" stroke-width="1"/>`;
+  el.innerHTML = `<svg width="${W}" height="${H}" style="display:block">${g}</svg>`;
+}
+window.addEventListener('resize', () => {
+  if (bvPerfDaily.length) bvBarSvg('bv-perf-bars', bvPerfDaily);
+  if (bvPerfWeek.length) bvBarSvg('bv-perf-week', bvPerfWeek);
+});
+async function bvRenderPerf() {
+  const card = document.getElementById('bv-perf-card');
+  if (bvVersion !== 'ist_delta') { card.style.display = 'none'; return; }
+  card.style.display = '';
+  if (Date.now() - bvPerfAt < 30000 && bvPerf) return;
+  bvPerfAt = Date.now();
+  let d;
+  try { d = await (await fetch('/api/btcvwap/live_pnl', { cache: 'no-store' })).json(); } catch (e) { return; }
+  if (!d || !d.ok) { document.getElementById('bv-perf-at').textContent = (d && d.reason) || 'ledger unavailable'; return; }
+  if (!bvPerf) {
+    const mk = (id, h) => LightweightCharts.createChart(document.getElementById(id), Object.assign({}, bvChartBase, {
+      timeScale: Object.assign({}, bvChartBase.timeScale || {}, { timeVisible: false }) }));
+    const cum = mk('bv-perf-cum', 240), dd = mk('bv-perf-dd', 150);
+    bvPerf = {
+      cum, dd,
+      cumS: cum.addBaselineSeries({ baseValue: { type: 'price', price: 0 }, lineWidth: 2,
+        topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,0.25)', topFillColor2: 'rgba(34,197,94,0.02)',
+        bottomLineColor: '#f43f5e', bottomFillColor1: 'rgba(244,63,94,0.02)', bottomFillColor2: 'rgba(244,63,94,0.25)' }),
+      ddS: dd.addAreaSeries({ lineColor: '#f43f5e', topColor: 'rgba(244,63,94,0.05)', bottomColor: 'rgba(244,63,94,0.35)', lineWidth: 2 }),
+    };
+    // keep the three time axes in step
+    const all = [cum, dd];
+    all.forEach(c => c.timeScale().subscribeVisibleLogicalRangeChange(r => {
+      if (!r) return; all.forEach(o => { if (o !== c) o.timeScale().setVisibleLogicalRange(r); });
+    }));
+    const byDate = {};
+    bvPerf.byDate = byDate;
+    const tip = p => {
+      const el = document.getElementById('bv-perf-tip');
+      if (!p.time) { el.textContent = ''; return; }
+      const k = typeof p.time === 'string' ? p.time : `${p.time.year}-${String(p.time.month).padStart(2, '0')}-${String(p.time.day).padStart(2, '0')}`;
+      const r = bvPerf.byDate[k];
+      if (!r) return;
+      el.innerHTML = `${r.date}${r.open ? ' (open legs incl.)' : ''} · day <b class="${bvCls(r.net)}">$${bvN(r.net)}</b> (gross $${bvN(r.gross)} − charges $${bvN(r.charges)} incl GST $${bvN(r.gst)}, ${r.fills} fills) · cumulative <b class="${bvCls(r.cum)}">$${bvN(r.cum)}</b> · drawdown <span class="text-rose-400">$${bvN(r.dd)}</span>`;
+    };
+    all.forEach(c => c.subscribeCrosshairMove(tip));
+  }
+  const rows = d.days || [];
+  rows.forEach(r => bvPerf.byDate[r.date] = r);
+  bvPerf.cumS.setData(rows.map(r => ({ time: r.date, value: r.cum })));
+  bvPerf.ddS.setData(rows.map(r => ({ time: r.date, value: r.dd })));
+  [bvPerf.cum, bvPerf.dd].forEach(c => c.timeScale().fitContent());
+  bvPerfRows = rows;
+  bvPerfDaily = rows.map(r => ({
+    label: r.date.slice(8) + '-' + ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+r.date.slice(5, 7) - 1],
+    sub: ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'][(new Date(r.date + 'T12:00:00Z').getUTCDay() + 6) % 7],
+    value: r.net, faded: r.open,
+    tip: `${r.date}${r.open ? ' (open legs incl.)' : ''}: net $${bvN(r.net)} · gross $${bvN(r.gross)} · charges $${bvN(r.charges)} (GST $${bvN(r.gst)}) · ${r.fills} fills · cumulative $${bvN(r.cum)}` }));
+  bvBarSvg('bv-perf-bars', bvPerfDaily);
+  const st = d.stats || {};
+  const cell = (k, v, cls) => `<div class="bg-slate-800/50 rounded p-2"><div class="text-[10px] uppercase text-slate-500">${k}</div><div class="font-semibold ${cls || ''}">${v}</div></div>`;
+  document.getElementById('bv-perf-stats').innerHTML =
+    cell('Net since ' + d.since, '$' + bvN(st.net) + ` <span class="text-[10px] text-slate-400">≈ ₹${Math.round((st.net || 0) * BV_USDINR).toLocaleString('en-IN')}</span>`, bvCls(st.net || 0)) +
+    cell('Gross (before charges)', '$' + bvN(st.gross), bvCls(st.gross || 0)) +
+    cell('Charges paid', '$' + bvN(st.charges) + ` <span class="text-[10px] text-slate-400">GST $${bvN(st.gst)}</span>`, 'text-amber-400') +
+    cell('Days', `${st.days} <span class="text-[10px] text-slate-400">${st.win_days}W / ${st.loss_days}L</span>`) +
+    cell('Avg / day', '$' + bvN(st.avg), bvCls(st.avg || 0)) +
+    cell('Best day', '$' + bvN(st.best), 'text-emerald-400') +
+    cell('Worst day', '$' + bvN(st.worst), 'text-rose-400') +
+    cell('Max drawdown', '$' + bvN(st.max_dd), 'text-rose-400');
+  document.getElementById('bv-perf-at').textContent = 'ledger as of ' + d.at;
+  // day-of-week bars: same renderer, one shared zero line
+  bvPerfWeek = (d.by_weekday || []).map(w => ({ label: w.day, sub: w.days ? `${w.days}d · avg ${bvN(w.avg)}` : 'no days',
+    value: w.days ? w.net : 0, empty: !w.days,
+    tip: w.days ? `${w.day}: total $${bvN(w.net)} over ${w.days} day(s) · avg $${bvN(w.avg)} · ${w.wins}/${w.days} winning · charges $${bvN(w.charges)} · ${w.dates.join(', ')}` : `${w.day}: no live days yet` }));
+  bvBarSvg('bv-perf-week', bvPerfWeek);
+  document.getElementById('bv-perf-table').innerHTML = `<table class="w-full text-xs tabular-nums whitespace-nowrap">
+    <thead class="text-slate-500"><tr class="text-[10px] uppercase"><th class="text-left py-1 pr-3">Date</th><th class="text-right pr-3">Fills</th>
+    <th class="text-right pr-3">Gross $</th><th class="text-right pr-3">Charges $</th><th class="text-right pr-3">of which GST $</th>
+    <th class="text-right pr-3">Net $</th><th class="text-right pr-3">Cumulative $</th><th class="text-right pr-3">Drawdown $</th><th class="text-left">Our book</th></tr></thead><tbody>` +
+    rows.slice().reverse().map(r => `<tr class="border-t border-slate-800"><td class="py-1 pr-3">${r.date}${r.open ? ' <span class="text-amber-400">(open)</span>' : ''}</td>
+      <td class="text-right pr-3">${r.fills}</td><td class="text-right pr-3 ${bvCls(r.gross)}">${bvN(r.gross)}</td>
+      <td class="text-right pr-3 text-amber-400">${bvN(r.charges)}</td><td class="text-right pr-3 text-slate-400">${bvN(r.gst)}</td>
+      <td class="text-right pr-3 font-semibold ${bvCls(r.net)}">${bvN(r.net)}</td><td class="text-right pr-3 ${bvCls(r.cum)}">${bvN(r.cum)}</td>
+      <td class="text-right pr-3 text-rose-400">${bvN(r.dd)}</td>
+      <td class="${r.book_ok === false ? 'text-rose-400' : 'text-slate-500'}">${r.book == null ? '— (old VPS)' : (r.book_ok ? '✓ matches' : 'differs: ' + bvN(r.book))}</td></tr>`).join('') + '</tbody></table>';
 }
 
 async function bvRenderBroker() {
