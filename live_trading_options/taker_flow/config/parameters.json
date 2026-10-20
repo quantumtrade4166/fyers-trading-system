@@ -1,0 +1,21 @@
+{
+  "strategy": "Taker Flow L/S",
+  "mode": "paper",
+  "capital_usd": 10000,
+  "leverage_per_book": 0.5,
+  "lookback_days": 14,
+  "rebalance_every_days": 3,
+  "rebalance_utc": "00:05",
+  "bucket_q": 0.2,
+  "min_coins": 10,
+  "universe_top_n": 100,
+  "adv_days": 30,
+  "warmup_days": 30,
+  "vol_days": 30,
+  "min_delta_turnover_usd": 50000,
+  "taker_fee": 0.0005,
+  "maker_fee": 0.0002,
+  "gst": 0.18,
+  "mtm_every_s": 60,
+  "equity_sample_every_s": 300
+}

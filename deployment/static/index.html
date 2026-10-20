@@ -185,6 +185,9 @@
     <button class="tab-btn" id="tab-btcarb" onclick="switchTab('btcarb')">
       ₿ BTC Arbitrage
     </button>
+    <button class="tab-btn" id="tab-takerflow" onclick="switchTab('takerflow')">
+      ₿ Taker Flow
+    </button>
     <button class="tab-btn" id="tab-ndp" onclick="switchTab('ndp')">
       📐 Nifty Directional Pivot
     </button>
@@ -1574,6 +1577,11 @@
             style="width:100%;height:calc(100vh - 110px);min-height:860px;border:0;display:block"></iframe>
   </div>
 
+  <div id="page-takerflow" style="display:none">
+    <iframe id="takerflow-frame" title="Taker Flow L/S"
+            style="width:100%;height:calc(100vh - 110px);min-height:900px;border:0;display:block"></iframe>
+  </div>
+
   <div id="page-stdir" style="display:none">
     <iframe id="stdir-frame" title="Nifty ST Directional"
             style="width:100%;height:calc(100vh - 110px);min-height:900px;border:0;display:block"></iframe>
@@ -1829,8 +1837,9 @@ function switchTab(tab) {
   if (tab === 'btcarb') { setTimeout(() => { baInit(); baStartPoll(); }, 0); } else { baStopPoll(); }
   if (tab === 'ndp') { ndpInit(); ndpStartPoll(); } else { ndpStopPoll(); }
   if (tab === 'stdir') { const f = document.getElementById('stdir-frame'); if (f && !f.src) f.src = '/static/stdir.html'; }
+  if (tab === 'takerflow') { const f = document.getElementById('takerflow-frame'); if (f && !f.src) f.src = '/static/takerflow.html'; }
   if (tab === 'builder') { const f = document.getElementById('builder-frame'); if (f && !f.src) f.src = '/static/builder.html'; }
-  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'btcvwap', 'btcarb', 'ndp', 'stdir', 'builder', 'terminal'].forEach(t => {
+  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'btcvwap', 'btcarb', 'takerflow', 'ndp', 'stdir', 'builder', 'terminal'].forEach(t => {
     const pg = document.getElementById('page-' + t);
     if (pg) pg.style.display = (t === tab) ? '' : 'none';
     const btn = document.getElementById('tab-' + t);

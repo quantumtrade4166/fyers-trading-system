@@ -38,6 +38,7 @@ Add-Task 'PairsDashboard'      "$repo\deployment\vps_tasks\start_dashboard.bat" 
 Add-Task 'VPSHealthHeartbeat'  $ps (& $psArgs "$repo\deployment\vps_tasks\vps_heartbeat.ps1") @(Every 5) 4
 Add-Task 'DualMomService'      "$repo\start_dualmom_service.bat" $null @((Boot), (Every 5)) -Restart
 Add-Task 'StrategyBuilder'     "$repo\live_trading_options\strategy_builder\run_builder.bat" $null @((Boot), (Every 5)) -Restart
+Add-Task 'TakerFlowEngine'     "$repo\live_trading_options\taker_flow\run_taker_flow_engine.bat" $null @((Boot), (Every 5)) -Restart   # crypto paper, 24/7
 if (-not $EnableDualMom) {
     # Live money (Kotak + Kite). Stays OFF until the owner has whitelisted the new VPS IP at
     # both brokers -- otherwise it would retry failing logins every 5 minutes.

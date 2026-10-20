@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Taker Flow L/S</title>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root { color-scheme: dark;
+    --bg: #0b1120; --card: #111a2e; --line: #1e293b; --muted: #64748b; --text: #cbd5e1;
+    --hi: #f1f5f9; --pos: #22c55e; --neg: #f43f5e; --warn: #f59e0b; --acc: #38bdf8;
+    --s-net: #3987e5; --s-bt: #d95926; --s-gross: #8a8984;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { padding: 14px 16px 40px; max-width: 1600px; margin: 0 auto; }
+  .num { font-variant-numeric: tabular-nums; }
+  .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+  .between { justify-content: space-between; }
+  .grid { display: grid; gap: 12px; grid-template-columns: repeat(6, minmax(0, 1fr)); }
+  @media (max-width: 1300px) { .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 640px) { .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; min-width: 0; }
+  .lbl { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+  .big { font-size: 24px; font-weight: 700; color: var(--hi); }
+  .mid { font-size: 17px; font-weight: 600; color: var(--hi); }
+  .sub { font-size: 11px; color: var(--muted); margin-top: 4px; }
+  .sub b { color: var(--text); font-weight: 500; }
+  .pos { color: var(--pos) !important; } .neg { color: var(--neg) !important; }
+  .pill { padding: 3px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .05em;
+          background: #1e293b; color: #94a3b8; text-transform: uppercase; }
+  .pill.live { background: #052e16; color: #4ade80; } .pill.stale { background: #3f1d0b; color: #fb923c; }
+  .pill.paper { background: #1e1b4b; color: #a5b4fc; }
+  .pill.long { background: #052e16; color: #4ade80; } .pill.short { background: #3b0a14; color: #fb7185; }
+  h1 { font-size: 16px; margin: 0; color: var(--hi); }
+  .banner { margin: 10px 0; padding: 8px 12px; border-radius: 8px; border: 1px solid #78350f;
+            background: #1c1305; color: #fbbf24; font-size: 12px; display: none; }
+  .sect { margin-top: 12px; }
+  .sect-h { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; gap: 8px; flex-wrap: wrap; }
+  .sect-h .t { font-weight: 600; color: var(--hi); }
+  .legend { display: flex; gap: 14px; font-size: 11px; color: var(--muted); flex-wrap: wrap; }
+  .legend i { display: inline-block; width: 14px; height: 2px; vertical-align: middle; margin-right: 5px; border-radius: 1px; }
+  .tip { font: 11px ui-monospace, Consolas, monospace; color: #94a3b8; min-height: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th { text-align: left; font-weight: 500; color: var(--muted); font-size: 10px; text-transform: uppercase;
+       letter-spacing: .06em; padding: 6px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  td { padding: 6px 8px; border-bottom: 1px solid #172033; white-space: nowrap; }
+  td.r, th.r { text-align: right; }
+  .scroll { overflow-x: auto; }
+  .tall { max-height: 420px; overflow-y: auto; }
+  .log { max-height: 300px; overflow-y: auto; font: 11px/1.7 ui-monospace, Consolas, monospace; }
+  .log .warn { color: var(--warn); } .log .error { color: var(--neg); }
+  .empty { color: var(--muted); padding: 18px; text-align: center; }
+  .two { display: grid; gap: 12px; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  @media (max-width: 1100px) { .two { grid-template-columns: 1fr; } }
+  details summary { cursor: pointer; color: var(--muted); font-size: 11px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="row between">
+    <div class="row" style="gap:14px">
+      <div>
+        <h1>Taker Flow L/S</h1>
+        <div class="sub">long the coins with the most aggressive buying · short the most aggressive selling ·
+          Binance 14-day taker-buy ratio · Delta Exchange India · rebalance every 3 days at 05:35 IST</div>
+      </div>
+      <span class="pill paper">paper</span>
+      <span id="status" class="pill">—</span>
+    </div>
+    <div class="sub num" id="updated">—</div>
+  </div>
+  <div id="banner" class="banner"></div>
+
+  <div class="grid sect">
+    <div class="card"><div class="lbl">Equity</div><div class="big num" id="k-eq">—</div>
+      <div class="sub num" id="k-eq-sub">—</div></div>
+    <div class="card"><div class="lbl">Net P&amp;L (after all charges)</div><div class="big num" id="k-pnl">—</div>
+      <div class="sub num" id="k-pnl-sub">—</div></div>
+    <div class="card"><div class="lbl">Price P&amp;L</div><div class="mid num" id="k-price">—</div>
+      <div class="sub num" id="k-price-sub">—</div></div>
+    <div class="card"><div class="lbl">Delta fees + 18% GST</div><div class="mid num neg" id="k-fees">—</div>
+      <div class="sub num" id="k-fees-sub">—</div></div>
+    <div class="card"><div class="lbl">Funding</div><div class="mid num" id="k-fund">—</div>
+      <div class="sub" id="k-fund-sub">accrued hourly at Delta rates</div></div>
+    <div class="card"><div class="lbl">Next rebalance</div><div class="mid num" id="k-next">—</div>
+      <div class="sub num" id="k-next-sub">—</div></div>
+  </div>
+
+  <div class="two sect">
+    <div class="card" style="border-left:3px solid var(--pos)">
+      <div class="row between"><span class="lbl">Long book — all long positions</span><span class="sub num" id="lb-size">—</span></div>
+      <div class="big num" id="lb-net">—</div>
+      <div class="sub num" id="lb-sub">—</div>
+    </div>
+    <div class="card" style="border-left:3px solid var(--neg)">
+      <div class="row between"><span class="lbl">Short book — all short positions</span><span class="sub num" id="sb-size">—</span></div>
+      <div class="big num" id="sb-net">—</div>
+      <div class="sub num" id="sb-sub">—</div>
+    </div>
+  </div>
+
+  <div class="card sect">
+    <div class="sect-h">
+      <span class="t">Cumulative P&amp;L</span>
+      <div class="legend">
+        <span><i style="background:var(--s-net)"></i>Paper net P&amp;L — after fees, GST, slippage, funding</span>
+        <span><i style="background:var(--s-bt)"></i>Backtest net P&amp;L — same days, same rules, backtest data</span>
+        <span><i style="background:var(--s-gross)"></i>Paper price P&amp;L — before charges</span>
+      </div>
+    </div>
+    <div id="pnl-chart" style="height:320px"></div>
+    <div class="tip num" id="pnl-tip">hover the chart for values</div>
+  </div>
+
+  <div class="card sect">
+    <div class="sect-h"><span class="t">Paper vs backtest</span><span class="sub num" id="cmp-sum">—</span></div>
+    <div class="grid" style="grid-template-columns:repeat(4,minmax(0,1fr));margin-bottom:10px">
+      <div><div class="lbl">Paper P&amp;L</div><div class="mid num" id="c-paper">—</div></div>
+      <div><div class="lbl">Backtest P&amp;L</div><div class="mid num" id="c-bt">—</div></div>
+      <div><div class="lbl">Gap (paper − backtest)</div><div class="mid num" id="c-gap">—</div></div>
+      <div><div class="lbl">Same coins picked</div><div class="mid num" id="c-picks">—</div></div>
+    </div>
+    <div class="two">
+      <div class="scroll tall"><table>
+        <thead><tr><th>Day end (05:30 IST)</th><th class="r">Paper day</th><th class="r">Backtest day</th>
+          <th class="r">Paper total</th><th class="r">Backtest total</th><th class="r">Gap</th></tr></thead>
+        <tbody id="cmp-body"><tr><td colspan="6" class="empty">the first full day closes at 05:30 IST</td></tr></tbody>
+      </table></div>
+      <div class="scroll tall"><table>
+        <thead><tr><th>Rebalance</th><th>Backtest picks</th><th class="r">Same as paper</th></tr></thead>
+        <tbody id="pick-body"><tr><td colspan="3" class="empty">—</td></tr></tbody>
+      </table></div>
+    </div>
+    <div class="sub" id="cmp-method" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card sect">
+    <div class="sect-h"><span class="t">Open positions</span><span class="sub num" id="pos-sum">—</span></div>
+    <div class="scroll"><table>
+      <thead><tr><th>Coin</th><th>Side</th><th class="r">Contracts</th><th class="r">Notional $</th>
+        <th class="r">Entry</th><th class="r">Mark</th><th class="r">Unrealized $</th><th class="r">Weight in book</th>
+        <th class="r">Taker-buy ratio</th><th class="r">Funding /8h</th></tr></thead>
+      <tbody id="pos-body"><tr><td colspan="10" class="empty">no positions yet</td></tr></tbody>
+    </table></div>
+  </div>
+
+  <div class="two sect">
+    <div class="card">
+      <div class="sect-h"><span class="t">Ranking at the last rebalance</span><span class="sub num" id="sig-sum">—</span></div>
+      <div class="scroll tall"><table>
+        <thead><tr><th>#</th><th>Coin</th><th class="r">Taker-buy ratio</th><th class="r">Daily vol</th>
+          <th class="r">Binance 30d avg vol</th><th>Status</th></tr></thead>
+        <tbody id="sig-body"><tr><td colspan="6" class="empty">no ranking yet</td></tr></tbody>
+      </table></div>
+    </div>
+    <div class="card">
+      <div class="sect-h"><span class="t">Paper fills</span><span class="sub num" id="tr-sum">—</span></div>
+      <div class="scroll tall"><table>
+        <thead><tr><th>Time (IST)</th><th>Coin</th><th>Side</th><th class="r">Contracts</th><th class="r">Fill</th>
+          <th class="r">Notional $</th><th class="r">Fee+GST $</th><th class="r">Slippage $</th><th class="r">Realized $</th></tr></thead>
+        <tbody id="tr-body"><tr><td colspan="9" class="empty">no fills yet</td></tr></tbody>
+      </table></div>
+    </div>
+  </div>
+
+  <div class="card sect">
+    <div class="sect-h"><span class="t">Engine log</span></div>
+    <div class="log" id="log"></div>
+    <details style="margin-top:8px"><summary>How the paper charges are computed</summary>
+      <div class="sub" style="line-height:1.7">
+        Every order is a <b>taker</b> order filled by walking Delta's live order book level by level, so the spread and
+        depth are real. Fee = Delta's product taker rate (0.05% on futures) on the filled notional, plus <b>18% GST</b>
+        on that fee. Funding is Delta's live funding rate (quoted per 8 hours), accrued every hour at one-eighth of it:
+        a long pays a positive rate, a short receives it. Slippage is shown for information — it is already inside the
+        fill prices, so it is not subtracted a second time. Deposits and withdrawals are free on Delta.
+      </div></details>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+const IST = 19800;
+const usd = (v, d = 2) => v == null ? '—' : (v < 0 ? '−$' : '$') + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const sgn = (v, d = 2) => v == null ? '—' : (v > 0 ? '+' : v < 0 ? '−' : '') + '$' + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
+const cls = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
+const pct = (v, d = 1) => v == null ? '—' : (v * 100).toFixed(d) + '%';
+const px = v => v == null ? '—' : (Math.abs(v) >= 100 ? v.toFixed(2) : Math.abs(v) >= 1 ? v.toFixed(4) : v.toPrecision(4));
+const istTime = iso => { if (!iso) return '—'; const d = new Date(new Date(iso).getTime() + IST * 1000);
+  return d.toISOString().slice(0, 16).replace('T', ' '); };
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+// ── chart ────────────────────────────────────────────────────────────────
+const chart = LightweightCharts.createChart($('pnl-chart'), {
+  layout: { background: { color: 'transparent' }, textColor: '#94a3b8', fontSize: 11 },
+  grid: { vertLines: { visible: false }, horzLines: { color: '#1a2438' } },
+  rightPriceScale: { borderColor: '#1e293b' },
+  timeScale: { borderColor: '#1e293b', timeVisible: true, secondsVisible: false },
+  crosshair: { mode: 1 },
+  localization: { priceFormatter: v => sgn(v, 0) },
+  autoSize: true,
+});
+const gross = chart.addLineSeries({ color: '#8a8984', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+const bt = chart.addLineSeries({ color: '#d95926', lineWidth: 2, priceLineVisible: false, lastValueVisible: true,
+  pointMarkersVisible: true, pointMarkersRadius: 3 });
+const net = chart.addLineSeries({ color: '#3987e5', lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+net.createPriceLine({ price: 0, color: '#334155', lineWidth: 1, lineStyle: 2, axisLabelVisible: false });
+let eqRows = [];
+chart.subscribeCrosshairMove(p => {
+  if (!p.time) { $('pnl-tip').textContent = 'hover the chart for values'; return; }
+  const r = eqRows.find(x => x._t === p.time);
+  if (!r) {
+    const b = btByTime[p.time];
+    if (b != null) $('pnl-tip').textContent = `${new Date((p.time - IST) * 1000).toISOString().slice(0, 10)} 05:30 IST   backtest ${sgn(b)}`;
+    return;
+  }
+  const priceP = r.realized + r.unrealized;
+  const b = btByTime[p.time];
+  $('pnl-tip').textContent = `${istTime(r.ts)} IST   net ${sgn(r.pnl)}${b != null ? '   backtest ' + sgn(b) : ''}   price ${sgn(priceP)}   fees+GST ${usd(-(r.fees + r.gst))}   funding ${sgn(-r.funding)}   gross exposure ${usd(r.gross, 0)}`;
+});
+
+async function loadEquity() {
+  const d = await (await fetch('/api/takerflow/equity', { cache: 'no-store' })).json();
+  const seen = new Set();
+  eqRows = (d.points || []).map(r => ({ ...r, _t: Math.floor(new Date(r.ts).getTime() / 1000) + IST }))
+    .filter(r => !seen.has(r._t) && seen.add(r._t));
+  net.setData(eqRows.map(r => ({ time: r._t, value: r.pnl })));
+  gross.setData(eqRows.map(r => ({ time: r._t, value: r.realized + r.unrealized })));
+}
+
+// ── tick ─────────────────────────────────────────────────────────────────
+async function loadTick() {
+  const d = await (await fetch('/api/takerflow/tick', { cache: 'no-store' })).json();
+  const st = $('status');
+  if (!d.ok) { st.textContent = 'not started'; st.className = 'pill stale';
+    $('banner').style.display = 'block'; $('banner').textContent = d.reason || 'engine not running'; return; }
+  st.textContent = d.stale ? 'stale' : (d.status || 'running');
+  st.className = 'pill ' + (d.stale || d.status === 'error' ? 'stale' : 'live');
+  $('banner').style.display = d.stale ? 'block' : 'none';
+  if (d.stale) $('banner').textContent = `Engine has not updated for ${Math.round(d.age || 0)} s — numbers below are frozen.`;
+  $('updated').textContent = `updated ${istTime(d.ts)} IST · started ${istTime(d.started)}`;
+
+  $('k-eq').textContent = usd(d.equity);
+  $('k-eq-sub').innerHTML = `start <b>${usd(d.capital, 0)}</b> · gross exposure <b>${usd(d.gross, 0)}</b>`;
+  const pnlEl = $('k-pnl'); pnlEl.textContent = sgn(d.pnl); pnlEl.className = 'big num ' + cls(d.pnl);
+  $('k-pnl-sub').innerHTML = `<b class="${cls(d.pnl)}">${(d.pnl / d.capital * 100).toFixed(2)}%</b> of capital`;
+  const priceP = d.realized + d.unrealized;
+  const pe = $('k-price'); pe.textContent = sgn(priceP); pe.className = 'mid num ' + cls(priceP);
+  $('k-price-sub').innerHTML = `realized <b>${sgn(d.realized)}</b> · open <b>${sgn(d.unrealized)}</b>`;
+  $('k-fees').textContent = usd(-(d.fees + d.gst));
+  $('k-fees-sub').innerHTML = `fee <b>${usd(d.fees)}</b> + GST <b>${usd(d.gst)}</b> · slippage in fills <b>${usd(d.slippage)}</b>`;
+  const fe = $('k-fund'); fe.textContent = sgn(-d.funding); fe.className = 'mid num ' + cls(-d.funding);
+  $('k-fund-sub').textContent = d.funding > 0 ? 'we paid (longs crowded)' : d.funding < 0 ? 'we received' : 'accrued hourly at Delta rates';
+  const nx = new Date(d.next_rebalance), left = (nx - Date.now()) / 1000;
+  $('k-next').textContent = istTime(d.next_rebalance).slice(5) + ' IST';
+  $('k-next-sub').textContent = left > 0 ? `in ${Math.floor(left / 86400)}d ${Math.floor(left % 86400 / 3600)}h ${Math.floor(left % 3600 / 60)}m` : 'due now';
+
+  for (const [k, b] of [['lb', d.long_book], ['sb', d.short_book]]) {
+    if (!b) continue;
+    const el = $(k + '-net'); el.textContent = sgn(b.net); el.className = 'big num ' + cls(b.net);
+    $(k + '-size').textContent = `${b.positions} coins · ${usd(b.notional, 0)}`;
+    $(k + '-sub').innerHTML = `price <b class="${cls(b.price)}">${sgn(b.price)}</b> (closed ${sgn(b.realized)} · open ${sgn(b.unrealized)})`
+      + ` · fees+GST <b>${usd(-b.charges)}</b> · funding <b class="${cls(-b.funding)}">${sgn(-b.funding)}</b>`;
+  }
+
+  // the curve ends at the live value, not the last 5-minute sample
+  const tNow = Math.floor(new Date(d.ts).getTime() / 1000) + IST;
+  const tLast = eqRows.length ? eqRows[eqRows.length - 1]._t : 0;
+  if (tNow > tLast) {
+    net.update({ time: tNow, value: d.pnl });
+    gross.update({ time: tNow, value: d.realized + d.unrealized });
+  }
+
+  const pos = d.positions || [];
+  $('pos-sum').innerHTML = `long <b>${usd(d.long_usd, 0)}</b> · short <b>${usd(d.short_usd, 0)}</b> · ${pos.length} positions`;
+  $('pos-body').innerHTML = pos.length ? pos.map(p => `<tr>
+      <td><b style="color:var(--hi)">${esc(p.underlying)}</b> <span class="sub">${esc(p.symbol)}</span></td>
+      <td><span class="pill ${p.side === 'LONG' ? 'long' : 'short'}">${p.side}</span></td>
+      <td class="r num">${Math.abs(p.contracts).toLocaleString()}</td>
+      <td class="r num">${usd(Math.abs(p.notional), 0)}</td>
+      <td class="r num">${px(p.avg_price)}</td><td class="r num">${px(p.mark)}</td>
+      <td class="r num ${cls(p.upnl)}">${sgn(p.upnl)}</td>
+      <td class="r num">${p.weight == null ? '—' : pct(Math.abs(p.weight))}</td>
+      <td class="r num">${p.taker_ratio == null ? '—' : pct(p.taker_ratio, 2)}</td>
+      <td class="r num">${p.funding_8h_pct == null ? '—' : p.funding_8h_pct.toFixed(4) + '%'}</td></tr>`).join('')
+    : '<tr><td colspan="10" class="empty">no positions yet</td></tr>';
+}
+
+let btByTime = {};
+async function loadCompare() {
+  const d = await (await fetch('/api/takerflow/compare', { cache: 'no-store' })).json();
+  if (!d.ok) { $('cmp-sum').textContent = d.reason || 'no backtest yet'; return; }
+  btByTime = {};
+  bt.setData(d.days.map(x => { const t = Math.floor(new Date(x.date + 'T00:00:00Z').getTime() / 1000) + IST;
+    btByTime[t] = x.backtest_pnl; return { time: t, value: x.backtest_pnl }; }));
+  const last = d.days[d.days.length - 1];
+  const pv = $('c-paper'), bv = $('c-bt'), gv = $('c-gap');
+  pv.textContent = sgn(last.paper_pnl); pv.className = 'mid num ' + cls(last.paper_pnl);
+  bv.textContent = sgn(last.backtest_pnl); bv.className = 'mid num ' + cls(last.backtest_pnl);
+  gv.textContent = sgn(last.gap); gv.className = 'mid num ' + cls(last.gap);
+  const full = d.picks.filter(p => p.same != null);
+  $('c-picks').textContent = full.length ? `${full.reduce((a, p) => a + p.same, 0)} of ${full.reduce((a, p) => a + p.of, 0)}` : '—';
+  $('cmp-sum').textContent = `since ${d.start} · values at each UTC midnight · backtest updated ${istTime(d.asof)} IST`;
+  $('cmp-body').innerHTML = d.days.length > 1 ? d.days.slice(1).reverse().map(x => `<tr>
+      <td class="num">${x.date}</td>
+      <td class="r num ${cls(x.paper_day)}">${sgn(x.paper_day)}</td><td class="r num ${cls(x.backtest_day)}">${sgn(x.backtest_day)}</td>
+      <td class="r num ${cls(x.paper_pnl)}">${sgn(x.paper_pnl)}</td><td class="r num ${cls(x.backtest_pnl)}">${sgn(x.backtest_pnl)}</td>
+      <td class="r num ${cls(x.gap)}">${sgn(x.gap)}</td></tr>`).join('')
+    : '<tr><td colspan="6" class="empty">the first full day closes at 05:30 IST</td></tr>';
+  $('pick-body').innerHTML = d.picks.map(p => {
+    const mark = (list, paper) => list.map(c => paper && !paper.includes(c) ? `<u title="paper did not pick">${esc(c)}</u>` : esc(c)).join(' ');
+    return `<tr><td class="num">${p.rebalance}</td>
+      <td style="white-space:normal"><span class="pos">L</span> ${mark(p.longs, p.paper_longs)}<br><span class="neg">S</span> ${mark(p.shorts, p.paper_shorts)}</td>
+      <td class="r num">${p.same == null ? '<span class="sub">pending</span>' : p.same + ' / ' + p.of}</td></tr>`; }).join('');
+  $('cmp-method').innerHTML = `Backtest = ${esc(d.method)}; median cost ${d.cost_bps_median ?? '—'} bps/side. It enters at the daily open (05:30 IST); paper enters at 05:35 IST against Delta's live book in whole contracts — that timing and the real fills are the gap. Underlined = picked by the backtest but not by paper.`;
+}
+
+async function loadSignal() {
+  const d = await (await fetch('/api/takerflow/signal', { cache: 'no-store' })).json();
+  if (!d.ok) return;
+  $('sig-sum').textContent = `${istTime(d.asof)} IST · top ${d.universe} Binance perps · ${d.eligible} tradable on Delta`;
+  let i = 0;
+  $('sig-body').innerHTML = d.table.map(r => {
+    const st = r.side ? `<span class="pill ${r.side}">${r.side} ${pct(Math.abs(r.weight))}</span>`
+      : r.eligible ? '<span class="sub">ranked, not traded</span>' : `<span class="sub">${r.delta ? (r.delta_turnover_usd < 50000 ? "thin on Delta" : "excluded") : "not on Delta"}</span>`;
+    return `<tr><td class="num sub">${r.eligible ? ++i : ''}</td>
+      <td>${esc(r.delta || r.binance.replace('USDT', ''))}</td>
+      <td class="r num">${pct(r.taker_ratio, 2)}</td><td class="r num">${pct(r.vol_daily)}</td>
+      <td class="r num">${usd(r.adv_usd / 1e6, 0)}M</td><td>${st}</td></tr>`; }).join('');
+}
+
+async function loadTrades() {
+  const d = await (await fetch('/api/takerflow/trades?limit=300', { cache: 'no-store' })).json();
+  const t = d.trades || [];
+  const tot = t.reduce((a, x) => a + x.fee + x.gst, 0);
+  $('tr-sum').innerHTML = `${d.count} fills · fees+GST shown <b>${usd(tot)}</b>`;
+  $('tr-body').innerHTML = t.length ? t.map(x => `<tr>
+      <td class="num">${istTime(x.ts).slice(5)}</td><td>${esc(x.underlying)}${x.thin_book ? ' <span class="pill stale">thin</span>' : ''}</td>
+      <td class="${x.side === 'BUY' ? 'pos' : 'neg'}">${x.side}</td>
+      <td class="r num">${x.contracts.toLocaleString()}</td><td class="r num">${px(x.price)}</td>
+      <td class="r num">${usd(x.notional)}</td><td class="r num">${usd(x.fee + x.gst)}</td>
+      <td class="r num">${usd(x.slippage)}</td><td class="r num ${cls(x.realized)}">${x.realized ? sgn(x.realized) : '—'}</td></tr>`).join('')
+    : '<tr><td colspan="9" class="empty">no fills yet</td></tr>';
+}
+
+async function loadLog() {
+  const d = await (await fetch('/api/takerflow/events?limit=150', { cache: 'no-store' })).json();
+  $('log').innerHTML = (d.events || []).map(e => `<div class="${e.kind}">${istTime(e.ts)}  ${esc(e.msg)}</div>`).join('') || '<div class="empty">no events</div>';
+}
+
+async function refresh(full) {
+  if (full) { try { await loadEquity(); } catch (e) {} }          // curve first, then the live point
+  try { await loadTick(); } catch (e) { $('status').textContent = 'offline'; $('status').className = 'pill stale'; }
+  if (full) { for (const f of [loadCompare, loadSignal, loadTrades, loadLog]) { try { await f(); } catch (e) {} } }
+}
+refresh(true);
+setInterval(() => refresh(false), 15000);
+setInterval(() => refresh(true), 60000);
+</script>
+</body>
+</html>

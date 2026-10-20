@@ -184,6 +184,14 @@ try:
 except Exception as _e:                                    # pragma: no cover
     print(f"[stdir] router NOT loaded: {type(_e).__name__}: {_e}", flush=True)
 
+# Taker Flow L/S — crypto cross-sectional (PAPER, Delta prices + charges). Separate
+# engine process publishes files (live_trading_options/taker_flow); read-only router.
+try:
+    from deployment.takerflow_api import router as _takerflow_router
+    app.include_router(_takerflow_router)
+except Exception as _e:                                    # pragma: no cover
+    print(f"[takerflow] router NOT loaded: {type(_e).__name__}: {_e}", flush=True)
+
 # Strategy Builder — PROXY to its own process (live_trading_options/strategy_builder,
 # port 47674), same reasoning as DualMom: restart it any time without touching this app.
 _SB_BASE = os.getenv("STRATEGY_BUILDER_URL", "http://127.0.0.1:47674")

@@ -64,6 +64,11 @@ class SplitVwapBook(VwapBook):
         # for the candle close) splits at once — the "1.5x" paper version
         self.vwap_cap = float(cfg.get("vwap_cap_mult") or 0)
         self.gst_rate = float((params.get("fees") or {}).get("gst_rate", 0.18))
+        # the stop must see the breach on N consecutive polls (~2 s each) before it
+        # fires: 19-Oct a one-tick Delta MARK glitch (PE mark 34 while it traded at 7.5)
+        # fired the -$70 stop at a real P&L of about -$43
+        self.stop_confirm = int(cfg.get("stop_confirm_polls", 3))
+        self._stop_hits = 0
         self.control_file = self.state_dir / f"live_control_{name}.json"
         self.mode = "paper"
         self.exec = PaperExec(self.s.contracts)
@@ -374,6 +379,11 @@ class SplitVwapBook(VwapBook):
     def _sample(self, now, ce, pe, chain):
         if ce is None or pe is None:
             return
+        if chain is not None and self.pair:
+            k_ce, k_pe = (float(self.pair["ce"]), "CE"), (float(self.pair["pe"]), "PE")
+            bids, asks = getattr(chain, "bid", {}) or {}, getattr(chain, "ask", {}) or {}
+            ce = self._clamp(ce, bids.get(k_ce), asks.get(k_ce))
+            pe = self._clamp(pe, bids.get(k_pe), asks.get(k_pe))
         if self.leg_builders:
             for t, v in (("CE", ce), ("PE", pe)):
                 c = self.leg_builders[t].add(now, v)
@@ -467,6 +477,19 @@ class SplitVwapBook(VwapBook):
 
     def _mark(self, t):
         return self.last.get("ce" if t == "CE" else "pe")
+
+    @staticmethod
+    def _clamp(mark, bid, ask):
+        """Delta's MARK, kept inside the real book: never above the best ask (you can
+        buy it back there) and never below the best bid. A mark glitch outside the
+        book (19-Oct: 34 vs a 7.5 offer) is ignored; an empty side leaves it free."""
+        if mark is None:
+            return None
+        if ask is not None and mark > ask:
+            mark = ask
+        if bid is not None and mark < bid:
+            mark = bid
+        return mark
 
     def _strike(self, t):
         return self.pair["ce" if t == "CE" else "pe"]
@@ -820,7 +843,7 @@ class SplitVwapBook(VwapBook):
         s = 0.0
         for t in self._open():
             l = self.legs[t]
-            ask = self.last.get("ce_ask" if t == "CE" else "pe_ask") or self._mark(t)
+            ask = self.last.get("ce_ask" if t == "CE" else "pe_ask") or self._mark(t)   # (mark already clamped)
             if ask is not None:
                 s += ((l["sell"] - ask) * l["qty"] * cv - (l.get("sell_fee") or 0)
                       - self._fee_q(ask, l["qty"], chain))
@@ -846,12 +869,25 @@ class SplitVwapBook(VwapBook):
         if self.trigger.done and not self._open():
             return
         m = self.mtm(chain)
+        if m > -self.s.mtm_stop:
+            if self._stop_hits:
+                self.audit(now, "MTM_STOP_CLEARED", mtm=m, after_polls=self._stop_hits)
+            self._stop_hits = 0
+            return
+        if self.stop_reason:
+            return
+        self._stop_hits += 1
+        if self._stop_hits < self.stop_confirm:
+            if self._stop_hits == 1:
+                self.audit(now, "MTM_STOP_PENDING", mtm=m, basis=self.stop_basis,
+                           need_polls=self.stop_confirm)
+            return
         if m <= -self.s.mtm_stop and not self.stop_reason:
-            self.stop_reason = f"MTM stop ${m:+.2f} <= -${self.s.mtm_stop:g}"
+            self.stop_reason = f"{'NET' if self.stop_basis == 'net' else 'MTM'} stop ${m:+.2f} <= -${self.s.mtm_stop:g} ({self._stop_hits} polls)"
             self.trigger.done = True
             self.trigger.pending = None
             self.status = "stopped (MTM)"
-            self.audit(now, "MTM_STOP", mtm=m)
+            self.audit(now, "MTM_STOP", mtm=m, basis=self.stop_basis, polls=self._stop_hits)
             self._close_all(now, chain, "MTM stop")
 
     # ── persistence ──────────────────────────────────────────────────────

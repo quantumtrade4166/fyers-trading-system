@@ -60,6 +60,7 @@ class FakeChain:
         self.mark[(CE_K, "CE")] = 40.0
         self.mark[(PE_K, "PE")] = 40.0
         self.ask = {}
+        self.bid = {}
 
     def is_ready(self):
         return True
@@ -191,9 +192,49 @@ check("no stop at -10", bk3.legs["CE"] and not bk3.trigger.done)
 check("stop watches price (marks), not asks/fees", abs(bk3.mtm() - (sold - 100) * 0.5) < 0.01)
 setm(bk3, 100, 40, D(2026, 10, 3, 10, 8))         # -(140-79.2)*0.5 = -30.4
 check("no stop at -30", not bk3.trigger.done)
-setm(bk3, 110, 40, D(2026, 10, 3, 10, 9))         # -35.4 -> stop
-check("stop fires at -35 and flattens", bk3.trigger.done and bk3.pos is None
+setm(bk3, 110, 40, D(2026, 10, 3, 10, 9))         # -35.4: 1st poll -> pending only
+check("stop waits for confirmation (1 poll)", not bk3.trigger.done and bk3.legs["CE"])
+setm(bk3, 110, 40, D(2026, 10, 3, 10, 9, 2))
+setm(bk3, 110, 40, D(2026, 10, 3, 10, 9, 4))      # 3rd consecutive poll -> stop
+check("stop fires at -35 after 3 polls and flattens", bk3.trigger.done and bk3.pos is None
       and "MTM stop" in (bk3.stop_reason or ""))
+
+# ── 19-Oct: a one-tick MARK glitch must not fire the stop ─────────────────
+fc.__init__()
+fc.bid = {}
+bg19, _ = new_book()
+setm(bg19, 40, 40, D(2026, 10, 19, 10, 0, 1))
+setm(bg19, 40, 40, D(2026, 10, 19, 10, 6))
+fire(bg19, D(2026, 10, 19, 10, 6, 1))
+pe_k = (float(bg19.pair["pe"]), "PE")
+fc.ask[pe_k] = 41.0; fc.bid[pe_k] = 39.0                # the real book
+setm(bg19, 40, 400, D(2026, 10, 19, 10, 7))             # PE MARK glitches to 400 (book 39/41)
+check("mark glitch clamped to the book (PE seen at 41, not 400)", bg19._mark("PE") == 41.0)
+check("mark glitch does not fire the stop", not bg19.trigger.done and bg19.legs["PE"])
+# a glitch that IS inside a wide book still needs 3 polls; one tick then normal -> cleared
+fc.ask[pe_k] = 400.0
+setm(bg19, 40, 400, D(2026, 10, 19, 10, 7, 2))          # 1 poll in breach
+fc.ask[pe_k] = 41.0
+setm(bg19, 40, 40, D(2026, 10, 19, 10, 7, 4))           # back to normal
+check("single-poll breach clears, no stop", not bg19.trigger.done and bg19._stop_hits == 0)
+
+# ── NET stop at -$80 including every charge (user rule 2026-10-20) ───────
+PN = json.loads(json.dumps(PARAMS))
+PN["versions"]["ist_live"].update(mtm_stop_usd=80, stop_basis="net")
+fc.__init__(); fc.bid = {}
+bn = SplitVwapBook("ist_live", PN, Path(tempfile.mkdtemp()), log=lambda m: None)
+setm(bn, 40, 40, D(2026, 10, 20, 10, 0, 1))
+setm(bn, 40, 40, D(2026, 10, 20, 10, 6))
+fire(bn, D(2026, 10, 20, 10, 6, 1))
+ce_k, pe_k = (float(bn.pair["ce"]), "CE"), (float(bn.pair["pe"]), "PE")
+sold = bn.legs["CE"]["sell"] + bn.legs["PE"]["sell"]
+# (500 contracts) price P&L about -35 (far above -80) but buying back at the wide ASK + fees -> NET below -80
+fc.ask[ce_k] = 230.0; fc.bid[ce_k] = 100.0; fc.ask[pe_k] = 41.0; fc.bid[pe_k] = 39.0
+for k in range(3):
+    setm(bn, 110, 40, D(2026, 10, 20, 10, 7, 2 * k))
+check("net stop counts spread + fees: price ~-70 but net <= -80 -> stop",
+      bn.trigger.done and bn.pos is None and "NET stop" in (bn.stop_reason or ""))
+check("net view includes exit fee estimate", abs((bn.realized()) - sum(t["net_usd"] for t in bn.trades)) < 1e-6)
 
 # ── KILL from the control file ────────────────────────────────────────────
 bk4, tmp4 = new_book()

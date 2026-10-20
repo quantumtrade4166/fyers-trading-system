@@ -65,14 +65,16 @@
       "enabled": true,
       "label": "Vwap New Delta Ex (split legs) — LIVE-capable",
       "live_capable": true,
+      "_stop_note_20261020": "User 2026-10-20: stop at -$80 NET incl. all charges (closed legs after fees+GST + open legs at the best-ask buy-back less the exit fee incl. GST), confirmed over 3 polls; replaces the -$70 price stop that a Delta mark glitch fired on 19-Oct.",
+      "stop_confirm_polls": 3,
       "start": "09:30",
       "entry_cutoff": "16:25",
       "square_off": "17:10",
       "combined_threshold": 100,
       "contracts": 1000,
       "max_entries": 4,
-      "mtm_stop_usd": 70,
-      "stop_basis": "price",
+      "mtm_stop_usd": 80,
+      "stop_basis": "net",
       "split_legs": true,
       "fallback_last_pair": false
     }

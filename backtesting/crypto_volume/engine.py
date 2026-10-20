@@ -73,12 +73,14 @@ def ts_weights(pnl: Panel, positions: pd.DataFrame) -> pd.DataFrame:
 
 def xs_weights(pnl: Panel, score: pd.DataFrame, rebal: int, q: float = 0.2,
                eligible_long: pd.DataFrame | None = None,
-               eligible_short: pd.DataFrame | None = None, min_coins: int = 10) -> pd.DataFrame:
-    """Top-q long / bottom-q short by score, inverse-vol inside each book."""
+               eligible_short: pd.DataFrame | None = None, min_coins: int = 10,
+               offset: int = 0) -> pd.DataFrame:
+    """Top-q long / bottom-q short by score, inverse-vol inside each book.
+    offset: first rebalance bar (0..rebal-1) — staggered sub-books use 0, 1, 2."""
     w = pd.DataFrame(np.nan, index=pnl.index, columns=pnl.close.columns)
     s_all = score.where(pnl.active)
     inv = 1.0 / pnl.vol
-    for i in range(0, len(pnl.index), rebal):
+    for i in range(offset, len(pnl.index), rebal):
         s = s_all.iloc[i].dropna()
         row = pd.Series(0.0, index=w.columns)
         if len(s) >= min_coins:
@@ -101,11 +103,16 @@ def xs_weights(pnl: Panel, score: pd.DataFrame, rebal: int, q: float = 0.2,
 
 
 # ── P&L + metrics ────────────────────────────────────────────────────────
-def run(pnl: Panel, weights: pd.DataFrame, cost_bps: float = 8.0) -> pd.DataFrame:
-    """Per-bar portfolio P&L. weights[t] is decided at close t, held during bar t+1."""
+def run(pnl: Panel, weights: pd.DataFrame, cost_bps: float | pd.Series = 8.0) -> pd.DataFrame:
+    """Per-bar portfolio P&L. weights[t] is decided at close t, held during bar t+1.
+    cost_bps: one number for every coin, or a Series indexed by coin (per side)."""
     held = weights.shift().fillna(0.0)
     gross = (held * pnl.ret.fillna(0.0)).sum(axis=1)
-    cost = held.diff().abs().fillna(held.abs()).sum(axis=1) * cost_bps / 1e4
+    traded = held.diff().abs().fillna(held.abs())
+    if isinstance(cost_bps, pd.Series):
+        cost = traded.mul(cost_bps.reindex(traded.columns), axis=1).sum(axis=1) / 1e4
+    else:
+        cost = traded.sum(axis=1) * cost_bps / 1e4
     fund = (held * pnl.funding).sum(axis=1)
     long_ = (held.clip(lower=0) * pnl.ret.fillna(0.0)).sum(axis=1)
     return pd.DataFrame({"gross": gross, "cost": cost, "funding": fund,
