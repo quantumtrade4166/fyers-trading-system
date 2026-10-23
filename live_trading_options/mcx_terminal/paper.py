@@ -3,14 +3,18 @@ mcx_terminal/paper.py — the PAPER order book (no broker calls exist in this fi
 =================================================================================
 
 Kotak does not take MARKET orders through the API, so every order is a LIMIT:
-  - "MKT"  : protective limit = best ask (buy) / best bid (sell) +/- buffer %, sweeps the book
+  - "MKT"  : system-priced limit = reference (best ask/bid or LTP, per settings) +/- buffer (% or points)
   - "LMT"  : the price the trader typed; whatever does not fill rests until the book reaches it
+An order that REDUCES a position uses the exit settings, anything else the entry settings.
+housekeep() (every 0.5 s) re-prices open system orders to the current reference each second and,
+if set, pushes any order still open after N seconds through the book (best price +/- 1 %).
 
 Fills walk the REAL Kotak book (5-level depth when subscribed, else the touch line):
   buy  -> take asks from the best up to the limit, each level's quantity at most
   sell -> hit bids from the best down to the limit
-A MKT order bigger than the visible depth fills the rest AT ITS LIMIT (worst case the order allows)
-and says so in its reason; an LMT order's rest stays open and fills as later ticks reach it.
+If a MKT order uses up every visible level inside its limit, the rest fills AT ITS LIMIT (worst case
+the order allows; deeper levels are not visible) and says so; if the book beyond its limit is visible
+the rest WAITS (open), exactly like a real limit order. LMT rests always wait.
 
 Orders bigger than the exchange freeze quantity are split into slices, all placed together; the
 slices share one working copy of the book so they cannot take the same quantity twice.
@@ -46,11 +50,14 @@ def _round_tick(px: float, tick: float, up: bool) -> float:
 
 
 class PaperBook:
-    def __init__(self, universe, quotes, on_change=None, path=None):
+    def __init__(self, universe, quotes, on_change=None, path=None, settings=None):
         """quotes(token) -> dict(ltp, bid, ask, bq, aq, depth=([(p,q)...] bids, [(p,q)...] asks))"""
         self.u = universe
         self.quotes = quotes
         self.on_change = on_change or (lambda: None)
+        self.settings = settings or (lambda: {"entry_ref": "touch", "entry_buffer": C.MKT_BUFFER_PCT, "entry_unit": "%",
+                                              "exit_ref": "touch", "exit_buffer": C.MKT_BUFFER_PCT, "exit_unit": "%",
+                                              "reprice": False, "market_after_s": 0, "product": "NRML", "session": "AUTO"})
         self.path = path or (C.DATA / f"paper_book_{today()}.json")
         self.orders: list[dict] = []
         self.pos: dict[int, dict] = {}
@@ -105,6 +112,43 @@ class PaperBook:
                 levels[i] = (p, avail - take)
         return fills
 
+    # ── pricing ─────────────────────────────────────────────────────────────
+    def _role(self, token, side) -> str:
+        p = self.pos.get(token)
+        if p and p["net"] and ((p["net"] > 0) == (side == "S")):
+            return "exit"
+        return "entry"
+
+    def _price(self, token, side, role, st):
+        """System limit price for an "at the market" order (None = no quote)."""
+        c = self.u.by_token[token]
+        q = self.quotes(token) or {}
+        if st[f"{role}_ref"] == "ltp":
+            ref = q.get("ltp")
+        else:
+            ref = q.get("ask") if side == "B" else q.get("bid")
+        ref = ref or q.get("ltp")
+        if not ref:
+            return None
+        buf = float(st[f"{role}_buffer"] or 0)
+        adj = ref * buf / 100 if st[f"{role}_unit"] == "%" else buf
+        px = ref + adj if side == "B" else ref - adj
+        return max(_round_tick(px, c.tick, side == "B"), c.tick)
+
+    def _aggressive(self, token, side):
+        c = self.u.by_token[token]
+        q = self.quotes(token) or {}
+        ref = (q.get("ask") if side == "B" else q.get("bid")) or q.get("ltp")
+        if not ref:
+            return None
+        return max(_round_tick(ref * (1.01 if side == "B" else 0.99), c.tick, side == "B"), c.tick)
+
+    @staticmethod
+    def _book_beyond(levels, side, limit) -> bool:
+        """Is a visible level with quantity left priced beyond our limit (the market is past us)?"""
+        return any(qq > 0 and ((side == "B" and p > limit + 1e-9) or (side == "S" and p < limit - 1e-9))
+                   for p, qq in levels)
+
     # ── orders ──────────────────────────────────────────────────────────────
     def place(self, token: int, side: str, qty: int, kind: str = "MKT", limit: float | None = None,
               source: str = "", buffer_pct: float | None = None) -> dict:
@@ -120,15 +164,15 @@ class PaperBook:
         lots = qty // c.lot
         if lots > C.MAX_LOTS_PER_ORDER:
             return {"ok": False, "msg": f"{lots} lots is over the cap of {C.MAX_LOTS_PER_ORDER} lots per order"}
-        q = self.quotes(token) or {}
-        buf = C.MKT_BUFFER_PCT if buffer_pct is None else buffer_pct
+        st = self.settings()
+        if buffer_pct is not None:                                   # explicit override (tests / callers)
+            st = {**st, "entry_buffer": buffer_pct, "exit_buffer": buffer_pct, "entry_unit": "%", "exit_unit": "%"}
+        with self.lock:
+            role = self._role(token, side)
         if kind == "MKT":
-            ref = q.get("ask") if side == "B" else q.get("bid")
-            ref = ref or q.get("ltp")
-            if not ref:
+            limit = self._price(token, side, role, st)
+            if not limit:
                 return {"ok": False, "msg": "no price for this contract yet"}
-            limit = _round_tick(ref * (1 + buf / 100) if side == "B" else ref * (1 - buf / 100), c.tick, side == "B")
-            limit = max(limit, c.tick)
         else:
             if not limit or limit <= 0:
                 return {"ok": False, "msg": "limit price required"}
@@ -139,9 +183,10 @@ class PaperBook:
             ids = []
             ts = dt.datetime.now(IST).strftime("%H:%M:%S.%f")[:-3]
             for i, sq in enumerate(slices):
-                o = {"id": next(_ids), "ts": ts, "token": token, "symbol": c.symbol, "name": c.name, "side": side,
-                     "qty": sq, "lot": c.lot, "kind": kind, "limit": limit, "filled": 0, "avg": 0.0,
-                     "status": "OPEN", "reason": "", "source": source,
+                o = {"id": next(_ids), "ts": ts, "t0": time.time(), "token": token, "symbol": c.symbol,
+                     "name": c.name, "side": side, "qty": sq, "lot": c.lot, "kind": kind, "limit": limit,
+                     "filled": 0, "avg": 0.0, "status": "OPEN", "reason": "", "source": source, "role": role,
+                     "product": st.get("product", "NRML"), "session": st.get("session", "AUTO"), "t_rep": time.time(),
                      "slice": f"{i + 1}/{len(slices)}" if len(slices) > 1 else ""}
                 fills = self._sweep(levels, side, limit, sq)
                 for px, fq in fills:
@@ -150,11 +195,11 @@ class PaperBook:
                 notes = []
                 if fills:
                     notes.append("filled from the book " + ", ".join(f"{fq}@{px:g}" for px, fq in fills))
-                if rem and kind == "MKT":
+                if rem and kind == "MKT" and not self._book_beyond(levels, side, limit):
                     self._fill(o, limit, rem)
                     notes.append(f"{rem} beyond visible depth filled at the limit {limit:g} (worst case)")
                 elif rem:
-                    notes.append(f"{rem} resting at {limit:g}")
+                    notes.append(f"{rem} waiting at {limit:g}")
                 o["reason"] = "; ".join(notes) or "resting"
                 o["status"] = "COMPLETE" if o["filled"] >= sq else "OPEN"
                 self.orders.append(o)
@@ -214,6 +259,49 @@ class PaperBook:
         if changed:
             self.on_change()
 
+    def housekeep(self):
+        """Every ~0.5 s: re-price open system orders (each second) and push old orders through."""
+        st = self.settings()
+        now = time.time()
+        changed = False
+        with self.lock:
+            for o in self.orders:
+                if o["status"] != "OPEN":
+                    continue
+                rem = o["qty"] - o["filled"]
+                levels = list(self._levels(o["token"], o["side"]))
+                mkt_after = float(st.get("market_after_s") or 0)
+                if mkt_after and now - o.get("t0", now) >= mkt_after:
+                    lim = self._aggressive(o["token"], o["side"])
+                    if lim:
+                        o["limit"] = lim
+                        for px, fq in self._sweep(levels, o["side"], lim, rem):
+                            self._fill(o, px, fq)
+                        left = o["qty"] - o["filled"]
+                        if left:
+                            self._fill(o, lim, left)
+                        o["status"] = "COMPLETE"
+                        o["reason"] += f"; pushed to market after {mkt_after:g}s (limit {lim:g})"
+                        changed = True
+                    continue
+                if o["kind"] == "MKT" and st.get("reprice") and now - o.get("t_rep", 0) >= 1.0:
+                    o["t_rep"] = now
+                    lim = self._price(o["token"], o["side"], o.get("role", "entry"), st)
+                    if lim and abs(lim - o["limit"]) > 1e-9:
+                        o["limit"] = lim
+                        o["reprices"] = o.get("reprices", 0) + 1
+                        changed = True
+                    for px, fq in self._sweep(levels, o["side"], o["limit"], rem):
+                        self._fill(o, px, fq)
+                        changed = True
+                    if o["filled"] >= o["qty"]:
+                        o["status"] = "COMPLETE"
+                        o["reason"] += f"; filled after {o.get('reprices', 0)} re-price(s)"
+            if changed:
+                self._save()
+        if changed:
+            self.on_change()
+
     def cancel(self, oid: int) -> dict:
         with self.lock:
             for o in self.orders:
@@ -256,7 +344,44 @@ class PaperBook:
         return {"ok": not bad, "msg": f"exit sent for {len(res)} position(s), {n_cancel} order(s) cancelled"
                 + (f"; problems: {bad}" if bad else "")}
 
+    def basket(self, legs, source="basket") -> dict:
+        """legs = [{token, side, qty}] placed together; BUYS FIRST (hedges before the sells, as live
+        trading needs for margin), then sells."""
+        legs = sorted(legs, key=lambda l: 0 if l["side"].upper().startswith("B") else 1)
+        res = [self.place(int(l["token"]), l["side"], int(l["qty"]), "MKT", source=source) for l in legs]
+        bad = [r["msg"] for r in res if not r["ok"]]
+        ids = [i for r in res if r["ok"] for i in r["ids"]]
+        return {"ok": not bad, "ids": ids,
+                "msg": f"basket: {len(res) - len(bad)}/{len(res)} legs placed" + (f"; problems: {bad}" if bad else "")}
+
+    def move(self, token, steps: int, away: bool) -> dict:
+        """Roll an open leg `steps` strikes: away = further OTM (CE up, PE down), close = toward ATM.
+        Closes the old strike and opens the same size at the new one, in one basket."""
+        c = self.u.by_token.get(token)
+        with self.lock:
+            p = self.pos.get(token)
+            if not c or c.kind not in ("CE", "PE") or not p or not p["net"]:
+                return {"ok": False, "msg": "no open option position to move"}
+            net = p["net"]
+        chain = self.u.products[c.name].chains.get(c.expiry, {})
+        strikes = sorted(chain)
+        i = strikes.index(c.strike)
+        d = steps if (c.kind == "CE") == away else -steps
+        j = i + d
+        if not 0 <= j < len(strikes):
+            return {"ok": False, "msg": "no strike that far in this expiry"}
+        new = chain[strikes[j]][c.kind]
+        close_side, open_side = ("S", "B") if net > 0 else ("B", "S")
+        r = self.basket([{"token": token, "side": close_side, "qty": abs(net)},
+                         {"token": new.token, "side": open_side, "qty": abs(net)}], source="move")
+        r["msg"] = f"moved {c.symbol} -> {new.symbol}: " + r["msg"]
+        return r
+
     # ── views ───────────────────────────────────────────────────────────────
+    def positions(self) -> list:
+        with self.lock:
+            return [dict(p) for p in self.pos.values()]
+
     def snapshot(self) -> dict:
         with self.lock:
             return {"positions": [dict(p) for p in self.pos.values() if p["net"] or p["realized"]],

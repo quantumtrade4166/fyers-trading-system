@@ -257,3 +257,64 @@ td.fd2 { animation: fd2 .32s ease-out; }
   .qty .units, .toggles .tg { font-size: 10px; }
 }
 .dim { color: var(--dim); }
+
+/* ── Stage 3: views, hedges, risk ── */
+.hedge { display: inline-flex; gap: 4px; align-items: center; }
+.hedge select { padding: 3px 6px; }
+.seg.small button[data-v] { padding: 5px 10px; }
+.chain.combo td.k, .chain.combo td.k2 {
+  text-align: center; font-weight: 600; background: var(--panel-2); min-width: 90px;
+  border-left: 1px solid var(--line); border-right: 1px solid var(--line);
+}
+.chain.combo td.sum { font-weight: 700; color: var(--accent); }
+.chain.combo td.act2 { text-align: center; white-space: nowrap; }
+.chain.combo td.act2 button { margin: 0 2px; padding: 3px 10px; }
+.btn.sell2 { background: rgba(242, 82, 92, .16); border-color: rgba(242, 82, 92, .6); color: #ff8a92; }
+.btn.buy2 { background: rgba(31, 201, 122, .14); border-color: rgba(31, 201, 122, .55); color: #5fe3a6; }
+.riskpane { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+.riskpane[hidden] { display: none; }
+.rk-form { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.rk-form input {
+  width: 120px; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 5px;
+  padding: 6px 8px; font-size: 13px;
+}
+.rk-state { font-size: 12.5px; color: var(--text); }
+.rk-state .armed { color: var(--up); font-weight: 600; }
+.rk-state .fired { color: var(--down); font-weight: 600; }
+.rk-sum { display: flex; gap: 22px; flex-wrap: wrap; font: 12px var(--mono); color: var(--muted); }
+.rk-sum b { color: var(--text); font-weight: 600; }
+.rk-note { color: var(--dim); font-size: 11px; }
+
+/* ── Stage 3b: settings + graphs ── */
+.gear { background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: 6px; width: 30px; height: 28px; cursor: pointer; font-size: 15px; }
+.gear:hover { color: var(--accent); border-color: var(--accent); }
+.panel {
+  width: 560px; max-width: calc(100vw - 32px); max-height: calc(100vh - 48px); overflow: auto;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 16px;
+  box-shadow: 0 16px 50px rgba(0, 0, 0, .5);
+}
+.panel.wide { width: 860px; }
+.p-head { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+.p-head b { font-size: 15px; }
+.p-head .x { margin-left: auto; background: transparent; border: 0; color: var(--muted); font-size: 16px; cursor: pointer; }
+.panel h4 { margin: 14px 0 4px; font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.hint2 { color: var(--muted); font-size: 12px; margin: 0 0 10px; }
+.sgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px 18px; }
+.sgrid label { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+.sgrid label.chk { flex-direction: row; align-items: center; gap: 8px; color: var(--text); }
+.sgrid input[type=number] {
+  background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 6px 8px; font: 13px var(--mono);
+}
+.pair { display: flex; gap: 6px; }
+.pair input { flex: 1; min-width: 0; }
+.p-foot { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 16px; }
+.g-tools { display: inline-flex; gap: 8px; align-items: center; color: var(--muted); font-size: 12px; }
+.g-body svg { width: 100%; height: auto; display: block; }
+.g-note { color: var(--muted); font-size: 12px; margin-top: 8px; }
+.g-note b { color: var(--text); }
+.g-axis { stroke: var(--line); stroke-width: 1; }
+.g-grid { stroke: var(--line-soft); stroke-width: 1; }
+.g-zero { stroke: var(--dim); stroke-width: 1; stroke-dasharray: 4 4; }
+.g-label { fill: var(--dim); font: 10.5px var(--mono); }
+.g-spot { stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 3 3; }
+.g-spot-l { fill: var(--accent); font: 600 11px var(--mono); }

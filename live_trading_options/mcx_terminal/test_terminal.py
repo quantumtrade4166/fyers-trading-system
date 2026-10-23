@@ -221,6 +221,127 @@ def test_engine_quote_lots_to_units():
     check("depth qty lots->units", q["depth"][0][0] == (1638.0, 300) and q["depth"][1][1] == (1645.0, 400), q["depth"])
 
 
+def test_risk_guard_stop_trail_target():
+    import tempfile
+    from live_trading_options.mcx_terminal.risk import RiskGuard
+    q = {}
+    u, b, path = _book("risk", q)
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[ce.token] = {"ltp": 500.0, "bid": 500.0, "ask": 500.1, "bq": 10**6, "aq": 10**6, "depth": None}
+    b.place(ce.token, "S", 100, "MKT")                         # short 1 lot at 500
+    ltp = {ce.token: 500.0}
+    rpath = Path(tempfile.gettempdir()) / "mcx_risk_test.json"
+    rpath.unlink(missing_ok=True)
+    g = RiskGuard(b, lambda t: ltp.get(t), path=rpath)
+    r = g.set(stop=-2000, target=None, trail=1000)
+    check("risk armed", r["ok"] and g.state()["armed"], r)
+    ltp[ce.token] = 485.0                                      # +1500 -> one trail step
+    g.check()
+    check("trail raised stop by one step", g.state()["stop"] == -1000.0, g.state())
+    ltp[ce.token] = 498.0                                      # +200, above the stop
+    check("no fire above stop", g.check() is None and b.pos[ce.token]["net"] == -100)
+    ltp[ce.token] = 511.0                                      # -1100 <= -1000 -> fire
+    q[ce.token] = {"ltp": 511.0, "bid": 510.9, "ask": 511.0, "bq": 10**6, "aq": 10**6, "depth": None}
+    reason = g.check()
+    check("stop fired", reason is not None and "stop-loss" in reason, reason)
+    check("flat after fire", b.pos[ce.token]["net"] == 0, b.pos[ce.token])
+    check("disarmed after fire", not g.state()["armed"] and g.state()["fired"])
+    r = g.set(stop=None, target=None, trail=None)
+    check("set needs stop or target", not r["ok"])
+    r = g.set(stop=10**9)
+    check("stop above current P&L refused", not r["ok"], r)
+    rpath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
+def test_basket_buys_first_and_move():
+    q = {}
+    u, b, path = _book("basket", q)
+    ch = u.products["CRUDEOIL"].chains["2026-11-17"]
+    ks = sorted(ch)
+    i = ks.index(9300.0)
+    for k in ks[i - 3:i + 4]:
+        for leg in ch[k].values():
+            q[leg.token] = {"ltp": 100.0, "bid": 99.9, "ask": 100.0, "bq": 10**6, "aq": 10**6, "depth": None}
+    sell_ce, hedge_ce = ch[9300.0]["CE"], ch[ks[i + 2]]["CE"]
+    r = b.basket([{"token": sell_ce.token, "side": "S", "qty": 200}, {"token": hedge_ce.token, "side": "B", "qty": 200}])
+    check("basket ok", r["ok"] and len(r["ids"]) == 2, r)
+    check("hedge bought first", b.orders[-2]["token"] == hedge_ce.token and b.orders[-2]["side"] == "B",
+          [(o["symbol"], o["side"]) for o in b.orders[-2:]])
+    r = b.move(sell_ce.token, 1, away=True)                    # short CE 9300 -> 9350
+    check("move ok", r["ok"], r)
+    check("old leg flat", b.pos[sell_ce.token]["net"] == 0)
+    check("new leg short 2 lots", b.pos[ch[ks[i + 1]]["CE"].token]["net"] == -200)
+    r = b.move(ch[ks[i + 1]]["CE"].token, 1, away=False)      # back toward ATM
+    check("move close ok", r["ok"] and b.pos[sell_ce.token]["net"] == -200, r)
+    path.unlink(missing_ok=True)
+
+
+def test_settings_pricing_reprice_and_push():
+    import tempfile
+    from live_trading_options.mcx_terminal.settings import Settings
+    spath = Path(tempfile.gettempdir()) / "mcx_settings_test.json"
+    spath.unlink(missing_ok=True)
+    S = Settings(path=spath)
+    r = S.update({"entry_ref": "ltp", "entry_buffer": 0, "exit_ref": "touch", "exit_buffer": 2, "exit_unit": "pts",
+                  "reprice": True, "market_after_s": 0})
+    check("settings saved", r["ok"] and spath.exists(), r)
+    check("bad choice ignored", S.update({"entry_ref": "nonsense"})["ok"] and S.get()["entry_ref"] == "ltp")
+    check("huge % buffer refused", not S.update({"entry_buffer": 50, "entry_unit": "%"})["ok"])
+    q = {}
+    u, b, path = _book("settings", q)
+    b.settings = S.get
+    pe = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["PE"]
+    # entry at LTP, no buffer: ltp 300 is below the ask 301 -> the buy waits (book beyond the limit is visible)
+    q[pe.token] = {"ltp": 300.0, "bid": 299.5, "ask": 301.0, "bq": 1000, "aq": 1000,
+                   "depth": ([(299.5, 1000)], [(301.0, 1000), (302.0, 1000)])}
+    r = b.place(pe.token, "B", 100, "MKT")
+    o = b.orders[-1]
+    check("ltp entry limit", o["limit"] == 300.0 and o["role"] == "entry", o)
+    check("waits when the book is past the limit", o["status"] == "OPEN" and o["filled"] == 0, o)
+    # the ask comes down to the LTP; a re-price round fills it
+    q[pe.token] = {"ltp": 300.5, "bid": 300.0, "ask": 300.5, "bq": 1000, "aq": 1000,
+                   "depth": ([(300.0, 1000)], [(300.5, 1000)])}
+    o["t_rep"] = 0
+    b.housekeep()
+    check("re-priced to new ltp and filled", o["status"] == "COMPLETE" and o["avg"] == 300.5, o)
+    # exit uses touch - 2 pts
+    b.place(pe.token, "S", 100, "MKT")
+    o2 = b.orders[-1]
+    check("exit role + touch - 2 pts", o2["role"] == "exit" and abs(o2["limit"] - 298.0) < 1e-9, o2)
+    # push-to-market: a typed limit far away is forced through after N seconds
+    S.update({"market_after_s": 0.5})
+    q[pe.token] = {"ltp": 300.0, "bid": 299.0, "ask": 300.0, "bq": 1000, "aq": 1000, "depth": None}
+    b.place(pe.token, "B", 100, "LMT", 250.0)
+    o3 = b.orders[-1]
+    check("typed limit waits", o3["status"] == "OPEN")
+    o3["t0"] -= 1
+    b.housekeep()
+    check("pushed to market", o3["status"] == "COMPLETE" and o3["avg"] == 300.0 and "pushed" in o3["reason"], o3)
+    spath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
+def test_mtm_history_buckets():
+    import tempfile
+    from live_trading_options.mcx_terminal.mtm import MtmHistory
+    mpath = Path(tempfile.gettempdir()) / "mcx_mtm_test.json"
+    mpath.unlink(missing_ok=True)
+    h = MtmHistory(path=mpath)
+    pos = [{"token": 1, "name": "CRUDEOIL", "net": -100, "avg": 500.0, "mult": 1.0, "realized": 0.0},
+           {"token": 2, "name": "GOLDM", "net": 0, "avg": 0.0, "mult": 0.1, "realized": 250.0}]
+    t0 = 1_800_000_000 - (1_800_000_000 % 60)
+    for i, px in enumerate([500, 498, 495, 497, 490]):        # one sample every 20 s
+        h.sample(pos, lambda t, px=px: px if t == 1 else None, now=t0 + i * 20)
+    r = h.query(1, "all")
+    check("1-min buckets keep last sample", [p[1] for p in r["points"]] == [750.0, 1250.0], r["points"])
+    check("instruments listed", r["instruments"] == ["CRUDEOIL", "GOLDM"])
+    r = h.query(1, "GOLDM")
+    check("per-instrument curve", [p[1] for p in r["points"]] == [250.0, 250.0], r["points"])
+    check("saved", mpath.exists())
+    mpath.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:
         fn()

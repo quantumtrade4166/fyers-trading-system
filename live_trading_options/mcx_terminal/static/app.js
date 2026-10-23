@@ -22,7 +22,7 @@ const nf = new Intl.NumberFormat("en-IN");
 const nf2 = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fp = (v, d = 2) => (v == null || !isFinite(v) ? "—" : v.toFixed(d));
 const fq = (v) => (v == null ? "—" : nf.format(v));
-const fr = (v) => (v == null || !isFinite(v) ? "—" : (v > 0 ? "+" : "") + nf2.format(v));
+const fr = (v) => (v == null || !isFinite(v) ? "—" : Math.abs(v) < 0.005 ? "0.00" : (v > 0 ? "+" : "") + nf2.format(v));
 const pct = (l, pc) => (l == null || !pc ? null : ((l - pc) / pc) * 100);
 const LS = {
   get(k, d) { try { const v = localStorage.getItem("mcxdesk." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
@@ -44,7 +44,12 @@ function connect() {
       case "chain": onChain(m); break;
       case "status": onStatus(m); break;
       case "book": onBook(m); break;
-      case "ack": toast(m.msg || (m.ok ? "done" : "failed"), !m.ok); break;
+      case "risk": onRisk(m); break;
+      case "ack":
+        if (m.op === "mtm_hist") onMtm(m);
+        else if (m.op === "settings_set") { onSettingsAck(m); toast(m.msg, !m.ok); }
+        else toast(m.msg || (m.ok ? "done" : "failed"), !m.ok);
+        break;
       case "pong": $("ping").textContent = `${(performance.now() - m.c).toFixed(0)} ms`; break;
     }
   };
@@ -146,8 +151,8 @@ function onChain(m) {
   S.futTok = m.fut ? m.fut.token : null;
   m.snap.forEach((t) => S.T.set(t[TOK], t));
   m.rows.forEach((r) => {
-    S.sym.set(r.ce, { symbol: r.cs, lot: m.lot, k: r.k, side: "ce" });
-    S.sym.set(r.pe, { symbol: r.ps, lot: m.lot, k: r.k, side: "pe" });
+    S.sym.set(r.ce, { symbol: r.cs, lot: m.lot, k: r.k, side: "ce", name: m.name, ex: m.expiry });
+    S.sym.set(r.pe, { symbol: r.ps, lot: m.lot, k: r.k, side: "pe", name: m.name, ex: m.expiry });
   });
   S.atm = null;
   if (S.cursor.k == null) S.cursor = { k: null, side: "ce" };
@@ -202,6 +207,7 @@ function layout() {
   const atr = S.rowsByStrike.get(S.atm);
   if (atr) atr.scrollIntoView({ block: "center" });
   paintUnderlying();
+  if (S.view !== "chain") buildCombo();
 }
 
 // one click handler for every B / S button in the chain
@@ -283,51 +289,95 @@ document.addEventListener("keydown", (e) => {
 });
 
 // ── order entry ─────────────────────────────────────────────────────────────
-function startOrder(tok, side, opts = {}) {
-  const info = S.sym.get(tok) || posInfo(tok);
-  if (!info) return toast("unknown contract", true);
-  const lots = opts.lots || S.qtyLots;
-  if (S.askQty || S.askPx || opts.ticket) return openTicket(tok, side, lots, info);
-  if (lots > S.meta.confirm_lots) return openTicket(tok, side, lots, info, true);
-  placeOrder(tok, side, lots, null, opts.source || (S.kb ? "keyboard" : "button"));
-}
+// Every entry point (chain B/S, keyboard, straddle/strangle, Add) builds a list of LEGS [{tok, side}].
+// With Hedges on, each SELL leg gets a BUY hedge `hedgeN` strikes further out of the money; the
+// engine places a basket buys-first, so the hedge is in before the sell.
+function startOrder(tok, side, opts = {}) { startLegs([{ tok, side }], opts); }
 
+function legInfo(tok) { return S.sym.get(tok) || posInfo(tok); }
 function posInfo(tok) {
   const p = S.book.positions.find((x) => x.token === tok);
   return p ? { symbol: p.symbol, lot: p.lot } : null;
 }
 
-function placeOrder(tok, side, lots, limit, source) {
-  if (lots > S.meta.max_lots) return toast(`${lots} lots is over the cap of ${S.meta.max_lots}`, true);
-  if (!send({ op: "order", token: tok, side, lots, limit, source, req: ++S.req })) toast("not connected", true);
+function startLegs(legs, opts = {}) {
+  if (legs.some((l) => !legInfo(l.tok))) return toast("unknown contract", true);
+  const lots = opts.lots || S.qtyLots;
+  const full = withHedges(legs);
+  if (!full) return;
+  if (S.askQty || (S.askPx && legs.length === 1) || opts.ticket) return openTicket(legs, lots);
+  if (lots > S.meta.confirm_lots) return openTicket(legs, lots);
+  sendLegs(full, lots, null, opts.source || (S.kb ? "keyboard" : "button"));
 }
 
-function openTicket(tok, side, lots, info, forceConfirm) {
+function hedgeTok(tok) {
+  const info = S.sym.get(tok);
+  if (!info || !S.chain) return null;
+  const rows = S.chain.rows;
+  const i = rows.findIndex((r) => r.k === info.k);
+  const j = info.side === "ce" ? i + S.hedgeN : i - S.hedgeN;
+  if (i < 0 || j < 0 || j >= rows.length) return null;
+  return info.side === "ce" ? rows[j].ce : rows[j].pe;
+}
+
+// null = refused (a hedge strike is missing); never send a naked sell when Hedges is on
+function withHedges(legs) {
+  if (!S.hedge) return legs;
+  const out = [...legs];
+  for (const l of legs) {
+    if (l.side !== "S") continue;
+    const h = hedgeTok(l.tok);
+    if (h == null) { toast(`no hedge strike ${S.hedgeN} away for ${legInfo(l.tok).symbol} — order not sent`, true); return null; }
+    out.push({ tok: h, side: "B", hedge: true });
+  }
+  return out;
+}
+
+function sendLegs(legs, lots, limit, source) {
+  if (lots > S.meta.max_lots) return toast(`${lots} lots is over the cap of ${S.meta.max_lots}`, true);
+  let ok;
+  if (legs.length === 1) ok = send({ op: "order", token: legs[0].tok, side: legs[0].side, lots, limit, source, req: ++S.req });
+  else ok = send({ op: "basket", legs: legs.map((l) => ({ token: l.tok, side: l.side, lots })), source, req: ++S.req });
+  if (!ok) toast("not connected", true);
+}
+
+function openTicket(legs, lots) {
+  const side = legs[0].side;
   const box = $("ticket-box");
-  S.ticket = { tok, side, info, confirmed: false, forceConfirm: !!forceConfirm };
+  S.ticket = { legs, side, confirmed: false };
   box.className = "ticket " + (side === "B" ? "buy" : "sell");
-  $("t-side").textContent = side === "B" ? "BUY" : "SELL";
-  $("t-sym").textContent = info.symbol;
+  $("t-side").textContent = (side === "B" ? "BUY" : "SELL") + (legs.length > 1 ? " ×" + legs.length : "");
+  const full = withHedges(legs) || legs;
+  $("t-sym").textContent = full.map((l) => (l.hedge ? "+ hedge " : "") + legInfo(l.tok).symbol).join("  ·  ");
   $("t-lots").value = lots;
-  $("t-pxrow").hidden = !S.askPx;
-  const t = S.T.get(tok);
+  const single = legs.length === 1;
+  $("t-pxrow").hidden = !(S.askPx && single);
   $("t-px").value = "";
-  if (S.askPx && t) $("t-px").placeholder = `empty = at the market (${fp(side === "B" ? t[ASK] : t[BID])})`;
+  const t = S.T.get(legs[0].tok);
+  if (S.askPx && single && t) $("t-px").placeholder = `empty = at the market (${fp(side === "B" ? t[ASK] : t[BID])})`;
   $("ticket").hidden = false;
   ticketPaint();
-  const f = S.askQty || !S.askPx ? $("t-lots") : $("t-px");
+  const f = S.askQty || !(S.askPx && single) ? $("t-lots") : $("t-px");
   f.focus(); f.select();
 }
 function ticketPaint() {
   const k = S.ticket;
   if (!k) return;
-  const t = S.T.get(k.tok);
-  $("t-quote").textContent = t ? `LTP ${fp(t[LTP])} · Bid ${fp(t[BID])} × ${fq(t[BQ])} lots · Ask ${fp(t[ASK])} × ${fq(t[AQ])} lots` : "no quote yet";
+  if (k.legs.length === 1) {
+    const t = S.T.get(k.legs[0].tok);
+    $("t-quote").textContent = t ? `LTP ${fp(t[LTP])} · Bid ${fp(t[BID])} × ${fq(t[BQ])} lots · Ask ${fp(t[ASK])} × ${fq(t[AQ])} lots` : "no quote yet";
+  } else {
+    const ts = k.legs.map((l) => S.T.get(l.tok));
+    const sum = ts.every((t) => t && t[LTP] != null) ? ts.reduce((a, t) => a + t[LTP], 0) : null;
+    $("t-quote").textContent = `Combined LTP ${fp(sum)} · ` + ts.map((t) => fp(t ? t[LTP] : null)).join(" + ");
+  }
   const lots = Math.max(0, +$("t-lots").value | 0);
-  $("t-units").textContent = `= ${fq(lots * k.info.lot)} qty`;
+  const lot = legInfo(k.legs[0].tok).lot;
+  $("t-units").textContent = `= ${fq(lots * lot)} qty${k.legs.length > 1 ? " each" : ""}`;
   let w = "";
   if (lots > S.meta.max_lots) w = `Over the cap of ${S.meta.max_lots} lots — will be refused`;
   else if (lots > S.meta.confirm_lots) w = k.confirmed ? `Press Enter again to send ${lots} lots` : `${lots} lots — press Enter twice to confirm`;
+  if (S.hedge && k.legs.some((l) => l.side === "S")) w = (w ? w + " · " : "") + `hedge ${S.hedgeN} strike(s) out is bought first`;
   $("t-warn").textContent = w;
 }
 function closeTicket() { $("ticket").hidden = true; S.ticket = null; }
@@ -336,8 +386,12 @@ function submitTicket() {
   const lots = +$("t-lots").value | 0;
   if (lots < 1) return toast("enter at least 1 lot", true);
   if (lots > S.meta.confirm_lots && !k.confirmed) { k.confirmed = true; ticketPaint(); return; }
-  const px = S.askPx ? parseFloat($("t-px").value) : NaN;
-  placeOrder(k.tok, k.side, lots, isFinite(px) && px > 0 ? px : null, S.kb ? "keyboard" : "button");
+  const px = S.askPx && k.legs.length === 1 ? parseFloat($("t-px").value) : NaN;
+  const full = withHedges(k.legs);
+  if (!full) return;
+  const limit = isFinite(px) && px > 0 ? px : null;
+  if (limit != null && full.length > 1) toast("limit price applies to single orders only — sent at the market with its hedge", true);
+  sendLegs(full, lots, full.length === 1 ? limit : null, S.kb ? "keyboard" : "button");
   closeTicket();
 }
 $("t-go").onclick = submitTicket;
@@ -382,7 +436,8 @@ function onTicks(list) {
       if (k !== S.atm) layout(); else { shade(); paintUnderlying(); }
     }
   }
-  if (posMoved) paintPnl();
+  if (posMoved) { paintPnl(); paintRiskSum(); }
+  if (S.view !== "chain") paintCombo(list);
   if (S.ticket) ticketPaint();
 }
 
@@ -446,7 +501,8 @@ function renderPositions() {
       <td class="l">${p.symbol}</td>
       <td class="${p.net > 0 ? "up-t" : p.net < 0 ? "dn-t" : ""}">${p.net ? (lots > 0 ? "+" : "") + lots + " lot" + (Math.abs(lots) === 1 ? "" : "s") : "flat"}</td>
       <td>${p.net ? fp(p.avg) : "—"}</td><td class="pl-ltp">—</td><td class="pl-open">—</td><td>${fr(p.realized)}</td>
-      <td>${p.net ? `<button class="btn sm danger" data-x="exit">Exit</button> <button class="btn sm" data-x="add">Add</button>` : ""}</td>
+      <td>${p.net ? `<button class="btn sm danger" data-x="exit">Exit</button> <button class="btn sm" data-x="add">Add</button>` +
+        (/(CE|PE)$/.test(p.symbol) ? ` <button class="btn sm" data-x="away" title="Roll this leg further out of the money">Move away</button> <button class="btn sm" data-x="close" title="Roll this leg toward the money">Move close</button>` : "") : ""}</td>
     </tr>`;
   }).join("") + `<tr class="tot"><td class="l">Total</td><td></td><td></td><td></td><td id="pl-tot-open"></td><td id="pl-tot-real"></td><td></td></tr>`;
   paintPnl();
@@ -459,6 +515,8 @@ $("pos-rows").addEventListener("click", (e) => {
   const p = S.book.positions.find((x) => x.token === tok);
   if (!p) return;
   if (b.dataset.x === "exit") send({ op: "exit", token: tok, req: ++S.req });
+  else if (b.dataset.x === "away" || b.dataset.x === "close")
+    send({ op: "move", token: tok, steps: +$("move-n").value, away: b.dataset.x === "away", req: ++S.req });
   else startOrder(tok, p.net > 0 ? "B" : "S", { source: "add" });
 });
 
@@ -507,10 +565,11 @@ document.querySelectorAll("#ofilter button").forEach((b) => (b.onclick = () => {
   renderOrders();
 }));
 document.querySelectorAll(".dt").forEach((b) => (b.onclick = () => {
-  const pos = b.dataset.p === "pos";
+  const p = b.dataset.p;
   document.querySelectorAll(".dt").forEach((x) => x.classList.toggle("on", x === b));
-  $("pos-table").hidden = !pos; $("tools-pos").hidden = !pos;
-  $("ord-table").hidden = pos; $("tools-ord").hidden = pos;
+  $("pos-table").hidden = p !== "pos"; $("tools-pos").hidden = p !== "pos";
+  $("ord-table").hidden = p !== "ord"; $("tools-ord").hidden = p !== "ord";
+  $("risk-pane").hidden = p !== "risk";
 }));
 
 // green / red edge on chain prices where I hold a position
@@ -544,5 +603,297 @@ setInterval(() => {
   $("f-age").textContent = age == null ? "no ticks yet" : `last tick ${age.toFixed(1)} s ago`;
   $("clock").textContent = new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour12: false });
 }, 1000);
+
+
+// ── Stage 3: views (chain / straddle / strangle), hedges, risk ─────────────
+S.view = LS.get("view", "chain");
+S.hedge = LS.get("hedge", false);
+S.hedgeN = LS.get("hedgeN", 2);
+S.combo = [];                    // [{a, b, cells}] rows of the straddle / strangle table
+S.risk = {};
+
+$("hedge-d").innerHTML = Array.from({ length: 10 }, (_, i) => `<option value="${i + 1}">${i + 1} out</option>`).join("");
+$("hedge-d").value = S.hedgeN;
+$("hedge-d").onchange = (e) => { S.hedgeN = +e.target.value; LS.set("hedgeN", S.hedgeN); };
+function paintHedge() { $("tg-hedge").classList.toggle("on", S.hedge); $("hedge-d").disabled = !S.hedge; }
+$("tg-hedge").onclick = () => { S.hedge = !S.hedge; LS.set("hedge", S.hedge); paintHedge(); };
+paintHedge();
+
+function setView(v) {
+  S.view = v; LS.set("view", v);
+  document.querySelectorAll("#view button").forEach((b) => b.classList.toggle("on", b.dataset.v === v));
+  $("chain").hidden = v !== "chain";
+  $("combo").hidden = v === "chain";
+  if (v !== "chain") buildCombo();
+}
+document.querySelectorAll("#view button").forEach((b) => (b.onclick = () => setView(b.dataset.v)));
+
+// straddle: CE + PE of the same strike · strangle: CE i strikes above ATM + PE i strikes below
+function buildCombo() {
+  const m = S.chain;
+  if (!m || S.view === "chain") return;
+  const rows = m.rows;
+  const ai = rows.findIndex((r) => r.k === S.atm);
+  if (ai < 0) return;
+  const n = S.cur.strikes;
+  const pairs = [];
+  if (S.view === "straddle") {
+    const g = strikeGap();
+    for (const r of S.visRows) {
+      const off = rows.indexOf(r) - ai;
+      if (off % g === 0) pairs.push({ a: r.ce, b: r.pe, ka: r.k, kb: r.k });
+    }
+    $("cb-h1").textContent = "Strike"; $("cb-h2").textContent = "";
+  } else {
+    const g = strikeGap();
+    for (let i = 0; i <= n * g; i += g) {
+      const up = rows[ai + i], dn = rows[ai - i];
+      if (up && dn) pairs.push({ a: up.ce, b: dn.pe, ka: up.k, kb: dn.k, w: i });
+    }
+    $("cb-h1").textContent = "Call strike"; $("cb-h2").textContent = "Put strike";
+  }
+  const tb = $("crows");
+  tb.innerHTML = "";
+  S.combo = pairs.map((p) => {
+    const tr = document.createElement("tr");
+    const isStr = S.view === "straddle";
+    tr.innerHTML = `<td class="k">${p.ka}${isStr && p.ka === S.atm ? " ATM" : ""}</td><td class="ltp"></td>` +
+      `<td class="${isStr ? "" : "k2"}">${isStr ? "" : p.kb}</td><td class="ltp"></td><td class="sum"></td><td class="c"></td>` +
+      `<td class="act2"><button class="btn sm sell2" data-a="S">Sell both</button><button class="btn sm buy2" data-a="B">Buy both</button></td>`;
+    if (isStr && p.ka === S.atm) tr.classList.add("atm");
+    tr.dataset.a = p.a; tr.dataset.b = p.b;
+    tb.appendChild(tr);
+    const td = tr.children;
+    return { ...p, ca: td[1], cb: td[3], sum: td[4], chg: td[5] };
+  });
+  paintCombo(null);
+}
+
+function paintCombo(list) {
+  const touched = list ? new Set(list.map((t) => t[TOK])) : null;
+  for (const r of S.combo) {
+    if (touched && !touched.has(r.a) && !touched.has(r.b)) continue;
+    const ta = S.T.get(r.a), tb = S.T.get(r.b);
+    const la = ta ? ta[LTP] : null, lb = tb ? tb[LTP] : null;
+    set(r.ca, fp(la)); set(r.cb, fp(lb));
+    const sum = la != null && lb != null ? la + lb : null;
+    const prev = r.prev;
+    set(r.sum, fp(sum));
+    const pcs = ta && tb && ta[PC] && tb[PC] ? ta[PC] + tb[PC] : null;
+    const ch = pct(sum, pcs);
+    set(r.chg, ch == null ? "—" : (ch > 0 ? "+" : "") + ch.toFixed(2));
+    r.chg.className = "c " + (ch > 0 ? "up" : ch < 0 ? "dn" : "");
+    if (prev != null && sum != null && sum !== prev) {
+      r.k = (r.k || 0) ^ 1;
+      r.sum.classList.remove("fu1", "fu2", "fd1", "fd2");
+      r.sum.classList.add((sum > prev ? "fu" : "fd") + (r.k ? "1" : "2"));
+    }
+    r.prev = sum;
+  }
+}
+
+$("crows").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-a]");
+  if (!b) return;
+  const tr = b.closest("tr");
+  startLegs([{ tok: +tr.dataset.a, side: b.dataset.a }, { tok: +tr.dataset.b, side: b.dataset.a }], { source: S.view });
+});
+
+// ── risk panel ──
+function onRisk(m) {
+  S.risk = m;
+  const el = $("rk-state");
+  const f = (v) => (v == null ? "—" : fr(v));
+  let h;
+  if (m.armed) {
+    h = `<span class="armed">● ARMED</span> since ${m.set_at} · stop ${f(m.stop)} · target ${f(m.target)}` +
+        (m.trail ? ` · trail ${nf.format(m.trail)}` : "") + ` · best P&L ${f(m.best)}`;
+  } else if (m.fired) {
+    h = `<span class="fired">● FIRED ${m.fired.at}</span> — ${m.fired.reason}. Exit orders sent. Press Set to arm again.`;
+  } else h = "Guard off. Type a stop-loss and/or target (and an optional trail), then Set.";
+  el.innerHTML = h;
+  $("nrisk").textContent = m.armed ? "on" : m.fired ? "fired" : "off";
+  $("nrisk").style.color = m.armed ? "var(--up)" : m.fired ? "var(--down)" : "";
+  paintRiskSum();
+}
+$("rk-set").onclick = () => send({ op: "risk_set", stop: $("rk-stop").value, target: $("rk-target").value,
+                                   trail: $("rk-trail").value, req: ++S.req });
+$("rk-clear").onclick = () => send({ op: "risk_clear", req: ++S.req });
+
+// short-premium summary: what is collected on short CE vs short PE right now
+function paintRiskSum() {
+  let ce = 0, pe = 0, nce = 0, npe = 0, legs = 0;
+  for (const p of S.book.positions) {
+    if (!p.net) continue;
+    legs++;
+    const t = S.T.get(p.token);
+    const ltp = t ? t[LTP] : p.avg;
+    if (p.net < 0 && /CE$/.test(p.symbol)) { ce += ltp * -p.net * p.mult; nce += -p.net / p.lot; }
+    if (p.net < 0 && /PE$/.test(p.symbol)) { pe += ltp * -p.net * p.mult; npe += -p.net / p.lot; }
+  }
+  const tot = ce + pe;
+  const imb = tot ? ((ce - pe) / tot) * 100 : null;
+  $("rk-sum").innerHTML = `Short CE premium <b>${nf2.format(ce)}</b> (${nce} lots) · Short PE premium <b>${nf2.format(pe)}</b> (${npe} lots)` +
+    ` · Total <b>${nf2.format(tot)}</b> · CE/PE imbalance <b>${imb == null ? "—" : imb.toFixed(1) + "%"}</b> · Open legs <b>${legs}</b>`;
+}
+
+setView(S.view);
+
+
+// ── Stage 3b: settings, payoff graph, MTM graph ────────────────────────────
+S.settings = null;
+document.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => closeModal(b.dataset.close)));
+["settings", "graph"].forEach((id) => $(id).addEventListener("click", (e) => { if (e.target.id === id) closeModal(id); }));
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (!$("settings").hidden) closeModal("settings");
+  if (!$("graph").hidden) closeModal("graph");
+});
+function closeModal(id) {
+  $(id).hidden = true;
+  if (id === "graph") { clearInterval(S.gTimer); S.gTimer = null; }
+}
+
+const SKEYS = ["entry_ref", "entry_buffer", "entry_unit", "exit_ref", "exit_buffer", "exit_unit", "product", "session", "market_after_s"];
+$("gear").onclick = () => {
+  const v = S.settings || (S.meta && S.meta.settings);
+  if (!v) return toast("settings not loaded yet", true);
+  for (const k of SKEYS) $("s-" + k).value = v[k];
+  $("s-reprice").checked = !!v.reprice;
+  $("s-gaps").innerHTML = Object.values(S.prods).map((p) => `<label>${p.label}<select data-gap="${p.name}">` +
+    [1, 2, 3, 4, 5, 10].map((g) => `<option value="${g}">${g === 1 ? "every strike" : "every " + g + "th"}</option>`).join("") +
+    `</select></label>`).join("");
+  document.querySelectorAll("#s-gaps select").forEach((s) => (s.value = (v.strike_gap || {})[s.dataset.gap] || 1));
+  $("s-note").textContent = "";
+  $("settings").hidden = false;
+};
+$("s-save").onclick = () => {
+  const values = {};
+  for (const k of SKEYS) values[k] = $("s-" + k).value;
+  values.reprice = $("s-reprice").checked;
+  values.strike_gap = {};
+  document.querySelectorAll("#s-gaps select").forEach((s) => (values.strike_gap[s.dataset.gap] = +s.value));
+  send({ op: "settings_set", values, req: ++S.req });
+  $("s-note").textContent = "saving…";
+};
+function onSettingsAck(m) {
+  if (m.settings) S.settings = m.settings;
+  $("s-note").textContent = m.ok ? "saved ✓" : m.msg;
+  if (m.ok) { setTimeout(() => closeModal("settings"), 500); buildCombo(); }
+}
+function strikeGap() {
+  const v = S.settings || (S.meta && S.meta.settings) || {};
+  return ((v.strike_gap || {})[S.cur.name]) || 1;
+}
+
+// ── small SVG chart helper (one series, zero line, x labels) ──
+function svgChart(xs, ys, o = {}) {
+  const W = 820, H = 300, L = 64, R = 16, T = 14, B = 30;
+  const x0 = Math.min(...xs), x1 = Math.max(...xs);
+  let y0 = Math.min(0, ...ys), y1 = Math.max(0, ...ys);
+  if (y0 === y1) { y0 -= 1; y1 += 1; }
+  const pad = (y1 - y0) * 0.08; y0 -= pad; y1 += pad;
+  const X = (v) => L + ((v - x0) / (x1 - x0 || 1)) * (W - L - R);
+  const Y = (v) => T + (1 - (v - y0) / (y1 - y0)) * (H - T - B);
+  const pts = xs.map((x, i) => `${X(x).toFixed(1)},${Y(ys[i]).toFixed(1)}`).join(" ");
+  const zy = Y(0).toFixed(1);
+  const id = "c" + Math.random().toString(36).slice(2, 7);
+  let grid = "";
+  for (let i = 0; i <= 4; i++) {
+    const v = y0 + ((y1 - y0) * i) / 4, y = Y(v).toFixed(1);
+    grid += `<line class="g-grid" x1="${L}" x2="${W - R}" y1="${y}" y2="${y}"/><text class="g-label" x="${L - 6}" y="${(+y + 3.5).toFixed(1)}" text-anchor="end">${nf.format(Math.round(v))}</text>`;
+  }
+  let xl = "";
+  const n = o.xticks || 6;
+  for (let i = 0; i <= n; i++) {
+    const v = x0 + ((x1 - x0) * i) / n;
+    xl += `<text class="g-label" x="${X(v).toFixed(1)}" y="${H - 10}" text-anchor="middle">${(o.xfmt || ((t) => nf.format(Math.round(t))))(v)}</text>`;
+  }
+  const area = `${X(xs[0]).toFixed(1)},${zy} ${pts} ${X(xs[xs.length - 1]).toFixed(1)},${zy}`;
+  const mark = o.mark != null && o.mark >= x0 && o.mark <= x1
+    ? `<line class="g-spot" x1="${X(o.mark).toFixed(1)}" x2="${X(o.mark).toFixed(1)}" y1="${T}" y2="${H - B}"/>` +
+      `<text class="g-spot-l" x="${(X(o.mark) + 5).toFixed(1)}" y="${T + 12}">${o.markLabel || ""}</text>` : "";
+  return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${o.label || "chart"}">
+    <defs><clipPath id="${id}a"><rect x="0" y="0" width="${W}" height="${zy}"/></clipPath>
+          <clipPath id="${id}b"><rect x="0" y="${zy}" width="${W}" height="${H}"/></clipPath></defs>
+    ${grid}
+    <polygon points="${area}" fill="var(--up)" opacity=".16" clip-path="url(#${id}a)"/>
+    <polygon points="${area}" fill="var(--down)" opacity=".16" clip-path="url(#${id}b)"/>
+    <polyline points="${pts}" fill="none" stroke="var(--up)" stroke-width="2" clip-path="url(#${id}a)"/>
+    <polyline points="${pts}" fill="none" stroke="var(--down)" stroke-width="2" clip-path="url(#${id}b)"/>
+    <line class="g-zero" x1="${L}" x2="${W - R}" y1="${zy}" y2="${zy}"/>
+    <line class="g-axis" x1="${L}" x2="${L}" y1="${T}" y2="${H - B}"/>
+    ${mark}${xl}</svg>`;
+}
+
+// ── payoff at expiry of the open positions in the chain on screen ──
+$("btn-payoff").onclick = () => {
+  const m = S.chain;
+  const legs = S.book.positions.filter((p) => p.net).map((p) => ({ p, i: S.sym.get(p.token) }))
+    .filter((x) => x.i && x.i.name === m.name && x.i.ex === m.expiry);
+  if (!m || !legs.length) return toast("open the instrument + expiry that holds your positions, then try again", true);
+  const spot = futPrice();
+  const ks = legs.map((x) => x.i.k);
+  const lo = Math.min(spot || ks[0], ...ks) * 0.95, hi = Math.max(spot || ks[0], ...ks) * 1.05;
+  const xs = [], ys = [];
+  for (let j = 0; j <= 300; j++) {
+    const S_ = lo + ((hi - lo) * j) / 300;
+    xs.push(S_);
+    ys.push(legs.reduce((a, { p, i }) => a + p.net * p.mult *
+      ((i.side === "ce" ? Math.max(S_ - i.k, 0) : Math.max(i.k - S_, 0)) - p.avg), 0));
+  }
+  const be = [];
+  for (let j = 1; j < ys.length; j++) if ((ys[j - 1] < 0) !== (ys[j] < 0)) be.push(xs[j - 1] + (xs[j] - xs[j - 1]) * (-ys[j - 1] / (ys[j] - ys[j - 1])));
+  const now = legs.reduce((a, { p }) => a + posPnl(p).open, 0);
+  $("g-title").textContent = `Payoff at expiry · ${m.fut ? m.fut.symbol.replace(/FUT$/, "") : m.name} options ${fmtDate(m.expiry)}`;
+  $("g-tools").innerHTML = "";
+  $("g-body").innerHTML = svgChart(xs, ys, { mark: spot, markLabel: `now ${fp(spot, 0)}`, label: "payoff at expiry" });
+  $("g-note").innerHTML = `Max profit in range <b class="up-t">${fr(Math.max(...ys))}</b> · Max loss in range <b class="dn-t">${fr(Math.min(...ys))}</b>` +
+    ` · Breakeven ${be.length ? be.map((b) => `<b>${nf.format(Math.round(b))}</b>`).join(" / ") : "<b>none in range</b>"}` +
+    ` · Open P&L now <b>${fr(now)}</b><br><span class="dim">${legs.length} open leg(s) at their average prices, ±5 % around the strikes. ` +
+    `Closed trades and time value are not included; the loss can be larger outside this range.</span>`;
+  $("graph").hidden = false;
+};
+
+// ── MTM graph: today's Session P&L, one point per N minutes ──
+S.g = { mins: LS.get("mtmMins", 1), inst: "all" };
+$("btn-mtm").onclick = () => {
+  $("g-title").textContent = "MTM graph · Session P&L today";
+  $("g-tools").innerHTML = `One point per <select id="g-mins">${[1, 2, 5, 10, 15, 30, 60].map((n) => `<option value="${n}">${n} min</option>`).join("")}</select>` +
+    ` <select id="g-inst"><option value="all">All instruments</option></select>`;
+  $("g-mins").value = S.g.mins;
+  $("g-mins").onchange = (e) => { S.g.mins = +e.target.value; LS.set("mtmMins", S.g.mins); askMtm(); };
+  $("g-inst").onchange = (e) => { S.g.inst = e.target.value; askMtm(); };
+  $("g-body").innerHTML = `<p class="g-note">Loading…</p>`;
+  $("g-note").textContent = "";
+  $("graph").hidden = false;
+  askMtm();
+  clearInterval(S.gTimer);
+  S.gTimer = setInterval(askMtm, 5000);
+};
+function askMtm() { send({ op: "mtm_hist", mins: S.g.mins, inst: S.g.inst, req: ++S.req }); }
+function onMtm(m) {
+  if ($("graph").hidden || !$("g-inst")) return;
+  const sel = $("g-inst");
+  const sig = m.instruments.join();
+  if (sel.dataset.sig !== sig) {
+    sel.dataset.sig = sig;
+    sel.innerHTML = `<option value="all">All instruments</option>` + m.instruments.map((n) => `<option value="${n}">${(S.prods[n] || {}).label || n}</option>`).join("");
+    sel.value = S.g.inst;
+  }
+  const pts = m.points;
+  if (pts.length < 2) {
+    $("g-body").innerHTML = `<p class="g-note">Not enough points yet — the engine samples Session P&L every 5 s once the day has a trade.</p>`;
+    $("g-note").textContent = "";
+    return;
+  }
+  const hm = (t) => new Date(t * 1000).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const span = (xs[xs.length - 1] - xs[0]) / 60;
+  $("g-body").innerHTML = svgChart(xs, ys, { xfmt: hm, label: "session P&L over time", xticks: Math.max(1, Math.min(6, Math.floor(span))) });
+  const mx = Math.max(...ys), mn = Math.min(...ys), ih = ys.indexOf(mx), il = ys.indexOf(mn);
+  $("g-note").innerHTML = `Now <b class="${ys[ys.length - 1] >= 0 ? "up-t" : "dn-t"}">${fr(ys[ys.length - 1])}</b> · High <b class="up-t">${fr(mx)}</b> at ${hm(xs[ih])}` +
+    ` · Low <b class="dn-t">${fr(mn)}</b> at ${hm(xs[il])} · ${pts.length} points, one per ${m.mins} min`;
+}
 
 connect();

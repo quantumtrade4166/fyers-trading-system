@@ -32,6 +32,9 @@ from live_trading_options.mcx_terminal import instruments as I
 from live_trading_options.mcx_terminal.feed import KotakFeed
 from live_trading_options.mcx_terminal.kotak_session import SessionHolder
 from live_trading_options.mcx_terminal.paper import PaperBook
+from live_trading_options.mcx_terminal.risk import RiskGuard
+from live_trading_options.mcx_terminal.settings import Settings
+from live_trading_options.mcx_terminal.mtm import MtmHistory, SAMPLE_S
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 log = logging.getLogger("mcx.server")
@@ -61,6 +64,9 @@ class Engine:
         self.clients: set["Client"] = set()
         self.feed: KotakFeed | None = None
         self.book: PaperBook | None = None
+        self.risk: RiskGuard | None = None
+        self.settings = Settings()
+        self.mtm = MtmHistory()
         self.book_tokens: set[int] = set()         # tokens with an open position / open order
         self.started_at = time.time()
         self.error = ""
@@ -76,8 +82,9 @@ class Engine:
             self.error = f"startup: {e}"
             log.exception("startup failed")
             raise
-        self.book = PaperBook(self.universe, self.quote, on_change=self.on_book)
+        self.book = PaperBook(self.universe, self.quote, on_change=self.on_book, settings=self.settings.get)
         self.book_tokens = self.book.tokens()
+        self.risk = RiskGuard(self.book, self.ltp, on_change=self.on_risk)
         self.feed = KotakFeed(self.sessions, self.on_ticks, self.on_status)
         # always-on: every future + the nearest option expiry of each product
         first = []
@@ -89,10 +96,30 @@ class Engine:
         if self.book_tokens:
             self.feed.want_depth(list(self.book_tokens))
         self.feed.start()
+        threading.Thread(target=self._housekeeping, daemon=True, name="Housekeeping").start()
+
+    def _housekeeping(self):
+        """Every 0.5 s: re-price / push waiting paper orders. Every SAMPLE_S s: one MTM-curve point."""
+        last_mtm = 0.0
+        while True:
+            try:
+                self.book.housekeep()
+                now = time.time()
+                if now - last_mtm >= SAMPLE_S:
+                    last_mtm = now
+                    pos = [p for p in self.book.positions() if p["net"] or p["realized"]]
+                    self.mtm.sample(pos, self.ltp, now)
+            except Exception:
+                log.exception("housekeeping")
+            time.sleep(0.5)
 
     def expiry_tokens(self, name, expiry) -> list:
         ch = self.universe.products[name].chains.get(expiry, {})
         return [leg.token for legs in ch.values() for leg in legs.values()]
+
+    def ltp(self, token):
+        t = self.last.get(token)
+        return t[1] if t else None
 
     def quote(self, token) -> dict:
         """Prices + book for the paper engine, quantities in UNITS. Kotak's MCX feed reports bid/ask
@@ -133,6 +160,8 @@ class Engine:
                 self.loop.call_soon_threadsafe(self._flush)
         for tok in touched:                        # resting paper orders vs the new book
             self.book.on_tick(tok)
+        if touched and self.risk:                  # MTM guard on every tick of a held contract
+            self.risk.check()
 
     def on_status(self, st):
         if self.loop:
@@ -145,6 +174,15 @@ class Engine:
             self.feed.want_depth(list(self.book_tokens))
         if self.loop:
             self.loop.call_soon_threadsafe(self._broadcast_book)
+
+    def on_risk(self):
+        if self.loop:
+            self.loop.call_soon_threadsafe(self._broadcast_risk)
+
+    def _broadcast_risk(self):
+        st = {"t": "risk", **self.risk.state()}
+        for c in list(self.clients):
+            c.send_nowait(st)
 
     def _flush(self):
         with self._plock:
@@ -186,7 +224,8 @@ class Engine:
         return {"t": "meta", "products": prods, "strikes": list(C.STRIKE_CHOICES),
                 "default_strikes": C.DEFAULT_STRIKES, "file_date": u.file_date, "mode": C.MODE,
                 "max_lots": C.MAX_LOTS_PER_ORDER, "confirm_lots": C.CONFIRM_LOTS,
-                "qty_lots_max": C.MAX_QTY_LOTS_CHOICE, "buffer_pct": C.MKT_BUFFER_PCT}
+                "qty_lots_max": C.MAX_QTY_LOTS_CHOICE, "buffer_pct": C.MKT_BUFFER_PCT,
+                "settings": self.settings.get()}
 
     def chain(self, name, expiry) -> dict:
         p = self.universe.products[name]
@@ -241,8 +280,26 @@ def _order(m):
                              source=m.get("source", ""))
 
 
+def _basket(m):
+    legs = []
+    for l in m.get("legs", []):
+        c = ENGINE.universe.by_token.get(int(l["token"]))
+        if c is None:
+            return {"ok": False, "msg": "unknown contract in basket"}
+        legs.append({"token": c.token, "side": l["side"], "qty": int(l["lots"]) * c.lot})
+    if not legs:
+        return {"ok": False, "msg": "empty basket"}
+    return ENGINE.book.basket(legs, source=m.get("source", "basket"))
+
+
 ORDER_OPS = {
     "order": _order,
+    "basket": _basket,
+    "move": lambda m: ENGINE.book.move(int(m["token"]), int(m.get("steps", 1)), bool(m.get("away", True))),
+    "risk_set": lambda m: ENGINE.risk.set(m.get("stop"), m.get("target"), m.get("trail")),
+    "risk_clear": lambda m: ENGINE.risk.clear(),
+    "settings_set": lambda m: {**ENGINE.settings.update(m.get("values") or {}), "settings": ENGINE.settings.get()},
+    "mtm_hist": lambda m: {"ok": True, "quiet": True, **ENGINE.mtm.query(m.get("mins", 1), m.get("inst", "all"))},
     "cancel": lambda m: ENGINE.book.cancel(int(m["id"])),
     "cancel_all": lambda m: {"ok": True, "msg": f"cancelled {ENGINE.book.cancel_all()} order(s)"},
     "exit": lambda m: ENGINE.book.exit_position(int(m["token"]), float(m.get("frac", 1.0))),
@@ -280,6 +337,7 @@ async def ws_endpoint(ws: WebSocket):
         c.send_nowait(ENGINE.meta())
         c.send_nowait({"t": "status", **ENGINE.status()})
         c.send_nowait({"t": "book", **ENGINE.book.snapshot()})
+        c.send_nowait({"t": "risk", **ENGINE.risk.state()})
         all_futs = {f.token for p in ENGINE.universe.products.values() for f in p.futures[:3]}
         while True:
             msg = json.loads(await ws.receive_text())
@@ -293,6 +351,7 @@ async def ws_endpoint(ws: WebSocket):
                 c.send_nowait(ch)
                 c.send_nowait({"t": "d", "s": round(time.time(), 3),
                                "u": [ENGINE.last[t] for t in c.watch if t in ENGINE.last]})
+                c.send_nowait({"t": "status", **ENGINE.status()})       # subscription counts changed
             elif op in ORDER_OPS:
                 try:
                     res = await loop.run_in_executor(None, ORDER_OPS[op], msg)
@@ -311,7 +370,7 @@ async def ws_endpoint(ws: WebSocket):
 
 def main():
     _setup_logging()
-    log.info("MCX terminal starting on %s:%s (%s, stage 2: paper orders)", C.HOST, C.PORT, C.MODE)
+    log.info("MCX terminal starting on %s:%s (%s, stage 3: paper orders + risk guard)", C.HOST, C.PORT, C.MODE)
     uvicorn.run(app, host=C.HOST, port=C.PORT, log_level="warning", ws_ping_interval=20, ws_ping_timeout=20)
 
 

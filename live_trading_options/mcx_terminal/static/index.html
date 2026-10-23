@@ -21,6 +21,7 @@
     <span class="pill" id="feed"><i class="led"></i><span id="feedtxt">connecting…</span></span>
     <span class="pill mono" id="ping" title="Screen ↔ engine round trip">— ms</span>
     <span class="clock mono" id="clock">--:--:--</span>
+    <button class="gear" id="gear" title="Settings">⚙</button>
   </div>
 </header>
 
@@ -40,6 +41,13 @@
     <button class="tg" id="tg-qty" title="Ask for the quantity before every order">Ask qty</button>
     <button class="tg" id="tg-px" title="Ask for a limit price before every order (empty = at the market)">Ask price</button>
   </div>
+  <div class="seg small" id="view" title="Chain · Straddle (same strike) · Strangle (CE above, PE below ATM)">
+    <button data-v="chain">Chain</button><button data-v="straddle">Straddle</button><button data-v="strangle">Strangle</button>
+  </div>
+  <div class="hedge">
+    <button class="tg" id="tg-hedge" title="Every SELL also BUYS a hedge further out of the money (bought first)">Hedges</button>
+    <select id="hedge-d" title="Hedge distance in strikes"></select>
+  </div>
   <div class="spacer"></div>
   <div class="und mono" id="und"></div>
 </section>
@@ -56,15 +64,27 @@
     </thead>
     <tbody id="rows"><tr><td colspan="15" class="empty">Loading chain…</td></tr></tbody>
   </table>
+  <table class="chain combo" id="combo" hidden>
+    <thead><tr>
+      <th class="kh" id="cb-h1">Strike</th><th class="ltph">Call LTP</th><th class="kh" id="cb-h2"></th><th class="ltph">Put LTP</th>
+      <th class="ltph">Call + Put</th><th>Chg%</th><th class="act2"></th>
+    </tr></thead>
+    <tbody id="crows"></tbody>
+  </table>
 </main>
 
 <section class="dock" id="dock">
   <div class="dock-head">
     <button class="dt on" data-p="pos">Positions <span id="npos">0</span></button>
     <button class="dt" data-p="ord">Orders <span id="nord">0</span></button>
+    <button class="dt" data-p="risk">Risk <span id="nrisk">off</span></button>
     <div class="spacer"></div>
     <div class="dock-tools" id="tools-pos">
-      <span class="lbl">Exit</span>
+      <button class="btn sm" id="btn-payoff" title="Profit / loss at expiry of the open positions in this chain">Payoff</button>
+      <button class="btn sm" id="btn-mtm" title="Today's Session P&L over time">MTM graph</button>
+      <span class="lbl" style="margin-left:8px">Move by</span>
+      <select id="move-n"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
+      <span class="lbl" style="margin-left:8px">Exit</span>
       <button class="btn sm" data-frac="0.25">25%</button><button class="btn sm" data-frac="0.5">50%</button>
       <button class="btn sm" data-frac="0.75">75%</button><button class="btn sm danger" data-frac="1">100%</button>
     </div>
@@ -80,6 +100,20 @@
       <thead><tr><th class="l">Contract</th><th>Net</th><th>Avg</th><th>LTP</th><th>P&amp;L</th><th>Realized</th><th></th></tr></thead>
       <tbody id="pos-rows"></tbody>
     </table>
+    <div class="riskpane" id="risk-pane" hidden>
+      <div class="rk-form">
+        <label>Stop-loss ₹ <input id="rk-stop" type="number" step="500" placeholder="-5000" class="mono"
+          title="A Session P&L level: exit everything when P&L falls to it. -5000 = stop at a 5,000 loss; +2000 = lock in 2,000"></label>
+        <label>Target ₹ <input id="rk-target" type="number" step="500" placeholder="10000" class="mono"
+          title="A Session P&L level: exit everything when P&L reaches it. Fixed, never trailed"></label>
+        <label>Trail ₹ <input id="rk-trail" type="number" step="500" placeholder="5000 step" class="mono"
+          title="Every time P&L rises this much, the stop rises by this much. With no stop typed it starts at P&L − trail"></label>
+        <button class="btn go" id="rk-set">Set</button><button class="btn" id="rk-clear">Clear</button>
+      </div>
+      <div class="rk-state mono" id="rk-state">Guard off.</div>
+      <div class="rk-sum" id="rk-sum"></div>
+      <div class="rk-note">The guard runs on the VPS engine: it keeps watching when this screen, laptop or Wi-Fi is closed.</div>
+    </div>
     <table class="grid" id="ord-table" hidden>
       <thead><tr><th class="l">Time</th><th class="l">Contract</th><th>Side</th><th>Qty</th><th>Filled</th><th>Limit</th><th>Avg</th><th class="l">Status</th><th class="l">Detail</th><th></th></tr></thead>
       <tbody id="ord-rows"></tbody>
@@ -103,6 +137,41 @@
     <div class="t-help">Enter places · Esc cancels · ↑ ↓ change by one lot</div>
   </div>
 </div>
+<!-- settings -->
+<div class="modal" id="settings" hidden>
+  <div class="panel wide">
+    <div class="p-head"><b>Settings</b><button class="x" data-close="settings">✕</button></div>
+    <h4>Order placement</h4>
+    <p class="hint2">Kotak takes no MARKET orders through the API, so every order is a LIMIT. Choose where an "at the market"
+      limit comes from. A BUY goes at reference + buffer, a SELL at reference − buffer, rounded to the tick.</p>
+    <div class="sgrid">
+      <label>Entry order (opens a position)<select id="s-entry_ref"><option value="touch">LIMIT at best bid / ask</option><option value="ltp">LIMIT at LTP</option></select></label>
+      <label>Entry buffer<span class="pair"><input id="s-entry_buffer" type="number" step="0.1" min="0"><select id="s-entry_unit"><option>%</option><option value="pts">points</option></select></span></label>
+      <label>Exit order (reduces a position)<select id="s-exit_ref"><option value="touch">LIMIT at best bid / ask</option><option value="ltp">LIMIT at LTP</option></select></label>
+      <label>Exit buffer<span class="pair"><input id="s-exit_buffer" type="number" step="0.1" min="0"><select id="s-exit_unit"><option>%</option><option value="pts">points</option></select></span></label>
+      <label>Order type<select id="s-product"><option>NRML</option><option>MIS</option></select></label>
+      <label>Session<select id="s-session"><option value="AUTO">Auto (AMO when closed)</option><option value="REGULAR">Regular</option><option value="AMO">AMO</option></select></label>
+      <label class="chk"><input id="s-reprice" type="checkbox"> Re-price unfilled system orders to the market every second</label>
+      <label>Push any waiting order to market after (s, 0 = off)<input id="s-market_after_s" type="number" step="0.5" min="0"></label>
+    </div>
+    <h4>Straddle / Strangle strike gap</h4>
+    <p class="hint2">Show only every Nth strike in the Straddle and Strangle tables.</p>
+    <div class="sgrid" id="s-gaps"></div>
+    <div class="p-foot"><span class="mono dim" id="s-note"></span><button class="btn go" id="s-save">Save</button></div>
+  </div>
+</div>
+
+<!-- graphs -->
+<div class="modal" id="graph" hidden>
+  <div class="panel wide">
+    <div class="p-head"><b id="g-title">Graph</b>
+      <span class="g-tools" id="g-tools"></span>
+      <button class="x" data-close="graph">✕</button></div>
+    <div class="g-body" id="g-body"></div>
+    <div class="g-note" id="g-note"></div>
+  </div>
+</div>
+
 <div class="toasts" id="toasts"></div>
 <script src="/static/app.js"></script>
 </body>
