@@ -6,7 +6,7 @@
 <title>MCX Desk</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css">
+<link rel="stylesheet" href="/static/app.css?v=20261024a">
 </head>
 <body>
 <header class="top">
@@ -17,6 +17,7 @@
       <span class="lbl">SESSION P&amp;L</span><span class="val mono" id="pnl">0.00</span>
     </div>
     <button class="btn danger" id="exitall" title="Cancel every open order and close every position">EXIT ALL</button>
+    <button class="kbtg" id="tg-kb" title="Keyboard trading: arrow keys move over the prices · − sells · + or = buys">⌨ KEYBOARD OFF</button>
     <span class="badge paper" id="mode">PAPER</span>
     <span class="pill" id="feed"><i class="led"></i><span id="feedtxt">connecting…</span></span>
     <span class="pill mono" id="ping" title="Screen ↔ engine round trip">— ms</span>
@@ -37,7 +38,6 @@
     <span class="units mono" id="qunits"></span>
   </div>
   <div class="toggles">
-    <button class="tg" id="tg-kb" title="Arrow keys move over the prices · − sells · + or = buys">⌨ Keys</button>
     <button class="tg" id="tg-qty" title="Ask for the quantity before every order">Ask qty</button>
     <button class="tg" id="tg-px" title="Ask for a limit price before every order (empty = at the market)">Ask price</button>
   </div>
@@ -173,6 +173,6 @@
 </div>
 
 <div class="toasts" id="toasts"></div>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v=20261024a"></script>
 </body>
 </html>

@@ -1838,7 +1838,7 @@ function switchTab(tab) {
   if (tab === 'ndp') { ndpInit(); ndpStartPoll(); } else { ndpStopPoll(); }
   if (tab === 'stdir') { const f = document.getElementById('stdir-frame'); if (f && !f.src) f.src = '/static/stdir.html'; }
   if (tab === 'takerflow') { const f = document.getElementById('takerflow-frame'); if (f && !f.src) f.src = '/static/takerflow.html'; }
-  if (tab === 'builder') { const f = document.getElementById('builder-frame'); if (f && !f.src) f.src = '/static/builder.html'; }
+  if (tab === 'builder') { const f = document.getElementById('builder-frame'); if (f && !f.src) f.src = '/static/builder.html?v=' + Date.now(); }
   ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'btcvwap', 'btcarb', 'takerflow', 'ndp', 'stdir', 'builder', 'terminal'].forEach(t => {
     const pg = document.getElementById('page-' + t);
     if (pg) pg.style.display = (t === tab) ? '' : 'none';

@@ -21,6 +21,18 @@ SAFETY RULES (each one is a test in test_orders.py)
   * A restart mid-placement does NOT carry on by itself: the deployment is marked
     'interrupted' and the page shows it, so a person decides (square off / leave it).
 
+PAPER (broker id "paper"): same desk, same book, same SL/target/square-off, but orders fill against
+the LIVE Fyers bid/ask (buy at the ask, sell at the bid; a limit fills when the market touches it).
+Paper never needs arming — it cannot reach a broker.
+
+QUICK orders (keyboard / Trade-mode clicks) go into one "Quick · <broker>" deployment per broker per day;
+each order adds to that book (same contract = same leg). Hedge-first still applies within one click.
+
+HISTORY: every 5 s each deployment with a position (and once more when it goes flat) appends
+{t, mtm, ce, pe, imb} to data/deployments/history/<id>.jsonl -> the MTM and CE/PE-imbalance charts.
+CE/PE imbalance = (short CE premium - short PE premium) / total short premium x 100, at live LTP
+(same definition as the MCX terminal).
+
 Marketable mode (default): each order is priced off the live order book (depth sweep + a few
 ticks), re-priced up to 4 times if it does not fill — like a market order with a ceiling.
 Limit mode: each leg rests at the price typed in the playground until filled or cancelled.
@@ -31,6 +43,7 @@ import logging
 import secrets
 import threading
 import time
+from pathlib import Path
 
 from live_trading_options.strategy_builder import config as C
 
@@ -47,6 +60,7 @@ ENTRY_CUSHIONS = (2, 5, 10, 20)                 # ticks through the book, per ch
 EXIT_CUSHIONS = (2, 6, 12, 25, 50)              # exits must fill — reach further
 FILL_WAIT = 4.0                                 # seconds per round before re-pricing
 FINAL = ("COMPLETE", "REJECTED", "CANCELLED")
+HIST_EVERY = 5.0                                # seconds between MTM / imbalance samples
 
 
 def now_ist():
@@ -146,10 +160,62 @@ class KotakAdapter:
         self.ke.cancel(c, oid)
 
 
+class PaperAdapter:
+    """Fills against the live Fyers quote. Marketable orders fill at the touch (buy at ask, sell at
+    bid); a limit fills when the touch reaches it. State lives in memory — a restart cancels
+    resting paper orders (fills already recorded in the deployment file stay)."""
+    def __init__(self, quote, clock=None):
+        self.quote = quote                 # fn(fyers_symbol) -> {ltp, bid, ask} | None
+        self.clock = clock or now_ist      # practice mode passes the replay clock
+        self.book = {}
+        self.n = 0
+
+    def _touch(self, k, side):
+        q = self.quote(k["symbol"]) or {}
+        ltp = q.get("ltp")
+        px = q.get("ask") if side == "B" else q.get("bid")
+        return float(px) if px else (float(ltp) if ltp else None)
+
+    def price(self, c, k, side, qty, fallback, cushion):
+        return self._touch(k, side) or fallback
+
+    def place(self, c, k, side, qty, price, product, tag):
+        self.n += 1
+        oid = f"P{self.n:05d}"
+        self.book[oid] = {"k": k, "side": side, "qty": qty, "px": float(price), "status": "OPEN",
+                          "filled": 0, "avg": None}
+        self._try(oid)
+        return oid, tag
+
+    def _try(self, oid):
+        o = self.book[oid]
+        if o["status"] != "OPEN":
+            return
+        t = self._touch(o["k"], o["side"])
+        if t is None:
+            return
+        if (o["side"] == "B" and t <= o["px"]) or (o["side"] == "S" and t >= o["px"]):
+            o.update(status="COMPLETE", filled=o["qty"], avg=t)
+
+    def status(self, c, oid):
+        o = self.book.get(oid)
+        if not o:
+            return {"status": "CANCELLED", "filled": 0, "avg": None, "time": None,
+                    "msg": "paper order lost in a restart"}
+        self._try(oid)
+        return {"status": o["status"], "filled": o["filled"], "avg": o["avg"],
+                "time": self.clock().strftime("%H:%M:%S"), "msg": None}
+
+    def cancel(self, c, oid):
+        o = self.book.get(oid)
+        if o and o["status"] == "OPEN":
+            o["status"] = "CANCELLED"
+
+
 # ── the desk ─────────────────────────────────────────────────────────────────────────────
 class Desk:
     def __init__(self, hub, quotes, adapters, resolve, clock=now_ist, sleep=time.sleep,
-                 fill_wait=FILL_WAIT):
+                 fill_wait=FILL_WAIT, dep_dir=None, control=None):
         """hub: BrokerHub-like (get(id) -> account with .ensure() .kind .name .lock .refresh_funds)
         quotes: fn(list[fyers legs]) -> {fyers_symbol: {ltp,bid,ask}}
         adapters: {"kite": KiteAdapter, "kotak": KotakAdapter}
@@ -159,19 +225,24 @@ class Desk:
         self.deps: dict[str, dict] = {}
         self.lock = threading.RLock()
         self._busy: set[str] = set()                 # deployments with a running thread
-        DEP_DIR.mkdir(parents=True, exist_ok=True)
+        self._last_hist: dict[str, float] = {}
+        self._last_open: set[str] = set()
+        self.dep_dir = Path(dep_dir) if dep_dir else DEP_DIR      # practice sessions use their own folder
+        self.control_path = Path(control) if control else CONTROL
+        self.dep_dir.mkdir(parents=True, exist_ok=True)
+        (self.dep_dir / "history").mkdir(exist_ok=True)
         self._load()
 
     # ── persistence ──
     def _save(self, d):
         d["updated"] = self.clock().strftime("%Y-%m-%d %H:%M:%S")
-        p = DEP_DIR / f"{d['id']}.json"
+        p = self.dep_dir / f"{d['id']}.json"
         tmp = p.with_suffix(".tmp")
         tmp.write_text(json.dumps(d, indent=1, default=str), encoding="utf-8")
         tmp.replace(p)
 
     def _load(self):
-        for p in sorted(DEP_DIR.glob("*.json")):
+        for p in sorted(self.dep_dir.glob("*.json")):
             try:
                 d = json.loads(p.read_text(encoding="utf-8"))
             except Exception as e:
@@ -192,14 +263,14 @@ class Desk:
     # ── control ──
     def armed(self) -> dict:
         try:
-            return json.loads(CONTROL.read_text(encoding="utf-8"))
+            return json.loads(self.control_path.read_text(encoding="utf-8"))
         except Exception:
             return {"armed": False}
 
     def set_armed(self, on: bool, by: str = "page"):
         C.DATA.mkdir(parents=True, exist_ok=True)
         c = {"armed": bool(on), "by": by, "at": self.clock().strftime("%Y-%m-%d %H:%M:%S")}
-        CONTROL.write_text(json.dumps(c), encoding="utf-8")
+        self.control_path.write_text(json.dumps(c), encoding="utf-8")
         return c
 
     # ── book ──
@@ -236,8 +307,28 @@ class Desk:
             avg_in = (sum(int(o.get("filled") or 0) * float(o.get("avg") or 0) for o in d["orders"]
                           if o["leg"] == l["id"] and o["side"] == l["side"]) / filled_in) if filled_in else None
             legs.append({**l, "net": net, "avg": avg_in, "ltp": ltp, "pnl": pnl})
+        ce, pe = self.short_premium(legs)
+        tot = (ce or 0) + (pe or 0)
+        imb = (100.0 * (ce - pe) / tot) if (ce is not None and pe is not None and tot) else None
         return {**{k: v for k, v in d.items() if k != "legs"}, "legs": legs, "mtm": total,
-                "open_qty": open_qty}
+                "open_qty": open_qty, "short_ce": ce, "short_pe": pe, "imbalance": imb}
+
+    @staticmethod
+    def short_premium(legs):
+        """Rupee premium currently held SHORT on calls and on puts (|net short qty| x LTP).
+        None if a short leg has no price (unknown, never a partial number)."""
+        ce = pe = 0.0
+        for l in legs:
+            if l["net"] >= 0:
+                continue
+            if l.get("ltp") is None:
+                return None, None
+            v = -l["net"] * float(l["ltp"])
+            if l["type"] == "CE":
+                ce += v
+            else:
+                pe += v
+        return ce, pe
 
     def list(self, include_closed_days: int = 1) -> list:
         cut = (self.clock() - dt.timedelta(days=include_closed_days)).strftime("%Y-%m-%d")
@@ -251,8 +342,9 @@ class Desk:
         """req = {name, strategy_id, legs:[{index,expiry,strike,type,side,lots,price,symbol}],
                   brokers:{account_id: multiplier}, mode: 'market'|'limit', product: 'NRML'|'MIS',
                   sl: rupees|None, target: rupees|None, exit_time: 'HH:MM'|None}"""
-        if not self.armed().get("armed"):
-            raise ValueError("Live trading is NOT armed — arm it on the page first")
+        brokers_req = {k: int(v) for k, v in (req.get("brokers") or {}).items() if int(v) > 0}
+        if any(self.hub.get(a).kind != "paper" for a in brokers_req) and not self.armed().get("armed"):
+            raise ValueError("Live trading is NOT armed — arm it on the page first (Paper works disarmed)")
         if not market_open(self.clock()):
             raise ValueError("Market is closed (orders only 09:15-15:30 IST, Mon-Fri)")
         name = (req.get("name") or "").strip()
@@ -284,6 +376,66 @@ class Desk:
             ids.append(d["id"])
             self._spawn(d, self._run_entry)
         return ids
+
+    def quick(self, req: dict) -> str:
+        """Keyboard / Trade-mode order. req = {broker, product, legs:[{index,expiry,strike,type,side,lots,symbol}]}
+        Adds to today's "Quick · <broker>" book (made on first use). Returns the deployment id."""
+        aid = req.get("broker")
+        acct = self.hub.get(aid)
+        if acct.kind != "paper" and not self.armed().get("armed"):
+            raise ValueError("Live trading is NOT armed — arm it first, or trade on Paper")
+        if not market_open(self.clock()):
+            raise ValueError("Market is closed (orders only 09:15-15:30 IST, Mon-Fri)")
+        legs = req.get("legs") or []
+        if not 1 <= len(legs) <= 4:
+            raise ValueError("1..4 legs per quick order")
+        for l in legs:
+            if l.get("side") not in ("B", "S") or l.get("type") not in ("CE", "PE") \
+                    or l.get("index") not in C.INDICES or not 1 <= int(l.get("lots", 0)) <= MAX_LOTS:
+                raise ValueError(f"bad leg {l}")
+        product = req.get("product", "NRML")
+        today = self.clock().strftime("%Y-%m-%d")
+        with self.lock:
+            d = next((x for x in self.deps.values() if x.get("quick") and x["broker"] == aid
+                      and x["created"][:10] == today and x["product"] == product), None)
+        if d is None:
+            d = self._new(f"Quick · {acct.name}", {"name": "quick"}, acct, 1, "market", product, [])
+            d["quick"] = True
+            d["status"] = "open"
+        items = []
+        for l in legs:
+            key = (l["index"], l["expiry"], float(l["strike"]), l["type"])
+            leg = next((x for x in d["legs"] if (x["index"], x["expiry"], float(x["strike"]), x["type"]) == key), None)
+            if leg is None:
+                leg = {"id": len(d["legs"]), "index": l["index"], "expiry": l["expiry"], "strike": float(l["strike"]),
+                       "type": l["type"], "side": l["side"], "lots": int(l["lots"]), "qty": None,
+                       "fyers_symbol": l.get("symbol"), "price": None, "contract": None}
+                d["legs"].append(leg)
+            items.append((leg["id"], l["side"], int(l["lots"])))
+        self._log(d, "quick: " + ", ".join(f"{'BUY' if s == 'B' else 'SELL'} {lt}x "
+                                            f"{d['legs'][i]['strike']:.0f}{d['legs'][i]['type']}" for i, s, lt in items))
+        self._save(d)
+        self._spawn(d, self._run_adhoc, items)
+        return d["id"]
+
+    def _run_adhoc(self, d, items):
+        """One quick order: BUYs first, then SELLs; a BUY that does not fill blocks the SELLs."""
+        acct = self.hub.get(d["broker"])
+        with acct.lock:
+            d["status"] = "placing"
+            self._resolve_all(d, acct)
+            for lid, side, lots in sorted(items, key=lambda x: 0 if x[1] == "B" else 1):
+                leg = d["legs"][lid]
+                qty = lots * int(leg["contract"]["lot"])
+                got = self._fill(d, acct, leg, side, qty, "entry", ENTRY_CUSHIONS)
+                if got < qty:
+                    self._log(d, f"{'BUY' if side == 'B' else 'SELL'} {leg['contract']['symbol']} filled {got}/{qty}"
+                                 + (" — remaining SELLs not sent" if side == "B" else ""))
+                    if side == "B":
+                        break
+            d["status"] = "open" if any(self.leg_book(d, l["id"])[0] for l in d["legs"]) else "closed"
+            self._save(d)
+            acct.refresh_funds()
 
     def _new_id(self, acct_id):
         used = {d.get("tag") for d in self.deps.values() if d["broker"] == acct_id}
@@ -525,9 +677,51 @@ class Desk:
         self._save(d)
 
     # ── monitor: resting orders, SL / target / exit time ──
+    def hist_path(self, dep_id):
+        return self.dep_dir / "history" / f"{dep_id}.jsonl"
+
+    def _sample(self, d, v, t):
+        """Append one {t, mtm, ce, pe, imb} point (every HIST_EVERY s while a position is open)."""
+        now = t.timestamp()                  # the desk's clock: real time live, replay time in practice
+        if now - self._last_hist.get(d["id"], 0) < HIST_EVERY:
+            return
+        self._last_hist[d["id"]] = now
+        rec = {"t": t.strftime("%Y-%m-%d %H:%M:%S"), "mtm": v["mtm"], "ce": v["short_ce"],
+               "pe": v["short_pe"], "imb": v["imbalance"], "open": v["open_qty"]}
+        with open(self.hist_path(d["id"]), "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec) + "\n")
+
+    def history(self, dep_id, date: str | None = None) -> list:
+        out = []
+        try:
+            with open(self.hist_path(dep_id), encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        r = json.loads(line)
+                    except ValueError:
+                        continue
+                    if date is None or r["t"][:10] == date:
+                        out.append(r)
+        except FileNotFoundError:
+            pass
+        return out
+
     def tick(self):
         t = self.clock()
         for d in list(self.deps.values()):
+            if d["status"] in ("closed", "failed") and d["id"] not in self._last_open:
+                continue
+            try:
+                if market_open(t) or d["id"] in self._last_open:
+                    v0 = self.view(d)
+                    if v0["open_qty"] or d["id"] in self._last_open:
+                        self._sample(d, v0, t)
+                    if v0["open_qty"]:
+                        self._last_open.add(d["id"])
+                    else:
+                        self._last_open.discard(d["id"])        # one last point at flat, then stop
+            except Exception as e:
+                log.warning("history %s: %s", d["id"], e)
             if d["status"] in ("closed", "failed") or d["id"] in self._busy:
                 continue
             try:

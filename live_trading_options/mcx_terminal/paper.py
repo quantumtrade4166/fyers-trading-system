@@ -67,6 +67,7 @@ class PaperBook:
     # ── persistence ─────────────────────────────────────────────────────────
     def _load(self):
         if not self.path.exists():
+            self._carry_forward()
             return
         try:
             d = json.loads(self.path.read_text(encoding="utf-8"))
@@ -77,6 +78,32 @@ class PaperBook:
             log.info("paper book restored: %d orders, %d positions", len(self.orders), len(self.pos))
         except Exception:
             log.exception("paper book load failed; starting empty")
+
+    def _carry_forward(self):
+        """A new day: bring over yesterday's OPEN positions (NRML carry) at their average price.
+        Realized P&L starts at 0 for the new day. Contracts no longer listed (expired) are dropped."""
+        prev = sorted(p for p in self.path.parent.glob("paper_book_*.json") if p.name < self.path.name)
+        if not prev:
+            return
+        try:
+            d = json.loads(prev[-1].read_text(encoding="utf-8"))
+        except Exception:
+            log.exception("carry-forward: cannot read %s", prev[-1].name)
+            return
+        kept, dropped = 0, []
+        for k, p in d.get("positions", {}).items():
+            if not p.get("net"):
+                continue
+            tok = int(k)
+            if tok not in self.u.by_token:
+                dropped.append(p.get("symbol", k))
+                continue
+            self.pos[tok] = {**p, "realized": 0.0, "bought": 0, "sold": 0, "carried": True}
+            kept += 1
+        if kept or dropped:
+            log.warning("carry-forward from %s: %d open position(s) kept, expired/unlisted dropped: %s",
+                        prev[-1].name, kept, dropped)
+            self._save()
 
     def _save(self):
         tmp = self.path.with_suffix(".tmp")

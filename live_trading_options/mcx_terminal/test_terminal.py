@@ -342,6 +342,82 @@ def test_mtm_history_buckets():
     mpath.unlink(missing_ok=True)
 
 
+def test_access_guard():
+    import asyncio
+    import time as _t
+    import jwt
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from live_trading_options.mcx_terminal.access import AccessGuard
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    class _K:
+        def get_signing_key_from_jwt(self, t):
+            return type("K", (), {"key": key.public_key()})()
+
+    hits = []
+
+    async def inner(scope, receive, send):
+        hits.append(scope["path"])
+
+    def run(g, headers, typ="http", path="/"):
+        sent = []
+
+        async def send(m):
+            sent.append(m)
+        scope = {"type": typ, "path": path, "headers": [(k.encode(), v.encode()) for k, v in headers.items()]}
+        asyncio.run(g(scope, None, send))
+        return sent
+
+    def tok(aud="AUD1", email="me@x.com", exp=3600, iss="https://team1.cloudflareaccess.com"):
+        return jwt.encode({"aud": aud, "email": email, "exp": int(_t.time()) + exp, "iss": iss}, key, algorithm="RS256")
+
+    g = AccessGuard(inner, team="team1", aud="AUD1", emails="me@x.com")
+    g._keys = lambda: _K()
+    hits.clear()
+    run(g, {"host": "localhost:47680"})
+    check("local (ssh tunnel) allowed", hits == ["/"], hits)
+    s = run(g, {"host": "mcx.trading.contact", "cf-ray": "x"})
+    check("external without token refused", s and s[0].get("status") == 403 and len(hits) == 1, s)
+    run(g, {"host": "mcx.trading.contact", "cf-ray": "x", "cf-access-jwt-assertion": tok()})
+    check("valid token allowed", len(hits) == 2, hits)
+    run(g, {"host": "mcx.trading.contact", "cookie": "a=1; CF_Authorization=" + tok()})
+    check("valid cookie allowed", len(hits) == 3, hits)
+    s = run(g, {"host": "mcx.trading.contact", "cf-access-jwt-assertion": tok(aud="OTHER")})
+    check("wrong audience refused", s[0].get("status") == 403 and len(hits) == 3, s)
+    s = run(g, {"host": "mcx.trading.contact", "cf-access-jwt-assertion": tok(email="evil@x.com")})
+    check("other email refused", s[0].get("status") == 403 and len(hits) == 3, s)
+    s = run(g, {"host": "mcx.trading.contact", "cf-access-jwt-assertion": tok(exp=-60)})
+    check("expired token refused", s[0].get("status") == 403 and len(hits) == 3, s)
+    s = run(g, {"host": "localhost", "cf-ray": "x"})
+    check("cloudflare header with local host still external", s[0].get("status") == 403, s)
+    s = run(g, {"host": "mcx.trading.contact", "cf-ray": "x"}, typ="websocket", path="/ws")
+    check("websocket refused with 4403", s == [{"type": "websocket.close", "code": 4403}], s)
+    g2 = AccessGuard(inner, team="", aud="", emails="")
+    s = run(g2, {"host": "mcx.trading.contact", "cf-access-jwt-assertion": tok()})
+    check("fail closed when not configured", s[0].get("status") == 403, s)
+
+
+def test_carry_forward_overnight():
+    import json as _j
+    import tempfile
+    from live_trading_options.mcx_terminal import paper as P
+    text = (HERE / "testdata" / "mcx_scrip_sample.csv").read_text(encoding="utf-8")
+    u = I.parse(text, today="2026-10-19")
+    d = Path(tempfile.mkdtemp())
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    (d / "paper_book_2026-10-22.json").write_text(_j.dumps({"orders": [], "positions": {
+        str(ce.token): {"token": ce.token, "symbol": ce.symbol, "name": "CRUDEOIL", "lot": 100, "mult": 1.0,
+                        "net": -200, "avg": 480.0, "realized": 1234.0, "bought": 0, "sold": 200},
+        "999999": {"token": 999999, "symbol": "OLDEXPIRED", "name": "CRUDEOIL", "lot": 100, "mult": 1.0,
+                   "net": -100, "avg": 10.0, "realized": 0.0, "bought": 0, "sold": 100}}}), encoding="utf-8")
+    b = P.PaperBook(u, lambda t: {}, path=d / "paper_book_2026-10-23.json")
+    p = b.pos.get(ce.token)
+    check("open position carried", p and p["net"] == -200 and p["avg"] == 480.0 and p["carried"], p)
+    check("realized reset for the new day", p and p["realized"] == 0.0, p)
+    check("expired contract dropped", 999999 not in b.pos)
+    check("new day saved", (d / "paper_book_2026-10-23.json").exists())
+
+
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:
         fn()

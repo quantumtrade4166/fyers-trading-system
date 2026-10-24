@@ -14,6 +14,7 @@ Run:
 """
 import sys
 import logging
+import time
 
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
@@ -34,13 +35,35 @@ app = FastAPI(title="Strategy Builder")
 feed = ChainFeed()
 hub = None
 desk = None
+practice = None             # PracticeManager — replays a past day through the same screen (px=1)
+
+
+# Every chain / order endpoint takes ?px=1 from the page while practice mode is on. These three
+# pick the replay or the live objects — practice can never reach the live desk or a broker.
+def F(px):
+    if px:
+        if not (practice and practice.active):
+            raise ValueError("practice mode is not running")
+        return practice.feed
+    return feed
+
+
+def D(px):
+    if px:
+        if not (practice and practice.active):
+            raise ValueError("practice mode is not running")
+        return practice.desk
+    _need_desk()
+    return desk
+
+
+def H(px):
+    return practice.desk.hub if px and practice and practice.active else hub
 
 
 def _leg_quotes(legs):
     """Live LTP for deployment legs (keeps their chains watched while positions are open)."""
-    for l in legs:
-        if l.get("index") and l.get("expiry"):
-            feed.touch(l["index"], l["expiry"])
+    # no touch(): open legs stream over the websocket — they must not keep Fyers REST pulls going
     return feed.quotes([l["fyers_symbol"] for l in legs if l.get("fyers_symbol")])
 
 
@@ -53,10 +76,14 @@ def _start():
         from live_trading_options.strategy_builder import brokers as B
         from live_trading_options.strategy_builder import orders as O
         hub = B.BrokerHub()
-        desk = O.Desk(hub, _leg_quotes, {"kite": O.KiteAdapter(B.kx), "kotak": O.KotakAdapter(B.ke)},
-                      B.resolve)
+        paper = O.PaperAdapter(lambda sym: feed.quotes([sym]).get(sym))
+        desk = O.Desk(hub, _leg_quotes, {"kite": O.KiteAdapter(B.kx), "kotak": O.KotakAdapter(B.ke),
+                                         "paper": paper}, B.resolve)
         hub.start()
         desk.run_monitor()
+        global practice
+        from live_trading_options.strategy_builder.practice import PracticeManager
+        practice = PracticeManager()
     except Exception as e:
         logging.getLogger("sb").exception("order desk NOT started: %s", e)
 
@@ -82,33 +109,53 @@ def health():
 
 
 @app.get("/api/sb/meta")
-def meta():
-    return {"ok": True, "indices": list(C.INDICES), "lot": C.LOT_SIZE, "step": C.STRIKE_STEP,
-            "expiries": feed.expiries, "under": {i: feed.underlying(i) for i in C.INDICES},
-            "feed": feed.status()}
+def meta(px: int = Query(0)):
+    try:
+        f = F(px)
+    except ValueError as e:
+        return _bad(str(e))
+    return {"ok": True, "indices": [practice.sess["index"]] if px else list(C.INDICES),
+            "lot": C.LOT_SIZE, "step": C.STRIKE_STEP,
+            "expiries": f.expiries, "under": {i: f.underlying(i) for i in C.INDICES},
+            "feed": f.status(), "practice": practice.state() if px else None}
 
 
 @app.get("/api/sb/chain")
-def chain(index: str = Query(...), expiry: str = Query(None)):
+def chain(index: str = Query(...), expiry: str = Query(None), px: int = Query(0)):
     if index not in C.INDICES:
         return _bad(f"unknown index {index}")
+    try:
+        f = F(px)
+    except ValueError as e:
+        return _bad(str(e))
+    ex = f.expiries.get(index)
+    if not px and not ex:
+        feed.want_index(index)
+    if px and ex:
+        expiry = ex[0]["date"]               # a practice day has exactly one expiry
     if not expiry:
-        ex = feed.expiries.get(index)
         if not ex:
             return {"ok": False, "loading": True, "index": index}
         expiry = ex[0]["date"]
-    return feed.snapshot(index, expiry)
+    snap = f.snapshot(index, expiry)
+    if px:
+        snap["practice"] = practice.state()
+    return snap
 
 
 @app.post("/api/sb/quotes")
-def quotes(body: dict = Body(...)):
+def quotes(body: dict = Body(...), px: int = Query(0)):
     """Live price + IV/Greeks for each playground leg, grouped by its chain.
     body = {"legs": [{"symbol", "index", "expiry"}, ...]}"""
     legs = body.get("legs") or []
     pairs = {(l.get("index"), l.get("expiry")) for l in legs if l.get("index") in C.INDICES and l.get("expiry")}
     out, chains = {}, {}
+    try:
+        f = F(px)
+    except ValueError as e:
+        return _bad(str(e))
     for index, expiry in pairs:
-        snap = feed.snapshot(index, expiry)
+        snap = f.snapshot(index, expiry)
         if not snap.get("ok"):
             continue
         chains[f"{index}|{expiry}"] = {"fwd": snap["synthetic_fut"], "T_days": snap["T_days"],
@@ -120,7 +167,7 @@ def quotes(body: dict = Body(...)):
                     out[o["symbol"]] = o
     wanted = {l.get("symbol") for l in legs}
     return {"ok": True, "quotes": {s: out[s] for s in wanted if s in out}, "chains": chains,
-            "under": {i: feed.underlying(i) for i in C.INDICES}}
+            "under": {i: f.underlying(i) for i in C.INDICES}}
 
 
 @app.get("/api/sb/strategies")
@@ -160,8 +207,8 @@ def _call(fn):
 
 
 @app.get("/api/sb/brokers")
-def brokers():
-    return _call(lambda: {"ok": True, "brokers": hub.status(), "control": desk.armed()})
+def brokers(px: int = Query(0)):
+    return _call(lambda: {"ok": True, "brokers": H(px).status(), "control": D(px).armed()})
 
 
 @app.post("/api/sb/brokers/{aid}/login")
@@ -184,12 +231,14 @@ def set_control(body: dict = Body(...)):
 
 
 @app.post("/api/sb/margin")
-def margin(body: dict = Body(...)):
+def margin(body: dict = Body(...), px: int = Query(0)):
     """Zerodha's own basket margin for the legs (Kotak has no basket-margin call — shown as —).
     body = {legs:[...], brokers:{id: mult}, product}"""
     def go():
         from live_trading_options.strategy_builder import brokers as B
         out = {}
+        if px:
+            return {"ok": True, "margin": {a: {"required": None, "funds": None} for a in (body.get("brokers") or {})}}
         for aid, mult in (body.get("brokers") or {}).items():
             a = hub.get(aid)
             if a.kind != "kite" or int(mult) <= 0:
@@ -215,36 +264,147 @@ def margin(body: dict = Body(...)):
 
 
 @app.post("/api/sb/deploy")
-def deploy(body: dict = Body(...)):
-    return _call(lambda: {"ok": True, "deployments": desk.deploy(body)})
+def deploy(body: dict = Body(...), px: int = Query(0)):
+    return _call(lambda: {"ok": True, "deployments": D(px).deploy(body)})
 
 
 @app.get("/api/sb/deployments")
-def deployments():
-    return _call(lambda: {"ok": True, "deployments": desk.list(), "control": desk.armed()})
+def deployments(px: int = Query(0)):
+    return _call(lambda: {"ok": True, "deployments": D(px).list(include_closed_days=10000 if px else 1),
+                          "control": D(px).armed()})
 
 
 @app.post("/api/sb/deployments/{dep_id}/squareoff")
-def squareoff(dep_id: str, body: dict = Body(default={})):
-    return _call(lambda: (desk.square_off(dep_id, body.get("leg")), {"ok": True})[1])
+def squareoff(dep_id: str, body: dict = Body(default={}), px: int = Query(0)):
+    return _call(lambda: (D(px).square_off(dep_id, body.get("leg")), {"ok": True})[1])
 
 
 @app.post("/api/sb/deployments/{dep_id}/cancel")
-def cancel_pending(dep_id: str):
-    return _call(lambda: (desk.cancel_pending(dep_id), {"ok": True})[1])
+def cancel_pending(dep_id: str, px: int = Query(0)):
+    return _call(lambda: (D(px).cancel_pending(dep_id), {"ok": True})[1])
 
 
 @app.post("/api/sb/deployments/{dep_id}/risk")
-def set_risk(dep_id: str, body: dict = Body(...)):
+def set_risk(dep_id: str, body: dict = Body(...), px: int = Query(0)):
     def num(v):
         return float(v) if v not in (None, "", 0, "0") else None
-    return _call(lambda: (desk.set_risk(dep_id, num(body.get("sl")), num(body.get("target")),
+    return _call(lambda: (D(px).set_risk(dep_id, num(body.get("sl")), num(body.get("target")),
                                         body.get("exit_time") or None), {"ok": True})[1])
 
 
+@app.post("/api/sb/quick")
+def quick(body: dict = Body(...), px: int = Query(0)):
+    """Keyboard / Trade-mode order into today's Quick book for that broker (Paper needs no arming)."""
+    return _call(lambda: {"ok": True, "deployment": D(px).quick(body)})
+
+
+@app.get("/api/sb/deployments/{dep_id}/history")
+def history(dep_id: str, date: str = Query(None), px: int = Query(0)):
+    """MTM + CE/PE imbalance samples (every 5 s) for the day — the EOD charts."""
+    return _call(lambda: {"ok": True, "points": D(px).history(dep_id, date)})
+
+
 @app.post("/api/sb/killall")
-def killall():
-    return _call(lambda: {"ok": True, "squaring": desk.square_off_all()})
+def killall(px: int = Query(0)):
+    return _call(lambda: {"ok": True, "squaring": D(px).square_off_all()})
+
+
+# ── practice mode ────────────────────────────────────────────────────────────────────────
+@app.get("/api/sb/practice/days")
+def practice_days():
+    """Prepared days (ready to replay) + the download job, if one is running."""
+    from live_trading_options.strategy_builder import practice_data as PD
+    return {"ok": True, "packs": PD.list_packs(), "job": _job, "batch": PD.batch_status()}
+
+
+_job: dict = {"state": "idle"}
+
+
+@app.post("/api/sb/practice/prepare")
+def practice_prepare(body: dict = Body(...)):
+    """Download a day from ICICI Breeze in the background (one at a time — Breeze blocks parallel calls)."""
+    from live_trading_options.strategy_builder import practice_data as PD
+    import threading as _th
+    index, date, seconds = body.get("index"), body.get("date"), bool(body.get("seconds"))
+    if index not in C.INDICES or not date:
+        return _bad("index and date are required")
+    if _job.get("state") == "running":
+        return _bad(f"already downloading {_job.get('index')} {_job.get('date')} — wait for it to finish")
+    if PD.batch_running() and not seconds:
+        # never two Breeze downloads at once (parallel calls get the IP blocked) — jump the bulk queue instead
+        PD.request_priority(index, date)
+        _job.clear()
+        _job.update(state="queued", index=index, date=date,
+                    lines=["the background 2026 download will fetch this day next (~4 min)"])
+        return {"ok": True, "job": _job}
+    _job.clear()
+    _job.update(state="running", index=index, date=date, seconds=seconds, lines=[], started=time.strftime("%H:%M:%S"))
+
+    def say(msg):
+        _job["lines"] = (_job["lines"] + [str(msg)])[-12:]
+
+    def run():
+        try:
+            b = PD.Builder(index, log=say, fast=True)
+            meta = PD.read_meta(index, date)
+            if meta and seconds and not meta.get("seconds"):
+                b.add_seconds(date)
+            elif not meta:
+                b.build(date, seconds=seconds)
+            _job.update(state="done", finished=time.strftime("%H:%M:%S"))
+        except Exception as e:
+            _job.update(state="error", error=f"{type(e).__name__}: {e}"[:400])
+    _th.Thread(target=run, daemon=True, name="SB-prepare").start()
+    return {"ok": True, "job": _job}
+
+
+def _pcall(fn):
+    try:
+        if practice is None:
+            raise RuntimeError("practice mode is not available — see logs/strategy_builder.log")
+        return fn()
+    except (ValueError, KeyError, RuntimeError, FileNotFoundError) as e:
+        return _bad(str(e))
+
+
+@app.get("/api/sb/practice/state")
+def practice_state():
+    return _pcall(lambda: {"ok": True, **practice.state()})
+
+
+@app.post("/api/sb/practice/start")
+def practice_start(body: dict = Body(...)):
+    return _pcall(lambda: {"ok": True, **practice.start(body.get("index"), body.get("date"))})
+
+
+@app.post("/api/sb/practice/resume")
+def practice_resume(body: dict = Body(...)):
+    return _pcall(lambda: {"ok": True, **practice.resume(body.get("id"))})
+
+
+@app.post("/api/sb/practice/control")
+def practice_control(body: dict = Body(...)):
+    def go():
+        if not practice.active:
+            raise ValueError("practice mode is not running")
+        practice.feed.control(body.get("action"), body.get("value"))
+        return {"ok": True, **practice.state()}
+    return _pcall(go)
+
+
+@app.post("/api/sb/practice/end")
+def practice_end():
+    return _pcall(lambda: (practice.end(), {"ok": True, "active": False})[1])
+
+
+@app.get("/api/sb/practice/sessions")
+def practice_sessions():
+    return _pcall(lambda: {"ok": True, "sessions": practice.sessions()})
+
+
+@app.get("/api/sb/practice/sessions/{sid}/combined")
+def practice_combined(sid: str):
+    return _pcall(lambda: {"ok": True, "points": practice.combined(sid)})
 
 
 if __name__ == "__main__":

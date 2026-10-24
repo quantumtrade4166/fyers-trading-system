@@ -251,5 +251,67 @@ with tempfile.TemporaryDirectory() as tmp:
     check("limit: monitor picks up the fill", d["status"] == "open" and desk.view(d)["legs"][0]["net"] == -65)
     ad.nofill = set()
 
+    # ── v3: paper broker, quick orders, CE/PE imbalance, history ──
+    PQ = {}
+    paper = O.PaperAdapter(lambda sym: PQ.get(sym))
+    hub = Hub(); hub.a["p"] = Acct("p", "paper")
+    def presolve(acct, leg):
+        if acct.kind == "paper":
+            return {"symbol": leg["fyers_symbol"], "exchange": "PAPER", "lot": 65, "token": None}
+        return resolve(acct, leg)
+    pd = O.Desk(hub, quotes, {"kite": ad, "kotak": ad, "paper": paper}, presolve,
+                clock=lambda: OPEN_T, sleep=lambda s: None, fill_wait=0)
+    pd.set_armed(False)
+    PQ.update({"NSE:X23100CE": {"ltp": 100, "bid": 99.5, "ask": 100.5},
+               "NSE:X23100PE": {"ltp": 80, "bid": 79.5, "ask": 80.5},
+               "NSE:X23300CE": {"ltp": 30, "bid": 29.8, "ask": 30.2},
+               "NSE:X22900PE": {"ltp": 25, "bid": 24.8, "ask": 25.2}})
+    ids = pd.deploy(req(brokers={"p": 1})); wait_idle(pd)
+    d = pd.deps[ids[0]]
+    check("paper: deploys while DISARMED", d["status"] == "open")
+    fills = {(o["side"], d["legs"][o["leg"]]["type"], d["legs"][o["leg"]]["strike"]): o["avg"] for o in d["orders"]}
+    check("paper: SELL fills at the bid, BUY at the ask",
+          fills[("S", "CE", 23100.0)] == 99.5 and fills[("B", "CE", 23300.0)] == 30.2)
+    try:
+        pd.deploy(req(brokers={"p": 1, "z": 1})); check("paper+real still needs arming", False)
+    except ValueError as e:
+        check("paper+real still needs arming", "armed" in str(e).lower())
+
+    # imbalance: short CE 65x100=6500, short PE 65x80=5200 -> (6500-5200)/11700 = 11.11 %
+    for sym, v in {"NSE:X23100CE": 100, "NSE:X23100PE": 80, "NSE:X23300CE": 30, "NSE:X22900PE": 25}.items():
+        QUOTES[sym] = {"ltp": v}
+    v = pd.view(d)
+    check("imbalance: short CE / PE premium", v["short_ce"] == 6500 and v["short_pe"] == 5200)
+    check(f"imbalance: {v['imbalance']:.2f}% = 11.11%", abs(v["imbalance"] - 11.111) < 0.01)
+
+    # history sampling + flat point
+    pd.tick()
+    h = pd.history(d["id"])
+    check("history: sample written while open", len(h) == 1 and h[0]["imb"] is not None and h[0]["mtm"] is not None)
+    pd._last_hist.clear(); pd.tick()
+    check("history: 2nd sample after the interval", len(pd.history(d["id"])) == 2)
+    pd.square_off(d["id"]); wait_idle(pd)
+    pd._last_hist.clear(); pd.tick(); pd._last_hist.clear(); pd.tick()
+    h = pd.history(d["id"])
+    check("history: one final flat point, then stops", h[-1]["open"] == 0 and len(h) == 3)
+    QUOTES.clear()
+
+    # quick orders: same book for the day, same contract = same leg, buy-first
+    q1 = pd.quick({"broker": "p", "legs": [leg("S", 23100, "CE", 2)]}); wait_idle(pd)
+    q2 = pd.quick({"broker": "p", "legs": [leg("S", 23100, "PE", 1), leg("B", 22900, "PE", 1)]}); wait_idle(pd)
+    q3 = pd.quick({"broker": "p", "legs": [leg("B", 23100, "CE", 1)]}); wait_idle(pd)
+    qd = pd.deps[q1]
+    check("quick: one book per broker per day", q1 == q2 == q3 and qd["quick"])
+    nets = {(l["strike"], l["type"]): pd.leg_book(qd, l["id"])[0] for l in qd["legs"]}
+    check("quick: same contract -> same leg (-130 then +65 = -65)", nets[(23100.0, "CE")] == -65)
+    o2 = [o for o in qd["orders"] if qd["legs"][o["leg"]]["type"] == "PE"]
+    check("quick: hedge BUY placed before the SELL", [o["side"] for o in o2] == ["B", "S"])
+    try:
+        pd.quick({"broker": "z", "legs": [leg("S", 23100, "CE")]}); check("quick on a real broker needs arming", False)
+    except ValueError as e:
+        check("quick on a real broker needs arming", "armed" in str(e).lower())
+    PQ["NSE:X23100CE"] = {"ltp": 100, "bid": None, "ask": None}
+    check("paper: no bid/ask -> uses LTP", paper.price(None, {"symbol": "NSE:X23100CE"}, "B", 65, 999, 2) == 100)
+
 print(f"\n{'ALL PASS' if not FAILS else str(len(FAILS)) + ' FAILED'}")
 sys.exit(1 if FAILS else 0)

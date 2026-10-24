@@ -17,6 +17,7 @@ import asyncio
 import datetime as dt
 import json
 import logging
+import os
 import sys
 import threading
 import time
@@ -28,6 +29,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from live_trading_options.mcx_terminal import config as C
+from live_trading_options.mcx_terminal.access import AccessGuard
 from live_trading_options.mcx_terminal import instruments as I
 from live_trading_options.mcx_terminal.feed import KotakFeed
 from live_trading_options.mcx_terminal.kotak_session import SessionHolder
@@ -38,6 +40,13 @@ from live_trading_options.mcx_terminal.mtm import MtmHistory, SAMPLE_S
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 log = logging.getLogger("mcx.server")
+DAILY_RESTART = dt.time(8, 45)    # fresh Kotak login + contract list before MCX opens at 09:00
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(C.ROOT / "deployment" / ".env")       # MCX_ACCESS_* for the login lock
+except Exception:
+    pass
 
 
 def _setup_logging():
@@ -101,8 +110,16 @@ class Engine:
     def _housekeeping(self):
         """Every 0.5 s: re-price / push waiting paper orders. Every SAMPLE_S s: one MTM-curve point."""
         last_mtm = 0.0
+        born = dt.datetime.now(IST).date()
         while True:
             try:
+                n = dt.datetime.now(IST)
+                if n.date() > born and n.time() >= DAILY_RESTART:
+                    # a new trading day: exit so the scheduled task starts a fresh engine (new Kotak
+                    # session, today's contract list, today's paper book with positions carried over)
+                    log.warning("daily restart: engine born %s, now %s - exiting for a fresh start", born, n)
+                    logging.shutdown()
+                    os._exit(3)
                 self.book.housekeep()
                 now = time.time()
                 if now - last_mtm >= SAMPLE_S:
@@ -307,6 +324,7 @@ ORDER_OPS = {
 }
 
 app = FastAPI(title="MCX Terminal")
+app.add_middleware(AccessGuard)               # second lock behind Cloudflare Access
 app.mount("/static", StaticFiles(directory=C.STATIC), name="static")
 
 

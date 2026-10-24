@@ -1,6 +1,7 @@
 ﻿# setup_tunnel.ps1 -- (re)creates the Cloudflare tunnel for the VPS web addresses.
 #   dash.trading.contact   -> http://localhost:8000   (trading dashboard)
 #   jarvis.trading.contact -> http://127.0.0.1:8020   (JARVIS; 502 until JARVIS is installed)
+#   mcx.trading.contact    -> http://127.0.0.1:47680  (MCX Desk; also checks the Access token itself)
 # Both stay behind Cloudflare Access (the Access apps are tied to the hostnames, not the tunnel).
 #
 # Needs C:\Users\Administrator\.cloudflared\cert.pem first: the owner authorises
@@ -37,10 +38,12 @@ ingress:
     service: http://localhost:8000
   - hostname: jarvis.trading.contact
     service: http://127.0.0.1:8020
+  - hostname: mcx.trading.contact
+    service: http://127.0.0.1:47680
   - service: http_status:404
 "@ | Set-Content "$dir\config.yml" -Encoding ascii
 
-foreach ($h in 'dash.trading.contact', 'jarvis.trading.contact') {
+foreach ($h in 'dash.trading.contact', 'jarvis.trading.contact', 'mcx.trading.contact') {
     & $cf tunnel route dns --overwrite-dns $id $h 2>&1 | ForEach-Object { "  | $_" }
 }
 

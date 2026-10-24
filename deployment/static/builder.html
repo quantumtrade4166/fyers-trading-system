@@ -192,6 +192,36 @@
   .dep details { padding: 0 10px 8px; font: 11px/1.6 ui-monospace, Consolas, monospace; color: #94a3b8; }
   .pill.open { background: #052e16; color: #4ade80; } .pill.closed { background: #1e293b; color: #94a3b8; }
   .pill.bad { background: #3b0a14; color: #fb7185; } .pill.busy { background: #0c2233; color: #38bdf8; }
+  .qbar { display: flex; gap: 10px; align-items: center; padding: 6px 10px; border-bottom: 1px solid var(--line);
+          flex-wrap: wrap; background: #0d1526; font-size: 12px; }
+  .qbar label { display: flex; gap: 5px; align-items: center; color: var(--muted); }
+  .qbar .seg button { padding: 3px 10px; }
+  .chain td.cur { outline: 2px solid var(--acc); outline-offset: -2px; background: #0c2233 !important; }
+  .modal.qt { width: min(420px, 100%); border-width: 2px; }
+  .modal.qt.buy { border-color: #15803d; } .modal.qt.sell { border-color: #be123c; }
+  .modal.qt #qtSide { font-weight: 800; font-size: 15px; }
+  .modal.qt.buy #qtSide { color: #4ade80; } .modal.qt.sell #qtSide { color: #fb7185; }
+  .modal.qt input#qtLots { font-size: 18px; width: 100px; padding: 6px 8px; }
+  .imbline { display: flex; gap: 14px; padding: 6px 10px; border-top: 1px solid var(--line2); color: var(--muted); flex-wrap: wrap; }
+  .imbline b { color: var(--hi); }
+  .modal.chart { width: min(1000px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; }
+  .modal.chart canvas { width: 100%; display: block; }
+  #chartBox { position: relative; }
+  .pill.paper { background: #1e1b4b; color: #a5b4fc; }
+  .pxbar { display: none; gap: 10px; align-items: center; padding: 6px 12px; background: #2e1065; border-bottom: 2px solid #7c3aed;
+           flex-wrap: wrap; position: relative; }
+  .pxbar .tag { font-weight: 800; color: #e9d5ff; letter-spacing: .05em; }
+  .pxbar #pxClock { font: 700 18px ui-monospace, Consolas, monospace; color: #fff; min-width: 96px; }
+  .pxbar button { background: #1e1b4b; border-color: #6d28d9; color: #e9d5ff; }
+  .pxbar button.on { background: #6d28d9; color: #fff; }
+  .pxbar .seg button { padding: 3px 9px; }
+  .pxbar .prog { position: absolute; left: 0; bottom: -2px; height: 2px; background: #c4b5fd; }
+  body.practice .main { height: calc(100vh - 47px - 46px); }
+  body.practice #btnArm { display: none; }
+  #btnPx { color: #c4b5fd; border-color: #6d28d9; }
+  #pxReady { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  #pxSess .it { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line2); }
+  #pxSess .nm { flex: 1; color: var(--hi); }
   .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #0f172a;
            border: 1px solid #334155; padding: 8px 14px; border-radius: 8px; z-index: 40; display: none; }
 </style>
@@ -205,11 +235,23 @@
   <span id="feedPill" class="pill">connecting</span>
   <button id="btnArm" class="armbtn off" title="Live orders are only possible while ARMED">○ DISARMED</button>
   <button id="btnKill" title="Square off EVERY builder position on every broker">⛔ Kill all</button>
+  <button id="btnPx" title="Replay a past day and trade it like live — paper only">🎓 Practice</button>
   <div class="idx num">
     <span><span class="mut" id="uName">NIFTY</span> <b id="uSpot">—</b> <span id="uChg"></span></span>
     <span><span class="mut">FUT</span> <b id="uFut">—</b></span>
     <span><span class="mut">INDIA VIX</span> <b id="uVix">—</b> <span id="uVixChg"></span></span>
   </div>
+</div>
+
+<div class="pxbar num" id="pxBar">
+  <span class="tag">🎓 PRACTICE</span><span id="pxName"></span>
+  <span id="pxClock">09:15:00</span>
+  <button id="pxPlay">▶ Play</button>
+  <div class="seg" id="pxSpeeds"><button data-v="1">1×</button><button data-v="2">2×</button><button data-v="5">5×</button><button data-v="10">10×</button><button data-v="30">30×</button></div>
+  <label style="color:#c4b5fd">Jump to <input type="time" id="pxJump" min="09:15" max="15:29" style="width:96px"></label><button id="pxJumpGo">Go</button>
+  <span style="color:#a78bfa;font-size:11px" id="pxSrc"></span>
+  <span style="margin-left:auto;display:flex;gap:8px"><button id="pxChart">📈 Session chart</button><button id="pxEnd">End practice</button></span>
+  <div class="prog" id="pxProg"></div>
 </div>
 
 <div class="main">
@@ -226,6 +268,7 @@
     </div>
 
     <div id="chainView" style="display:flex;flex-direction:column;flex:1;min-height:0">
+      <div class="qbar num" id="qbar"></div>
       <div class="expiries" id="expiries"></div>
       <div class="chain" id="chain"><div class="loading">Loading chain…</div></div>
     </div>
@@ -352,6 +395,54 @@
     </div>
   </div>
 </div>
+<!-- quick ticket (keyboard / Trade mode) -->
+<div class="modal-bg" id="qticket">
+  <div class="modal qt" id="qtBox">
+    <div id="qtSide">BUY</div>
+    <div id="qtSym" style="margin:8px 0;line-height:1.7"></div>
+    <div class="mut num" id="qtQuote" style="margin-bottom:10px"></div>
+    <label class="mut">Lots &nbsp;<input type="number" id="qtLots" min="1" max="50" value="1"></label>
+    <div class="err" id="qtWarn"></div>
+    <div class="note">Enter = send · Esc = cancel · ↑↓ = lots</div>
+    <div class="row"><button id="qtCancel">Cancel</button><button class="pri" id="qtGo">Send</button></div>
+  </div>
+</div>
+
+<!-- MTM + CE/PE imbalance charts -->
+<div class="modal-bg" id="chartModal">
+  <div class="modal chart">
+    <div style="display:flex;gap:10px;align-items:center">
+      <h3 style="margin:0" id="chTitle">Chart</h3>
+      <select id="chDate" style="margin-left:auto"></select><button id="chClose">✕</button>
+    </div>
+    <div class="note num" id="chInfo" style="margin:8px 0"></div>
+    <div id="chartBox">
+      <div class="lbl" style="margin-top:6px">MTM (₹) — sampled every 5 s</div>
+      <canvas id="chMtm" style="height:240px"></canvas>
+      <div class="lbl" style="margin-top:10px">CE/PE imbalance (%) = (short CE premium − short PE premium) ÷ total short premium</div>
+      <canvas id="chImb" style="height:200px"></canvas>
+      <div class="tip num" id="chTip"></div>
+    </div>
+  </div>
+</div>
+<!-- practice picker -->
+<div class="modal-bg" id="pxModal">
+  <div class="modal wide">
+    <div style="display:flex;align-items:center"><h3 style="margin:0">🎓 Practice — replay a past day like live</h3><button id="pxClose" style="margin-left:auto">✕</button></div>
+    <div class="note">Real ICICI Breeze prices of that day (1-minute candles walked tick by tick; 1-second where downloaded), nearest expiry, paper fills on a realistic bid/ask. Trades, MTM and CE/PE imbalance are saved as “Practice INDEX DATE”.</div>
+    <div class="frm">
+      <label>Index<select id="pxIdx"><option>NIFTY</option><option>SENSEX</option></select></label>
+      <label>Date<input type="date" id="pxDate" min="2026-01-01"></label>
+      <label title="ATM ±5 strikes at 1-second — the real tick path, ~15 extra minutes to download"><span><input type="checkbox" id="pxSec"> also 1-second data ⚡</span></label>
+    </div>
+    <div class="lbl" style="margin-top:12px">Ready days</div><div id="pxReady"></div>
+    <div class="note" id="pxHint"></div>
+    <div class="note num" id="pxJob"></div>
+    <div class="note num" id="pxBatch"></div>
+    <div class="row"><button id="pxGet">Download day</button><button class="pri" id="pxStart">Start practice</button></div>
+    <div class="lbl" style="margin-top:14px">Saved practice sessions</div><div id="pxSess"></div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 
 <script>
@@ -365,8 +456,9 @@ const sgn = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
 const oiFmt = v => v == null ? '—' : v >= 1e7 ? (v / 1e7).toFixed(2) + 'Cr' : v >= 1e5 ? (v / 1e5).toFixed(1) + 'L' : v >= 1e3 ? (v / 1e3).toFixed(1) + 'K' : String(v);
 const dMon = s => { const d = new Date(s + 'T00:00:00'); return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }).toUpperCase(); };
 function toast(m, ms = 2500) { const t = $('toast'); t.textContent = m; t.style.display = 'block'; clearTimeout(toast._t); toast._t = setTimeout(() => t.style.display = 'none', ms); }
-async function jget(u) { const r = await fetch(API + u, { cache: 'no-store' }); return r.json(); }
-async function jpost(u, b) { const r = await fetch(API + u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); return r.json(); }
+const pxq = u => (typeof S !== 'undefined' && S.px) ? u + (u.includes('?') ? '&' : '?') + 'px=1' : u;
+async function jget(u) { const r = await fetch(API + pxq(u), { cache: 'no-store' }); return r.json(); }
+async function jpost(u, b) { const r = await fetch(API + pxq(u), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); return r.json(); }
 
 // ───────────────────────────────── Black-76 (same maths as greeks.py)
 function ncdf(x) { // Abramowitz-Stegun 7.1.26 via erf, |err| < 1.5e-7
@@ -402,6 +494,7 @@ const stepOf = idx => (S.meta && S.meta.step[idx]) || (idx === 'SENSEX' ? 100 : 
 
 // ───────────────────────────────── top / feed status
 function marketOpen() {           // NSE/BSE cash hours in IST, Mon-Fri (holidays show as "no ticks")
+  if (S.px) return !!(S.pstate && S.pstate.active && !S.pstate.ended);
   const n = new Date(Date.now() + (330 + new Date().getTimezoneOffset()) * 60000), d = n.getDay(), m = n.getHours() * 60 + n.getMinutes();
   return d >= 1 && d <= 5 && m >= 555 && m <= 930;
 }
@@ -417,6 +510,8 @@ function renderTop() {
   const c = S.chain;
   const p = $('feedPill');
   if (!c || !c.ok) { p.className = 'pill'; p.textContent = 'loading'; }
+  else if (c.last_close) { p.className = 'pill stale'; p.textContent = `last close · ${c.last_close}`; }
+  else if (S.px) { p.className = 'pill paper'; p.textContent = S.pstate && S.pstate.playing ? 'replaying' : 'replay paused'; }
   else if (!marketOpen()) { p.className = 'pill'; p.textContent = 'market closed · last prices'; }
   else if (c.tick_age != null && c.tick_age < 10) { p.className = 'pill live'; p.textContent = 'live ticks'; }
   else { p.className = 'pill stale'; p.textContent = c.tick_age == null ? 'no ticks' : `last tick ${Math.round(c.tick_age)}s`; }
@@ -485,6 +580,10 @@ function renderChain() {
   box.innerHTML = html;
   const key = S.index + '|' + c.expiry;
   if (S.scrolledTo !== key) { goAtm(); S.scrolledTo = key; } else box.scrollTop = st;
+  if (typeof paintCursor === 'function' && S.kb) {
+    if (S.cursor.k == null || !c.rows.some(r => r.strike === S.cursor.k)) S.cursor = { k: c.atm, t: S.cursor.t || 'CE' };
+    paintCursor(false);                             // re-mark only; scrolling follows the arrow keys
+  }
 }
 function goAtm() {
   const l = $('atmLine'), box = $('chain'); if (!l) return;
@@ -492,6 +591,7 @@ function goAtm() {
 }
 $('chain').onclick = e => {
   const b = e.target.closest('.bs button'); if (!b) return;
+  if (S.clickMode === 'trade') { startQuick(+b.dataset.k, b.dataset.t, b.dataset.a); return; }
   addLeg({ symbol: b.dataset.s, strike: +b.dataset.k, type: b.dataset.t, side: b.dataset.a });
 };
 
@@ -630,15 +730,29 @@ $('pg').addEventListener('click', async e => {
 });
 
 // ───────────────────────────────── analysis maths
+// Spot for the curves even with NO chain (weekend, expired token, a saved strategy on an old expiry):
+// live/last spot if we have it, else the middle of the strategy's own strikes.
+function spotNow() {
+  const u = (S.under[S.index] || {}).spot || (S.chain && S.chain.ok && S.chain.under && S.chain.under.spot);
+  if (u) return u;
+  const ks = S.legs.filter(l => l.on).map(l => l.strike);
+  return ks.length ? ks.reduce((a, b) => a + b) / ks.length : null;
+}
+// days to a leg's expiry (15:30 IST) from the page clock — used when its chain is not loaded
+function daysTo(expiry) {
+  const now = S.px && S.pstate ? new Date(`${S.pstate.session.date}T${S.pstate.time}+05:30`) : new Date();
+  return Math.max(0, (new Date(`${expiry}T15:30:00+05:30`) - now) / 86400000);
+}
 function legModel() {
   // everything the curves need, per active leg
-  const lot = lotOf(S.index), spot = (S.under[S.index] || {}).spot || (S.chain && S.chain.under.spot);
+  const lot = lotOf(S.index), spot = spotNow();
   return S.legs.filter(l => l.on && l.price != null).map(l => {
     const ck = S.chains[l.index + '|' + l.expiry] || (S.cache[l.index + '|' + l.expiry] ? { fwd: S.cache[l.index + '|' + l.expiry].synthetic_fut, T_days: S.cache[l.index + '|' + l.expiry].T_days } : null);
     const q = liveOf(l) || {};
     const iv = (q.iv || atmIv(l.index, l.expiry) || 12) / 100;
     return { l, qty: (l.side === 'B' ? 1 : -1) * l.lots * lot * S.mult, call: l.type === 'CE', K: l.strike,
-             entry: l.price, ltp: q.ltp, iv, Tdays: ck ? ck.T_days : 0, basis: ck && spot ? ck.fwd / spot : 1, q };
+             entry: l.price, ltp: q.ltp, iv, Tdays: ck ? ck.T_days : daysTo(l.expiry),
+             basis: ck && spot && ck.fwd ? ck.fwd / spot : 1, q };
   });
 }
 function atmIv(idx, exp) {
@@ -672,7 +786,7 @@ function analyse() {
     $('mPrem').textContent = $('mUnr').textContent = $('mTot').textContent = '—';
     return;
   }
-  const spot = (S.under[S.index] || {}).spot || S.chain.under.spot;
+  const spot = spotNow();
   const tE = earliest(M);
   // MTM
   const mtm = M.reduce((a, m) => a + (m.ltp != null ? m.qty * (m.ltp - m.entry) : 0), 0);
@@ -955,7 +1069,8 @@ async function loadBrokers() {
 function renderBrokerRows() {
   $('brokerList').innerHTML = S.brokers.map(b => {
     const ok = b.status === 'logged_in' && b.today, sel = S.dsel[b.id] || { on: false, mult: 1 };
-    const pill = ok ? '<span class="pill live st">LOGGED IN</span>'
+    const pill = b.kind === 'paper' ? '<span class="pill paper st">PAPER</span>'
+      : ok ? '<span class="pill live st">LOGGED IN</span>'
       : b.status === 'parked' ? '<span class="pill st" title="parked — not logging in">PARKED</span>'
       : b.status === 'no_creds' ? '<span class="pill st" title="add its keys to deployment/.env on the VPS">NO KEYS</span>'
       : `<span class="pill stale st" title="${esc(b.error)}">LOGGED OUT</span>`;
@@ -1002,11 +1117,12 @@ function renderReview() {
         <td>${l.index} ${dMon(l.expiry)} ${l.strike} ${l.type}</td><td>${l.lots * br[id]}</td><td>${l.lots * br[id] * lot}</td><td>${fmt(l.price)}</td></tr>`)).join('') +
       '</tbody></table>';
   const warn = [];
-  if (!S.control.armed) warn.push('Live trading is DISARMED — click "○ DISARMED" at the top to arm it first.');
+  const realSel = ids.some(id => (S.brokers.find(b => b.id === id) || {}).kind !== 'paper');
+  if (!S.control.armed && realSel) warn.push('Live trading is DISARMED — click "○ DISARMED" at the top to arm it first (Paper works without arming).');
   if (!marketOpen()) warn.push('Market is closed — orders go only 09:15–15:30 IST, Mon–Fri.');
   if (legs.some(l => l.price == null)) warn.push('A leg has no price yet — wait for the chain to load.');
   $('dWarn').innerHTML = warn.map(w => `<div class="warnbox">${esc(w)}</div>`).join('');
-  $('dPlace').disabled = !ids.length || !S.control.armed || !marketOpen() || !legs.length;
+  $('dPlace').disabled = !ids.length || (realSel && !S.control.armed) || !marketOpen() || !legs.length;
 }
 $('btnLive').onclick = () => {
   if (!S.legs.filter(l => l.on).length) { toast('Add legs first'); return; }
@@ -1022,12 +1138,13 @@ $('dMargin').onclick = async () => {
   $('dMargin').disabled = false;
   if (!r.ok) { $('dErr').textContent = r.error; return; }
   const names = Object.fromEntries(S.brokers.map(b => [b.id, b.name]));
-  $('dErr').innerHTML = Object.entries(r.margin).map(([id, m]) => `<div class="mut">${esc(names[id])}: margin needed <b style="color:var(--hi)">${m.required == null ? (m.error ? 'n/a — ' + esc(m.error) : 'n/a (Kotak has no basket check)') : rs(m.required)}</b> · funds ${rs(m.funds)}${m.required != null && m.funds != null && m.required > m.funds ? ' <b class="neg">— NOT ENOUGH</b>' : ''}</div>`).join('');
+  $('dErr').innerHTML = Object.entries(r.margin).map(([id, m]) => `<div class="mut">${esc(names[id])}: margin needed <b style="color:var(--hi)">${m.required == null ? (m.error ? 'n/a — ' + esc(m.error) : ((S.brokers.find(b => b.id === id) || {}).kind === 'paper' ? 'none (paper)' : 'n/a (Kotak has no basket check)')) : rs(m.required)}</b> · funds ${rs(m.funds)}${m.required != null && m.funds != null && m.required > m.funds ? ' <b class="neg">— NOT ENOUGH</b>' : ''}</div>`).join('');
 };
 $('dPlace').onclick = async () => {
   const name = $('dName').value.trim(); if (!name) { $('dErr').textContent = 'Give the strategy a name'; return; }
   const br = chosen(), legs = legsForDeploy(), n = Object.keys(br).length;
-  if (!confirm(`Place REAL orders?\n\n"${name}" — ${legs.length} legs on ${n} broker${n > 1 ? 's' : ''} (${segVal('dMode')}, ${segVal('dProd')}).`)) return;
+  const allPaper = Object.keys(br).every(id => (S.brokers.find(b => b.id === id) || {}).kind === 'paper');
+  if (!confirm(`${allPaper ? 'Place PAPER orders' : 'Place REAL orders'}?\n\n"${name}" — ${legs.length} legs on ${n} broker${n > 1 ? 's' : ''} (${segVal('dMode')}, ${segVal('dProd')}).`)) return;
   $('dPlace').disabled = true; $('dErr').textContent = 'sending…';
   const body = { name, strategy_id: S.sid, legs, brokers: br, mode: segVal('dMode'), product: segVal('dProd'),
                  sl: +$('dSl').value || null, target: +$('dTgt').value || null, exit_time: $('dExit').value || null };
@@ -1058,14 +1175,20 @@ function renderLive(force) {
   box.innerHTML = S.deps.map(d => {
     const busy = ['placing', 'closing'].includes(d.status);
     const legs = d.legs.map(l => `<tr>
-      <td><b class="${l.side === 'B' ? 'pos' : 'neg'}">${l.side}</b> ${l.index} ${l.strike} ${l.type} <span class="mut">${dMon(l.expiry)}</span></td>
+      <td><b class="${(l.net || (l.side === 'B' ? 1 : -1)) > 0 ? 'pos' : 'neg'}">${l.net > 0 ? 'B' : l.net < 0 ? 'S' : l.side}</b> ${l.index} ${l.strike} ${l.type} <span class="mut">${dMon(l.expiry)}</span></td>
       <td>${l.net}</td><td>${fmt(l.avg)}</td><td>${fmt(l.ltp)}</td><td class="${sgn(l.pnl)}">${rs(l.pnl)}</td>
       <td>${l.net && !busy ? `<button data-exit="${d.id}" data-leg="${l.id}">Exit</button>` : ''}</td></tr>`).join('');
     return `<div class="dep" data-dep="${d.id}">
-      <div class="hd"><span class="nm">${esc(d.name)}</span><span class="mut">${esc(d.broker_name)} · ×${d.mult} · ${d.mode} · ${d.product}</span>
+      <div class="hd"><span class="nm">${esc(d.name)}</span>${d.kind === 'paper' ? '<span class="pill paper">PAPER</span>' : ''}<span class="mut">${esc(d.broker_name)} · ×${d.mult} · ${d.mode} · ${d.product}</span>
         <span class="pill ${STATUS_CLS[d.status] || ''}">${esc(d.status.replace('_', ' '))}</span>
         <span class="mtm num ${sgn(d.mtm)}">${rs(d.mtm)}</span></div>
       <table class="num"><thead><tr><th>Leg</th><th>Net qty</th><th>Avg</th><th>LTP</th><th>P&L</th><th></th></tr></thead><tbody>${legs}</tbody></table>
+      <div class="imbline num">
+        <span>Short CE <b>${rs(d.short_ce)}</b></span><span>Short PE <b>${rs(d.short_pe)}</b></span>
+        <span>CE/PE imbalance <b class="${d.imbalance > 0 ? 'neg' : d.imbalance < 0 ? 'pos' : ''}">${d.imbalance == null ? '—' : (d.imbalance > 0 ? '+' : '') + fmt(d.imbalance, 1) + '%'}</b>
+          <span class="mut">${d.imbalance == null ? '' : d.imbalance > 0 ? 'CE-heavy' : d.imbalance < 0 ? 'PE-heavy' : 'balanced'}</span></span>
+        <button data-chart="${d.id}" style="margin-left:auto">📈 MTM / imbalance chart</button>
+      </div>
       <div class="ft num">
         <label class="mut">SL ₹ <input type="number" data-r="sl" value="${d.sl ?? ''}" placeholder="none"></label>
         <label class="mut">Target ₹ <input type="number" data-r="target" value="${d.target ?? ''}" placeholder="none"></label>
@@ -1081,6 +1204,7 @@ function renderLive(force) {
 }
 $('liveList').addEventListener('click', async e => {
   const t = e.target;
+  if (t.dataset.chart) { openChart(t.dataset.chart); return; }
   if (t.dataset.exit) {
     if (!confirm('Exit this leg at market?')) return;
     const r = await jpost(`/deployments/${t.dataset.exit}/squareoff`, { leg: +t.dataset.leg }); toast(r.ok ? 'Exiting leg…' : r.error, 4000);
@@ -1107,7 +1231,315 @@ function renderOrders() {
         <td class="${o.status === 'REJECTED' ? 'neg' : o.status === 'COMPLETE' ? 'pos' : ''}">${o.status}${o.msg ? ' ⓘ' : ''}</td><td>${o.filled || 0}</td><td>${fmt(o.avg)}</td></tr>`).join('') +
       '</tbody></table>';
 }
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { ['saveModal', 'liveModal'].forEach(i => $(i).classList.remove('open')); $('drawer').classList.remove('open'); } });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { ['saveModal', 'liveModal'].forEach(i => $(i).classList.remove('open')); $('drawer').classList.remove('open'); if (S.chartDep) closeChart(); } });
+
+// ───────────────────────────────── quick trading: keyboard + Trade-mode clicks (MCX-terminal keys)
+// KB on:  ← CE  → PE  ↑↓ strike   + or = BUY   − SELL   (held key = one ticket)
+// Ticket: Enter = send (twice above CONFIRM_LOTS)  Esc = cancel  ↑↓ = lots
+const CONFIRM_LOTS = 5;
+S.kb = false; S.clickMode = 'build'; S.cursor = { k: null, t: 'CE' }; S.qticket = null;
+try { const q = JSON.parse(localStorage.getItem('sb_quick') || '{}'); Object.assign(S, { qTarget: q.t || 'paper', qLots: q.l || 1, qHedge: !!q.h, qHedgeN: q.n || 4 }); }
+catch (e) { Object.assign(S, { qTarget: 'paper', qLots: 1, qHedge: false, qHedgeN: 4 }); }
+function saveQuick() { try { localStorage.setItem('sb_quick', JSON.stringify({ t: S.qTarget, l: S.qLots, h: S.qHedge, n: S.qHedgeN })); } catch (e) { } }
+
+function renderQbar() {
+  const opts = (S.px || !S.brokers.length ? [{ id: 'paper', name: 'Paper', status: 'logged_in', today: true }] : S.brokers)
+    .filter(b => b.status !== 'parked')
+    .map(b => `<option value="${b.id}" ${b.id === S.qTarget ? 'selected' : ''} ${b.status === 'logged_in' && b.today ? '' : 'disabled'}>${esc(b.name)}${b.status === 'logged_in' && b.today ? '' : ' (logged out)'}</option>`).join('');
+  $('qbar').innerHTML = `
+    <div class="seg" id="qMode" title="Build = B/S adds legs to the playground · Trade = B/S sends an order now">
+      <button data-v="build" class="${S.clickMode === 'build' ? 'on' : ''}">Build</button><button data-v="trade" class="${S.clickMode === 'trade' ? 'on' : ''}">Trade</button></div>
+    <label>on <select id="qTarget">${opts}</select></label>
+    <label>Lots <input type="number" id="qLots" min="1" max="50" value="${S.qLots}" style="width:52px"></label>
+    <label title="each SELL also BUYS a hedge N strikes further out — bought FIRST"><input type="checkbox" id="qHedge" ${S.qHedge ? 'checked' : ''}> Hedge
+      <input type="number" id="qHedgeN" min="1" max="20" value="${S.qHedgeN}" style="width:44px"> out</label>
+    <button id="qKb" class="${S.kb ? 'on' : ''}" title="Keyboard: ← CE  → PE  ↑↓ strike  + BUY  − SELL">⌨ ${S.kb ? 'KB ON' : 'KB'}</button>
+    <span class="mut" id="qInfo">${S.px ? 'PRACTICE — replayed prices, paper fills' : S.qTarget === 'paper' ? 'PAPER — live prices, no broker' : (S.control.armed ? '<b class="neg">LIVE orders</b>' : 'disarmed — arm to trade live')}</span>`;
+}
+$('qbar').addEventListener('click', e => {
+  const m = e.target.closest('#qMode button');
+  if (m) { S.clickMode = m.dataset.v; renderQbar(); toast(S.clickMode === 'trade' ? 'Trade mode: chain B/S sends an order' : 'Build mode: chain B/S adds to the playground'); return; }
+  if (e.target.id === 'qKb') { S.kb = !S.kb; if (S.kb && S.cursor.k == null && S.chain && S.chain.ok) S.cursor = { k: S.chain.atm, t: 'CE' }; renderQbar(); paintCursor(); if (S.kb) setLeft('chain'); }
+});
+$('qbar').addEventListener('change', e => {
+  if (e.target.id === 'qTarget') S.qTarget = e.target.value;
+  if (e.target.id === 'qLots') S.qLots = Math.max(1, Math.min(50, +e.target.value | 0));
+  if (e.target.id === 'qHedge') S.qHedge = e.target.checked;
+  if (e.target.id === 'qHedgeN') S.qHedgeN = Math.max(1, +e.target.value | 0);
+  saveQuick(); renderQbar();
+});
+
+function paintCursor(scroll = true) {
+  document.querySelectorAll('#chain td.cur').forEach(td => td.classList.remove('cur'));
+  if (!S.kb || S.cursor.k == null) return;
+  const tr = document.querySelector(`#chain tr[data-k="${S.cursor.k}"]`); if (!tr) return;
+  const td = tr.querySelector(S.cursor.t === 'CE' ? 'td.ltp.c' : 'td.ltp.p');
+  if (td) { td.classList.add('cur'); if (scroll) td.scrollIntoView({ block: 'nearest' }); }
+}
+function rowAt(k) { return S.chain && S.chain.ok ? S.chain.rows.find(r => r.strike === k) : null; }
+document.addEventListener('keydown', e => {
+  if (S.qticket || !S.kb || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (document.querySelector('.modal-bg.open')) return;
+  const t = e.target; if (t && ['INPUT', 'SELECT', 'TEXTAREA'].includes(t.tagName)) return;
+  if (!S.chain || !S.chain.ok) return;
+  if (e.key.startsWith('Arrow')) {
+    e.preventDefault();
+    const ks = S.chain.rows.map(r => r.strike), i = ks.indexOf(S.cursor.k);
+    if (e.key === 'ArrowLeft') S.cursor.t = 'CE';
+    else if (e.key === 'ArrowRight') S.cursor.t = 'PE';
+    else if (e.key === 'ArrowUp' && i > 0) S.cursor.k = ks[i - 1];
+    else if (e.key === 'ArrowDown' && i < ks.length - 1) S.cursor.k = ks[i + 1];
+    else if (i < 0) S.cursor.k = S.chain.atm;
+    paintCursor(); return;
+  }
+  const buy = e.key === '+' || e.key === '=' || e.code === 'NumpadAdd', sell = e.key === '-' || e.code === 'NumpadSubtract';
+  if (buy || sell) { e.preventDefault(); if (e.repeat) return; startQuick(S.cursor.k, S.cursor.t, buy ? 'B' : 'S'); }
+});
+
+function quickLegs(k, type, side) {
+  const r = rowAt(k), o = r && r[type];
+  if (!o || !o.symbol) { toast('no contract at that strike', 3000); return null; }
+  const base = { index: S.index, expiry: S.expiry[S.index], lots: S.qLots };
+  const legs = [{ ...base, strike: k, type, side, symbol: o.symbol }];
+  if (side === 'S' && S.qHedge) {
+    const ks = S.chain.rows.map(x => x.strike), i = ks.indexOf(k), j = type === 'CE' ? i + S.qHedgeN : i - S.qHedgeN;
+    const hr = j >= 0 && j < ks.length ? S.chain.rows[j] : null, ho = hr && hr[type];
+    if (!ho || !ho.symbol) { toast(`no hedge strike ${S.qHedgeN} out — order NOT sent`, 4000); return null; }
+    legs.unshift({ ...base, strike: hr.strike, type, side: 'B', symbol: ho.symbol, hedge: true });
+  }
+  return legs;
+}
+function startQuick(k, type, side) {
+  const legs = quickLegs(k, type, side); if (!legs) return;
+  const tgt = S.brokers.find(b => b.id === S.qTarget) || { id: 'paper', name: 'Paper' };
+  S.qticket = { legs, side, tgt, confirmed: false };
+  $('qtBox').className = 'modal qt ' + (side === 'B' ? 'buy' : 'sell');
+  $('qtSide').textContent = (side === 'B' ? 'BUY' : 'SELL') + ' · ' + tgt.name + (tgt.id === 'paper' ? ' (PAPER)' : ' — LIVE');
+  $('qtSym').innerHTML = legs.map(l => `${l.hedge ? '<span class="mut">+ hedge</span> ' : ''}<b class="${l.side === 'B' ? 'pos' : 'neg'}">${l.side === 'B' ? 'BUY' : 'SELL'}</b> ${l.index} ${dMon(l.expiry)} ${l.strike} ${l.type}`).join('<br>');
+  $('qtLots').value = S.qLots;
+  $('qticket').classList.add('open'); qtPaint();
+  $('qtLots').focus(); $('qtLots').select();
+}
+function qtPaint() {
+  const q = S.qticket; if (!q) return;
+  const lots = Math.max(0, +$('qtLots').value | 0), lot = lotOf(S.index);
+  const r = rowAt(q.legs[q.legs.length - 1].strike), o = r && r[q.legs[q.legs.length - 1].type] || {};
+  $('qtQuote').textContent = `LTP ${fmt(o.ltp)} · Bid ${fmt(o.bid)} · Ask ${fmt(o.ask)} · ${lots} lot${lots > 1 ? 's' : ''} = ${lots * lot} qty${q.legs.length > 1 ? ' each leg' : ''}`;
+  let w = '';
+  if (lots > 50) w = 'Over the 50-lot cap — will be refused';
+  else if (lots > CONFIRM_LOTS) w = q.confirmed ? `Press Enter again to send ${lots} lots` : `${lots} lots — press Enter twice to confirm`;
+  if (q.legs.some(l => l.hedge)) w = (w ? w + ' · ' : '') + 'hedge is bought FIRST';
+  if (q.tgt.id !== 'paper' && !S.control.armed) w = 'DISARMED — this live order will be refused (arm first, or switch to Paper)';
+  $('qtWarn').textContent = w;
+}
+function closeQt() { $('qticket').classList.remove('open'); S.qticket = null; }
+async function sendQt() {
+  const q = S.qticket; if (!q) return;
+  const lots = +$('qtLots').value | 0;
+  if (lots < 1) { toast('enter at least 1 lot'); return; }
+  if (lots > CONFIRM_LOTS && !q.confirmed) { q.confirmed = true; qtPaint(); return; }
+  const legs = q.legs.map(l => ({ ...l, lots }));
+  closeQt();
+  const r = await jpost('/quick', { broker: q.tgt.id, product: 'NRML', legs });
+  toast(r.ok ? `${q.side === 'B' ? 'BUY' : 'SELL'} sent → ${q.tgt.name}${q.tgt.id === 'paper' ? ' (paper)' : ''}` : (r.error || 'refused'), 4000);
+  pollDeps();
+}
+$('qtGo').onclick = sendQt; $('qtCancel').onclick = closeQt;
+$('qticket').addEventListener('click', e => { if (e.target.id === 'qticket') closeQt(); });
+$('qtLots').addEventListener('input', () => { if (S.qticket) { S.qticket.confirmed = false; qtPaint(); } });
+$('qticket').addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); if (!e.repeat) sendQt(); }
+  else if (e.key === 'Escape') { e.preventDefault(); closeQt(); }
+  else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    e.preventDefault(); $('qtLots').value = Math.max(1, (+$('qtLots').value | 0) + (e.key === 'ArrowUp' ? 1 : -1));
+    S.qticket.confirmed = false; qtPaint();
+  }
+});
+
+// ───────────────────────────────── MTM + CE/PE imbalance charts (per strategy, 5-s samples)
+S.chartDep = null; S.chartTimer = null; S.chartPts = [];
+async function openChart(depId) {
+  S.chartDep = depId;
+  const d = S.deps.find(x => x.id === depId);
+  $('chTitle').textContent = depId.startsWith('session:') ? `${S.pstate ? S.pstate.session.name : 'Practice'} — all strategies` : d ? `${d.name} · ${d.broker_name}` : depId;
+  $('chartModal').classList.add('open');
+  await loadChart(true);
+  clearInterval(S.chartTimer); S.chartTimer = setInterval(loadChart, 5000);
+}
+function closeChart() { $('chartModal').classList.remove('open'); clearInterval(S.chartTimer); S.chartTimer = null; S.chartDep = null; }
+$('chClose').onclick = closeChart;
+$('chartModal').addEventListener('click', e => { if (e.target.id === 'chartModal') closeChart(); });
+$('chDate').onchange = () => loadChart(true);
+async function loadChart(resetDates) {
+  if (!S.chartDep) return;
+  const r = S.chartDep.startsWith('session:')
+    ? await fetch(API + `/practice/sessions/${S.chartDep.slice(8)}/combined`).then(x => x.json())
+    : await jget(`/deployments/${S.chartDep}/history`);
+  if (!r.ok) { $('chInfo').textContent = r.error; return; }
+  const all = r.points || [];
+  const dates = [...new Set(all.map(p => p.t.slice(0, 10)))].sort();
+  if (resetDates || ![...$('chDate').options].some(o => o.value === $('chDate').value)) {
+    const keep = $('chDate').value;
+    $('chDate').innerHTML = dates.map(x => `<option ${x === (dates.includes(keep) ? keep : dates[dates.length - 1]) ? 'selected' : ''}>${x}</option>`).join('');
+  }
+  const day = $('chDate').value;
+  S.chartPts = all.filter(p => p.t.slice(0, 10) === day);
+  drawCharts();
+}
+function drawCharts() {
+  const P = S.chartPts;
+  if (!P.length) { $('chInfo').textContent = 'No samples yet — points are recorded every 5 s while the strategy has an open position in market hours.'; ['chMtm', 'chImb'].forEach(i => { const c = $(i); c.getContext('2d').clearRect(0, 0, c.width, c.height); }); return; }
+  const last = P[P.length - 1], imbs = P.filter(p => p.imb != null);
+  const hi = imbs.length ? imbs.reduce((a, p) => p.imb > a.imb ? p : a) : null, lo = imbs.length ? imbs.reduce((a, p) => p.imb < a.imb ? p : a) : null;
+  const mx = P.filter(p => p.mtm != null);
+  const best = mx.length ? mx.reduce((a, p) => p.mtm > a.mtm ? p : a) : null, worst = mx.length ? mx.reduce((a, p) => p.mtm < a.mtm ? p : a) : null;
+  $('chInfo').innerHTML = `${P.length} samples · last ${last.t.slice(11)} · MTM <b class="${sgn(last.mtm)}">${rs(last.mtm)}</b>` +
+    (best ? ` · high <b class="pos">${rs(best.mtm)}</b> @ ${best.t.slice(11, 16)} · low <b class="neg">${rs(worst.mtm)}</b> @ ${worst.t.slice(11, 16)}` : '') +
+    (hi ? `<br>CE/PE imbalance now <b>${fmt(last.imb, 1)}%</b> · most CE-heavy <b>${fmt(hi.imb, 1)}%</b> @ ${hi.t.slice(11, 16)} · most PE-heavy <b>${fmt(lo.imb, 1)}%</b> @ ${lo.t.slice(11, 16)}` : '<br>CE/PE imbalance: no short legs');
+  lineChart($('chMtm'), P, 'mtm', v => rs(v), true);
+  lineChart($('chImb'), P, 'imb', v => fmt(v, 1) + '%', false);
+}
+function lineChart(cv, P, key, lab, fillPnl) {
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr; const ctx = cv.getContext('2d'); ctx.scale(dpr, dpr);
+  const pts = P.map(p => ({ x: hm(p.t), y: p[key] })).filter(p => p.y != null);
+  ctx.font = '11px ui-sans-serif, system-ui'; ctx.fillStyle = '#64748b';
+  if (!pts.length) { ctx.fillText('no data', 10, 20); cv._map = null; return; }
+  const x0 = Math.min(...pts.map(p => p.x)), x1 = Math.max(x0 + 1, ...pts.map(p => p.x));
+  let y0 = Math.min(0, ...pts.map(p => p.y)), y1 = Math.max(0, ...pts.map(p => p.y)); const pad = (y1 - y0) * 0.08 || 1; y0 -= pad; y1 += pad;
+  const L = 70, R = 10, T = 8, B = 22, X = x => L + (x - x0) / (x1 - x0) * (W - L - R), Y = y => T + (y1 - y) / (y1 - y0) * (H - T - B);
+  ctx.strokeStyle = '#1e293b';
+  for (let i = 0; i <= 4; i++) { const v = y0 + (y1 - y0) * i / 4; ctx.beginPath(); ctx.moveTo(L, Y(v)); ctx.lineTo(W - R, Y(v)); ctx.stroke(); ctx.fillText(lab(v), 4, Y(v) + 4); }
+  for (let i = 0; i <= 5; i++) { const v = x0 + (x1 - x0) * i / 5; ctx.fillText(hhmm(v), X(v) - 14, H - 6); }
+  ctx.strokeStyle = '#475569'; ctx.beginPath(); ctx.moveTo(L, Y(0)); ctx.lineTo(W - R, Y(0)); ctx.stroke();
+  if (fillPnl) for (const pos of [true, false]) {
+    ctx.beginPath(); ctx.moveTo(X(pts[0].x), Y(0));
+    pts.forEach(p => ctx.lineTo(X(p.x), Y(pos ? Math.max(p.y, 0) : Math.min(p.y, 0))));
+    ctx.lineTo(X(pts[pts.length - 1].x), Y(0)); ctx.closePath(); ctx.fillStyle = pos ? 'rgba(34,197,94,.22)' : 'rgba(244,63,94,.22)'; ctx.fill();
+  }
+  ctx.strokeStyle = fillPnl ? '#e2e8f0' : '#f59e0b'; ctx.lineWidth = 1.6; ctx.beginPath();
+  pts.forEach((p, i) => i ? ctx.lineTo(X(p.x), Y(p.y)) : ctx.moveTo(X(p.x), Y(p.y))); ctx.stroke(); ctx.lineWidth = 1;
+  if (!fillPnl) { ctx.fillStyle = '#64748b'; ctx.fillText('↑ CE-heavy', W - R - 64, T + 12); ctx.fillText('↓ PE-heavy', W - R - 64, H - B - 4); }
+  cv._map = { X, x0, x1, L, R, W, P };
+}
+const hm = t => { const [h, m, s] = t.slice(11).split(':').map(Number); return h * 3600 + m * 60 + s; };
+const hhmm = v => `${String(Math.floor(v / 3600)).padStart(2, '0')}:${String(Math.floor(v % 3600 / 60)).padStart(2, '0')}`;
+['chMtm', 'chImb'].forEach(id => {
+  $(id).addEventListener('mousemove', e => {
+    const m = $(id)._map; if (!m) return;
+    const r = $(id).getBoundingClientRect(), x = m.x0 + (e.clientX - r.left - m.L) / (m.W - m.L - m.R) * (m.x1 - m.x0);
+    const p = m.P.reduce((a, q) => Math.abs(hm(q.t) - x) < Math.abs(hm(a.t) - x) ? q : a);
+    const tip = $('chTip'); tip.style.display = 'block';
+    tip.innerHTML = `${p.t.slice(11)}<br>MTM <b class="${sgn(p.mtm)}">${rs(p.mtm)}</b><br>Imbalance <b>${p.imb == null ? '—' : fmt(p.imb, 1) + '%'}</b><br>Short CE ${rs(p.ce)} · PE ${rs(p.pe)}`;
+    const box = $('chartBox').getBoundingClientRect();
+    tip.style.left = Math.min(e.clientX - box.left + 14, box.width - 190) + 'px'; tip.style.top = (e.clientY - box.top + 10) + 'px';
+  });
+  $(id).addEventListener('mouseleave', () => $('chTip').style.display = 'none');
+});
+window.addEventListener('resize', () => { if (S.chartDep) drawCharts(); });
+
+// ───────────────────────────────── PRACTICE MODE (replay a past day through this same screen)
+S.px = false; S.pstate = null;
+function pxEnter(st) {
+  S.px = true; S.pstate = st;
+  const sess = st.session;
+  S.index = sess.index; S.expiry = { NIFTY: null, SENSEX: null }; S.expiry[sess.index] = sess.expiry;
+  S.legs = []; S.cache = {}; S.quotes = {}; S.chain = null; S.scrolledTo = null; S.sid = null;
+  S.name = sess.name; $('stratName').textContent = sess.name;
+  S.qTarget = 'paper';
+  document.body.classList.add('practice');
+  $('pxBar').style.display = 'flex';
+  loadMeta().then(() => { renderIdxBtns(); renderExpiries(); pollChain(); });
+  renderPg(); analyse(); renderPx(); pollDeps(); renderQbar();
+  $('pxModal').classList.remove('open');
+  toast(`Practice: ${sess.name} — press ▶ to start the clock`, 4000);
+}
+function pxLeave() {
+  S.px = false; S.pstate = null;
+  document.body.classList.remove('practice');
+  $('pxBar').style.display = 'none';
+  S.legs = []; S.cache = {}; S.quotes = {}; S.chain = null; S.scrolledTo = null; S.expiry = { NIFTY: null, SENSEX: null };
+  S.name = 'New strategy'; $('stratName').textContent = S.name;
+  loadMeta().then(() => { renderIdxBtns(); renderExpiries(); pollChain(); });
+  renderPg(); analyse(); pollDeps(); renderQbar();
+}
+function renderPx() {
+  const st = S.pstate; if (!st || !st.active) return;
+  const s = st.session;
+  $('pxName').textContent = `${s.index} · ${new Date(s.date + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} · expiry ${dMon(s.expiry)}`;
+  $('pxSrc').textContent = s.seconds ? `1-second data on ${s.seconds} contracts + 1-minute` : '1-minute data';
+  $('pxClock').textContent = st.ended ? `${st.time} · day over` : st.time;
+  $('pxPlay').textContent = st.playing ? '⏸ Pause' : '▶ Play';
+  $('pxPlay').classList.toggle('on', st.playing);
+  [...$('pxSpeeds').children].forEach(b => b.classList.toggle('on', +b.dataset.v === st.speed));
+  $('pxProg').style.width = (100 * st.progress).toFixed(2) + '%';
+}
+async function pxControl(action, value) {
+  const r = await fetch(API + '/practice/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, value }) }).then(x => x.json());
+  if (!r.ok) { toast(r.error, 4000); return; }
+  S.pstate = r; renderPx();
+}
+$('pxPlay').onclick = () => pxControl(S.pstate && S.pstate.playing ? 'pause' : 'play');
+$('pxSpeeds').onclick = e => { const b = e.target.closest('button'); if (b) pxControl('speed', +b.dataset.v); };
+$('pxJumpGo').onclick = () => { const v = $('pxJump').value; if (v) pxControl('seek', v); };
+$('pxEnd').onclick = async () => {
+  if (!confirm('End practice? The session is saved — resume it any time from 🎓 Practice.')) return;
+  await fetch(API + '/practice/end', { method: 'POST' }); pxLeave(); toast('Practice saved and closed');
+};
+$('pxChart').onclick = () => openChart('session:' + S.pstate.session.id);
+document.addEventListener('keydown', e => {           // Space = play/pause while practising (not while typing)
+  if (!S.px || e.code !== 'Space' || S.qticket || document.querySelector('.modal-bg.open')) return;
+  const t = e.target; if (t && ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(t.tagName)) return;
+  e.preventDefault(); $('pxPlay').click();
+});
+async function pollPx() {
+  if (!S.px) return;
+  try { const r = await fetch(API + '/practice/state', { cache: 'no-store' }).then(x => x.json()); if (r.ok && r.active) { S.pstate = r; renderPx(); } else if (r.ok && !r.active) pxLeave(); } catch (e) { }
+}
+
+// ---------- practice picker
+$('btnPx').onclick = () => { $('pxModal').classList.add('open'); pxPicker(); };
+$('pxClose').onclick = () => $('pxModal').classList.remove('open');
+$('pxModal').addEventListener('click', e => { if (e.target.id === 'pxModal') $('pxModal').classList.remove('open'); });
+let pxTimer = null;
+async function pxPicker() {
+  const [d, ss] = await Promise.all([fetch(API + '/practice/days').then(x => x.json()), fetch(API + '/practice/sessions').then(x => x.json())]);
+  const idx = $('pxIdx').value, date = $('pxDate').value;
+  const packs = (d.packs || []);
+  const have = packs.find(p => p.index === idx && p.date === date);
+  $('pxReady').innerHTML = packs.length ? packs.map(p => `<button class="${p.index === idx && p.date === date ? 'on' : ''}" data-pi="${p.index}" data-pd="${p.date}">${p.index} ${p.date.slice(8)}-${p.date.slice(5, 7)}${p.seconds ? ' ⚡' : ''}</button>`).join('') : '<span class="mut">none yet</span>';
+  const job = d.job || {};
+  const busy = job.state === 'running' || (job.state === 'queued' && !have);
+  const bt = d.batch || {};
+  $('pxBatch').innerHTML = bt.total ? `Background 2026 download: <b>${bt.ready}/${bt.total}</b> days ready${bt.running ? ` · now ${esc(bt.current || '')}` : ' · finished'}${bt.errors ? ` · ${bt.errors} errors` : ''}` : '';
+  $('pxJob').innerHTML = job.state && job.state !== 'idle' ? `<b>${job.index} ${job.date}</b> — ${job.state}${job.error ? ': ' + esc(job.error) : ''}<br>${(job.lines || []).slice(-4).map(esc).join('<br>')}` : '';
+  $('pxGet').disabled = busy || !date || (have && (have.seconds || !$('pxSec').checked));
+  $('pxGet').textContent = have && $('pxSec').checked && !have.seconds ? 'Add 1-second data' : 'Download day';
+  $('pxStart').disabled = !have || busy;
+  $('pxHint').textContent = !date ? 'Pick a date.' : have ? `Ready: expiry ${have.expiry}, ${have.strikes} strikes${have.seconds ? ', with 1-second data' : ''}.` : 'Not downloaded yet — about 5 minutes (1-second adds ~15 min).';
+  $('pxSess').innerHTML = (ss.sessions || []).length ? ss.sessions.slice(0, 15).map(s => `<div class="it"><span class="nm">${esc(s.name)}</span>
+     <span class="mut num">${s.clock || ''}${s.mtm != null ? ' · ' + rs(s.mtm) : ''}</span><button class="pri" data-resume="${s.id}">Resume</button></div>`).join('') : '<div class="mut">No practice sessions yet</div>';
+  clearTimeout(pxTimer); if (busy && $('pxModal').classList.contains('open')) pxTimer = setTimeout(pxPicker, 3000);
+}
+$('pxReady').onclick = e => { const b = e.target.closest('[data-pi]'); if (!b) return; $('pxIdx').value = b.dataset.pi; $('pxDate').value = b.dataset.pd; pxPicker(); };
+['pxIdx', 'pxDate', 'pxSec'].forEach(id => $(id).onchange = pxPicker);
+$('pxGet').onclick = async () => {
+  const r = await jpostRaw('/practice/prepare', { index: $('pxIdx').value, date: $('pxDate').value, seconds: $('pxSec').checked });
+  if (!r.ok) toast(r.error, 5000); pxPicker();
+};
+$('pxStart').onclick = async () => {
+  const r = await jpostRaw('/practice/start', { index: $('pxIdx').value, date: $('pxDate').value });
+  if (!r.ok) { toast(r.error, 5000); return; } pxEnter(r);
+};
+$('pxSess').onclick = async e => {
+  const b = e.target.closest('[data-resume]'); if (!b) return;
+  const r = await jpostRaw('/practice/resume', { id: b.dataset.resume });
+  if (!r.ok) { toast(r.error, 5000); return; } pxEnter(r);
+};
+async function jpostRaw(u, b) { const r = await fetch(API + u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); return r.json(); }
+(async () => {                                         // a practice left running (page reload) -> re-enter it
+  try { const r = await fetch(API + '/practice/state').then(x => x.json()); if (r.ok && r.active) pxEnter(r); } catch (e) { }
+})();
 
 // ───────────────────────────────── polling
 let chainBusy = false, quoteBusy = false;
@@ -1155,6 +1587,10 @@ async function loadMeta() {
 (async function init() {
   renderIdxBtns(); renderPg(); analyse();
   pollDeps(); setInterval(pollDeps, 2000);          // live positions never wait for the chain
+  renderQbar();
+  const refreshBrokers = async () => { try { const r = await jget('/brokers'); if (r.ok) { S.brokers = r.brokers; S.control = r.control; if (!S.qticket) renderQbar(); } } catch (e) { } };
+  refreshBrokers(); setInterval(refreshBrokers, 15000);
+  setInterval(pollPx, 500);
   await loadMeta();
   for (let i = 0; i < 20 && !(S.meta && S.meta.expiries[S.index]); i++) { await new Promise(r => setTimeout(r, 1000)); await loadMeta(); }
   pollChain();

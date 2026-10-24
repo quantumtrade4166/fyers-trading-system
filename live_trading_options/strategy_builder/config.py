@@ -30,6 +30,11 @@ VIX_SYMBOL = "NSE:INDIAVIX-INDEX"
 INDICES = ("NIFTY", "SENSEX")
 
 STRIKECOUNT = 50          # strikes each side of ATM from Fyers optionchain (50 is its max)
-REST_REFRESH_S = 15       # full chain re-pull (OI, bid/ask, new strikes) per watched expiry
-WATCH_TTL_S = 600         # an expiry nobody has looked at for 10 min is dropped from the feed
+# Fyers REST is capped at 5,000 requests/day for the WHOLE account (strangle engine, data tasks and
+# this builder share it — hit on 2026-10-24). So the builder pulls the chain only while a page is
+# actually looking, once a minute (prices between pulls stream over the websocket, which is free),
+# and never more than DAILY_REST_CAP times a day.
+REST_REFRESH_S = 60       # full chain re-pull (OI, new strikes) per watched expiry
+WATCH_TTL_S = 120         # no page has asked for this expiry for 2 min -> stop pulling it
+DAILY_REST_CAP = 1200     # builder's own ceiling, well inside the account's 5,000
 EXPIRY_HOUR = (15, 30)    # options expire 15:30 IST

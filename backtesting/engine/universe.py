@@ -68,8 +68,11 @@ def load_nifty500(sym: str) -> pd.DataFrame:
     return df[(df["volume"] > 0) & (df["high"] >= df["low"]) & (df["low"] > 0)]
 
 
+from backtesting.engine import bhav  # noqa: E402
+
 LOADERS = {"in_stocks_5m": (list_in_stocks, load_in_stock),
-           "nifty500_1d": (list_nifty500, load_nifty500)}
+           "nifty500_1d": (list_nifty500, load_nifty500),
+           "bhav_1d": (bhav.list_symbols, bhav.load)}   # survivorship-free NSE
 
 
 # ── Session rules ────────────────────────────────────────────────────────────
@@ -118,6 +121,11 @@ def _run_symbol(folder: str, specs: list, market: str) -> list[dict]:
     feat = vpa.add_vpa_features(df, intraday=mk["intraday"])
     feat_m = vpa.add_vpa_features(vpa.mirror(df), intraday=mk["intraday"])
     entry_ok, force = session_masks(feat, mk)
+    if "tradable" in feat:          # point-in-time universe (e.g. bhavcopy top 500)
+        entry_ok = entry_ok & feat["tradable"].to_numpy(bool)
+    jump = (feat["open"] / feat["close"].shift(1)).to_numpy()
+    bad = (jump < 0.6) | (jump > 1.67)          # likely unadjusted corporate action
+    pos = {t: k for k, t in enumerate(feat.index)}
     hcfg = {k: mk[k] for k in ("capital", "risk_pct", "max_position_pct",
                                "entry_on", "cost_pct", "calendar")}
     hcfg["atr_col"] = "atr"
@@ -133,6 +141,10 @@ def _run_symbol(folder: str, specs: list, market: str) -> list[dict]:
             d = tr.to_dict()
             d.update(strategy=sid, cfg_id=cid, symbol=folder,
                      R=d["pnl"] / risk, R_gross=d["gross_pnl"] / risk)
+            a, b = pos[d["entry_time"]], pos[d["exit_time"]]
+            d["data_jump"] = bool(bad[a:b + 1].any())
+            if "adv20" in feat:
+                d["adv20"] = float(feat["adv20"].iat[a])
             rows.append(d)
     return rows
 

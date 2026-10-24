@@ -318,3 +318,10 @@ td.fd2 { animation: fd2 .32s ease-out; }
 .g-label { fill: var(--dim); font: 10.5px var(--mono); }
 .g-spot { stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 3 3; }
 .g-spot-l { fill: var(--accent); font: 600 11px var(--mono); }
+
+/* keyboard trading switch: always visible in the top bar */
+.kbtg {
+  border-radius: 5px; padding: 6px 11px; font: 700 11.5px var(--sans); letter-spacing: .05em; cursor: pointer; white-space: nowrap;
+  background: rgba(242, 82, 92, .12); border: 1px solid rgba(242, 82, 92, .5); color: #ff8a92;
+}
+.kbtg.on { background: rgba(31, 201, 122, .16); border-color: var(--up); color: #5fe3a6; box-shadow: 0 0 0 1px rgba(31, 201, 122, .25); }

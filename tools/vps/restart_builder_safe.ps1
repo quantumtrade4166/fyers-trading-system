@@ -18,6 +18,7 @@ Expand-Archive "$desk\builder2_bundle.zip" $tmp
 Get-ChildItem $tmp -Recurse -File | ForEach-Object {
     $rel = $_.FullName.Substring($tmp.Length + 1); $dst = Join-Path $repo $rel
     if (Test-Path $dst) { $b = Join-Path $bk $rel; New-Item -ItemType Directory -Force (Split-Path $b) | Out-Null; Copy-Item $dst $b }
+    New-Item -ItemType Directory -Force (Split-Path $dst) | Out-Null
     Copy-Item $_.FullName $dst -Force; "   $rel"
 }
 Push-Location $repo

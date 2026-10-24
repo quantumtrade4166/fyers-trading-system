@@ -41,4 +41,19 @@ MARKETS = {
         "oos_start":      "2019-01-01",
         "loader":         "nifty500_1d",
     },
+
+    # Same account rules as in_stocks_1d, but SURVIVORSHIP-FREE: every NSE
+    # stock from the bhavcopy archive, tradable only while it is in that
+    # day's top 500 by 63-day traded value (engine/bhav.py).
+    "nse_all_1d": {
+        "intraday":       False,
+        "cost_pct":       0.0015,
+        "capital":        1_000_000.0,
+        "risk_pct":       0.01,
+        "max_position_pct": 0.20,
+        "entry_on":       "next_open",
+        "calendar":       "business",
+        "oos_start":      "2019-01-01",
+        "loader":         "bhav_1d",
+    },
 }

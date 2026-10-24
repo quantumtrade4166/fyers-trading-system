@@ -37,6 +37,8 @@ from live_trading_options.strategy_builder import greeks as G
 log = logging.getLogger("sb.chain")
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 TOKEN_FILE = C.ROOT / "config" / "access_token.txt"
+LAST_FILE = C.DATA / "last_chain.json"      # last good chain -> shown as "last close" when Fyers can't answer
+PERSIST_EVERY = 60
 CLIENT_ID = "W09OMXQB8J-100"
 
 
@@ -63,7 +65,7 @@ def years_to(expiry: str, at: dt.datetime | None = None) -> float:
 
 
 class ChainFeed:
-    def __init__(self):
+    def __init__(self, load_cache: bool = True):
         self._lock = threading.RLock()
         self._rest = None
         self._token_sig = None          # (mtime, size) of the token file the clients were built from
@@ -80,6 +82,66 @@ class ChainFeed:
         self.vix: dict = {}
         self.errors: list[str] = []
         self._stop = threading.Event()
+        self._persisted = 0.0
+        self.rest_day, self.rest_calls, self.rest_blocked = None, 0, None
+        self._want_idx: set = set()
+        self._exp_day: dict = {}
+        self.cache_as_of: str | None = None     # set while the chain on screen is the saved last close
+        if load_cache:
+            self._load_last()
+
+    # ── last close on disk (weekends, holidays, an expired token, a Fyers outage) ──
+    def _persist(self):
+        if time.time() - self._persisted < PERSIST_EVERY:
+            return
+        self._persisted = time.time()
+        with self._lock:
+            chains = {}
+            for (idx, exp), ch in self.chains.items():
+                rows = []
+                for r in ch["by_symbol"].values():
+                    ltp, bid, ask = self._px(r)
+                    rows.append({**r, "ltp": ltp, "bid": bid, "ask": ask})
+                chains[f"{idx}|{exp}"] = rows
+            under = {}
+            for i in C.INDICES:
+                u = dict(self.under.get(i, {}))
+                lv = self.live.get(C.INDEX_SYMBOL[i]) or {}
+                if lv.get("ltp"):
+                    u["spot"] = lv["ltp"]
+                under[i] = u
+            doc = {"saved_at": now_ist().strftime("%Y-%m-%d %H:%M:%S"), "expiries": self.expiries,
+                   "under": under, "vix": self.vix, "chains": chains}
+        try:
+            C.DATA.mkdir(parents=True, exist_ok=True)
+            tmp = LAST_FILE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(doc), encoding="utf-8")
+            tmp.replace(LAST_FILE)
+        except Exception as e:
+            log.info("persist last chain: %s", e)
+
+    def _load_last(self):
+        try:
+            doc = json.loads(LAST_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        today = now_ist().date().isoformat()
+        self.cache_as_of = doc.get("saved_at")
+        as_of = dt.datetime.fromisoformat(self.cache_as_of).replace(tzinfo=IST) if self.cache_as_of else None
+        self.expiries = {i: [e for e in ex if e["date"] >= today] for i, ex in (doc.get("expiries") or {}).items()}
+        self.under = {i: u for i, u in (doc.get("under") or {}).items() if u}
+        self.vix = doc.get("vix") or {}
+        for key, rows in (doc.get("chains") or {}).items():
+            idx, exp = key.split("|")
+            if exp < today:
+                continue
+            by_symbol, by_strike = {}, {}
+            for r in rows:
+                by_symbol[r["symbol"]] = r
+                by_strike.setdefault(r["strike"], {})[r["type"]] = r
+            self.chains[(idx, exp)] = {"by_symbol": by_symbol, "by_strike": by_strike, "fetched": 0.0,
+                                       "as_of": as_of}
+        log.info("loaded last close from %s (%d chains)", self.cache_as_of, len(self.chains))
 
     # ── auth ────────────────────────────────────────────────────────────────
     def _token(self) -> str:
@@ -186,9 +248,20 @@ class ChainFeed:
             self.errors = (self.errors + [f"{now_ist():%H:%M:%S} {s}"])[-20:]
 
     def _pull(self, index: str, epoch: str | None):
+        day = now_ist().date().isoformat()
+        if self.rest_day != day:
+            self.rest_day, self.rest_calls, self.rest_blocked = day, 0, None
+        if self.rest_blocked:
+            raise RuntimeError(f"REST paused for today: {self.rest_blocked}")
+        if self.rest_calls >= C.DAILY_REST_CAP:
+            self.rest_blocked = f"builder used its {C.DAILY_REST_CAP} Fyers calls for today (ticks still stream)"
+            raise RuntimeError(self.rest_blocked)
+        self.rest_calls += 1
         r = self._rest.optionchain(data={"symbol": C.INDEX_SYMBOL[index], "strikecount": C.STRIKECOUNT,
                                          "timestamp": epoch or "", "greeks": 1})
         if not isinstance(r, dict) or r.get("s") != "ok":
+            if isinstance(r, dict) and (r.get("code") == -360 or "limit" in str(r.get("message", "")).lower()):
+                self.rest_blocked = "Fyers daily request limit reached — waiting for tomorrow (ticks still stream)"
             raise RuntimeError(f"optionchain {index} {epoch}: {str(r)[:200]}")
         return r["data"]
 
@@ -228,12 +301,14 @@ class ChainFeed:
         with self._lock:
             self.chains[(index, expiry)] = {"by_symbol": by_symbol, "by_strike": by_strike,
                                             "fetched": time.time()}
+            self.cache_as_of = None                 # a fresh pull: no longer showing the saved close
             if und:
                 self.under[index] = {**self.under.get(index, {}), **und, "rest_at": time.time()}
             if vixn:
                 self.vix = {"ltp": _f(vixn.get("ltp")), "chg": _f(vixn.get("ltpch"))}
             syms = sorted(self._wanted_symbols())
         self._subscribe(syms)
+        self._persist()
 
     def _expiry_epoch(self, index, expiry):
         for e in self.expiries.get(index, []):
@@ -242,24 +317,29 @@ class ChainFeed:
         return None
 
     def refresh_once(self):
-        """One maintenance pass: expiries, then every stale watched chain."""
+        """One maintenance pass — ONLY for what a page has asked for in the last WATCH_TTL_S.
+        Nobody looking = zero Fyers REST calls (the websocket keeps streaming open legs)."""
         self._ensure_clients()
         now_m = time.monotonic()
+        today = now_ist().date().isoformat()
+        with self._lock:
+            for k, seen in list(self.watch.items()):
+                if now_m - seen > C.WATCH_TTL_S:
+                    del self.watch[k]                    # keep the last chain on screen, just stop pulling it
+            wanted_idx = {i for i, _ in self.watch} | set(self._want_idx)
         for index in C.INDICES:
-            if not self.expiries.get(index):
-                data = self._pull(index, None)
+            ex = self.expiries.get(index) or []
+            stale = not ex or ex[0]["date"] < today or self._exp_day.get(index) != today
+            if index in wanted_idx and stale:
+                data = self._pull(index, None)            # expiry list: once a day per index
                 self._ingest_expiries(index, data)
+                self._exp_day[index] = today
                 ex = self.expiries.get(index)
                 if ex:
-                    self.watch.setdefault((index, ex[0]["date"]), now_m)
                     self._ingest_chain(index, ex[0]["date"], data)
                 time.sleep(0.25)
+        self._want_idx.clear()
         with self._lock:
-            nearest = {(i, self.expiries[i][0]["date"]) for i in C.INDICES if self.expiries.get(i)}
-            for k, seen in list(self.watch.items()):
-                if k not in nearest and now_m - seen > C.WATCH_TTL_S:
-                    del self.watch[k]
-                    self.chains.pop(k, None)
             todo = [k for k in self.watch
                     if time.time() - self.chains.get(k, {}).get("fetched", 0) >= C.REST_REFRESH_S]
         for index, expiry in todo:
@@ -301,6 +381,10 @@ class ChainFeed:
         with self._lock:
             self.watch[(index, expiry)] = time.monotonic()
 
+    def want_index(self, index: str):
+        """A page opened an index whose expiry list is not known yet."""
+        self._want_idx.add(index)
+
     def _px(self, row):
         """Live tick if we have one, else the REST value."""
         lv = self.live.get(row["symbol"]) or {}
@@ -326,6 +410,10 @@ class ChainFeed:
                     vx["chg"] = lv["ltp"] - lv["prev_close"]
         return {**u, "vix": vx}
 
+    def now(self) -> dt.datetime:
+        """The feed's clock. Practice mode (practice.py) overrides it with the replay clock."""
+        return now_ist()
+
     def snapshot(self, index: str, expiry: str) -> dict:
         """Chain rows with live prices + IV/Greeks recomputed now."""
         self.touch(index, expiry)
@@ -346,15 +434,17 @@ class ChainFeed:
                                    "oi": r["oi"], "oich": r["oich"], "volume": r["volume"]}
                 rows.append(rec)
             fetched = ch["fetched"]
+            as_of = ch.get("as_of")
         u = self.underlying(index)
         fwd = self._synthetic_forward(rows, u.get("fut") or u.get("spot"))
-        T = years_to(expiry)
+        T = years_to(expiry, as_of or self.now())     # a saved close keeps the IV of ITS moment
         self._add_greeks(rows, fwd, T)
         atm = min(strikes, key=lambda k: abs(k - (fwd or 0))) if strikes and fwd else None
         return {"ok": True, "index": index, "expiry": expiry, "lot": C.LOT_SIZE[index],
                 "step": C.STRIKE_STEP[index], "under": u, "synthetic_fut": fwd, "atm": atm,
                 "T_days": T * 365, "rows": rows, "rest_age": round(time.time() - fetched, 1),
-                "tick_age": round(time.time() - self.last_tick_at, 1) if self.last_tick_at else None}
+                "tick_age": round(time.time() - self.last_tick_at, 1) if self.last_tick_at else None,
+                "last_close": as_of.strftime("%a %d-%b %H:%M") if as_of else None}
 
     @staticmethod
     def _mid(o):
@@ -432,7 +522,8 @@ class ChainFeed:
 
     def status(self) -> dict:
         with self._lock:
-            return {"ws_connected": self._ws_connected, "subscribed": len(self._ws_subscribed),
+            return {"rest_calls_today": self.rest_calls, "rest_cap": C.DAILY_REST_CAP, "rest_blocked": self.rest_blocked,
+                    "ws_connected": self._ws_connected, "subscribed": len(self._ws_subscribed),
                     "watched": [f"{i} {e}" for i, e in self.watch],
                     "last_tick_age": round(time.time() - self.last_tick_at, 1) if self.last_tick_at else None,
                     "errors": self.errors[-5:]}

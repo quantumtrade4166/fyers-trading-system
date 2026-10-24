@@ -128,6 +128,7 @@ function paintQty() {
 // toggles
 function paintToggles() {
   $("tg-kb").classList.toggle("on", S.kb);
+  $("tg-kb").textContent = S.kb ? "⌨ KEYBOARD ON" : "⌨ KEYBOARD OFF";
   $("tg-qty").classList.toggle("on", S.askQty);
   $("tg-px").classList.toggle("on", S.askPx);
   $("f-kb").textContent = S.kb ? "⌨ ↑↓←→ move · − sell · + / = buy" : "";

@@ -37,6 +37,7 @@ log = logging.getLogger("sb.brokers")
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
 ACCOUNTS = [
+    {"id": "paper", "name": "Paper", "kind": "paper"},          # fills on live Fyers bid/ask, never a broker
     {"id": "zerodha", "name": "Zerodha (Kite)", "kind": "kite"},
     {"id": "kotak_bhaiya", "name": "Kotak Bhaiya", "kind": "kotak", "suffix": ""},
     {"id": "kotak_rohit", "name": "Kotak Rohit", "kind": "kotak", "suffix": "_ROHIT"},
@@ -100,6 +101,8 @@ class Account:
             self.status, self.error = "parked", "parked — not logging in"
 
     def has_creds(self) -> bool:
+        if self.kind == "paper":
+            return True
         if self.kind == "kite":
             return bool(os.getenv("KITE_API_KEY"))
         return all(os.getenv(k + self.suffix) for k in ka._REQUIRED)
@@ -117,6 +120,10 @@ class Account:
                 self.status, self.error, self.client = "no_creds", "credentials not in deployment/.env", None
                 return False
             try:
+                if self.kind == "paper":
+                    self.client, self.day, self.status, self.error = "paper", today_ist(), "logged_in", None
+                    self.at = dt.datetime.now(IST).strftime("%H:%M:%S")
+                    return True
                 if self.kind == "kite":
                     c = kx.get_kite()            # raises if the token file is not today's
                     c.profile()
@@ -143,6 +150,8 @@ class Account:
             return self.client
 
     def refresh_funds(self):
+        if self.kind == "paper":
+            return
         try:
             if self.kind == "kite":
                 m = self.client.margins("equity") or {}
@@ -217,6 +226,10 @@ class BrokerHub:
 # ── broker-neutral contract lookup ──
 def resolve(acct: Account, leg: dict) -> dict:
     """Exact broker contract for a leg, from the broker's own instrument list."""
+    if acct.kind == "paper":                     # paper trades the Fyers contract itself
+        if not leg.get("fyers_symbol"):
+            raise RuntimeError("paper: leg has no Fyers symbol")
+        return {"symbol": leg["fyers_symbol"], "exchange": "PAPER", "lot": C.LOT_SIZE[leg["index"]], "token": None}
     c = acct.ensure()
     if acct.kind == "kite":
         r = kx.resolve(c, leg["index"], leg["expiry"], int(leg["strike"]), leg["type"])

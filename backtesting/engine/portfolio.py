@@ -24,7 +24,7 @@ import pandas as pd
 
 
 def simulate(trades: pd.DataFrame, capital: float, seed: int = 7,
-             calendar: str = "business") -> tuple[pd.DataFrame, pd.Series]:
+             calendar: str = "business", adv_frac: float = None) -> tuple[pd.DataFrame, pd.Series]:
     if trades.empty:
         return trades.assign(taken=False), pd.Series(dtype=float)
     t = trades.copy()
@@ -38,6 +38,9 @@ def simulate(trades: pd.DataFrame, capital: float, seed: int = 7,
     exit_d = t["exit_time"].dt.normalize().to_numpy()
     notional0 = (t["entry_price"] * t["units"]).to_numpy(float)
     pnl0 = t["pnl"].to_numpy(float)
+    # capacity: a position may not exceed adv_frac x the stock's average daily
+    # traded value (adv20) — a large account can't buy Rs1 cr of a small cap
+    adv = (t["adv20"].to_numpy(float) if adv_frac and "adv20" in t else None)
 
     equity = capital
     open_pos: list = []                 # (exit_day, notional, pnl)
@@ -52,6 +55,9 @@ def simulate(trades: pd.DataFrame, capital: float, seed: int = 7,
                 keep.append((ex, no, pn))
         open_pos = keep
         k = max(equity, 0.0) / capital
+        if adv is not None and notional0[i] > 0:
+            cap_k = adv_frac * (adv[i] if adv[i] == adv[i] else 0.0) / notional0[i]
+            k = min(k, cap_k)
         need = notional0[i] * k
         free = equity - sum(no for _, no, _ in open_pos)
         # 0.01% tolerance: the harness rounds units to 4 decimals, so a trade
