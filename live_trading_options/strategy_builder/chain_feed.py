@@ -439,7 +439,10 @@ class ChainFeed:
         fwd = self._synthetic_forward(rows, u.get("fut") or u.get("spot"))
         T = years_to(expiry, as_of or self.now())     # a saved close keeps the IV of ITS moment
         self._add_greeks(rows, fwd, T)
-        atm = min(strikes, key=lambda k: abs(k - (fwd or 0))) if strikes and fwd else None
+        # ATM = strike nearest SPOT (what the owner trades against; options settle on spot).
+        # The synthetic forward is still used above for IV / Greeks — it is what premiums price off.
+        ref = u.get("spot") or fwd
+        atm = min(strikes, key=lambda k: abs(k - ref)) if strikes and ref else None
         return {"ok": True, "index": index, "expiry": expiry, "lot": C.LOT_SIZE[index],
                 "step": C.STRIKE_STEP[index], "under": u, "synthetic_fut": fwd, "atm": atm,
                 "T_days": T * 365, "rows": rows, "rest_age": round(time.time() - fetched, 1),

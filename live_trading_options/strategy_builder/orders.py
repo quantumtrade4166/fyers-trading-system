@@ -315,16 +315,24 @@ class Desk:
 
     @staticmethod
     def short_premium(legs):
-        """Rupee premium currently held SHORT on calls and on puts (|net short qty| x LTP).
-        None if a short leg has no price (unknown, never a partial number)."""
-        ce = pe = 0.0
+        """Rupee premium currently held SHORT on calls and on puts (|net short qty| x LTP), netted
+        per contract first — a strike sold on one leg and bought back on another counts as flat.
+        None if a short contract has no price (unknown, never a partial number)."""
+        net = {}
         for l in legs:
-            if l["net"] >= 0:
+            k = (l["index"], l["expiry"], float(l["strike"]), l["type"])
+            n = net.setdefault(k, {"qty": 0, "ltp": None})
+            n["qty"] += l["net"]
+            if l.get("ltp") is not None:
+                n["ltp"] = float(l["ltp"])
+        ce = pe = 0.0
+        for (idx, exp, strike, typ), n in net.items():
+            if n["qty"] >= 0:
                 continue
-            if l.get("ltp") is None:
+            if n["ltp"] is None:
                 return None, None
-            v = -l["net"] * float(l["ltp"])
-            if l["type"] == "CE":
+            v = -n["qty"] * n["ltp"]
+            if typ == "CE":
                 ce += v
             else:
                 pe += v

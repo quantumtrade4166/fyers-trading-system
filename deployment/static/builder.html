@@ -216,12 +216,40 @@
   .pxbar button.on { background: #6d28d9; color: #fff; }
   .pxbar .seg button { padding: 3px 9px; }
   .pxbar .prog { position: absolute; left: 0; bottom: -2px; height: 2px; background: #c4b5fd; }
-  body.practice .main { height: calc(100vh - 47px - 46px); }
+  @media (min-width: 1001px) { body.practice .main { height: calc(100vh - 47px - 46px); } }
+  @media (max-width: 1000px) { .left { height: 78vh; } }      /* stacked: the chain scrolls inside its own box */
   body.practice #btnArm { display: none; }
   #btnPx { color: #c4b5fd; border-color: #6d28d9; }
   #pxReady { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   #pxSess .it { display: flex; gap: 8px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line2); }
   #pxSess .nm { flex: 1; color: var(--hi); }
+  /* ATM row: one colour across the whole line (wins over ITM shading) so it is obvious in fast replay */
+  .chain tr.atm td { background: rgba(56, 189, 248, .22) !important; border-top: 1px solid #0284c7; border-bottom: 1px solid #0284c7; }
+  .chain tr.atm td.k { background: #0369a1 !important; color: #fff; }
+  .chain tr.atm td.k::after { content: ' ATM'; font-size: 9px; font-weight: 800; color: #bae6fd; }
+  .chain td.itm1 { background: rgba(245, 158, 11, .30) !important; }
+  .chain td.itm2 { background: rgba(245, 158, 11, .14) !important; }
+  .chain td.k.itm1c, .chain td.k.itm1p { box-shadow: inset 0 0 0 1px rgba(245, 158, 11, .7); }
+  .itmtag { font-size: 9px; font-weight: 800; padding: 0 4px; border-radius: 3px; margin-left: 4px; vertical-align: middle; }
+  .itmtag.i1 { background: #f59e0b; color: #1c1305; } .itmtag.i2 { background: #78350f; color: #fde68a; }
+  .itmtag.i3 { background: #7f1d1d; color: #fecaca; } .itmtag.atm { background: #0c4a6e; color: #bae6fd; }
+  .dep tr.itm1row td { background: rgba(245, 158, 11, .16); } .dep tr.itm2row td { background: rgba(245, 158, 11, .08); }
+  .dep tr.itm3row td { background: rgba(244, 63, 94, .14); }
+  .allsum { display: flex; gap: 14px; flex-wrap: wrap; padding: 8px 10px; margin-bottom: 10px; border: 1px solid var(--line);
+            border-radius: 10px; background: var(--card2); color: var(--muted); }
+  .allsum b { color: var(--hi); }
+  .pxbar .pxsum { color: #e9d5ff; font-size: 12px; } .pxbar .pxsum b { color: #fff; }
+  .imb-ok { color: #22c55e !important; } .imb-bad { color: #f43f5e !important; }
+  #bookPane { display: none; border-bottom: 1px solid var(--line); padding: 8px 12px 10px; background: #0d1526; }
+  #bookPane .bh { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; margin-bottom: 6px; }
+  #bookPane .bh .t { font-weight: 700; color: var(--hi); }
+  #bookPane .bh .mtm { font-size: 16px; font-weight: 800; margin-left: auto; }
+  #bookPane table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  #bookPane th { font-size: 10px; color: var(--muted); font-weight: 500; text-transform: uppercase; text-align: right; padding: 3px 6px; border-bottom: 1px solid var(--line); }
+  #bookPane td { padding: 4px 6px; text-align: right; border-bottom: 1px solid var(--line2); white-space: nowrap; }
+  #bookPane th:first-child, #bookPane td:first-child { text-align: left; }
+  #bookPane td button { padding: 1px 7px; font-size: 11px; }
+  #bookPane .flat td { opacity: .45; }
   .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #0f172a;
            border: 1px solid #334155; padding: 8px 14px; border-radius: 8px; z-index: 40; display: none; }
 </style>
@@ -250,6 +278,7 @@
   <div class="seg" id="pxSpeeds"><button data-v="1">1×</button><button data-v="2">2×</button><button data-v="5">5×</button><button data-v="10">10×</button><button data-v="30">30×</button></div>
   <label style="color:#c4b5fd">Jump to <input type="time" id="pxJump" min="09:15" max="15:29" style="width:96px"></label><button id="pxJumpGo">Go</button>
   <span style="color:#a78bfa;font-size:11px" id="pxSrc"></span>
+  <span class="pxsum num" id="pxSum"></span>
   <span style="margin-left:auto;display:flex;gap:8px"><button id="pxChart">📈 Session chart</button><button id="pxEnd">End practice</button></span>
   <div class="prog" id="pxProg"></div>
 </div>
@@ -283,6 +312,7 @@
         <div><span class="lbl">Premium</span><b id="mPrem">—</b></div>
         <div><span class="lbl">Unrealised</span><b id="mUnr">—</b></div>
         <div><span class="lbl">Total MTM</span><b id="mTot">—</b></div>
+        <div><span class="lbl">CE/PE imbalance</span><b id="mImb">—</b></div>
       </div>
       <div class="actions">
         <button id="btnToChain">Option Chain</button>
@@ -294,6 +324,7 @@
 
   <!-- RIGHT: analysis -->
   <div class="right">
+    <div id="bookPane" class="num"></div>
     <div class="tabs small" id="rightTabs">
       <button data-t="payoff" class="on">Payoff</button>
       <button data-t="greeks">Greeks</button>
@@ -311,6 +342,9 @@
       <div><div class="lbl">Breakeven</div><div class="v" id="sBe" style="font-size:12px">—</div></div>
       <div><div class="lbl">Net Premium</div><div class="v" id="sPrem">—</div></div>
       <div><div class="lbl">Charges (est. round trip)</div><div class="v" id="sChg">—</div></div>
+      <div><div class="lbl">CE/PE imbalance</div><div class="v" id="sImb">—</div></div>
+      <div><div class="lbl">Short CE premium</div><div class="v" id="sSce">—</div></div>
+      <div><div class="lbl">Short PE premium</div><div class="v" id="sSpe">—</div></div>
     </div>
     <div class="greekline num" id="greekLine">
       <span class="lbl">Net Greeks</span>
@@ -458,7 +492,10 @@ const dMon = s => { const d = new Date(s + 'T00:00:00'); return d.toLocaleDateSt
 function toast(m, ms = 2500) { const t = $('toast'); t.textContent = m; t.style.display = 'block'; clearTimeout(toast._t); toast._t = setTimeout(() => t.style.display = 'none', ms); }
 const pxq = u => (typeof S !== 'undefined' && S.px) ? u + (u.includes('?') ? '&' : '?') + 'px=1' : u;
 async function jget(u) { const r = await fetch(API + pxq(u), { cache: 'no-store' }); return r.json(); }
-async function jpost(u, b) { const r = await fetch(API + pxq(u), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); return r.json(); }
+// practice flag travels twice — in the URL AND in the body — so a proxy that drops one cannot send a
+// practice order / square-off / kill-all to the LIVE desk
+async function jpost(u, b) { const body = (typeof S !== 'undefined' && S.px && b && typeof b === 'object' && !Array.isArray(b)) ? { ...b, px: 1 } : b;
+  const r = await fetch(API + pxq(u), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); return r.json(); }
 
 // ───────────────────────────────── Black-76 (same maths as greeks.py)
 function ncdf(x) { // Abramowitz-Stegun 7.1.26 via erf, |err| < 1.5e-7
@@ -546,9 +583,38 @@ $('expiries').onclick = e => {
 
 // ───────────────────────────────── option chain
 function legBadge(sym) {
+  if (S.clickMode === 'trade') {                     // your actual positions (net lots) on this strike
+    const b = S.book.map[sym]; if (!b || !b.lots) return '';
+    return `<span class="badge ${b.lots > 0 ? 'b' : 's'}">${b.lots > 0 ? 'B' : 'S'} ${Math.abs(b.lots)}</span>`;
+  }
   const ls = S.legs.filter(l => l.symbol === sym && l.on); if (!ls.length) return '';
   const net = ls.reduce((a, l) => a + (l.side === 'B' ? l.lots : -l.lots), 0);
   return net === 0 ? '' : `<span class="badge ${net > 0 ? 'b' : 's'}">${net > 0 ? 'B' : 'S'} ${Math.abs(net)}</span>`;
+}
+// ATM = strike nearest SPOT and is its own level. ITM1 / ITM2 are the 1st / 2nd strikes BEYOND ATM:
+// calls counting down from ATM, puts counting up (the usual terminal convention — the ATM strike is
+// always slightly ITM on one side, which made it show as ITM1 too).
+function atmOf(strikes, spot) {
+  return strikes.length && spot ? strikes.reduce((a, k) => Math.abs(k - spot) < Math.abs(a - spot) ? k : a) : null;
+}
+function itmMap(strikes, spot) {
+  const out = { ce: {}, pe: {} };
+  const ks = [...strikes].sort((a, b) => a - b), atm = atmOf(ks, spot);
+  if (atm == null) return out;
+  const i = ks.indexOf(atm);
+  if (i - 1 >= 0) out.ce[ks[i - 1]] = 'itm1';
+  if (i - 2 >= 0) out.ce[ks[i - 2]] = 'itm2';
+  if (i + 1 < ks.length) out.pe[ks[i + 1]] = 'itm1';
+  if (i + 2 < ks.length) out.pe[ks[i + 2]] = 'itm2';
+  return out;
+}
+// a leg's level against the ATM strike: 'ATM', 'OTM', or ITM 1 / 2 / 3+ strikes beyond ATM
+function legDepth(l) {
+  const u = (S.under[l.index] || {}).spot; if (!u) return null;
+  const step = stepOf(l.index), atm = Math.round(u / step) * step;
+  if (Math.abs(l.strike - atm) < step / 2) return 'ATM';
+  const n = Math.round((l.type === 'CE' ? atm - l.strike : l.strike - atm) / step);
+  return n <= 0 ? 'OTM' : Math.min(3, n);
 }
 function renderChain() {
   const c = S.chain;
@@ -557,22 +623,24 @@ function renderChain() {
   const F = c.synthetic_fut, maxOi = Math.max(1, ...c.rows.flatMap(r => [r.CE && r.CE.oi || 0, r.PE && r.PE.oi || 0]));
   let html = `<table class="num"><thead><tr><th>Delta</th><th>Call LTP</th><th>OI</th><th>Strike</th><th>IV</th><th>OI</th><th>Put LTP</th><th>Delta</th></tr></thead><tbody>`;
   let lineDone = false;
+  const SP = (c.under && c.under.spot) || F;           // centre line, ATM and ITM shading all follow SPOT
+  const itm = itmMap(c.rows.map(r => r.strike), c.under && c.under.spot);
   for (const r of c.rows) {
-    if (!lineDone && r.strike > F) {
-      html += `<tr class="atm-line" id="atmLine"><td colspan="8">Synthetic FUT ${fmt(F)} · spot ${fmt(c.under.spot)}</td></tr>`; lineDone = true;
+    if (!lineDone && r.strike > SP) {
+      html += `<tr class="atm-line" id="atmLine"><td colspan="8">Spot ${fmt(SP)}</td></tr>`; lineDone = true;
     }
     const ce = r.CE || {}, pe = r.PE || {};
-    const cls = (r.strike < F ? 'itm-c' : 'itm-p') + (r.strike === c.atm ? ' atm' : '');
-    const iv = ce.iv != null && pe.iv != null ? (r.strike < F ? pe.iv : ce.iv) : (ce.iv ?? pe.iv);
+    const cls = (r.strike < SP ? 'itm-c' : 'itm-p') + (r.strike === c.atm ? ' atm' : '');
+    const iv = ce.iv != null && pe.iv != null ? (r.strike < SP ? pe.iv : ce.iv) : (ce.iv ?? pe.iv);
     const bs = (o, side) => o.symbol ? `<div class="bs"><button class="b" data-a="B" data-s="${o.symbol}" data-k="${r.strike}" data-t="${side}">B</button><button class="s" data-a="S" data-s="${o.symbol}" data-k="${r.strike}" data-t="${side}">S</button></div>` : '';
     html += `<tr class="${cls}" data-k="${r.strike}">
       <td class="dl cs">${fmt(ce.delta, 2)}</td>
-      <td class="ltp c cs">${bs(ce, 'CE')}${legBadge(ce.symbol)}${fmt(ce.ltp)}</td>
-      <td class="oi c cs"><div class="bar" style="width:${(100 * (ce.oi || 0) / maxOi).toFixed(1)}%"></div>${oiFmt(ce.oi)}</td>
+      <td class="ltp c cs ${itm.ce[r.strike] || ''}">${bs(ce, 'CE')}${legBadge(ce.symbol)}${fmt(ce.ltp)}${itm.ce[r.strike] ? `<span class="itmtag ${itm.ce[r.strike] === 'itm1' ? 'i1' : 'i2'}">${itm.ce[r.strike] === 'itm1' ? 'ITM1' : 'ITM2'}</span>` : ''}</td>
+      <td class="oi c cs ${itm.ce[r.strike] || ''}"><div class="bar" style="width:${(100 * (ce.oi || 0) / maxOi).toFixed(1)}%"></div>${oiFmt(ce.oi)}</td>
       <td class="k">${r.strike}</td>
       <td class="iv">${iv == null ? '—' : fmt(iv, 1)}</td>
-      <td class="oi p ps"><div class="bar" style="width:${(100 * (pe.oi || 0) / maxOi).toFixed(1)}%"></div>${oiFmt(pe.oi)}</td>
-      <td class="ltp p ps">${bs(pe, 'PE')}${legBadge(pe.symbol)}${fmt(pe.ltp)}</td>
+      <td class="oi p ps ${itm.pe[r.strike] || ''}"><div class="bar" style="width:${(100 * (pe.oi || 0) / maxOi).toFixed(1)}%"></div>${oiFmt(pe.oi)}</td>
+      <td class="ltp p ps ${itm.pe[r.strike] || ''}">${itm.pe[r.strike] ? `<span class="itmtag ${itm.pe[r.strike] === 'itm1' ? 'i1' : 'i2'}" style="margin:0 4px 0 0">${itm.pe[r.strike] === 'itm1' ? 'ITM1' : 'ITM2'}</span>` : ''}${bs(pe, 'PE')}${legBadge(pe.symbol)}${fmt(pe.ltp)}</td>
       <td class="dl ps">${fmt(pe.delta, 2)}</td></tr>`;
   }
   html += '</tbody></table>';
@@ -589,11 +657,15 @@ function goAtm() {
   const l = $('atmLine'), box = $('chain'); if (!l) return;
   box.scrollTop += l.getBoundingClientRect().top - box.getBoundingClientRect().top - box.clientHeight / 2;
 }
-$('chain').onclick = e => {
+// Fire on PRESS (pointerdown), not on click: the chain is redrawn ~2x a second and a click needs the press
+// and the release on the SAME element — a redraw in between silently swallowed orders.
+$('chain').addEventListener('pointerdown', e => {
+  if (e.button !== 0) return;
   const b = e.target.closest('.bs button'); if (!b) return;
+  e.preventDefault();
   if (S.clickMode === 'trade') { startQuick(+b.dataset.k, b.dataset.t, b.dataset.a); return; }
   addLeg({ symbol: b.dataset.s, strike: +b.dataset.k, type: b.dataset.t, side: b.dataset.a });
-};
+});
 
 // ───────────────────────────────── playground
 function rowFor(idx, exp, strike) { const c = S.cache[idx + '|' + exp]; return c && c.rows.find(r => r.strike === strike); }
@@ -601,6 +673,14 @@ function liveOf(l) { const q = S.quotes[l.symbol]; if (q) return q; const r = ro
 function addLeg(p) {
   const idx = S.index, exp = S.expiry[S.index];
   const o = (rowFor(idx, exp, p.strike) || {})[p.type] || {};
+  const same = S.legs.find(l => l.on && l.symbol === p.symbol && l.expiry === exp);
+  if (same) {                                       // net it like an order book: same side adds, opposite side reduces
+    same.lots += same.side === p.side ? 1 : -1;
+    if (same.lots <= 0) S.legs = S.legs.filter(l => l !== same);
+    renderChain(); renderPg(); analyse(); pollQuotes();
+    toast(same.lots <= 0 ? `${idx} ${p.strike} ${p.type} closed out` : `${idx} ${p.strike} ${p.type}: ${same.side === 'B' ? 'long' : 'short'} ${same.lots} lot${same.lots > 1 ? 's' : ''}`);
+    return;
+  }
   S.legs.push({ id: legSeq++, on: true, index: idx, expiry: exp, strike: p.strike, type: p.type, side: p.side,
                 lots: p.lots || 1, symbol: p.symbol, price: o.ltp ?? null, manual: false });
   renderChain(); renderPg(); analyse(); pollQuotes();
@@ -630,11 +710,16 @@ async function relink(l) {
   renderPg(); renderChain(); analyse(); pollQuotes();
 }
 
+// in practice the playground is a what-if sketch — say so where it is used
+function pxBuildNote() {
+  return S.px ? `<div class="warnbox" style="margin:0 0 10px">Playground = <b>what-if only</b>: nothing here is a trade, adjustments re-price the legs and MTM is not kept.
+    To practise adjustments with a real running MTM, use <b>Trade</b> mode (or deploy this to Paper with “Live trade with”).</div>` : '';
+}
 function renderPg() {
   $('legCount').textContent = S.legs.length ? `(${S.legs.length})` : '';
-  if (!S.legs.length) { $('pg').innerHTML = prebuiltHtml(); drawPrebuilt(); return; }
+  if (!S.legs.length) { $('pg').innerHTML = pxBuildNote() + prebuiltHtml(); drawPrebuilt(); return; }
   const ex = (S.meta && S.meta.expiries[S.index]) || [];
-  let h = `<table class="num"><thead><tr><th></th><th>B/S</th><th>Expiry</th><th>Strike</th><th>Type</th><th>Lots</th><th>Price</th><th>LTP</th><th></th></tr></thead><tbody>`;
+  let h = pxBuildNote() + `<table class="num"><thead><tr><th></th><th>B/S</th><th>Expiry</th><th>Strike</th><th>Type</th><th>Lots</th><th>Price</th><th>LTP</th><th></th></tr></thead><tbody>`;
   for (const l of S.legs) {
     const q = liveOf(l) || {};
     h += `<tr class="${l.on ? '' : 'legoff'}" data-id="${l.id}">
@@ -744,16 +829,21 @@ function daysTo(expiry) {
   return Math.max(0, (new Date(`${expiry}T15:30:00+05:30`) - now) / 86400000);
 }
 function legModel() {
-  // everything the curves need, per active leg
-  const lot = lotOf(S.index), spot = spotNow();
-  return S.legs.filter(l => l.on && l.price != null).map(l => {
+  // everything the curves need, per active leg — the playground in Build mode, your real book in Trade mode
+  const lot = lotOf(S.index), spot = spotNow(), trade = S.clickMode === 'trade';
+  const src = trade ? S.book.rows.filter(b => b.lots && b.entry != null).map(b => ({ on: true, index: b.index, expiry: b.expiry,
+    strike: b.strike, type: b.type, side: b.lots > 0 ? 'B' : 'S', lots: Math.abs(b.lots), price: b.entry, symbol: b.symbol })) : S.legs;
+  const mult = trade ? 1 : S.mult;
+  const out = src.filter(l => l.on && l.price != null).map(l => {
     const ck = S.chains[l.index + '|' + l.expiry] || (S.cache[l.index + '|' + l.expiry] ? { fwd: S.cache[l.index + '|' + l.expiry].synthetic_fut, T_days: S.cache[l.index + '|' + l.expiry].T_days } : null);
     const q = liveOf(l) || {};
     const iv = (q.iv || atmIv(l.index, l.expiry) || 12) / 100;
-    return { l, qty: (l.side === 'B' ? 1 : -1) * l.lots * lot * S.mult, call: l.type === 'CE', K: l.strike,
+    return { l, qty: (l.side === 'B' ? 1 : -1) * l.lots * lot * mult, call: l.type === 'CE', K: l.strike,
              entry: l.price, ltp: q.ltp, iv, Tdays: ck ? ck.T_days : daysTo(l.expiry),
              basis: ck && spot && ck.fwd ? ck.fwd / spot : 1, q };
   });
+  out.offset = trade ? S.book.offset : 0;             // P&L already booked on contracts that are now flat
+  return out;
 }
 function atmIv(idx, exp) {
   const c = S.cache[idx + '|' + exp]; if (!c) return null;
@@ -762,7 +852,7 @@ function atmIv(idx, exp) {
 }
 // P&L of the whole position at underlying spot x, `days` from now, with IV shifted by ivs (vol points)
 function pnlAt(M, x, days, ivs) {
-  let p = 0;
+  let p = M.offset || 0;
   for (const m of M) {
     const left = Math.max(m.Tdays - days, 0), T = left / 365, vol = Math.max(m.iv + ivs / 100, 0.005);
     // the futures-spot gap shrinks to zero at expiry (settlement is on spot)
@@ -783,13 +873,14 @@ function analyse() {
   if (!has) {
     ['sMtm', 'sMaxP', 'sMaxL', 'sRR', 'sPop', 'sBe', 'sPrem', 'sChg'].forEach(i => set(i, '—'));
     ['gD', 'gG', 'gT', 'gV'].forEach(i => $(i).textContent = '—');
-    $('mPrem').textContent = $('mUnr').textContent = $('mTot').textContent = '—';
+    $('mPrem').textContent = $('mUnr').textContent = $('mTot').textContent = $('mImb').textContent = '—';
+    ['sImb', 'sSce', 'sSpe'].forEach(i => set(i, '—')); S.pgImb = null;
     return;
   }
   const spot = spotNow();
   const tE = earliest(M);
   // MTM
-  const mtm = M.reduce((a, m) => a + (m.ltp != null ? m.qty * (m.ltp - m.entry) : 0), 0);
+  const mtm = (M.offset || 0) + M.reduce((a, m) => a + (m.ltp != null ? m.qty * (m.ltp - m.entry) : 0), 0);
   const prem = -M.reduce((a, m) => a + m.qty * m.entry, 0);
   set('sMtm', rs(mtm), sgn(mtm)); set('sPrem', (prem >= 0 ? 'get ' : 'pay ') + rs(Math.abs(prem)));
   $('mPrem').textContent = rs(prem); $('mUnr').textContent = rs(mtm); $('mUnr').className = sgn(mtm); $('mTot').textContent = rs(mtm); $('mTot').className = sgn(mtm);
@@ -823,6 +914,10 @@ function analyse() {
   } else pop = pnlAt(M, spot, 0, 0) > 0 ? 1 : 0;
   set('sPop', fmt(pop * 100, 1) + '%');
   set('sChg', rs(charges(M), 2));
+  // CE/PE imbalance of the playground itself (same formula as deployed strategies and the MCX terminal)
+  const P = pgImbalance(M); S.pgImb = { ...P, mtm };
+  set('sImb', imbTxt(P.imb), imbCls(P.imb)); set('sSce', rs(P.ce)); set('sSpe', rs(P.pe));
+  $('mImb').textContent = imbTxt(P.imb); $('mImb').className = imbCls(P.imb);
   // net greeks (₹ per point / per day / per vol point)
   let gd = 0, gg = 0, gt = 0, gv = 0;
   for (const m of M) { const g = b76g(spot * m.basis, m.K, m.Tdays / 365, m.iv + S.ivShift / 100, m.call); gd += m.qty * g.delta * m.basis; gg += m.qty * g.gamma; gt += m.qty * g.theta; gv += m.qty * g.vega; }
@@ -834,6 +929,34 @@ function analyse() {
   if (S.right === 'greeks') renderGreeks();
   if (S.right === 'scenario') renderScenario();
   if (S.right === 'mc' && !$('pane-mc').dataset.ready) renderMcShell();
+}
+
+// CE/PE imbalance colour: GREEN while within ±10 %, RED beyond +10 % or -10 %
+const IMB_LIMIT = 10;
+const imbCls = v => v == null ? '' : Math.abs(v) > IMB_LIMIT ? 'imb-bad' : 'imb-ok';
+const imbTxt = v => v == null ? '—' : `${v > 0 ? '+' : ''}${fmt(v, 1)}% ${v > 0 ? 'CE-heavy' : v < 0 ? 'PE-heavy' : ''}`;
+// Imbalance counts only what is CURRENTLY net short: legs are netted per contract (index|expiry|strike|type)
+// first, so selling a strike and buying it back removes it completely.
+// items: [{key, call, qty (signed, + long), px}]
+function netImbalance(items) {
+  const net = new Map();
+  for (const it of items) {
+    const n = net.get(it.key) || { call: it.call, qty: 0, px: it.px };
+    n.qty += it.qty; if (it.px != null) n.px = it.px;
+    net.set(it.key, n);
+  }
+  let ce = 0, pe = 0, unknown = false;
+  for (const n of net.values()) {
+    if (n.qty >= 0) continue;
+    if (n.px == null) { unknown = true; continue; }
+    if (n.call) ce -= n.qty * n.px; else pe -= n.qty * n.px;
+  }
+  if (unknown) return { ce: null, pe: null, imb: null };
+  return { ce, pe, imb: ce + pe ? 100 * (ce - pe) / (ce + pe) : null };
+}
+function pgImbalance(M) {
+  return netImbalance(M.map(m => ({ key: `${m.l.index}|${m.l.expiry}|${m.K}|${m.l.type}`, call: m.call, qty: m.qty,
+                                   px: m.ltp != null ? m.ltp : m.entry })));
 }
 
 // est. round-trip charges (Zerodha-style F&O): ₹20/order, STT 0.1% on sell premium, exch txn, SEBI, stamp, GST
@@ -1160,11 +1283,82 @@ async function pollDeps() {
     const r = await jget('/deployments');
     if (!r.ok) return;
     S.deps = r.deployments; S.control = r.control; renderArm();
+    buildBook(); renderBook();
+    if (S.clickMode === 'trade') { analyse(); if (S.left === 'chain' && S.chain) renderChain(); }
     const live = S.deps.filter(d => d.open_qty > 0 || ['pending', 'placing', 'closing'].includes(d.status)).length;
     $('liveCount').textContent = live ? `(${live})` : '';
     if (S.left === 'live') renderLive();
     if (S.right === 'orders') renderOrders();
   } catch (e) { }
+}
+// ── MY POSITIONS: every open strategy netted per contract (index|expiry|strike|type) ──
+// entry is the EFFECTIVE price: P&L so far (realised + open) is kept, so the payoff starts from the true MTM.
+function buildBook() {
+  const live = S.deps.filter(d => d.open_qty > 0 || ['placing', 'pending', 'closing'].includes(d.status) ||
+                                  (d.quick && (d.created || '').slice(0, 10) === (S.px && S.pstate ? S.pstate.session.date
+                                    : new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10))));   // IST date
+  const m = new Map();
+  for (const d of live) for (const l of d.legs) {
+    const k = `${l.index}|${l.expiry}|${l.strike}|${l.type}`;
+    const lot = (l.contract && l.contract.lot) || lotOf(l.index);
+    const r = m.get(k) || { key: k, index: l.index, expiry: l.expiry, strike: l.strike, type: l.type, symbol: l.fyers_symbol,
+                             net: 0, pnl: 0, ltp: null, lot, unknown: false, deps: new Set() };
+    r.net += l.net; if (l.pnl == null) r.unknown = true; else r.pnl += l.pnl;
+    if (l.ltp != null) r.ltp = l.ltp; r.deps.add(d.id);
+    m.set(k, r);
+  }
+  const rows = [...m.values()].sort((a, b) => a.type.localeCompare(b.type) || a.strike - b.strike);
+  let offset = 0;
+  for (const r of rows) {
+    r.lots = Math.round(r.net / r.lot);
+    r.entry = r.net && r.ltp != null && !r.unknown ? r.ltp - r.pnl / r.net : null;   // effective entry
+    if (!r.net && !r.unknown) offset += r.pnl;
+  }
+  const map = {}; rows.forEach(r => { if (r.symbol) map[r.symbol] = r; });
+  const N = netImbalance(rows.filter(r => r.net).map(r => ({ key: r.key, call: r.type === 'CE', qty: r.net, px: r.ltp })));
+  const mtm = rows.some(r => r.unknown && r.net) ? null : rows.reduce((a, r) => a + r.pnl, 0);
+  S.book = { rows, map, offset, mtm, imb: N.imb, ce: N.ce, pe: N.pe };
+}
+function renderBook() {
+  const pane = $('bookPane');
+  pane.style.display = S.clickMode === 'trade' ? 'block' : 'none';
+  if (S.clickMode !== 'trade') return;
+  const B = S.book, tgt = (S.brokers.find(b => b.id === S.qTarget) || { name: 'Paper' }).name;
+  const head = `<div class="bh"><span class="t">My positions</span><span class="mut">${S.px ? 'practice · paper' : esc(tgt)} · net per strike, all strategies</span>
+    <span>CE/PE imbalance <b class="${imbCls(B.imb)}">${imbTxt(B.imb)}</b></span>
+    <span class="mtm ${sgn(B.mtm)}">${B.rows.length ? rs(B.mtm) : ''}</span></div>`;
+  if (!B.rows.length) { pane.innerHTML = head + '<div class="mut">No positions yet — click B / S on the chain (or + / − with ⌨ KB) to trade.</div>'; return; }
+  pane.innerHTML = head + `<table><thead><tr><th>Position</th><th>Lots</th><th>Avg</th><th>LTP</th><th>P&L</th><th></th></tr></thead><tbody>` +
+    B.rows.map(r => {
+      const dp = r.net ? legDepth(r) : null;
+      const tag = dp == null || dp === 'OTM' ? '' : dp === 'ATM' ? '<span class="itmtag atm">ATM</span>' : `<span class="itmtag i${dp}">ITM${dp === 3 ? '3+' : dp}</span>`;
+      return `<tr class="${r.net ? (typeof dp === 'number' ? 'itm' + dp + 'row' : '') : 'flat'}" data-key="${r.key}">
+        <td><b class="${r.net > 0 ? 'pos' : r.net < 0 ? 'neg' : 'mut'}">${r.net > 0 ? 'B' : r.net < 0 ? 'S' : '—'}</b> ${r.strike} ${r.type} <span class="mut">${dMon(r.expiry)}</span>${tag}</td>
+        <td>${r.lots ? Math.abs(r.lots) : 'flat'}</td><td>${fmt(r.entry)}</td><td>${fmt(r.ltp)}</td><td class="${sgn(r.pnl)}">${rs(r.unknown ? null : r.pnl)}</td>
+        <td>${r.net ? `<button data-bk="add" title="${r.net < 0 ? 'sell' : 'buy'} ${S.qLots} more">+${S.qLots}</button> <button data-bk="cut" title="reduce by ${S.qLots}">−${S.qLots}</button> <button data-bk="exit" style="color:#fda4af">Exit</button>` : ''}</td></tr>`;
+    }).join('') + '</tbody></table>';
+}
+$('bookPane').addEventListener('pointerdown', async e => {        // press, not click — the panel redraws every second
+  if (e.button !== 0) return;
+  const b = e.target.closest('[data-bk]'); if (!b) return;
+  e.preventDefault();
+  const r = S.book.rows.find(x => x.key === b.closest('tr').dataset.key); if (!r || !r.net) return;
+  const shortPos = r.net < 0, lots = b.dataset.bk === 'exit' ? Math.abs(r.lots) : Math.min(S.qLots, b.dataset.bk === 'cut' ? Math.abs(r.lots) : S.qLots);
+  const side = b.dataset.bk === 'add' ? (shortPos ? 'S' : 'B') : (shortPos ? 'B' : 'S');
+  const tgt = S.brokers.find(x => x.id === S.qTarget) || { id: 'paper', name: 'Paper' };
+  if (!S.px && tgt.id !== 'paper' && b.dataset.bk === 'exit' && !confirm(`Exit ${Math.abs(r.lots)} lots ${r.strike} ${r.type} on ${tgt.name}?`)) return;
+  sendQuick(tgt, side, [{ index: r.index, expiry: r.expiry, strike: r.strike, type: r.type, side, lots, symbol: r.symbol }]);
+});
+
+// combined MTM + CE/PE imbalance over every strategy with an open position (practice or live)
+function allSummary() {
+  const open = S.deps.filter(d => d.open_qty > 0);
+  if (!open.length) return null;
+  const sum = k => open.some(d => d[k] == null) ? null : open.reduce((a, d) => a + d[k], 0);
+  const mtm = S.deps.some(d => d.mtm == null && d.open_qty > 0) ? null : S.deps.reduce((a, d) => a + (d.mtm || 0), 0);
+  const N = netImbalance(open.flatMap(d => d.legs.filter(l => l.net).map(l =>
+    ({ key: `${l.index}|${l.expiry}|${l.strike}|${l.type}`, call: l.type === 'CE', qty: l.net, px: l.ltp }))));
+  return { mtm, ce: N.ce, pe: N.pe, imb: N.imb };
 }
 function renderLive(force) {
   const box = $('liveList');
@@ -1172,12 +1366,19 @@ function renderLive(force) {
   if (!force && act && box.contains(act) && act.tagName === 'INPUT') return;     // don't wipe what the user is typing
   if (!S.deps.length) { box.innerHTML = '<div class="empty"><b>No live strategies</b>Deploy one from Positions → Live Trade with.</div>'; return; }
   const openDet = new Set([...box.querySelectorAll('details[open]')].map(x => x.dataset.d));
-  box.innerHTML = S.deps.map(d => {
+  const A = allSummary();
+  box.innerHTML = (A ? `<div class="allsum num"><span>All ${S.px ? 'practice' : 'live'} strategies</span>
+      <span>MTM <b class="${sgn(A.mtm)}">${rs(A.mtm)}</b></span><span>Short CE <b>${rs(A.ce)}</b></span><span>Short PE <b>${rs(A.pe)}</b></span>
+      <span>CE/PE imbalance <b class="${imbCls(A.imb)}">${A.imb == null ? '—' : (A.imb > 0 ? '+' : '') + fmt(A.imb, 1) + '%'}</b>
+      ${A.imb == null ? '' : A.imb > 0 ? 'CE-heavy' : A.imb < 0 ? 'PE-heavy' : 'balanced'}</span></div>` : '') + S.deps.map(d => {
     const busy = ['placing', 'closing'].includes(d.status);
-    const legs = d.legs.map(l => `<tr>
-      <td><b class="${(l.net || (l.side === 'B' ? 1 : -1)) > 0 ? 'pos' : 'neg'}">${l.net > 0 ? 'B' : l.net < 0 ? 'S' : l.side}</b> ${l.index} ${l.strike} ${l.type} <span class="mut">${dMon(l.expiry)}</span></td>
+    const legs = d.legs.map(l => { const dp = l.net ? legDepth(l) : null; return `<tr class="${typeof dp === 'number' ? 'itm' + dp + 'row' : ''}">
+      <td><b class="${(l.net || (l.side === 'B' ? 1 : -1)) > 0 ? 'pos' : 'neg'}">${l.net > 0 ? 'B' : l.net < 0 ? 'S' : l.side}</b> ${l.index} ${l.strike} ${l.type} <span class="mut">${dMon(l.expiry)}</span>${dp == null ? '' : dp === 'ATM' ? '<span class="itmtag atm">ATM</span>' : dp === 'OTM' ? '' : `<span class="itmtag i${dp}">ITM${dp === 3 ? '3+' : dp}</span>`}</td>
       <td>${l.net}</td><td>${fmt(l.avg)}</td><td>${fmt(l.ltp)}</td><td class="${sgn(l.pnl)}">${rs(l.pnl)}</td>
-      <td>${l.net && !busy ? `<button data-exit="${d.id}" data-leg="${l.id}">Exit</button>` : ''}</td></tr>`).join('');
+      <td>${l.net && !busy ? `<button data-exit="${d.id}" data-leg="${l.id}">Exit</button>` : ''}</td></tr>`; }).join('');
+    const DI = netImbalance(d.legs.filter(l => l.net).map(l =>        // net per contract, this strategy only
+      ({ key: `${l.index}|${l.expiry}|${l.strike}|${l.type}`, call: l.type === 'CE', qty: l.net, px: l.ltp })));
+    d = { ...d, short_ce: DI.ce, short_pe: DI.pe, imbalance: DI.imb };
     return `<div class="dep" data-dep="${d.id}">
       <div class="hd"><span class="nm">${esc(d.name)}</span>${d.kind === 'paper' ? '<span class="pill paper">PAPER</span>' : ''}<span class="mut">${esc(d.broker_name)} · ×${d.mult} · ${d.mode} · ${d.product}</span>
         <span class="pill ${STATUS_CLS[d.status] || ''}">${esc(d.status.replace('_', ' '))}</span>
@@ -1185,7 +1386,7 @@ function renderLive(force) {
       <table class="num"><thead><tr><th>Leg</th><th>Net qty</th><th>Avg</th><th>LTP</th><th>P&L</th><th></th></tr></thead><tbody>${legs}</tbody></table>
       <div class="imbline num">
         <span>Short CE <b>${rs(d.short_ce)}</b></span><span>Short PE <b>${rs(d.short_pe)}</b></span>
-        <span>CE/PE imbalance <b class="${d.imbalance > 0 ? 'neg' : d.imbalance < 0 ? 'pos' : ''}">${d.imbalance == null ? '—' : (d.imbalance > 0 ? '+' : '') + fmt(d.imbalance, 1) + '%'}</b>
+        <span>CE/PE imbalance <b class="${imbCls(d.imbalance)}">${d.imbalance == null ? '—' : (d.imbalance > 0 ? '+' : '') + fmt(d.imbalance, 1) + '%'}</b>
           <span class="mut">${d.imbalance == null ? '' : d.imbalance > 0 ? 'CE-heavy' : d.imbalance < 0 ? 'PE-heavy' : 'balanced'}</span></span>
         <button data-chart="${d.id}" style="margin-left:auto">📈 MTM / imbalance chart</button>
       </div>
@@ -1202,8 +1403,9 @@ function renderLive(force) {
     </div>`;
   }).join('');
 }
-$('liveList').addEventListener('click', async e => {
-  const t = e.target;
+$('liveList').addEventListener('pointerdown', async e => {        // press, not click — the cards redraw every second
+  if (e.button !== 0) return;
+  const t = e.target.closest('button') || e.target;
   if (t.dataset.chart) { openChart(t.dataset.chart); return; }
   if (t.dataset.exit) {
     if (!confirm('Exit this leg at market?')) return;
@@ -1237,7 +1439,8 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape') { ['saveModa
 // KB on:  ← CE  → PE  ↑↓ strike   + or = BUY   − SELL   (held key = one ticket)
 // Ticket: Enter = send (twice above CONFIRM_LOTS)  Esc = cancel  ↑↓ = lots
 const CONFIRM_LOTS = 5;
-S.kb = false; S.clickMode = 'build'; S.cursor = { k: null, t: 'CE' }; S.qticket = null;
+S.kb = false; S.clickMode = 'build'; S.cursor = { k: null, t: 'CE' }; S.qticket = null; S.qConfirm = false;
+S.book = { rows: [], map: {}, offset: 0 };
 try { const q = JSON.parse(localStorage.getItem('sb_quick') || '{}'); Object.assign(S, { qTarget: q.t || 'paper', qLots: q.l || 1, qHedge: !!q.h, qHedgeN: q.n || 4 }); }
 catch (e) { Object.assign(S, { qTarget: 'paper', qLots: 1, qHedge: false, qHedgeN: 4 }); }
 function saveQuick() { try { localStorage.setItem('sb_quick', JSON.stringify({ t: S.qTarget, l: S.qLots, h: S.qHedge, n: S.qHedgeN })); } catch (e) { } }
@@ -1251,20 +1454,28 @@ function renderQbar() {
       <button data-v="build" class="${S.clickMode === 'build' ? 'on' : ''}">Build</button><button data-v="trade" class="${S.clickMode === 'trade' ? 'on' : ''}">Trade</button></div>
     <label>on <select id="qTarget">${opts}</select></label>
     <label>Lots <input type="number" id="qLots" min="1" max="50" value="${S.qLots}" style="width:52px"></label>
+    <label title="off = one click places the order at once; on = a ticket asks first"><input type="checkbox" id="qConfirm" ${S.qConfirm ? 'checked' : ''}> Confirm</label>
     <label title="each SELL also BUYS a hedge N strikes further out — bought FIRST"><input type="checkbox" id="qHedge" ${S.qHedge ? 'checked' : ''}> Hedge
       <input type="number" id="qHedgeN" min="1" max="20" value="${S.qHedgeN}" style="width:44px"> out</label>
     <button id="qKb" class="${S.kb ? 'on' : ''}" title="Keyboard: ← CE  → PE  ↑↓ strike  + BUY  − SELL">⌨ ${S.kb ? 'KB ON' : 'KB'}</button>
-    <span class="mut" id="qInfo">${S.px ? 'PRACTICE — replayed prices, paper fills' : S.qTarget === 'paper' ? 'PAPER — live prices, no broker' : (S.control.armed ? '<b class="neg">LIVE orders</b>' : 'disarmed — arm to trade live')}</span>`;
+    <span class="mut" id="qInfo">${S.px && S.clickMode === 'build' ? '<b style="color:#fbbf24">BUILD = what-if only, nothing is recorded — switch to Trade to practise adjustments</b>' : S.px ? 'PRACTICE — replayed prices, paper fills' : S.qTarget === 'paper' ? 'PAPER — live prices, no broker' : (S.control.armed ? '<b class="neg">LIVE orders</b>' : 'disarmed — arm to trade live')}</span>`;
 }
 $('qbar').addEventListener('click', e => {
   const m = e.target.closest('#qMode button');
-  if (m) { S.clickMode = m.dataset.v; renderQbar(); toast(S.clickMode === 'trade' ? 'Trade mode: chain B/S sends an order' : 'Build mode: chain B/S adds to the playground'); return; }
+  if (m) {
+    S.clickMode = m.dataset.v; renderQbar(); renderBook(); analyse(); renderChain();
+    toast(S.clickMode === 'trade' ? 'Trade mode: chain B/S sends an order'
+      : S.px ? 'Build = what-if only: nothing is recorded and MTM is not kept. Use Trade to practise adjustments.'
+      : 'Build mode: chain B/S adds to the playground', S.px && S.clickMode === 'build' ? 6000 : 2500);
+    renderPg(); return;
+  }
   if (e.target.id === 'qKb') { S.kb = !S.kb; if (S.kb && S.cursor.k == null && S.chain && S.chain.ok) S.cursor = { k: S.chain.atm, t: 'CE' }; renderQbar(); paintCursor(); if (S.kb) setLeft('chain'); }
 });
 $('qbar').addEventListener('change', e => {
   if (e.target.id === 'qTarget') S.qTarget = e.target.value;
   if (e.target.id === 'qLots') S.qLots = Math.max(1, Math.min(50, +e.target.value | 0));
   if (e.target.id === 'qHedge') S.qHedge = e.target.checked;
+  if (e.target.id === 'qConfirm') S.qConfirm = e.target.checked;
   if (e.target.id === 'qHedgeN') S.qHedgeN = Math.max(1, +e.target.value | 0);
   saveQuick(); renderQbar();
 });
@@ -1312,6 +1523,8 @@ function quickLegs(k, type, side) {
 function startQuick(k, type, side) {
   const legs = quickLegs(k, type, side); if (!legs) return;
   const tgt = S.brokers.find(b => b.id === S.qTarget) || { id: 'paper', name: 'Paper' };
+  const real = !S.px && tgt.id !== 'paper';
+  if (!S.qConfirm && !(real && S.qLots > CONFIRM_LOTS)) { sendQuick(tgt, side, legs.map(l => ({ ...l, lots: S.qLots }))); return; }
   S.qticket = { legs, side, tgt, confirmed: false };
   $('qtBox').className = 'modal qt ' + (side === 'B' ? 'buy' : 'sell');
   $('qtSide').textContent = (side === 'B' ? 'BUY' : 'SELL') + ' · ' + tgt.name + (tgt.id === 'paper' ? ' (PAPER)' : ' — LIVE');
@@ -1333,6 +1546,20 @@ function qtPaint() {
   $('qtWarn').textContent = w;
 }
 function closeQt() { $('qticket').classList.remove('open'); S.qticket = null; }
+// Orders go out one after another (a queue): a second click while the first is still being booked used to
+// get "busy" from the server and was lost — now it waits its turn and is retried.
+S.qQueue = Promise.resolve();
+function sendQuick(tgt, side, legs) { S.qQueue = S.qQueue.then(() => sendQuickNow(tgt, side, legs)).catch(() => { }); return S.qQueue; }
+async function sendQuickNow(tgt, side, legs) {
+  let r;
+  for (let i = 0; i < 8; i++) {
+    r = await jpost('/quick', { broker: tgt.id, product: 'NRML', legs });
+    if (r.ok || !/busy/i.test(r.error || '')) break;
+    await new Promise(res => setTimeout(res, 150 + 100 * i));
+  }
+  toast(r.ok ? `${side === 'B' ? 'BUY' : 'SELL'} ${legs[legs.length - 1].lots} lot${legs[legs.length - 1].lots > 1 ? 's' : ''} ${legs[legs.length - 1].strike} ${legs[legs.length - 1].type} → ${tgt.name}` : (r.error || 'refused'), r.ok ? 1800 : 4000);
+  [250, 600, 1200].forEach(ms => setTimeout(pollDeps, ms));
+}
 async function sendQt() {
   const q = S.qticket; if (!q) return;
   const lots = +$('qtLots').value | 0;
@@ -1342,6 +1569,7 @@ async function sendQt() {
   closeQt();
   const r = await jpost('/quick', { broker: q.tgt.id, product: 'NRML', legs });
   toast(r.ok ? `${q.side === 'B' ? 'BUY' : 'SELL'} sent → ${q.tgt.name}${q.tgt.id === 'paper' ? ' (paper)' : ''}` : (r.error || 'refused'), 4000);
+  [300, 800, 1500].forEach(ms => setTimeout(pollDeps, ms));   // show the fill and the new imbalance at once
   pollDeps();
 }
 $('qtGo').onclick = sendQt; $('qtCancel').onclick = closeQt;
@@ -1447,6 +1675,7 @@ function pxEnter(st) {
   S.legs = []; S.cache = {}; S.quotes = {}; S.chain = null; S.scrolledTo = null; S.sid = null;
   S.name = sess.name; $('stratName').textContent = sess.name;
   S.qTarget = 'paper';
+  S.clickMode = 'trade';                 // practice = real paper fills by default (Build is what-if only)
   document.body.classList.add('practice');
   $('pxBar').style.display = 'flex';
   loadMeta().then(() => { renderIdxBtns(); renderExpiries(); pollChain(); });
@@ -1473,6 +1702,9 @@ function renderPx() {
   $('pxPlay').classList.toggle('on', st.playing);
   [...$('pxSpeeds').children].forEach(b => b.classList.toggle('on', +b.dataset.v === st.speed));
   $('pxProg').style.width = (100 * st.progress).toFixed(2) + '%';
+  const A = allSummary();
+  const B = A || (S.pgImb && S.pgImb.imb != null ? S.pgImb : null);      // nothing deployed -> show the playground
+  $('pxSum').innerHTML = B ? `${A ? '' : 'playground · '}MTM <b>${rs(B.mtm)}</b> · CE/PE imbalance <b class="${imbCls(B.imb)}">${B.imb == null ? '—' : (B.imb > 0 ? '+' : '') + fmt(B.imb, 1) + '%'}</b>${B.imb == null ? '' : B.imb > 0 ? ' CE-heavy' : B.imb < 0 ? ' PE-heavy' : ''}` : 'no open position';
 }
 async function pxControl(action, value) {
   const r = await fetch(API + '/practice/control', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action, value }) }).then(x => x.json());
@@ -1551,6 +1783,8 @@ async function pollChain() {
     if (c.ok) {
       if (!S.expiry[S.index]) { S.expiry[S.index] = c.expiry; renderExpiries(); }
       if (c.index === S.index && c.expiry === S.expiry[S.index]) {
+        const sp = c.under && c.under.spot;                // ATM = strike nearest SPOT, whatever the server sent
+        if (sp && c.rows && c.rows.length) c.atm = c.rows.reduce((a, r) => Math.abs(r.strike - sp) < Math.abs(a.strike - sp) ? r : a).strike;
         S.chain = c; S.cache[c.index + '|' + c.expiry] = c; S.under[c.index] = c.under;
         if (S.left === 'chain') renderChain();
         if (!S.legs.length) analyse();
@@ -1586,7 +1820,7 @@ async function loadMeta() {
 
 (async function init() {
   renderIdxBtns(); renderPg(); analyse();
-  pollDeps(); setInterval(pollDeps, 2000);          // live positions never wait for the chain
+  pollDeps(); setInterval(pollDeps, 1000);          // live positions never wait for the chain
   renderQbar();
   const refreshBrokers = async () => { try { const r = await jget('/brokers'); if (r.ok) { S.brokers = r.brokers; S.control = r.control; if (!S.qticket) renderQbar(); } } catch (e) { } };
   refreshBrokers(); setInterval(refreshBrokers, 15000);

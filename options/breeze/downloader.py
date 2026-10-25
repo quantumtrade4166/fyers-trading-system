@@ -35,6 +35,19 @@ from pathlib import Path
 
 import pandas as pd
 
+
+def _swap(tmp, path, tries: int = 20) -> None:
+    """os.replace with retries: Windows refuses the swap (WinError 5/32) while a
+    backup sync or antivirus briefly holds the target open."""
+    for i in range(tries):
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(0.5 * (i + 1))
+
 from options.breeze.config import (
     DATA_DIR,
     MANIFEST_PATH,
@@ -160,7 +173,7 @@ class Manifest:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.entries), encoding="utf-8")
-        tmp.replace(self.path)
+        _swap(tmp, self.path)
 
     def stats(self) -> dict:
         out = {"ok": 0, "empty": 0, "error": 0}
@@ -505,7 +518,7 @@ class Downloader:
             # truncated year file -- every cached contract-day of that year unreadable
             tmp = path.with_suffix(".parquet.tmp")
             chunk.to_parquet(tmp, index=False, compression="snappy")
-            os.replace(tmp, path)
+            _swap(tmp, path)
             print(f"    [flush] {_display(path)} -> {len(chunk):,} rows")
 
         self.rows_written += len(df)

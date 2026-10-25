@@ -40,6 +40,11 @@ practice = None             # PracticeManager — replays a past day through the
 
 # Every chain / order endpoint takes ?px=1 from the page while practice mode is on. These three
 # pick the replay or the live objects — practice can never reach the live desk or a broker.
+def bpx(px, body) -> int:
+    """practice if EITHER the query or the body says so (belt and braces against a proxy dropping one)."""
+    return 1 if px or (isinstance(body, dict) and body.get("px")) else 0
+
+
 def F(px):
     if px:
         if not (practice and practice.active):
@@ -145,6 +150,7 @@ def chain(index: str = Query(...), expiry: str = Query(None), px: int = Query(0)
 
 @app.post("/api/sb/quotes")
 def quotes(body: dict = Body(...), px: int = Query(0)):
+    px = bpx(px, body)
     """Live price + IV/Greeks for each playground leg, grouped by its chain.
     body = {"legs": [{"symbol", "index", "expiry"}, ...]}"""
     legs = body.get("legs") or []
@@ -232,6 +238,7 @@ def set_control(body: dict = Body(...)):
 
 @app.post("/api/sb/margin")
 def margin(body: dict = Body(...), px: int = Query(0)):
+    px = bpx(px, body)
     """Zerodha's own basket margin for the legs (Kotak has no basket-margin call — shown as —).
     body = {legs:[...], brokers:{id: mult}, product}"""
     def go():
@@ -265,6 +272,7 @@ def margin(body: dict = Body(...), px: int = Query(0)):
 
 @app.post("/api/sb/deploy")
 def deploy(body: dict = Body(...), px: int = Query(0)):
+    px = bpx(px, body)
     return _call(lambda: {"ok": True, "deployments": D(px).deploy(body)})
 
 
@@ -276,16 +284,19 @@ def deployments(px: int = Query(0)):
 
 @app.post("/api/sb/deployments/{dep_id}/squareoff")
 def squareoff(dep_id: str, body: dict = Body(default={}), px: int = Query(0)):
+    px = bpx(px, body)
     return _call(lambda: (D(px).square_off(dep_id, body.get("leg")), {"ok": True})[1])
 
 
 @app.post("/api/sb/deployments/{dep_id}/cancel")
-def cancel_pending(dep_id: str, px: int = Query(0)):
+def cancel_pending(dep_id: str, body: dict = Body(default={}), px: int = Query(0)):
+    px = bpx(px, body)
     return _call(lambda: (D(px).cancel_pending(dep_id), {"ok": True})[1])
 
 
 @app.post("/api/sb/deployments/{dep_id}/risk")
 def set_risk(dep_id: str, body: dict = Body(...), px: int = Query(0)):
+    px = bpx(px, body)
     def num(v):
         return float(v) if v not in (None, "", 0, "0") else None
     return _call(lambda: (D(px).set_risk(dep_id, num(body.get("sl")), num(body.get("target")),
@@ -294,6 +305,7 @@ def set_risk(dep_id: str, body: dict = Body(...), px: int = Query(0)):
 
 @app.post("/api/sb/quick")
 def quick(body: dict = Body(...), px: int = Query(0)):
+    px = bpx(px, body)
     """Keyboard / Trade-mode order into today's Quick book for that broker (Paper needs no arming)."""
     return _call(lambda: {"ok": True, "deployment": D(px).quick(body)})
 
@@ -305,7 +317,8 @@ def history(dep_id: str, date: str = Query(None), px: int = Query(0)):
 
 
 @app.post("/api/sb/killall")
-def killall(px: int = Query(0)):
+def killall(body: dict = Body(default={}), px: int = Query(0)):
+    px = bpx(px, body)
     return _call(lambda: {"ok": True, "squaring": D(px).square_off_all()})
 
 

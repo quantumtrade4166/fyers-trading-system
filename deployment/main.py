@@ -203,11 +203,15 @@ async def _strategy_builder_proxy(path: str, request: _Request):
     body = await request.body()
     qs = str(request.url.query)
 
+    # The query string MUST go through on POSTs too: ?px=1 is what keeps a PRACTICE order / square-off /
+    # kill-all on the practice desk. Dropping it (bug until 2026-10-25) sent practice POSTs to the LIVE desk.
+    full = url + (f"?{qs}" if qs else "")
+
     def _call():
         if request.method == "POST":
-            return _requests.post(url, data=body, timeout=30,
+            return _requests.post(full, data=body, timeout=30,
                                   headers={"Content-Type": "application/json"})
-        return _requests.get(url + (f"?{qs}" if qs else ""), timeout=30)
+        return _requests.get(full, timeout=30)
 
     try:
         r = await asyncio.to_thread(_call)
