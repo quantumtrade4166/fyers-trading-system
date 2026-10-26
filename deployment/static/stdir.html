@@ -86,6 +86,7 @@
       </span>
       <select id="date"></select>
       <span id="status" class="pill">—</span>
+      <span id="stream-pill" class="pill" title="tick stream from the engine (age of the last tick update)">stream —</span>
     </div>
   </div>
 
@@ -116,6 +117,30 @@
     </div>
   </div>
 
+  <div data-view="live" class="grid sect">
+    <div class="card" style="border-color:#7f1d1d">
+      <div class="lbl">Kotak D MTM (net of charges · live ticks)</div>
+      <div id="kd-net" class="big num">—</div>
+      <div class="sub">gross <b id="kd-gross" class="num">—</b> · realized <b id="kd-real" class="num">—</b>
+        · open <b id="kd-open" class="num">—</b> · trades <b id="kd-trades">—</b></div>
+    </div>
+    <div class="card" style="border-color:#7f1d1d">
+      <div class="lbl">Kotak D position</div>
+      <div id="kd-pos" class="mid num">flat</div>
+      <div id="kd-pos-sub" class="sub"></div>
+    </div>
+    <div class="card">
+      <div class="lbl">Setup (next entry)</div>
+      <div id="kd-setup" class="mid num">—</div>
+      <div id="kd-setup-sub" class="sub"></div>
+    </div>
+    <div class="card">
+      <div class="lbl">Kotak D status</div>
+      <div id="kd-arm" class="mid">—</div>
+      <div id="kd-status" class="sub"></div>
+    </div>
+  </div>
+
   <div data-view="live" class="card sect" id="live-card" style="border-color:#7f1d1d">
     <div class="sect-h">
       <span class="t">LIVE — Kotak D <span id="lv-pill" class="pill">—</span></span>
@@ -131,15 +156,19 @@
     <div class="sub" style="margin:0 0 6px">Real NRML orders on Kotak D, copying every paper entry and exit at the lots set here. Arming affects the next paper entry only — an open paper trade is never chased. KILL buys back anything open and stops for the day.</div>
     <div id="lv-hist" class="sub" style="margin:0 0 6px;color:#93c5fd;display:none"></div>
     <div id="lv-msg" class="sub" style="margin:0 0 6px;color:#fbbf24"></div>
-    <div class="grid" style="grid-template-columns:repeat(3,minmax(0,1fr))">
-      <div><div class="lbl">Kotak D position</div><div id="lv-pos" class="mid num">flat</div><div id="lv-pos-sub" class="sub"></div></div>
-      <div><div class="lbl">Kotak D P&amp;L (gross)</div><div id="lv-pnl" class="mid num">—</div><div id="lv-pnl-sub" class="sub"></div></div>
-      <div><div class="lbl">Status</div><div id="lv-status" class="sub" style="margin:0"></div></div>
-    </div>
-    <div class="scroll" style="margin-top:8px"><table>
-      <thead><tr><th>time</th><th>side</th><th>contract</th><th class="r">qty</th><th class="r">price</th><th>order</th></tr></thead>
+    <div id="lv-status" class="sub" style="margin:0 0 6px"></div>
+    <div class="sub" style="margin:6px 0 2px">Kotak D order fills (every order, with timings)</div>
+    <div class="scroll"><table>
+      <thead><tr><th>time</th><th>side</th><th>contract</th><th class="r">qty</th><th class="r">fill</th><th class="r">limit</th>
+        <th>priced from</th><th class="r">try</th><th class="r">decision→sent</th><th class="r">Kotak ack</th><th class="r">sent→fill seen</th><th>order</th></tr></thead>
       <tbody id="lv-fills"></tbody>
     </table></div>
+  </div>
+
+  <div data-view="live" class="card sect">
+    <div class="sect-h"><span class="t">Kotak D MTM — <span id="kd-mtm-date">—</span></span>
+      <span class="sub" id="kd-mtm-sum" style="margin:0"></span></div>
+    <div id="kd-mtm-chart" style="height:200px"></div>
   </div>
 
   <div data-view="paper" class="card sect">
@@ -169,6 +198,15 @@
       <thead><tr><th>#</th><th>contract</th><th>origin</th><th>signal</th><th>sell</th><th class="r">price</th>
         <th>buy back</th><th class="r">price</th><th>reason</th><th class="r">gross</th><th class="r">charges</th><th class="r">net</th></tr></thead>
       <tbody id="trades"></tbody>
+    </table></div>
+  </div>
+
+  <div data-view="live" class="card sect">
+    <div class="sect-h"><span class="t">Kotak D trades</span><span class="sub" style="margin:0">real fills · gross = (sell − buy) × qty · net after STT, exchange, SEBI, stamp, GST, brokerage · paper price shown for comparison</span></div>
+    <div class="scroll"><table>
+      <thead><tr><th>#</th><th>contract</th><th>origin</th><th>signal</th><th>sell</th><th class="r">price</th><th class="r">paper</th>
+        <th>buy back</th><th class="r">price</th><th class="r">paper</th><th>reason</th><th class="r">gross</th><th class="r">charges</th><th class="r">net</th></tr></thead>
+      <tbody id="kd-trades-rows"></tbody>
     </table></div>
   </div>
 
@@ -258,6 +296,13 @@ function mk(id, extra = {}) {
 // charts
 const mtmChart = mk('mtm-chart');
 const mtmSeries = mtmChart.addBaselineSeries({
+  baseValue: { type: 'price', price: 0 }, lineWidth: 2,
+  topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,.25)', topFillColor2: 'rgba(34,197,94,.02)',
+  bottomLineColor: '#f43f5e', bottomFillColor1: 'rgba(244,63,94,.02)', bottomFillColor2: 'rgba(244,63,94,.25)',
+  priceFormat: { type: 'custom', formatter: v => money(v) },
+});
+const kdMtmChart = mk('kd-mtm-chart');
+const kdMtmSeries = kdMtmChart.addBaselineSeries({
   baseValue: { type: 'price', price: 0 }, lineWidth: 2,
   topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,.25)', topFillColor2: 'rgba(34,197,94,.02)',
   bottomLineColor: '#f43f5e', bottomFillColor1: 'rgba(244,63,94,.02)', bottomFillColor2: 'rgba(244,63,94,.25)',
@@ -376,10 +421,59 @@ function renderPos(p) {
   $('pos-sub').innerHTML = `sold <b>${num(p.entry_price)}</b> at <b>${tOnly(p.entry_ts)}</b> · LTP <b>${num(p.ltp)}</b> · exp <b>${p.expiry}</b>` + be;
 }
 function renderSetup(s) {
-  if (!s) { $('setup').textContent = '—'; $('setup-sub').textContent = ''; return; }
-  $('setup').textContent = `${s.strike} ${s.opt} · ${s.status}${s.pending ? ' (pending)' : ''}`;
-  $('setup-sub').innerHTML = `ref low <b>${num(s.ref_low)}</b> (from ${s.ref_candle || '—'} candle, lowered ${s.updates}×)` +
-    (s.signal ? ` · signal <b>${s.signal}</b>` : ` · enter when a 5-min close &lt; ${num(s.ref_low)}`);
+  for (const pre of ['', 'kd-']) {
+    const a = $(pre + 'setup'), b = $(pre + 'setup-sub');
+    if (!s) { a.textContent = '—'; b.textContent = ''; continue; }
+    a.textContent = `${s.strike} ${s.opt} · ${s.status}${s.pending ? ' (pending)' : ''}`;
+    b.innerHTML = `ref low <b>${num(s.ref_low)}</b> (from ${s.ref_candle || '—'} candle, lowered ${s.updates}×)` +
+      (s.signal ? ` · signal <b>${s.signal}</b>` : ` · enter when a 5-min close &lt; ${num(s.ref_low)}`);
+  }
+}
+// ── Kotak D top cards + trades (fed by /live every 2 s and by the tick stream) ──
+let kdCharges = {};                    // trade id -> charges of the open row (for tick updates)
+function renderKdMoney(k) {
+  if (!k) return;
+  $('kd-net').textContent = signed(k.net); cls($('kd-net'), k.net);
+  $('kd-gross').textContent = signed(k.gross); $('kd-real').textContent = signed(k.realized);
+  $('kd-open').textContent = signed(k.open);
+}
+function renderKdPos(p) {
+  if (!p) { $('kd-pos').textContent = 'flat'; $('kd-pos-sub').textContent = ''; return; }
+  const g = p.gross;
+  $('kd-pos').innerHTML = `SELL ${p.qty} × ${p.strike ?? ''} ${p.opt ?? esc(p.symbol)} <span class="${(g ?? 0) >= 0 ? 'pos' : 'neg'}">${g === null || g === undefined ? '' : signed(g)}</span>`;
+  const st = p.stop;
+  const stop = !st ? '' : (st.armed
+    ? ` · <b class="pos">stop at cost ${num(st.price)} (armed ${esc(st.armed)})</b>`
+    : ` · stop to cost once LTP ≤ <b>${num(st.trigger)}</b> (then buy back at ${num(st.price)})`);
+  $('kd-pos-sub').innerHTML = `sold <b>${num(p.avg)}</b> at <b>${esc(p.entry_time || '—')}</b> · LTP <b>${num(p.ltp)}</b> · exp <b>${esc(p.expiry || '—')}</b>` + stop;
+}
+function kdReason(t) {
+  if (t.open) return '—';
+  if (t.reason === 'option_st') return t.exit_close !== undefined && t.exit_close !== null ? `close ${num(t.exit_close)} &gt; ST ${num(t.exit_st)}` : 'option ST exit';
+  if (t.reason === 'breakeven_stop') return 'stop at cost';
+  if (t.reason === 'square_off_1515') return '15:15 square-off';
+  return esc(t.reason || '—');
+}
+function renderKdTrades(ts) {
+  kdCharges = {};
+  if (!ts || !ts.length) { $('kd-trades-rows').innerHTML = '<tr><td colspan="14" class="empty">no Kotak D trades</td></tr>'; $('kd-trades').textContent = 0; return; }
+  $('kd-trades').textContent = ts.length;
+  $('kd-trades-rows').innerHTML = ts.map(t => {
+    if (t.open) kdCharges.open = t.charges || 0;
+    const sig = t.signal_ts ? `${tOnly(t.signal_ts)} <span class="sub">close ${num(t.signal_close)} &lt; ${num(t.signal_ref)}</span>` : '—';
+    return `<tr>
+      <td>${esc((t.trade_id || '').split('-').pop() || '—')}</td>
+      <td>${t.strike ? t.strike + ' ' + t.opt_type : esc(t.symbol)} <span class="sub">${esc(t.expiry || '')}</span></td>
+      <td>${esc(t.origin || '—')}</td><td>${sig}</td>
+      <td>${esc(t.sell_time || '—')}</td><td class="r num">${num(t.sell_price)}</td><td class="r num sub">${num(t.paper_entry)}</td>
+      <td>${t.open ? '<span class="pill live">open</span>' : esc(t.buy_time || '—')}</td>
+      <td class="r num" ${t.open ? 'id="kd-open-ltp"' : ''}>${t.open ? num(t.ltp) + ' <span class="sub">ltp</span>' : num(t.buy_price)}</td>
+      <td class="r num sub">${t.open ? '—' : num(t.paper_exit)}</td>
+      <td>${kdReason(t)}</td>
+      <td class="r num ${t.gross >= 0 ? 'pos' : 'neg'}" ${t.open ? 'id="kd-open-gross"' : ''}>${signed(t.gross)}</td>
+      <td class="r num">${money(t.charges)}</td>
+      <td class="r num ${(t.net ?? 0) >= 0 ? 'pos' : 'neg'}" ${t.open ? 'id="kd-open-net"' : ''}><b>${t.net === null || t.net === undefined ? '—' : signed(t.net)}</b></td></tr>`;
+  }).join('');
 }
 
 async function loadState() {
@@ -403,6 +497,8 @@ async function loadState() {
   }
   // spot
   spotCandle.setData(d.spot_candles.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
+  const lastSpot = d.spot_candles.length ? d.spot_candles[d.spot_candles.length - 1].time : 0;
+  if (isToday() && sBar && sBar.time > lastSpot) { try { spotCandle.update(sBar); } catch (e) {} }
   spotST.set(withPrev(d.spot_candles));
   spotCandle.setMarkers((d.reversals || []).map(r => ({
     time: r.time, position: r.to === 'bull' ? 'belowBar' : 'aboveBar', shape: 'circle',
@@ -420,6 +516,9 @@ async function loadState() {
   } else {
     $('opt-label').textContent = `${p.symbol || p.label} (exp ${p.expiry})${p.ltp ? ' · LTP ' + num(p.ltp) : ''}`;
     optCandle.setData(p.candles.map(c => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close })));
+    const lastOpt = p.candles.length ? p.candles[p.candles.length - 1].time : 0;
+    const ob = oBars[p.label];
+    if (isToday() && ob && ob.time > lastOpt) { try { optCandle.update(ob); } catch (e) {} }
     optST.set(withPrev(p.candles));
     refSeries.forEach((s, i) => {
       const r = p.refs[p.refs.length - 1 - i];
@@ -479,6 +578,16 @@ async function loadMtm() {
   for (const r of d.rows) if (r.time) m.set(r.time, r.net);
   const pts = [...m.entries()].sort((a, b) => a[0] - b[0]).map(([time, value]) => ({ time, value }));
   mtmSeries.setData(pts);
+  const km = new Map();
+  for (const r of d.rows) if (r.time && r.kd_net !== undefined) km.set(r.time, r.kd_net);
+  const kpts = [...km.entries()].sort((a, b) => a[0] - b[0]).map(([time, value]) => ({ time, value }));
+  kdMtmSeries.setData(kpts);
+  $('kd-mtm-date').textContent = curDate;
+  if (kpts.length) {
+    const kv = kpts.map(p => p.value);
+    $('kd-mtm-sum').innerHTML = `now <b class="${kv[kv.length-1] >= 0 ? 'pos' : 'neg'}">${signed(kv[kv.length-1])}</b> · high <b>${signed(Math.max(...kv))}</b> · low <b>${signed(Math.min(...kv))}</b> · net of est. charges`;
+    if (fitKey.kdmtm !== curDate) { kdMtmChart.timeScale().fitContent(); fitKey.kdmtm = curDate; }
+  } else { $('kd-mtm-sum').textContent = 'no Kotak D samples yet'; }
   if (pts.length) {
     const vals = pts.map(p => p.value);
     $('mtm-sum').innerHTML = `now <b class="${vals[vals.length-1] >= 0 ? 'pos' : 'neg'}">${signed(vals[vals.length-1])}</b> · high <b>${signed(Math.max(...vals))}</b> · low <b>${signed(Math.min(...vals))}</b>`;
@@ -562,16 +671,24 @@ async function loadLive() {
   pill.textContent = c.armed ? 'ARMED · ' + c.lots + ' lot(s)' : 'disarmed';
   pill.className = 'pill ' + (c.armed ? 'bear' : '');
   $('vw-dot').style.display = c.armed ? '' : 'none';
-  const p = e.position;
-  if (p) {
-    $('lv-pos').innerHTML = `SHORT ${p.qty} × ${esc(p.symbol)}`;
-    $('lv-pos-sub').innerHTML = `sold avg <b>${num(p.avg)}</b> · LTP <b>${num(p.ltp)}</b> · paper ${esc(p.trade_id || '')}`;
-  } else { $('lv-pos').textContent = 'flat'; $('lv-pos-sub').textContent = ''; }
-  $('lv-pnl').textContent = e.day_gross === undefined ? '—' : signed(e.day_gross);
-  cls($('lv-pnl'), e.day_gross || 0);
-  $('lv-pnl-sub').innerHTML = e.day_gross === undefined ? '' : `realized <b>${signed(e.realized_gross)}</b> · open <b>${signed(e.open_gross)}</b> · charges not included`;
+  renderKdTrades(e.trades || []);
+  if (hist) {
+    const tr = e.trades || [];
+    const net = tr.reduce((a, t) => a + (t.net || 0), 0), gross = tr.reduce((a, t) => a + (t.gross || 0), 0);
+    renderKdMoney({ net, gross, realized: gross, open: 0 });
+    renderKdPos(null);
+  } else if (!streamLive()) {
+    if (e.mtm) renderKdMoney(e.mtm);
+    renderKdPos(e.pos_detail || null);
+  }
+  $('kd-arm').innerHTML = c.armed ? `<span class="pill bear">ARMED</span> ${c.lots} lot(s)` : '<span class="pill">disarmed</span>';
+  const lf = (e.fills || []).slice(-1)[0];
+  $('kd-status').innerHTML = (e.logged_in ? 'session <b class="pos">logged in</b>' : (hist ? 'history' : 'session not logged in')) +
+    (lf && lf.ms_decision_to_send !== undefined ? ` · last order sent <b>${lf.ms_decision_to_send} ms</b> after the decision, fill seen <b>${lf.ms_send_to_fill_seen} ms</b> after send` : '') +
+    (e.halted ? ` · <span class="neg">halted: ${esc(e.halted)}</span>` : '') +
+    (e.pending_exit ? ' · <span class="neg"><b>BUY-BACK PENDING</b></span>' : '');
   const st = [];
-  if (hist) st.push(d.engine ? `${d.engine.trades ?? 0} round trip(s) on ${curDate}` : `no Kotak D activity on ${curDate}`);
+  if (hist) st.push(d.engine ? `${d.engine.n_trades ?? 0} round trip(s) on ${curDate}` : `no Kotak D activity on ${curDate}`);
   else if (!d.engine) st.push('engine not running (starts 09:10 IST on market days)');
   else st.push(e.logged_in ? 'Kotak D session: <b class="pos">logged in</b>' : 'Kotak D session: not logged in yet' + (e.login_error ? ' — <span class="neg">' + esc(e.login_error) + '</span>' : ''));
   if (e.halted) st.push('<span class="neg">halted: ' + esc(e.halted) + '</span>');
@@ -580,9 +697,13 @@ async function loadLive() {
   if (c.updated) st.push('control updated ' + esc(c.updated));
   $('lv-status').innerHTML = st.join('<br>');
   const f = (e.fills || []).slice().reverse();
+  const ms = v => (v === null || v === undefined) ? '—' : `${v} ms`;
   $('lv-fills').innerHTML = f.map(x => `<tr><td>${esc(x.time || '')}</td><td>${esc(String(x.side))}</td><td>${esc(x.symbol || x.trading_symbol || '')}</td>
-    <td class="r">${x.qty}</td><td class="r num">${num(x.price ?? x.avg_price)}</td><td class="sub">${esc(x.order_id || '')}</td></tr>`).join('')
-    || '<tr><td colspan="6" class="empty">no Kotak D fills today</td></tr>';
+    <td class="r">${x.qty}</td><td class="r num">${num(x.price ?? x.avg_price)}</td><td class="r num">${num(x.limit)}</td>
+    <td class="sub">${esc(x.price_src || '—')}</td><td class="r">${esc(String(x.attempt ?? '—'))}</td>
+    <td class="r num">${ms(x.ms_decision_to_send)}</td><td class="r num">${ms(x.ms_ack)}</td><td class="r num">${ms(x.ms_send_to_fill_seen)}</td>
+    <td class="sub">${esc(x.order_id || '')}</td></tr>`).join('')
+    || '<tr><td colspan="12" class="empty">no Kotak D fills today</td></tr>';
 }
 
 let cmpChart = null, cumChart = null, ddChart2 = null;
@@ -675,6 +796,52 @@ async function loadCompare() {
   }).join('') || '<tr><td colspan="6" class="empty">no days yet</td></tr>';
 }
 
+// ── live tick stream (server-sent events from the engine, ~10 updates a second) ──
+let es = null, sBar = null, oBars = {}, lastStream = 0;
+function streamLive() { return Date.now() - lastStream < 3000; }
+function startStream() {
+  if (es) return;
+  es = new EventSource('/api/stdir/stream');
+  es.onmessage = ev => { let d; try { d = JSON.parse(ev.data); } catch (e) { return; } onStream(d); };
+}
+function onStream(d) {
+  if (!d || d.type !== 'tick' || d.date !== today) return;
+  lastStream = Date.now();
+  const sp = $('stream-pill');
+  const age = Math.max(0, Date.now() - d.ms);
+  sp.textContent = `ticks ${age < 1000 ? age + ' ms' : (age / 1000).toFixed(1) + ' s'}`;
+  sp.className = 'pill ' + (age < 2000 ? 'live' : 'stale');
+  if (!isToday()) return;
+  if (d.spot !== null && d.spot !== undefined) $('spot').textContent = num(d.spot);
+  if (d.spot_bar) { sBar = d.spot_bar; try { spotCandle.update(sBar); } catch (e) {} }
+  for (const [label, o] of Object.entries(d.opt || {})) if (o.bar) oBars[label] = o.bar;
+  const p = lastState && (lastState.panels || [])[panelIdx];
+  if (p && d.opt && d.opt[p.label]) {
+    const o = d.opt[p.label];
+    if (o.bar) { try { optCandle.update(o.bar); } catch (e) {} }
+    if (o.ltp !== null && o.ltp !== undefined) $('opt-label').textContent = `${p.symbol || p.label} (exp ${p.expiry}) · LTP ${num(o.ltp)}`;
+  }
+  if (d.paper) {
+    renderDay(d.paper);
+    try { mtmSeries.update({ time: d.time, value: d.paper.day_net }); } catch (e) {}
+  }
+  if (d.kd) {
+    const k = d.kd;
+    renderKdMoney(k);
+    renderKdPos(k.pos);
+    if (k.pos && $('kd-open-ltp')) {
+      $('kd-open-ltp').innerHTML = num(k.pos.ltp) + ' <span class="sub">ltp</span>';
+      const g = k.pos.gross ?? 0, n = g - (kdCharges.open || 0);
+      $('kd-open-gross').textContent = signed(g); cls($('kd-open-gross'), g);
+      $('kd-open-net').innerHTML = `<b>${signed(n)}</b>`; cls($('kd-open-net'), n);
+    }
+    try { kdMtmSeries.update({ time: d.time, value: k.net }); } catch (e) {}
+  }
+}
+setInterval(() => {                    // the pill turns stale if the stream stops
+  if (lastStream && !streamLive()) { const sp = $('stream-pill'); sp.textContent = 'stream stale'; sp.className = 'pill stale'; }
+}, 1000);
+
 async function refreshAll() {
   try { await loadState(); } catch (e) { console.error(e); }
   try { await loadMtm(); } catch (e) { console.error(e); }
@@ -689,9 +856,10 @@ async function refreshAll() {
   setView(v0 === 'live' ? 'live' : 'paper', true);
   try { await loadDates(); } catch (e) { console.error(e); }
   await refreshAll();
+  startStream();
   setInterval(() => { if (!document.hidden) loadTick().catch(console.error); }, 1000);
   setInterval(() => { if (!document.hidden && isToday()) loadState().catch(console.error); }, 3000);
-  setInterval(() => { if (!document.hidden && isToday()) loadMtm().catch(console.error); }, 5000);
+  setInterval(() => { if (!document.hidden && isToday()) loadMtm().catch(console.error); }, 15000);
   setInterval(() => { if (!document.hidden) loadDaily().catch(console.error); }, 60000);
   setInterval(() => { if (!document.hidden) loadCompare().catch(console.error); }, 60000);
   setInterval(() => { if (!document.hidden) loadLive().catch(console.error); }, 2000);

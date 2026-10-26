@@ -386,9 +386,13 @@ class Desk:
         return ids
 
     def quick(self, req: dict) -> str:
-        """Keyboard / Trade-mode order. req = {broker, product, legs:[{index,expiry,strike,type,side,lots,symbol}]}
-        Adds to today's "Quick · <broker>" book (made on first use). Returns the deployment id."""
-        aid = req.get("broker")
+        """Keyboard / Trade-mode order. req = {broker, product, legs:[{index,expiry,strike,type,side,lots,symbol}],
+        deployment?: id}. With `deployment` the order is an ADJUSTMENT of that strategy (its card, MTM and
+        imbalance include it); without, it goes to today's "Quick · <broker>" book. Returns the deployment id."""
+        target = self.deps.get(req.get("deployment")) if req.get("deployment") else None
+        if req.get("deployment") and target is None:
+            raise ValueError("that strategy no longer exists — pick it again in 'into:'")
+        aid = target["broker"] if target else req.get("broker")
         acct = self.hub.get(aid)
         if acct.kind != "paper" and not self.armed().get("armed"):
             raise ValueError("Live trading is NOT armed — arm it first, or trade on Paper")
@@ -401,11 +405,13 @@ class Desk:
             if l.get("side") not in ("B", "S") or l.get("type") not in ("CE", "PE") \
                     or l.get("index") not in C.INDICES or not 1 <= int(l.get("lots", 0)) <= MAX_LOTS:
                 raise ValueError(f"bad leg {l}")
-        product = req.get("product", "NRML")
+        product = target["product"] if target else req.get("product", "NRML")
         today = self.clock().strftime("%Y-%m-%d")
         with self.lock:
-            d = next((x for x in self.deps.values() if x.get("quick") and x["broker"] == aid
-                      and x["created"][:10] == today and x["product"] == product), None)
+            d = target or next((x for x in self.deps.values() if x.get("quick") and x["broker"] == aid
+                                and x["created"][:10] == today and x["product"] == product), None)
+        if target is not None and target["status"] in ("closed", "failed"):
+            target["status"] = "open"                         # adding to a flat strategy re-opens it
         if d is None:
             d = self._new(f"Quick · {acct.name}", {"name": "quick"}, acct, 1, "market", product, [])
             d["quick"] = True
@@ -420,7 +426,7 @@ class Desk:
                        "fyers_symbol": l.get("symbol"), "price": None, "contract": None}
                 d["legs"].append(leg)
             items.append((leg["id"], l["side"], int(l["lots"])))
-        self._log(d, "quick: " + ", ".join(f"{'BUY' if s == 'B' else 'SELL'} {lt}x "
+        self._log(d, ("adjust: " if target else "quick: ") + ", ".join(f"{'BUY' if s == 'B' else 'SELL'} {lt}x "
                                             f"{d['legs'][i]['strike']:.0f}{d['legs'][i]['type']}" for i, s, lt in items))
         self._save(d)
         self._spawn(d, self._run_adhoc, items)

@@ -6,7 +6,7 @@
 <title>MCX Desk</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=20261024a">
+<link rel="stylesheet" href="/static/app.css?v=20261026p">
 </head>
 <body>
 <header class="top">
@@ -22,12 +22,18 @@
     <span class="pill" id="feed"><i class="led"></i><span id="feedtxt">connecting…</span></span>
     <span class="pill mono" id="ping" title="Screen ↔ engine round trip">— ms</span>
     <span class="clock mono" id="clock">--:--:--</span>
+    <button class="gear rpbtn" id="btn-replays" title="Replays: download a day as a double-click file">⏵ Replays</button>
     <button class="gear" id="gear" title="Settings">⚙</button>
   </div>
 </header>
 
 <section class="bar">
-  <div class="seg" id="inst"></div>
+  <div class="instpick" id="instpick">
+    <button class="ip-btn" id="ip-btn" title="Choose the instrument (its option chain opens)">
+      <span class="n" id="ipb-n">—</span><span class="p mono" id="ipb-p">—</span><span class="c mono" id="ipb-c"></span><span class="a mono" id="ipb-a" title="ATM straddle (call + put) of the chain on screen"></span><span class="caret">▾</span>
+    </button>
+    <div class="ip-menu" id="ip-menu" hidden></div>
+  </div>
   <label>Expiry <select id="expiry"></select></label>
   <label>Strikes <select id="strikes"></select></label>
   <div class="qty">
@@ -52,17 +58,18 @@
   <div class="und mono" id="und"></div>
 </section>
 
+<div class="workarea">
 <main class="chainwrap" id="chainwrap">
   <table class="chain" id="chain">
     <thead>
-      <tr class="side"><th colspan="7" class="ce">CALLS</th><th class="kh"></th><th colspan="7" class="pe">PUTS</th></tr>
+      <tr class="side"><th colspan="5" class="ce">CALLS</th><th class="kh"></th><th colspan="5" class="pe">PUTS</th></tr>
       <tr>
-        <th title="Open interest, lots">OI</th><th title="Volume today, lots">Vol</th><th>Bid</th><th>Ask</th><th>Chg%</th><th class="act"></th><th class="ltph">LTP</th>
+        <th>Bid</th><th>Ask</th><th class="act"></th><th class="ltph">LTP</th><th class="posh" title="Your current call position on this strike, in lots (+ long, − short)">Pos</th>
         <th class="kh">Strike</th>
-        <th class="ltph">LTP</th><th class="act"></th><th>Chg%</th><th>Bid</th><th>Ask</th><th title="Volume today, lots">Vol</th><th title="Open interest, lots">OI</th>
+        <th class="posh" title="Your current put position on this strike, in lots (+ long, − short)">Pos</th><th class="ltph">LTP</th><th class="act"></th><th>Bid</th><th>Ask</th>
       </tr>
     </thead>
-    <tbody id="rows"><tr><td colspan="15" class="empty">Loading chain…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="11" class="empty">Loading chain…</td></tr></tbody>
   </table>
   <table class="chain combo" id="combo" hidden>
     <thead><tr>
@@ -72,27 +79,77 @@
     <tbody id="crows"></tbody>
   </table>
 </main>
+<aside class="sidepane" id="sidepane">
+  <div class="cp">
+    <div class="cp-lbl">Session P&amp;L (MTM)</div>
+    <div class="cp-big mono" id="cp-pnl">0.00</div>
+    <div class="cp-row">
+      <span class="cp-lbl">Instrument MTM</span>
+      <select id="cp-inst" title="P&amp;L of one instrument's positions"></select>
+      <span class="cp-imtm mono" id="cp-imtm">0.00</span>
+    </div>
+
+    <div class="cp-grid3">
+      <label>Stop-loss ₹<input id="rk-stop" type="number" step="500" placeholder="-5000" class="mono"
+        title="A Session P&amp;L level: exit everything when P&amp;L falls to it. -5000 = stop at a 5,000 loss; +2000 = lock in 2,000"></label>
+      <label>Target ₹<input id="rk-target" type="number" step="500" placeholder="10000" class="mono"
+        title="A Session P&amp;L level: exit everything when P&amp;L reaches it. Fixed, never trailed"></label>
+      <label>Trail ₹<input id="rk-trail" type="number" step="500" placeholder="5000 step" class="mono"
+        title="Every time P&amp;L rises this much, the stop rises by this much. With no stop typed it starts at P&amp;L − trail"></label>
+    </div>
+    <div class="cp-btns"><button class="btn cp-set" id="rk-set">Set</button><button class="btn cp-clear" id="rk-clear">Clear</button></div>
+    <div class="rk-state mono" id="rk-state">Guard off.</div>
+
+    <div class="cp-lbl">Quick exit (all positions)</div>
+    <div class="cp-exit">
+      <button class="btn" data-frac="0.25">25%</button><button class="btn" data-frac="0.5">50%</button>
+      <button class="btn" data-frac="0.75">75%</button><button class="btn" data-frac="1">100%</button>
+    </div>
+    <button class="cp-link" id="cancelall">Cancel all pending orders</button>
+    <div class="rk-sum" id="rk-sum"></div>
+
+    <div class="cp-margin">
+      <div><span class="cp-lbl">Available margin</span><span class="mono" id="cp-mavail">—</span></div>
+      <div><span class="cp-lbl">Used margin</span><span class="mono" id="cp-mused">—</span></div>
+      <div class="cp-note" id="cp-mnote">Kotak P account</div>
+    </div>
+
+    <div class="cp-graphs">
+      <button class="btn" id="btn-payoff" title="Profit / loss at expiry of the open positions in this chain">Payoff graph</button>
+      <button class="btn" id="btn-atm" title="ATM straddle premium (call + put) through the day, nearest expiry">ATM chart</button>
+    </div>
+
+    <div class="rk-note">The stop-loss / target / trail guard runs on the VPS engine: it keeps working when this screen, laptop or Wi-Fi is closed.</div>
+  </div>
+</aside>
+<section class="graphpane" id="graphpane">
+  <div class="gp-card">
+    <div class="gp-head"><b>MTM</b><span class="cp-lbl">Session P&amp;L today</span>
+      <select id="gp-mins" title="One point per"></select></div>
+    <div class="gp-body" id="gp-mtm"><p class="gp-empty">No trades yet today.</p></div>
+    <div class="gp-note" id="gp-mtm-note"></div>
+  </div>
+  <div class="gp-card">
+    <div class="gp-head"><b>CE / PE imbalance</b><span class="cp-lbl">(short CE − short PE) ÷ total premium</span></div>
+    <div class="gp-body" id="gp-imb"><p class="gp-empty">Shows once you are short calls and/or puts.</p></div>
+    <div class="gp-note" id="gp-imb-note"></div>
+  </div>
+</section>
+</div>
 
 <section class="dock" id="dock">
   <div class="dock-head">
     <button class="dt on" data-p="pos">Positions <span id="npos">0</span></button>
     <button class="dt" data-p="ord">Orders <span id="nord">0</span></button>
-    <button class="dt" data-p="risk">Risk <span id="nrisk">off</span></button>
     <div class="spacer"></div>
     <div class="dock-tools" id="tools-pos">
-      <button class="btn sm" id="btn-payoff" title="Profit / loss at expiry of the open positions in this chain">Payoff</button>
-      <button class="btn sm" id="btn-mtm" title="Today's Session P&L over time">MTM graph</button>
-      <span class="lbl" style="margin-left:8px">Move by</span>
+      <span class="lbl">Move by</span>
       <select id="move-n"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
-      <span class="lbl" style="margin-left:8px">Exit</span>
-      <button class="btn sm" data-frac="0.25">25%</button><button class="btn sm" data-frac="0.5">50%</button>
-      <button class="btn sm" data-frac="0.75">75%</button><button class="btn sm danger" data-frac="1">100%</button>
     </div>
     <div class="dock-tools" id="tools-ord" hidden>
       <div class="seg small" id="ofilter">
         <button class="on" data-f="all">All</button><button data-f="open">Open</button><button data-f="done">Done</button>
       </div>
-      <button class="btn sm" id="cancelall">Cancel all open</button>
     </div>
   </div>
   <div class="dock-body">
@@ -100,20 +157,6 @@
       <thead><tr><th class="l">Contract</th><th>Net</th><th>Avg</th><th>LTP</th><th>P&amp;L</th><th>Realized</th><th></th></tr></thead>
       <tbody id="pos-rows"></tbody>
     </table>
-    <div class="riskpane" id="risk-pane" hidden>
-      <div class="rk-form">
-        <label>Stop-loss ₹ <input id="rk-stop" type="number" step="500" placeholder="-5000" class="mono"
-          title="A Session P&L level: exit everything when P&L falls to it. -5000 = stop at a 5,000 loss; +2000 = lock in 2,000"></label>
-        <label>Target ₹ <input id="rk-target" type="number" step="500" placeholder="10000" class="mono"
-          title="A Session P&L level: exit everything when P&L reaches it. Fixed, never trailed"></label>
-        <label>Trail ₹ <input id="rk-trail" type="number" step="500" placeholder="5000 step" class="mono"
-          title="Every time P&L rises this much, the stop rises by this much. With no stop typed it starts at P&L − trail"></label>
-        <button class="btn go" id="rk-set">Set</button><button class="btn" id="rk-clear">Clear</button>
-      </div>
-      <div class="rk-state mono" id="rk-state">Guard off.</div>
-      <div class="rk-sum" id="rk-sum"></div>
-      <div class="rk-note">The guard runs on the VPS engine: it keeps watching when this screen, laptop or Wi-Fi is closed.</div>
-    </div>
     <table class="grid" id="ord-table" hidden>
       <thead><tr><th class="l">Time</th><th class="l">Contract</th><th>Side</th><th>Qty</th><th>Filled</th><th>Limit</th><th>Avg</th><th class="l">Status</th><th class="l">Detail</th><th></th></tr></thead>
       <tbody id="ord-rows"></tbody>
@@ -161,6 +204,17 @@
   </div>
 </div>
 
+<!-- replays -->
+<div class="modal" id="replays" hidden>
+  <div class="panel">
+    <div class="p-head"><b>Replays</b><button class="x" data-close="replays">✕</button></div>
+    <p class="hint2">Every day you place an order is recorded automatically (from 15 min before your first order to the close).
+      Download a day and double-click the file: it opens this terminal offline and plays the day back — prices, your trades,
+      positions, P&amp;L, risk guard and graphs exactly as they were. Files are also backed up to Google Drive.</p>
+    <table class="grid" id="rp-list"><tbody><tr><td class="empty">Loading…</td></tr></tbody></table>
+  </div>
+</div>
+
 <!-- graphs -->
 <div class="modal" id="graph" hidden>
   <div class="panel wide">
@@ -173,6 +227,6 @@
 </div>
 
 <div class="toasts" id="toasts"></div>
-<script src="/static/app.js?v=20261024a"></script>
+<script src="/static/app.js?v=20261026p"></script>
 </body>
 </html>

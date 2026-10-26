@@ -64,10 +64,15 @@ class Throttle:
                 pass  # corrupt budget file — start today's count from zero
 
     def _save_budget(self) -> None:
-        BUDGET_PATH.parent.mkdir(parents=True, exist_ok=True)
-        BUDGET_PATH.write_text(
-            json.dumps({"date": self.day, "used": self.used}), encoding="utf-8"
-        )
+        # Bookkeeping only (the quota is not enforced by ICICI): a backup sync or
+        # antivirus briefly locking the file must never stop a download.
+        try:
+            BUDGET_PATH.parent.mkdir(parents=True, exist_ok=True)
+            BUDGET_PATH.write_text(
+                json.dumps({"date": self.day, "used": self.used}), encoding="utf-8"
+            )
+        except OSError:
+            pass
 
     def remaining(self) -> int:
         # Roll over if the process has been running across midnight.

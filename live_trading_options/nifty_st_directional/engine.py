@@ -15,7 +15,7 @@ this engine and compares with the backtest). This file only:
     paper fills = option LTP at that moment
 
 Market data: its own Kite ticker (never a Fyers socket — the VWAP strangle owns
-that). Fyers REST history only for indicator warm-up (previous sessions + today's
+that). Kite REST history (Fyers as backup) for indicator warm-up (previous sessions + today's
 minutes before the engine started). Paper only: it places no orders.
 
 Restart-safe: the machine is snapshotted after every boundary. A restarted engine
@@ -69,7 +69,12 @@ for d in (STATE_DIR, RESULTS):
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 PORT_LOCK = 47668
 MKT_OPEN, MKT_CLOSE = dt.time(9, 15), dt.time(15, 30)
-GRACE = 1.5                 # seconds after a boundary before the bar is processed
+GRACE = 0.10                # seconds after a boundary before the bar is processed.
+                            # Ticks are bucketed by RECEIPT time, so a tick arriving after
+                            # the boundary belongs to the next minute whatever we wait;
+                            # the old 1.5 s only delayed every decision (26-Oct review).
+STREAM_PORT = 47673         # 127.0.0.1 line stream of ticks for the dashboard (SSE proxy)
+STREAM_EVERY = 0.10         # seconds: at most ~10 pushes a second to the page
 SPOT_SYMBOL_FYERS = "NSE:NIFTY50-INDEX"
 
 
@@ -183,6 +188,23 @@ class MinuteBook:
         return pd.DataFrame({"datetime": keys, "open": a[:, 0], "high": a[:, 1],
                              "low": a[:, 2], "close": a[:, 3]})
 
+    def forming(self, start: pd.Timestamp):
+        """[o, h, l, c] of everything traded from `start` (a 5-min boundary) up to now,
+        including the minute still in progress -- the candle the chart shows forming."""
+        full_from = self.full_from
+        rows = []
+        for m, b in self.hist.items():
+            if m >= start and (full_from is None or m < full_from):
+                rows.append((m, b))
+        if full_from is not None:
+            for m, b in list(self.ticks.items()):
+                if m >= start and m >= full_from:
+                    rows.append((m, b))
+        if not rows:
+            return None
+        rows.sort(key=lambda x: x[0])
+        return [rows[0][1][0], max(b[1] for _, b in rows), min(b[2] for _, b in rows), rows[-1][1][3]]
+
     def open_at(self, m: pd.Timestamp):
         b = self.ticks.get(m) if (self.full_from is not None and m >= self.full_from) else None
         b = b or self.hist.get(m)
@@ -198,6 +220,48 @@ class MinuteBook:
 
 
 # ════════════════════════════════════════════════════════════════════════════
+class StreamHub:
+    """Pushes one JSON line per update to every local listener (the dashboard's SSE
+    proxy) on 127.0.0.1. A slow or dead listener is dropped, never waited on."""
+
+    def __init__(self, port):
+        import socket
+        self.clients, self.clock = [], threading.Lock()
+        self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.srv.bind(("127.0.0.1", port))
+        self.srv.listen(8)
+        threading.Thread(target=self._accept, daemon=True, name="stdir-stream-accept").start()
+
+    def _accept(self):
+        import socket
+        while True:
+            try:
+                c, _ = self.srv.accept()
+                c.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                c.settimeout(0.2)
+                with self.clock:
+                    self.clients.append(c)
+            except Exception:
+                time.sleep(0.5)
+
+    def publish(self, obj):
+        if not self.clients:
+            return
+        data = (json.dumps(obj, default=str, separators=(",", ":")) + "\n").encode()
+        with self.clock:
+            for c in list(self.clients):
+                try:
+                    c.sendall(data)
+                except Exception:
+                    self.clients.remove(c)
+                    try:
+                        c.close()
+                    except Exception:
+                        pass
+
+
+# ════════════════════════════════════════════════════════════════════════════
 class LiveProvider:
     """The DayMachine's data interface, backed by the engine's live books."""
 
@@ -205,7 +269,7 @@ class LiveProvider:
         self.e = eng
 
     def _until(self):
-        return pd.Timestamp(self.e.clock()) - pd.Timedelta(seconds=GRACE - 0.5)
+        return pd.Timestamp(self.e.clock())
 
     def spot_candles(self, day):
         e = self.e
@@ -220,7 +284,7 @@ class LiveProvider:
         return c5[c5.index + pd.Timedelta(minutes=5) <= self._until()]
 
     def prev_cpr_width(self, day):
-        """CPR width from the previous session in the warm-up history (Fyers REST:
+        """CPR width from the previous session in the warm-up history (Kite REST, same as Fyers:
         on closing-auction days it is flat 15:15-15:29 with the official close last)."""
         e = self.e
         with e.lock:
@@ -334,6 +398,11 @@ class Engine:
         self.cpr_info = None
         self.live = None                 # KotakDLive (real orders) -- attached in main()
         self._last_live = 0.0
+        self.last_decision_ms = None      # wall ms of the latest machine decision (latency log)
+        self.tick_evt = threading.Event() # set by every tick: wakes the step loop at once
+        self.stream_evt = threading.Event()
+        self.hub = None                   # StreamHub (dashboard live feed)
+        self._prepared_keys: set = set()
         self.status = "starting"
         self._dirty = True
         self._last_mtm = 0.0
@@ -431,28 +500,48 @@ class Engine:
                 time.sleep(wait)
             Engine._fyers_last = time.monotonic()
 
+    _KITE_GAP = 0.35                       # Kite historical API: 3 requests/second
+    _kite_lock = threading.Lock()
+    _kite_last = 0.0
+
+    def _kite_pace(self):
+        with Engine._kite_lock:
+            wait = Engine._kite_last + self._KITE_GAP - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
+            Engine._kite_last = time.monotonic()
+
     def history(self, fyers_symbol: str, kite_token: int | None, sessions: int) -> pd.DataFrame:
-        """Last `sessions` prior sessions + today's completed minutes, 1-min OHLC."""
+        """Last `sessions` prior sessions + today's completed minutes, 1-min OHLC.
+
+        Kite first: the live ticks are Kite's, so the warm-up comes from the same source
+        (checked 26-Oct on 9 sessions: previous-day H/L/C and CPR identical to Fyers,
+        5-min Supertrend direction 100% equal). Fyers only if Kite fails."""
         start = self.today - dt.timedelta(days=sessions * 2 + 6)
         cutoff = pd.Timestamp(self.clock()).floor("min")
-        try:
+        df = None
+        if kite_token is not None and self.kite is not None:
+            try:
+                self._kite_pace()
+                rows = self.kite.historical_data(kite_token, start, self.today + dt.timedelta(days=1), "minute")
+                if not rows:
+                    raise RuntimeError("empty")
+                df = pd.DataFrame(rows)
+                df["datetime"] = [pd.Timestamp(x).tz_localize(None) if pd.Timestamp(x).tzinfo is None
+                                  else pd.Timestamp(x).tz_convert(IST).tz_localize(None) for x in df["date"]]
+            except Exception as e:
+                self.event("WARN", f"Kite history {fyers_symbol} failed ({e}); trying Fyers")
+                df = None
+        if df is None:
             self._fyers_pace()
             r = self._fyers().history({"symbol": fyers_symbol, "resolution": "1", "date_format": "1",
                                        "range_from": start.isoformat(), "range_to": self.date_str,
                                        "cont_flag": "1"})
             c = (r or {}).get("candles") or []
             if not c:
-                raise RuntimeError(f"empty: {str(r)[:120]}")
+                raise RuntimeError(f"Kite and Fyers history both unavailable: {str(r)[:120]}")
             df = pd.DataFrame(c, columns=["ts", "open", "high", "low", "close", "volume"])
             df["datetime"] = [dt.datetime.fromtimestamp(x, IST).replace(tzinfo=None) for x in df.ts]
-        except Exception as e:
-            if kite_token is None:
-                raise
-            self.event("WARN", f"Fyers history {fyers_symbol} failed ({e}); trying Kite")
-            rows = self.kite.historical_data(kite_token, start, self.today + dt.timedelta(days=1), "minute")
-            df = pd.DataFrame(rows)
-            df["datetime"] = [pd.Timestamp(x).tz_localize(None) if pd.Timestamp(x).tzinfo is None
-                              else pd.Timestamp(x).tz_convert(IST).tz_localize(None) for x in df["date"]]
         df = df[df["datetime"] < cutoff]
         days = sorted(df["datetime"].dt.date.unique())
         prior = [d for d in days if d < self.today][-sessions:] if sessions else []
@@ -549,6 +638,8 @@ class Engine:
                         self.tick(int(tok), float(lp), now, t.get("last_trade_time"))
                     except Exception as e:
                         print(f"  [stdir] tick skipped: {e}", flush=True)
+            self.tick_evt.set()
+            self.stream_evt.set()
         except Exception as e:
             print(f"  [stdir] on_ticks error: {e}", flush=True)
 
@@ -662,7 +753,19 @@ class Engine:
             if len(self.machine.events) > n_ev:
                 self._after_bar(n_ev)
         if self.machine.position is None and pos is not None:
+            self.last_decision_ms = int(time.time() * 1000)
             self.live_sync(force=True)           # cost-stop hit: buy back on Kotak D now
+
+    def prepare_live(self, contract):
+        """Have Kotak D resolve this contract NOW (background), not when the signal fires."""
+        if self.live is None:
+            return
+        k = self.contract_key(contract)
+        if k in self._prepared_keys:
+            return
+        self._prepared_keys.add(k)
+        threading.Thread(target=self.live.prepare, args=(contract,), daemon=True,
+                         name=f"kd-prep-{k[1]}{k[2]}").start()
 
     def live_sync(self, force=False):
         """Mirror any paper position change onto Kotak D (live_kotak). Never raises."""
@@ -695,6 +798,7 @@ class Engine:
                 with self.mlock:
                     n_ev = len(self.machine.events)
                     self.machine.on_close(pd.Timestamp(t))
+                    self.last_decision_ms = int(time.time() * 1000)
                     self._after_bar(n_ev)
                 self.live_sync(force=True)
             except Exception as e:
@@ -721,6 +825,7 @@ class Engine:
         # make sure the contract of any new setup / position streams from now on
         for c in [s.contract for s in self.machine.setups[-2:]]:
             self.ensure_tracked(self.contract_key(c))
+            self.prepare_live(c)
         for tr in self.machine.trades:
             if tr["exit_price"] is not None and tr["trade_id"] not in self.recorded_exits:
                 self.recorded_exits.add(tr["trade_id"])
@@ -769,6 +874,14 @@ class Engine:
         row = self.instr.get(key)
         v = self.ltp.get(row["token"]) if row else None
         return v[0] if v else None
+
+    def ltp_fresh(self, key, max_age_s):
+        """Our own Kite LTP for a contract if it is at most `max_age_s` old, else None."""
+        row = self.instr.get(key)
+        v = self.ltp.get(row["token"]) if row else None
+        if v is None or time.monotonic() - v[1] > max_age_s:
+            return None
+        return float(v[0])
 
     # ── persistence ──────────────────────────────────────────────────────
     def _persist(self):
@@ -858,13 +971,19 @@ class Engine:
                  "cpr_max": self.p.get("cpr_max_width"),
                  "last_bar": max(self.processed) if self.processed else None}
         write_json(STATE_DIR / "TICK.json", d)
-        if self.first_tick_seen and time.monotonic() - self._last_mtm >= 5 \
+        if self.first_tick_seen and time.monotonic() - self._last_mtm >= 1 \
                 and MKT_OPEN <= self.clock().time() <= dt.time(15, 31):
             self._last_mtm = time.monotonic()
-            append_jsonl(RESULTS / f"{self.date_str}_mtm.jsonl",
-                         {"t": d["ts"], "time": epoch(self.clock()), "spot": d["spot"],
-                          "gross": m["day_gross"], "net": m["day_net"],
-                          "open": bool(pos), "equity": d["equity"]})
+            row = {"t": d["ts"], "time": epoch(self.clock()), "spot": d["spot"],
+                   "gross": m["day_gross"], "net": m["day_net"],
+                   "open": bool(pos), "equity": d["equity"]}
+            if self.live is not None:
+                try:
+                    k = self.live.mtm()
+                    row.update(kd_gross=k["gross"], kd_net=k["net"], kd_open=bool(k["pos"]))
+                except Exception:
+                    pass
+            append_jsonl(RESULTS / f"{self.date_str}_mtm.jsonl", row)
 
     def _candles_json(self, c5):
         return [{"time": epoch(ts), "label": ts.strftime("%H:%M"), "open": _r(r["open"]),
@@ -943,9 +1062,76 @@ class Engine:
         self._dirty = False
 
     # ── loops ────────────────────────────────────────────────────────────
+    def stream_payload(self):
+        """Everything the page redraws per tick: spot, forming candles, LTPs, both MTMs."""
+        now = self.clock()
+        b = pd.Timestamp(now).floor("5min")
+        in_session = MKT_OPEN <= now.time() < MKT_CLOSE
+        keys = []
+        mach = self.machine
+        if mach.setup is not None:
+            keys.append(self.contract_key(mach.setup.contract))
+        if mach.position is not None:
+            keys.append(self.contract_key(mach.position["contract"]))
+        lp = self.live.pos if self.live is not None else None
+        if lp and lp.get("contract"):
+            keys.append(self.contract_key(tuple(lp["contract"])))
+        out = {"type": "tick", "ms": int(time.time() * 1000), "t": now.strftime("%H:%M:%S.%f")[:12],
+               "date": self.date_str, "spot": _r(self.spot), "opt": {}}
+        with self.lock:
+            sb = self.spot_book.forming(b) if in_session else None
+            for k in dict.fromkeys(keys):
+                row = self.instr.get(k)
+                if not row:
+                    continue
+                tok = row["token"]
+                book = self.books.get(tok)
+                fb = book.forming(b) if (book and in_session) else None
+                v = self.ltp.get(tok)
+                out["opt"][f"{k[1]} {k[2]}"] = {
+                    "ltp": _r(v[0]) if v else None,
+                    "bar": ({"time": epoch(b), "open": _r(fb[0]), "high": _r(fb[1]),
+                             "low": _r(fb[2]), "close": _r(fb[3])} if fb else None)}
+        if sb:
+            out["spot_bar"] = {"time": epoch(b), "open": _r(sb[0]), "high": _r(sb[1]),
+                               "low": _r(sb[2]), "close": _r(sb[3])}
+        try:
+            m, pos = self.day_pnl()
+            out["paper"] = {"day_net": m["day_net"], "day_gross": m["day_gross"],
+                            "realized_net": m["realized_net"], "open_net": m["open_net"],
+                            "trades": m["trades"],
+                            "pos": ({"label": f"{pos['strike']} {pos['opt_type']}", "entry": pos["entry_price"],
+                                     "ltp": pos.get("ltp"), "net": pos.get("net")} if pos else None)}
+        except Exception:
+            pass
+        if self.live is not None:
+            try:
+                out["kd"] = self.live.mtm()
+            except Exception:
+                pass
+        out["time"] = epoch(now)
+        return out
+
+    def stream_loop(self):
+        last = 0.0
+        while True:
+            self.stream_evt.wait(1.0)          # a tick, or a 1 s heartbeat
+            self.stream_evt.clear()
+            gap = time.monotonic() - last
+            if gap < STREAM_EVERY:
+                time.sleep(STREAM_EVERY - gap)
+            last = time.monotonic()
+            if self.hub is None or not self.hub.clients:
+                continue
+            try:
+                self.hub.publish(self.stream_payload())
+            except Exception as e:
+                print(f"  [stdir] stream error: {type(e).__name__}: {e}", flush=True)
+
     def step_loop(self):
         while True:
-            time.sleep(0.25)
+            self.tick_evt.wait(0.05)          # every tick, or every 50 ms at the latest
+            self.tick_evt.clear()
             try:
                 self.step()
             except Exception as e:
@@ -1039,6 +1225,19 @@ def main():
         eng.event("SYSTEM", f"Kotak D live leg ready (armed={eng.live.ctrl['armed']}, lots={eng.live.ctrl['lots']})")
     except Exception as e:
         eng.event("ERROR", f"Kotak D live leg NOT available: {type(e).__name__}: {e}")
+    # pre-load Kotak D for the contracts a setup can pick right now (scrip lists warm)
+    if eng.live is not None:
+        for k in eng.band_keys()[:6]:
+            eng.prepare_live(k)
+        with eng.mlock:
+            for s in eng.machine.setups[-2:]:
+                eng.prepare_live(s.contract)
+    try:
+        eng.hub = StreamHub(STREAM_PORT)
+        threading.Thread(target=eng.stream_loop, daemon=True, name="stdir-stream").start()
+        eng.event("SYSTEM", f"tick stream for the dashboard on 127.0.0.1:{STREAM_PORT}")
+    except Exception as e:
+        eng.event("WARN", f"tick stream NOT available ({e}) — page falls back to polling")
     eng.write_state()
     threading.Thread(target=eng.writer_loop, daemon=True, name="stdir-writer").start()
     eng.step_loop()

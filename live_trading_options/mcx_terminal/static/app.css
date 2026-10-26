@@ -325,3 +325,167 @@ td.fd2 { animation: fd2 .32s ease-out; }
   background: rgba(242, 82, 92, .12); border: 1px solid rgba(242, 82, 92, .5); color: #ff8a92;
 }
 .kbtg.on { background: rgba(31, 201, 122, .16); border-color: var(--up); color: #5fe3a6; box-shadow: 0 0 0 1px rgba(31, 201, 122, .25); }
+.rpbtn { width: auto; padding: 0 9px; font: 600 11.5px var(--sans); }
+a.btn { text-decoration: none; display: inline-block; }
+
+/* ── layout v2: option chain on the left, tools panel on the right ── */
+.workarea { flex: 1; min-height: 0; display: flex; }
+.workarea .chainwrap { flex: 0 0 auto; max-width: 64%; overflow: auto; border-right: 1px solid var(--line); }
+.workarea .chain { width: auto; }
+.chain td.q { color: var(--muted); min-width: 52px; }
+.sidepane { flex: 1; min-width: 0; overflow: auto; background: var(--panel); }
+.sp-empty {
+  height: 100%; min-height: 120px; display: flex; align-items: center; justify-content: center;
+  color: var(--dim); font-size: 12px; letter-spacing: .06em; border: 1px dashed var(--line); margin: 12px; border-radius: 8px;
+}
+@media (max-width: 900px) {
+  .workarea { flex-direction: column; }
+  .workarea .chainwrap { max-width: none; flex: 1; border-right: 0; }
+  .sidepane { flex: 0 0 auto; }
+}
+/* own position lots per strike */
+.chain th.posh { color: var(--accent); }
+.chain td.pos { min-width: 44px; text-align: center; font-weight: 700; color: var(--dim); }
+.chain td.pos.long { color: var(--up); background: rgba(31, 201, 122, .10); }
+.chain td.pos.short { color: var(--down); background: rgba(242, 82, 92, .10); }
+
+/* one instrument switch (replaces the three price boxes + instrument buttons) */
+.instpick { position: relative; }
+.ip-btn {
+  display: inline-flex; align-items: baseline; gap: 10px; padding: 6px 12px; cursor: pointer;
+  background: var(--panel-2); border: 1px solid var(--accent); border-radius: 6px; color: var(--text);
+}
+.ip-btn .n { font: 700 12px var(--sans); letter-spacing: .06em; }
+.ip-btn .p { font-size: 15px; font-weight: 600; }
+.ip-btn .c { font-size: 11px; }
+.ip-btn .caret { color: var(--accent); font-size: 11px; transition: transform .12s; }
+.ip-btn.open .caret { transform: rotate(180deg); }
+.ip-menu {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 25; min-width: 300px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 6px;
+  box-shadow: 0 14px 40px rgba(0, 0, 0, .5);
+}
+.ip-menu[hidden] { display: none; }
+.ip-item {
+  display: grid; grid-template-columns: 1fr auto; column-gap: 14px; row-gap: 1px; align-items: baseline;
+  padding: 8px 10px; border-radius: 6px; cursor: pointer;
+}
+.ip-item:hover { background: var(--panel-2); }
+.ip-item.on { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.ip-item .n { font: 600 12px var(--sans); color: var(--text); letter-spacing: .04em; }
+.ip-item .p { font-size: 14px; font-weight: 600; text-align: right; }
+.ip-item .c { font-size: 11px; }
+.ip-item .s { font-size: 11px; color: var(--muted); text-align: right; }
+/* switch sits at the start of the second row; tickers back on the top row */
+.bar .ip-btn { padding: 5px 11px; }
+.bar .ip-btn .p { font-size: 14px; }
+
+/* ── right control panel ── */
+.cp { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.cp-lbl { color: var(--muted); font-size: 12px; }
+.cp-big { font-size: 34px; font-weight: 700; line-height: 1.05; letter-spacing: -.01em; }
+.cp-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cp-row select { padding: 4px 8px; }
+.cp-imtm { font-size: 15px; font-weight: 600; }
+.cp-grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.cp-grid3 label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; }
+.cp-grid3 input {
+  width: 100%; min-width: 0; background: var(--bg); color: var(--text); border: 1px solid var(--line);
+  border-radius: 5px; padding: 7px 8px; font-size: 13px;
+}
+.cp-grid3 input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.cp-btns { display: flex; gap: 10px; }
+.cp-set { background: #138a6c; border-color: #138a6c; color: #fff; padding: 7px 20px; }
+.cp-set.armed { box-shadow: 0 0 0 2px rgba(31, 201, 122, .45); }
+.cp-clear { background: transparent; border-color: transparent; padding: 7px 14px; }
+.cp-exit { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.cp-exit .btn { background: #b8323a; border-color: #b8323a; color: #fff; padding: 8px 0; font-weight: 700; }
+.cp-exit .btn:hover { background: #d03a43; }
+.cp-link { align-self: center; background: transparent; border: 0; color: var(--text); font: 600 12.5px var(--sans); cursor: pointer; padding: 2px 6px; }
+.cp-link:hover { color: var(--accent); }
+.cp-margin { display: flex; flex-direction: column; gap: 4px; border-top: 1px solid var(--line-soft); padding-top: 10px; }
+.cp-margin > div { display: flex; justify-content: space-between; align-items: baseline; }
+.cp-margin .mono { font-size: 13px; font-weight: 600; }
+.cp-note { color: var(--dim); font-size: 10.5px; justify-content: flex-end !important; }
+.cp-graphs { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.cp-graphs .btn { padding: 8px 0; }
+.sidepane .rk-state { font-size: 11.5px; color: var(--muted); }
+.sidepane .rk-sum { font-size: 11px; }
+.sidepane .rk-note { font-size: 10.5px; }
+
+/* ── right panel: standard (compact) size — overrides the first version above ── */
+.workarea .chainwrap { flex: 1 1 auto; max-width: none; }
+.sidepane { flex: 0 0 330px; }
+.cp { padding: 10px 12px; gap: 8px; }
+.cp-lbl { font-size: 11px; }
+.cp-big { font-size: 22px; font-weight: 700; }
+.cp-row { gap: 8px; }
+.cp-row select { padding: 2px 6px; font-size: 11.5px; }
+.cp-imtm { font-size: 12.5px; }
+.cp-grid3 { gap: 6px; }
+.cp-grid3 label { font-size: 11px; gap: 3px; }
+.cp-grid3 input { padding: 4px 6px; font-size: 12px; }
+.cp-btns { gap: 6px; }
+.cp-set { padding: 4px 14px; font-size: 12px; }
+.cp-clear { padding: 4px 10px; font-size: 12px; }
+.cp-exit { gap: 5px; }
+.cp-exit .btn { padding: 4px 0; font-size: 11.5px; }
+.cp-link { font-size: 11.5px; }
+.cp-margin { padding-top: 6px; gap: 2px; }
+.cp-margin .mono { font-size: 12px; }
+.cp-graphs { gap: 6px; }
+.cp-graphs .btn { padding: 4px 0; font-size: 11.5px; }
+.sidepane .rk-state { font-size: 11px; }
+.sidepane .rk-sum, .sidepane .rk-note { font-size: 10.5px; }
+@media (max-width: 900px) { .sidepane { flex: 0 0 auto; } }
+.workarea .chain { width: 100%; }
+/* chain back to its natural width; compact panel right beside it (spare space stays at the far right) */
+.workarea .chainwrap { flex: 0 0 auto; max-width: 70%; }
+.workarea .chain { width: auto; }
+.sidepane { flex: 1 1 auto; }
+.cp { max-width: 340px; }
+
+/* ── wider control panel + graphs column on the far right ── */
+.sidepane { flex: 0 0 auto; }
+.cp { max-width: none; width: 380px; }
+.graphpane { flex: 1 1 auto; min-width: 280px; display: flex; flex-direction: column; gap: 10px; padding: 10px 12px;
+             border-left: 1px solid var(--line); overflow: auto; background: var(--bg); }
+.gp-card { flex: 1 1 0; min-height: 150px; display: flex; flex-direction: column; background: var(--panel);
+           border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.gp-head { display: flex; align-items: baseline; gap: 8px; }
+.gp-head b { font-size: 12.5px; }
+.gp-head select { margin-left: auto; padding: 2px 6px; font-size: 11px; }
+.gp-body { flex: 1; min-height: 0; display: flex; align-items: center; }
+.gp-body svg { width: 100%; height: 100%; max-height: 100%; }
+.gp-empty { color: var(--dim); font-size: 11.5px; margin: auto; }
+.gp-note { color: var(--muted); font-size: 11px; }
+.gp-note b { color: var(--text); }
+@media (max-width: 1200px) { .graphpane { display: none; } }
+
+/* ── big order pop-ups: green executed · amber waiting · red error ── */
+.toasts { right: 18px; bottom: 44px; gap: 10px; }
+.toast { cursor: pointer; border: 0; border-left: 0; }
+.toast.ok, .toast.wait, .toast.bad {
+  min-width: 340px; max-width: 520px; padding: 14px 18px; border-radius: 10px; color: #fff;
+  display: flex; flex-direction: column; gap: 4px; box-shadow: 0 12px 36px rgba(0, 0, 0, .55);
+  animation: toastIn .14s ease-out;
+}
+.toast.ok { background: #138a4c; }
+.toast.wait { background: #b07400; }
+.toast.bad { background: #c0313b; }
+.toast .t-h { font: 800 13px var(--sans); letter-spacing: .1em; opacity: .95; }
+.toast.ok .t-m, .toast.wait .t-m, .toast.bad .t-m { font: 700 16px var(--sans); line-height: 1.3; }
+.toast.info { background: var(--panel-2); border: 1px solid var(--line); color: var(--text); font-size: 12px; }
+@keyframes toastIn { from { transform: translateY(10px); opacity: 0; } to { transform: none; opacity: 1; } }
+/* narrow screens: stack chain over the panel and keep it inside its box (re-asserted after the width rules above) */
+.workarea { overflow: hidden; }
+@media (max-width: 900px) {
+  .workarea .chainwrap { flex: 1 1 auto; max-width: none; min-height: 0; border-right: 0; }
+  .workarea .chain { width: 100%; }
+  .sidepane { flex: 0 0 auto; max-height: 45%; overflow: auto; }
+  .cp { width: auto; }
+}
+/* ATM straddle premium in the tickers, the list and the switch */
+.tk .a { grid-column: 1 / -1; font: 600 11px var(--mono); color: var(--accent); }
+.ip-item .a { grid-column: 1 / -1; font-size: 11px; color: var(--accent); }
+.ip-btn .a { font-size: 11.5px; color: var(--accent); font-weight: 600; }

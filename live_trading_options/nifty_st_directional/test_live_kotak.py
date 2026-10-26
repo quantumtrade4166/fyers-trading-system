@@ -14,8 +14,10 @@ import live_trading_options.nifty_st_directional.live_kotak as LK
 class FakeKE:
     """Stand-in for kotak_executor: records orders, fills them per a script."""
 
-    def __init__(self, fill_plan=None, margin=False, reject=0):
+    def __init__(self, fill_plan=None, margin=False, reject=0, never_settle=False):
         self.orders = []
+        self.never_settle = never_settle            # cancel is ignored, status stays "open"
+        self.resolves = 0
         self.fill_plan = list(fill_plan or [])      # filled qty per order (default: full)
         self.margin = margin
         self.reject = reject
@@ -24,6 +26,7 @@ class FakeKE:
         self.book = []                              # COMPLETE orders for strategy_fills
 
     def resolve(self, client, index, expiry, strike, opt):
+        self.resolves += 1
         return {"trading_symbol": f"NIFTY26O27{strike}{opt}", "exchange_segment": "nse_fo",
                 "lot_size": 65, "token": "123"}
 
@@ -57,7 +60,11 @@ class FakeKE:
 
     def cancel(self, client, oid):
         self.cancels.append(oid)
-        self.status[oid]["status"] = "cancelled"
+        if not self.never_settle:
+            self.status[oid]["status"] = "cancelled"
+
+    def quote_book(self, client, token, seg):
+        return {"low_lpp": 10.0, "high_lpp": 900.0}
 
     def strategy_fills(self, client, tag_prefix):
         return list(self.book)
@@ -89,6 +96,9 @@ class FakeEngine:
     def price_cached(self, key):
         return self.prices.get(key, 100.0)
 
+    def ltp_fresh(self, key, max_age_s):
+        return self.fresh.get(key) if hasattr(self, "fresh") else None
+
 
 @pytest.fixture(autouse=True)
 def tmp_dirs(tmp_path, monkeypatch):
@@ -102,6 +112,8 @@ def make(now=dt.datetime(2026, 10, 19, 9, 30, 2), **ke_kw):
     eng = FakeEngine(now)
     ke = FakeKE(**ke_kw)
     live = LK.KotakDLive(eng, ke=ke, login=lambda: object(), sleep=lambda s: None)
+    live.wait_first = live.wait_retry = 0.05            # test clock: no real 3-4 s waits
+    live.confirm_s = 0.05
     return eng, ke, live
 
 
@@ -203,6 +215,7 @@ def test_restart_rebuilds_open_short_from_own_orders():
     eng2 = FakeEngine(eng.now)
     eng2.machine = eng.machine
     live2 = LK.KotakDLive(eng2, ke=ke, login=lambda: object(), sleep=lambda s: None)
+    live2.wait_first = live2.wait_retry = live2.confirm_s = 0.05
     live2.reconcile()
     assert live2.pos["qty"] == 130 and live2.pos["trade_id"] == "T1"
     close_paper(eng2)
@@ -218,3 +231,69 @@ def test_safety_squareoff_after_1516():
     eng.now = dt.datetime(2026, 10, 19, 15, 16, 5)
     live.sync()
     assert ke.orders[-1]["side"] == "BUY" and live.pos is None
+
+
+def test_realized_pairs_fifo_per_contract():
+    """26-Oct: sold 22450CE 267.5 / bought 356.2, then sold 22550PE 164.85 (open).
+    True realized = -88.7 x 65 = -5,765.5 (the old average-of-everything showed ~ -9,100)."""
+    fills = [{"side": "SELL", "symbol": "CE", "qty": 65, "price": 267.5},
+             {"side": "BUY", "symbol": "CE", "qty": 65, "price": 356.2},
+             {"side": "SELL", "symbol": "PE", "qty": 65, "price": 164.85}]
+    assert LK.realized_fifo(fills) == pytest.approx(-5765.5)
+
+
+def test_prepared_contract_is_not_looked_up_at_fire_time():
+    eng, ke, live = make()
+    LK.write_control(armed=True, lots=1)
+    live.prepare((pd.Timestamp("2026-10-27"), 22950, "CE"))
+    assert ke.resolves == 1
+    open_paper(eng)
+    live.sync()
+    assert ke.resolves == 1 and ke.orders[0]["side"] == "SELL"
+
+
+def test_first_order_priced_from_own_tick_inside_band():
+    eng, ke, live = make()
+    eng.fresh = {(dt.date(2026, 10, 27), 22950, "CE"): 270.0}
+    LK.write_control(armed=True, lots=1)
+    live.prepare((pd.Timestamp("2026-10-27"), 22950, "CE"))
+    open_paper(eng)
+    eng.last_decision_ms = LK._ms()
+    live.sync()
+    assert ke.orders[0]["price"] == pytest.approx(267.3)          # 1% through the 270.0 tick
+    f = live.fills[0]
+    assert f["price_src"].startswith("tick") and f["ms_decision_to_send"] >= 0 and "ms_ack" in f
+
+
+def test_unknown_order_state_blocks_every_new_order():
+    eng, ke, live = make(fill_plan=[0], never_settle=True)
+    LK.write_control(armed=True, lots=1)
+    open_paper(eng)
+    live.sync()
+    assert len(ke.orders) == 1 and live.unsettled and live.pos is None
+    close_paper(eng)
+    open_paper(eng, tid="T2")
+    live.sync()                                       # still unknown -> nothing new is sent
+    assert len(ke.orders) == 1
+    # Kotak finally reports the order: filled
+    oid = ke.orders[0]["oid"]
+    ke.status[oid].update(status="complete", filled_qty=65)
+    live.sync()
+    assert not live.unsettled and any(f["attempt"] == "settled" for f in live.fills)
+
+
+def test_view_shows_trades_position_and_stop_to_cost():
+    eng, ke, live = make()
+    eng.p = {"breakeven_after_points": 25}
+    LK.write_control(armed=True, lots=1)
+    open_paper(eng, price=200.0)
+    live.sync()
+    v = live.view()
+    pd_ = v["pos_detail"]
+    assert pd_["qty"] == 65 and pd_["expiry"] == "2026-10-27" and pd_["strike"] == 22950
+    assert pd_["stop"] == {"price": 200.0, "trigger": 175.0, "points": 25, "armed": None}
+    assert len(v["trades"]) == 1 and v["trades"][0]["open"] and v["trades"][0]["trade_id"] == "T1"
+    close_paper(eng, "breakeven_stop")
+    live.sync()
+    t = live.view()["trades"][0]
+    assert not t["open"] and t["reason"] == "breakeven_stop" and t["net"] is not None

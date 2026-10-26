@@ -418,6 +418,142 @@ def test_carry_forward_overnight():
     check("new day saved", (d / "paper_book_2026-10-23.json").exists())
 
 
+def test_recorder_ring_activation_roundtrip():
+    import tempfile
+    from live_trading_options.mcx_terminal import recorder as R
+    d = Path(tempfile.mkdtemp())
+    rec = R.DayRecorder(day="2026-10-26", folder=d)
+    rec._stop.set()                                            # drive flushes by hand
+    for i in range(1000):
+        rec.tick((1000 + i, 5, 1.0 + i, None, None, None, None, None, None, None, None, None, None))
+    rec.event("book", {"t": "book", "positions": [], "orders": []})
+    rec.flush()
+    check("no file before the first order", not rec.path.exists())
+    rec.activate(lambda: {"meta": {"x": 1}})
+    for i in range(500):
+        rec.tick((5000 + i, 6, 2.0, None, None, None, None, None, None, None, None, None, None))
+    rec.flush()
+    check("file after the first order", rec.path.exists())
+    ticks, events = R.read_raw(rec.path)
+    check("ring (before) + after all kept, in order", len(ticks) == 1500 and ticks[0][0] == 1000 and ticks[-1][0] == 5499,
+          (len(ticks), ticks[:1], ticks[-1:]))
+    check("header recorded", any(e[1] == "header" and e[2] == {"meta": {"x": 1}} for e in events), events[:3])
+    check("events kept", any(e[1] == "book" for e in events))
+    rec2 = R.DayRecorder(day="2026-10-26", folder=d)
+    rec2._stop.set()
+    check("restart mid-day keeps appending", rec2.active)
+
+
+def test_engine_records_only_visible_changes():
+    import tempfile
+    from live_trading_options.mcx_terminal import recorder as R
+    from live_trading_options.mcx_terminal.server import Engine
+    e = Engine()
+    e.rec = R.DayRecorder(day="2099-01-02", folder=Path(tempfile.mkdtemp()))
+    e.rec._stop.set()
+    t = (7, 100.0, 99.5, 100.5, 3, 2, 10, 5, 98.0, 1, 1_792_000_000, 2.0, None)
+    e.on_ticks([t])
+    e.on_ticks([t])                                            # identical repeat (e.g. a depth-only packet)
+    e.on_ticks([(7, 100.0, 99.5, 100.5, 3, 2, 10, 5, 98.0, 1, 1_792_000_000, 2.0, ([(99.5, 3)], [(100.5, 2)]))])
+    e.on_ticks([(7, 101.0, 100.5, 101.5, 3, 2, 11, 5, 98.0, 1, 1_792_000_001, 3.0, None)])
+    check("repeats not recorded", len(e.rec.ticks) == 2, len(e.rec.ticks))
+
+
+def test_replay_builder_file():
+    import tempfile
+    import base64
+    import gzip
+    import json as _j
+    from live_trading_options.mcx_terminal import recorder as R
+    from live_trading_options.mcx_terminal import replay_build as B
+    text = (HERE / "testdata" / "mcx_scrip_sample.csv").read_text(encoding="utf-8")
+    u = I.parse(text, today="2026-10-19")
+    p = u.products["CRUDEOIL"]
+    ch = p.chains["2026-11-17"]
+    rows = [{"k": k, "ce": l["CE"].token, "pe": l["PE"].token, "cs": l["CE"].symbol, "ps": l["PE"].symbol} for k, l in ch.items()]
+    fut = p.underlying("2026-11-17")
+    cdef = {"t": "chain", "name": "CRUDEOIL", "expiry": "2026-11-17", "lot": 100, "tick": 0.1,
+            "fut": {"token": fut.token, "symbol": fut.symbol}, "rows": rows}
+    d = Path(tempfile.mkdtemp())
+    rec = R.DayRecorder(day="2026-10-27", folder=d)
+    rec._stop.set()
+    ce = rows[10]["ce"]
+    rec.activate(lambda: {"meta": {"products": [{"name": "CRUDEOIL", "futures": [{"token": fut.token}]}]},
+                          "chains": [cdef], "last": [[ce, 400.0, None, None, None, None, None, None, None, None, None, None]]})
+    t0 = 1_792_000_000_000
+    for i in range(300):
+        rec.tick((t0 + i * 100, ce, 400.0 + i * 0.1, 399.9, 400.1, 3, 2, 100 + i, 50, 410.0, 1, 1_792_000_000 + i // 10, -10.0))
+        rec.tick((t0 + i * 100, 123456789, 1.0, None, None, None, None, None, None, None, None, None, None))  # not on screen
+    rec.events.append((t0 + 5000, "book", {"t": "book", "positions": [], "orders": [
+        {"id": 1, "token": ce, "symbol": "X", "name": "CRUDEOIL", "side": "S", "qty": 100, "lot": 100}]}))
+    rec.flush()
+    out = B.build("2026-10-27", folder=d)
+    html = out.read_text(encoding="utf-8")
+    check("html built", out.exists() and "rp-ticks" in html and "ReplaySocket" in html and "function onChain" in html)
+    info = _j.loads(html.split('id="rp-info" type="application/json">')[1].split("</script>")[0])
+    check("off-screen contract dropped", info["n"] == 300 and 123456789 not in info["tokens"], info["n"])
+    blob = gzip.decompress(base64.b64decode(html.split('id="rp-ticks" type="application/octet-stream">')[1].split("</script>")[0]))
+    import numpy as np
+    n = info["n"]
+    ltp = np.frombuffer(blob[6 * n: 6 * n + 4 * n], dtype=np.float32)
+    check("float32 prices exact to the tick", abs(float(ltp[-1]) - 429.9) < 1e-3, float(ltp[-1]))
+
+
+def test_mtm_imbalance_series():
+    import tempfile
+    from live_trading_options.mcx_terminal.mtm import MtmHistory
+    mpath = Path(tempfile.gettempdir()) / "mcx_mtm_imb_test.json"
+    mpath.unlink(missing_ok=True)
+    h = MtmHistory(path=mpath)
+    pos = [{"token": 1, "symbol": "CRUDEOIL17NOV269500CE", "name": "CRUDEOIL", "net": -200, "avg": 300.0, "mult": 1.0, "realized": 0.0},
+           {"token": 2, "symbol": "CRUDEOIL17NOV269300PE", "name": "CRUDEOIL", "net": -100, "avg": 200.0, "mult": 1.0, "realized": 0.0},
+           {"token": 3, "symbol": "CRUDEOIL17NOV269900CE", "name": "CRUDEOIL", "net": 200, "avg": 50.0, "mult": 1.0, "realized": 0.0}]
+    px = {1: 300.0, 2: 200.0, 3: 50.0}
+    t0 = 1_800_000_000 - (1_800_000_000 % 60)
+    h.sample(pos, px.get, now=t0)
+    r = h.query(1, "all", "imb")
+    # short CE premium 300*200 = 60,000 (the long hedge is not counted) · short PE 200*100 = 20,000
+    check("imbalance % = (CE-PE)/(CE+PE)", r["points"] and abs(r["points"][0][1] - 50.0) < 1e-9, r["points"])
+    check("ce/pe premium carried", r["points"][0][2:] == [60000.0, 20000.0], r["points"])
+    h.sample([pos[2]], px.get, now=t0 + 60)                   # only a long left -> no short premium
+    check("no point when nothing is short", len(h.query(1, "all", "imb")["points"]) == 1)
+    mpath.unlink(missing_ok=True)
+
+
+def test_atm_straddle():
+    from live_trading_options.mcx_terminal.server import Engine
+    text = (HERE / "testdata" / "mcx_scrip_sample.csv").read_text(encoding="utf-8")
+    e = Engine()
+    e.universe = I.parse(text, today="2026-10-19")
+    p = e.universe.products["CRUDEOIL"]
+    exp = p.expiries()[0]
+    fut = p.underlying(exp)
+    e.last[fut.token] = [fut.token, 9312.0] + [None] * 10
+    ch = p.chains[exp]
+    e.last[ch[9300.0]["CE"].token] = [ch[9300.0]["CE"].token, 410.5] + [None] * 10
+    e.last[ch[9300.0]["PE"].token] = [ch[9300.0]["PE"].token, 398.0] + [None] * 10
+    v = e.atm_straddles()
+    check("ATM strike nearest the future", v.get("CRUDEOIL", [None])[0] == 9300.0, v)
+    check("ATM straddle = CE + PE", abs(v["CRUDEOIL"][1] - 808.5) < 1e-9, v)
+    check("no value without prices", "GOLDM" not in v)
+
+
+def test_atm_history():
+    import tempfile
+    from live_trading_options.mcx_terminal.mtm import AtmHistory
+    p = Path(tempfile.gettempdir()) / "mcx_atm_test.json"
+    p.unlink(missing_ok=True)
+    h = AtmHistory(path=p)
+    t0 = 1_800_000_000 - (1_800_000_000 % 60)
+    for i, (k, v) in enumerate([(9300, 800.0), (9300, 790.0), (9350, 780.0), (9350, 775.0)]):
+        h.sample({"CRUDEOIL": [k, v, "2026-11-17"], "GOLDM": [140500, 3100.0 + i, "2026-10-29"]}, now=t0 + i * 20)
+    r = h.query("CRUDEOIL", 1)
+    check("atm buckets keep last + strike", r["points"] == [[t0 + 40, 780.0, 9350], [t0 + 60, 775.0, 9350]], r["points"])
+    check("atm per instrument", len(h.query("GOLDM", 0.1)["points"]) == 4)
+    check("atm saved", p.exists())
+    p.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:
         fn()

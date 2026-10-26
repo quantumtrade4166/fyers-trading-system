@@ -92,6 +92,49 @@ def mtm(date: str = Query(None)):
     return {"ok": True, "date": date, "rows": rows}
 
 
+STREAM_PORT = 47673          # engine.py StreamHub (127.0.0.1 only)
+
+
+@router.get("/stream")
+async def stream():
+    """Server-sent events: every update the engine pushes (spot, forming candles, LTPs,
+    paper + Kotak D MTM), ~10 a second while ticks flow. Reconnects to the engine on its
+    own; a comment line every 15 s keeps proxies from closing an idle stream."""
+    import asyncio
+    from fastapi.responses import StreamingResponse
+
+    async def gen():
+        yield "retry: 2000\n\n"
+        while True:
+            try:
+                reader, writer = await asyncio.wait_for(
+                    asyncio.open_connection("127.0.0.1", STREAM_PORT), timeout=3)
+            except Exception:
+                yield ": engine stream not available\n\n"
+                await asyncio.sleep(3)
+                continue
+            try:
+                while True:
+                    try:
+                        line = await asyncio.wait_for(reader.readline(), timeout=15)
+                    except asyncio.TimeoutError:
+                        yield ": keep-alive\n\n"
+                        continue
+                    if not line:
+                        break
+                    yield "data: " + line.decode("utf-8", "replace").strip() + "\n\n"
+            finally:
+                try:
+                    writer.close()
+                except Exception:
+                    pass
+            await asyncio.sleep(1)
+
+    return StreamingResponse(gen(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache, no-transform",
+                                      "X-Accel-Buffering": "no", "Connection": "keep-alive"})
+
+
 @router.get("/daily")
 def daily():
     days = _read(RESULTS / "daily.json", {}) or {}
@@ -184,19 +227,39 @@ def _kd_book_view(date: str):
         norm.append({"time": f.get("time") or str(f.get("fill_time") or "")[-8:],
                      "side": f.get("side"), "symbol": f.get("symbol") or f.get("trading_symbol"),
                      "qty": int(f.get("qty") or 0), "price": f.get("price", f.get("avg_price")),
-                     "order_id": f.get("order_id")})
+                     "order_id": f.get("order_id"), "limit": f.get("limit"),
+                     "price_src": f.get("price_src"), "attempt": f.get("attempt"),
+                     "ms_decision_to_send": f.get("ms_decision_to_send"), "ms_ack": f.get("ms_ack"),
+                     "ms_send_to_fill_seen": f.get("ms_send_to_fill_seen"), "ms_total": f.get("ms_total")})
     sells = [f for f in norm if str(f["side"]).upper().startswith("S")]
     buys = [f for f in norm if str(f["side"]).upper().startswith("B")]
-    sq, bq = sum(f["qty"] for f in sells), sum(f["qty"] for f in buys)
-    realized = 0.0
-    if sq and bq:
-        s_avg = sum(f["qty"] * float(f["price"] or 0) for f in sells) / sq
-        b_avg = sum(f["qty"] * float(f["price"] or 0) for f in buys) / bq
-        realized = (s_avg - b_avg) * min(sq, bq)
-    return {"position": b.get("pos"), "fills": norm, "halted": b.get("halted"),
+    # FIFO per contract (averaging all sells against all buys across different
+    # contracts was wrong as soon as a day had two trades)
+    realized, opens = 0.0, {}
+    for f in norm:
+        q, px, sym = f["qty"], float(f["price"] or 0), f["symbol"]
+        if str(f["side"]).upper().startswith("S"):
+            opens.setdefault(sym, []).append([q, px])
+            continue
+        lots = opens.get(sym, [])
+        while q > 0 and lots:
+            take = min(q, lots[0][0])
+            realized += (lots[0][1] - px) * take
+            lots[0][0] -= take
+            q -= take
+            if lots[0][0] == 0:
+                lots.pop(0)
+    trades = []
+    try:                     # same round-trip builder the engine uses live
+        from live_trading_options.nifty_st_directional.live_kotak import round_trips, link_paper
+        st = _read(STATE / f"{date}_STATE.json", {}) or {}
+        trades = link_paper(round_trips(fills, date), st.get("trades") or [])
+    except Exception:
+        pass
+    return {"trades": trades, "position": b.get("pos"), "fills": norm, "halted": b.get("halted"),
             "last_error": b.get("last_error"), "pending_exit": b.get("pending_exit"),
             "realized_gross": round(realized, 2), "open_gross": 0.0, "day_gross": round(realized, 2),
-            "logged_in": None, "trades": min(len(sells), len(buys))}
+            "logged_in": None, "n_trades": min(len(sells), len(buys))}
 
 
 @router.get("/live")

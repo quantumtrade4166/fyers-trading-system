@@ -310,6 +310,20 @@ with tempfile.TemporaryDirectory() as tmp:
         pd.quick({"broker": "z", "legs": [leg("S", 23100, "CE")]}); check("quick on a real broker needs arming", False)
     except ValueError as e:
         check("quick on a real broker needs arming", "armed" in str(e).lower())
+    # adjust a DEPLOYED strategy (not the Quick book): order lands inside it
+    ids = pd.deploy(req(legs=[leg("S", 23100, "CE"), leg("S", 23100, "PE")], brokers={"p": 1})); wait_idle(pd)
+    dd = pd.deps[ids[0]]
+    n_quick = len(pd.deps[q1]["orders"])
+    got = pd.quick({"broker": "p", "deployment": dd["id"], "legs": [leg("S", 23100, "CE", 1)]}); wait_idle(pd)
+    check("adjust: order goes INTO the chosen strategy", got == dd["id"] and len(pd.deps[q1]["orders"]) == n_quick)
+    check("adjust: same contract -> same leg (-130)", pd.leg_book(dd, 0)[0] == -130)
+    pd.quick({"broker": "p", "deployment": dd["id"], "legs": [leg("S", 23300, "CE", 1)]}); wait_idle(pd)
+    check("adjust: a new strike is added as a new leg", len(dd["legs"]) == 3 and pd.leg_book(dd, 2)[0] == -65)
+    try:
+        pd.quick({"broker": "p", "deployment": "nope", "legs": [leg("S", 23100, "CE")]}); check("adjust: unknown strategy refused", False)
+    except ValueError:
+        check("adjust: unknown strategy refused", True)
+    PQ["NSE:X23300CE"] = {"ltp": 30, "bid": 29.8, "ask": 30.2}
     PQ["NSE:X23100CE"] = {"ltp": 100, "bid": None, "ask": None}
     check("paper: no bid/ask -> uses LTP", paper.price(None, {"symbol": "NSE:X23100CE"}, "B", 65, 999, 2) == 100)
 

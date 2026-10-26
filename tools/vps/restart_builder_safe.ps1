@@ -7,9 +7,13 @@ $desk = 'C:\Users\Administrator\Desktop'
 $py = "$repo\.venv\Scripts\python.exe"
 
 $d = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 'http://127.0.0.1:47674/api/sb/deployments').Content | ConvertFrom-Json
-$busy = @($d.deployments | Where-Object { $_.open_qty -gt 0 -or $_.status -in 'placing', 'closing', 'pending' })
-if ($busy.Count -gt 0) { throw "builder holds $($busy.Count) live deployment(s) -- NOT restarting" }
-"builder holds nothing -- safe to restart"
+# Never restart with a REAL-broker position open or ANY order in flight. Open PAPER positions are fine:
+# every paper fill is in the deployment file and reloads exactly.
+$inflight = @($d.deployments | Where-Object { $_.status -in 'placing', 'closing', 'pending' })
+$realOpen = @($d.deployments | Where-Object { $_.open_qty -gt 0 -and $_.kind -ne 'paper' })
+if ($inflight.Count -gt 0) { throw "$($inflight.Count) deployment(s) have orders in flight -- NOT restarting" }
+if ($realOpen.Count -gt 0) { throw "builder holds $($realOpen.Count) REAL-broker position(s) -- NOT restarting" }
+"no real positions, nothing in flight -- safe to restart (open paper positions reload from disk)"
 
 $bk = "$repo\_deploy_backups\builder_safe_" + (Get-Date -Format 'yyyyMMdd_HHmmss')
 $tmp = "$desk\builder2_unpack"

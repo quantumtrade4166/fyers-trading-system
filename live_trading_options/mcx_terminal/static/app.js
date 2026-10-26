@@ -44,11 +44,18 @@ function connect() {
       case "chain": onChain(m); break;
       case "status": onStatus(m); break;
       case "book": onBook(m); break;
+      case "atm": onAtm(m.v || {}); break;
       case "risk": onRisk(m); break;
       case "ack":
-        if (m.op === "mtm_hist") onMtm(m);
+        if (m.op === "mtm_hist" && (m.tag === "gp-pnl" || m.tag === "gp-imb")) onInlineGraph(m);
+        else if (m.op === "mtm_hist") onMtm(m);
+        else if (m.op === "margin") onMargin(m);
+        else if (m.op === "atm_hist") onAtmHist(m);
         else if (m.op === "settings_set") { onSettingsAck(m); toast(m.msg, !m.ok); }
-        else toast(m.msg || (m.ok ? "done" : "failed"), !m.ok);
+        else if (ORDER_ACKS.has(m.op))
+          toast(m.msg || (m.ok ? "done" : "failed"), !m.ok,
+                !m.ok ? "bad" : m.state === "waiting" || m.state === "partial" ? "wait" : "ok");
+        else toast(m.msg || (m.ok ? "done" : "failed"), !m.ok, m.ok ? "info" : "bad");
         break;
       case "pong": $("ping").textContent = `${(performance.now() - m.c).toFixed(0)} ms`; break;
     }
@@ -59,13 +66,20 @@ setInterval(() => send({ op: "ping", c: performance.now() }), 2000);
 
 function setFeed(txt, cls) { $("feedtxt").textContent = txt; $("feed").className = "pill " + (cls || ""); }
 
-function toast(msg, bad) {
+// order pop-up: big + solid colour. kind: "ok" (executed, green) · "wait" (placed, waiting, amber) ·
+// "bad" (error, red) · "info" (small, neutral). Click to dismiss.
+function toast(msg, bad, kind) {
+  kind = kind || (bad ? "bad" : "info");
   const el = document.createElement("div");
-  el.className = "toast" + (bad ? " bad" : "");
-  el.textContent = msg;
+  el.className = "toast " + kind;
+  const head = { ok: "✔ EXECUTED", wait: "⏳ PLACED · WAITING", bad: "✖ ERROR" }[kind];
+  el.innerHTML = (head ? `<b class="t-h">${head}</b>` : "") + `<span class="t-m"></span>`;
+  el.querySelector(".t-m").textContent = msg;
+  el.onclick = () => el.remove();
   $("toasts").appendChild(el);
-  setTimeout(() => el.remove(), bad ? 6000 : 3000);
+  setTimeout(() => el.remove(), { bad: 8000, wait: 5000, ok: 4000 }[kind] || 3000);
 }
+const ORDER_ACKS = new Set(["order", "basket", "exit", "exit_all", "move"]);
 
 // ── meta / controls ─────────────────────────────────────────────────────────
 function onMeta(m) {
@@ -75,14 +89,23 @@ function onMeta(m) {
   S.cur.strikes = LS.get("strikes", m.default_strikes);
   $("strikes").innerHTML = m.strikes.map((n) => `<option value="${n}">${n}</option>`).join("");
   $("strikes").value = S.cur.strikes;
-  $("inst").innerHTML = m.products.map((p) => `<button data-n="${p.name}">${p.label}</button>`).join("");
+  // one instrument switch: the button shows the current one, the list shows all with live prices
   $("tickers").innerHTML = m.products.map((p) => `
     <div class="tk" data-n="${p.name}">
       <span class="n">${p.label.toUpperCase()}</span><span class="p" id="tp-${p.name}">—</span>
       <span class="c" id="tc-${p.name}">—</span><span class="s" id="ts-${p.name}"></span>
+      <span class="a" id="ta-${p.name}" title="ATM straddle (call + put), nearest expiry"></span>
     </div>`).join("");
+  $("ip-menu").innerHTML = m.products.map((p) => `
+    <div class="ip-item" data-n="${p.name}">
+      <span class="n">${p.label.toUpperCase()}</span><span class="p mono" id="mp-${p.name}">—</span>
+      <span class="c mono" id="mc-${p.name}"></span><span class="s mono" id="ms-${p.name}"></span>
+      <span class="a mono" id="ma-${p.name}"></span>
+    </div>`).join("");
+  $("cp-inst").innerHTML = m.products.map((p) => `<option value="${p.name}">${p.label}</option>`).join("");
+  $("cp-inst").onchange = () => paintPnl();
   $("qty").innerHTML = Array.from({ length: m.qty_lots_max }, (_, i) => `<option value="${i + 1}">${i + 1} lot${i ? "s" : ""}</option>`).join("");
-  document.querySelectorAll("#inst button, .tk").forEach((b) => (b.onclick = () => pick(b.dataset.n)));
+  document.querySelectorAll(".ip-item, .tk").forEach((b) => (b.onclick = () => { pick(b.dataset.n); ipClose(); }));
   pick(S.prods[name] ? name : m.products[0].name, true);
 }
 
@@ -96,15 +119,18 @@ function pick(name, keepExpiry) {
   S.cur.expiry = p.expiries.includes(saved) ? saved : p.expiries[0];
   $("expiry").innerHTML = p.expiries.map((e) => `<option value="${e}">${fmtDate(e)}</option>`).join("");
   $("expiry").value = S.cur.expiry;
-  document.querySelectorAll("#inst button").forEach((b) => b.classList.toggle("on", b.dataset.n === name));
-  document.querySelectorAll(".tk").forEach((b) => b.classList.toggle("on", b.dataset.n === name));
+  document.querySelectorAll(".ip-item, .tk").forEach((b) => b.classList.toggle("on", b.dataset.n === name));
+  $("ipb-n").textContent = p.label.toUpperCase();
+  $("cp-inst").value = name;
+  if (S.book) paintPnl();
+  ipMirror();
   S.qtyLots = LS.get("qty." + name, 1);
   paintQty();
   requestChain();
 }
 
 function requestChain() {
-  $("rows").innerHTML = `<tr><td colspan="15" class="empty">Loading chain…</td></tr>`;
+  $("rows").innerHTML = `<tr><td colspan="11" class="empty">Loading chain…</td></tr>`;
   S.cells.clear(); S.rowsByStrike.clear(); S.atm = null;
   send({ op: "chain", name: S.cur.name, expiry: S.cur.expiry });
 }
@@ -186,15 +212,15 @@ function layout() {
   for (const r of vis) {
     const tr = document.createElement("tr");
     tr.innerHTML =
-      `<td class="q"></td><td class="q"></td><td class="ba"></td><td class="ba"></td><td class="c"></td>` +
-      `<td class="act" data-tok="${r.ce}">${BS}</td><td class="ltp"></td>` +
+      `<td class="ba"></td><td class="ba"></td>` +
+      `<td class="act" data-tok="${r.ce}">${BS}</td><td class="ltp"></td><td class="pos"></td>` +
       `<td class="k">${fp(r.k, r.k % 1 ? 1 : 0)}</td>` +
-      `<td class="ltp"></td><td class="act" data-tok="${r.pe}">${BS}</td>` +
-      `<td class="c"></td><td class="ba"></td><td class="ba"></td><td class="q"></td><td class="q"></td>`;
+      `<td class="pos"></td><td class="ltp"></td><td class="act" data-tok="${r.pe}">${BS}</td>` +
+      `<td class="ba"></td><td class="ba"></td>`;
     const td = tr.children;
-    S.cells.set(r.ce, { oi: td[0], vol: td[1], bid: td[2], ask: td[3], chg: td[4], ltp: td[6] });
-    S.cells.set(r.pe, { ltp: td[8], chg: td[10], bid: td[11], ask: td[12], vol: td[13], oi: td[14] });
-    td[6].dataset.tok = r.ce; td[8].dataset.tok = r.pe;
+    S.cells.set(r.ce, { bid: td[0], ask: td[1], ltp: td[3], pos: td[4] });
+    S.cells.set(r.pe, { pos: td[6], ltp: td[7], bid: td[9], ask: td[10] });
+    td[3].dataset.tok = r.ce; td[7].dataset.tok = r.pe;
     S.rowsByStrike.set(r.k, tr);
     tb.appendChild(tr);
   }
@@ -225,8 +251,8 @@ function shade() {
     tr.classList.toggle("atm", k === S.atm);
     const c = tr.children;
     const ceItm = px != null && k < px, peItm = px != null && k > px;
-    for (let i = 0; i < 7; i++) c[i].classList.toggle("itm", ceItm);
-    for (let i = 8; i < 15; i++) c[i].classList.toggle("itm", peItm);
+    for (let i = 0; i < 5; i++) c[i].classList.toggle("itm", ceItm);
+    for (let i = 6; i < 11; i++) c[i].classList.toggle("itm", peItm);
   }
 }
 
@@ -236,13 +262,10 @@ function paint(tok, flash, prevLtp) {
   if (!c || !t) return;
   const l = t[LTP];
   set(c.ltp, fp(l));
-  const ch = pct(l, t[PC]);
-  set(c.chg, ch == null ? "—" : (ch > 0 ? "+" : "") + ch.toFixed(2));
+  const ch = pct(l, t[PC]);                         // LTP stays green / red vs the previous close
   const dir = ch == null ? "" : ch > 0 ? "up" : ch < 0 ? "dn" : "";
   c.ltp.classList.toggle("up", dir === "up"); c.ltp.classList.toggle("dn", dir === "dn");
-  c.chg.classList.toggle("up", dir === "up"); c.chg.classList.toggle("dn", dir === "dn");
   set(c.bid, fp(t[BID])); set(c.ask, fp(t[ASK]));
-  set(c.vol, fq(t[VOL])); set(c.oi, fq(t[OI]));
   if (flash && prevLtp != null && l != null && l !== prevLtp) {
     const k = (S.flip.get(tok) || 0) ^ 1;
     S.flip.set(tok, k);
@@ -410,7 +433,7 @@ $("ticket").addEventListener("keydown", (e) => {
 });
 
 $("exitall").onclick = () => send({ op: "exit_all", req: ++S.req });
-document.querySelectorAll("#tools-pos button[data-frac]").forEach((b) =>
+document.querySelectorAll("#sidepane button[data-frac]").forEach((b) =>
   (b.onclick = () => send({ op: "exit_all", frac: +b.dataset.frac, req: ++S.req })));
 $("cancelall").onclick = () => send({ op: "cancel_all", req: ++S.req });
 
@@ -437,7 +460,7 @@ function onTicks(list) {
       if (k !== S.atm) layout(); else { shade(); paintUnderlying(); }
     }
   }
-  if (posMoved) { paintPnl(); paintRiskSum(); }
+  if (posMoved) { paintPnl(); paintRiskSum(); S.gpDirty = true; }
   if (S.view !== "chain") paintCombo(list);
   if (S.ticket) ticketPaint();
 }
@@ -456,8 +479,36 @@ function paintTicker(tok) {
     c.textContent = ch == null ? "" : `${t[LTP] - t[PC] > 0 ? "+" : ""}${fp(t[LTP] - t[PC], 0)} (${ch.toFixed(2)}%)`;
     c.style.color = ch > 0 ? "var(--up)" : ch < 0 ? "var(--down)" : "var(--muted)";
     if (prev != null && prev !== t[LTP]) el.style.color = t[LTP] > prev ? "var(--up)" : "var(--down)";
+    ipMirror();
   }
 }
+
+// the switch button repeats the current instrument's price + change from its list row
+function ipMirror() {
+  for (const n of Object.keys(S.prods)) {                // the list rows repeat the top tickers
+    const src = $("tp-" + n), c = $("tc-" + n), sy = $("ts-" + n);
+    if (!src || !$("mp-" + n)) continue;
+    $("mp-" + n).textContent = src.textContent; $("mp-" + n).style.color = src.style.color;
+    $("mc-" + n).textContent = c.textContent; $("mc-" + n).style.color = c.style.color;
+    $("ms-" + n).textContent = sy.textContent;
+  }
+  const n = S.cur.name;
+  if (!n || !$("tp-" + n)) return;
+  const src = $("tp-" + n), c = $("tc-" + n);
+  $("ipb-p").textContent = src.textContent;
+  $("ipb-p").style.color = src.style.color;
+  $("ipb-c").textContent = c.textContent;
+  $("ipb-c").style.color = c.style.color;
+}
+function ipClose() { $("ip-menu").hidden = true; $("ip-btn").classList.remove("open"); }
+$("ip-btn").onclick = (e) => {
+  e.stopPropagation();
+  const open = $("ip-menu").hidden;
+  $("ip-menu").hidden = !open;
+  $("ip-btn").classList.toggle("open", open);
+};
+document.addEventListener("click", (e) => { if (!e.target.closest("#instpick")) ipClose(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape") ipClose(); });
 
 function paintUnderlying() {
   const m = S.chain;
@@ -470,6 +521,12 @@ function paintUnderlying() {
     if (ce && pe && ce[LTP] != null && pe[LTP] != null) syn = row.k + ce[LTP] - pe[LTP];
   }
   $("und").innerHTML = `${m.fut.symbol} <b>${fp(px, 0)}</b> · Syn <b>${fp(syn, 1)}</b> · ATM <b>${S.atm ?? "—"}</b> · Lot ${m.lot}`;
+  let str = null;
+  if (row) {
+    const ce = S.T.get(row.ce), pe = S.T.get(row.pe);
+    if (ce && pe && ce[LTP] != null && pe[LTP] != null) str = ce[LTP] + pe[LTP];
+  }
+  $("ipb-a").textContent = str == null ? "" : `ATM ${S.atm} · ${nf2.format(str)}`;
   const s = $("ts-" + m.name);
   if (s) s.textContent = syn == null ? "" : `Syn ${fp(syn, 0)}`;
 }
@@ -523,9 +580,11 @@ $("pos-rows").addEventListener("click", (e) => {
 
 function paintPnl() {
   let total = 0, open = 0, real = 0;
+  const per = {};                                        // instrument MTM for the right panel
   for (const p of S.book.positions) {
     const r = posPnl(p);
     total += r.total; open += r.open; real += p.realized;
+    per[p.name] = (per[p.name] || 0) + r.total;
     const tr = document.querySelector(`#pos-rows tr[data-tok="${p.token}"]`);
     if (tr) {
       tr.querySelector(".pl-ltp").textContent = fp(r.ltp);
@@ -540,6 +599,12 @@ function paintPnl() {
   const el = $("pnl");
   el.textContent = fr(total);
   el.className = "val mono " + (total > 0 ? "up-t" : total < 0 ? "dn-t" : "");
+  const big = $("cp-pnl");
+  big.textContent = fr(total);
+  big.className = "cp-big mono " + (total > 0 ? "up-t" : total < 0 ? "dn-t" : "");
+  const iv = per[$("cp-inst").value] || 0;
+  $("cp-imtm").textContent = fr(iv);
+  $("cp-imtm").className = "cp-imtm mono " + (iv > 0 ? "up-t" : iv < 0 ? "dn-t" : "");
 }
 
 function renderOrders() {
@@ -570,16 +635,18 @@ document.querySelectorAll(".dt").forEach((b) => (b.onclick = () => {
   document.querySelectorAll(".dt").forEach((x) => x.classList.toggle("on", x === b));
   $("pos-table").hidden = p !== "pos"; $("tools-pos").hidden = p !== "pos";
   $("ord-table").hidden = p !== "ord"; $("tools-ord").hidden = p !== "ord";
-  $("risk-pane").hidden = p !== "risk";
 }));
 
 // green / red edge on chain prices where I hold a position
 function markPositions() {
   document.querySelectorAll("#rows td.pos-long, #rows td.pos-short").forEach((td) => td.classList.remove("pos-long", "pos-short"));
-  for (const p of S.book.positions) {
-    if (!p.net) continue;
-    const c = S.cells.get(p.token);
-    if (c) c.ltp.classList.add(p.net > 0 ? "pos-long" : "pos-short");
+  const lots = new Map();
+  for (const p of S.book.positions) if (p.net) lots.set(p.token, p.net / p.lot);
+  for (const [tok, c] of S.cells) {
+    const l = lots.get(tok);
+    set(c.pos, l ? (l > 0 ? "+" : "") + l : "");
+    c.pos.className = "pos" + (l > 0 ? " long" : l < 0 ? " short" : "");
+    if (l) c.ltp.classList.add(l > 0 ? "pos-long" : "pos-short");
   }
 }
 
@@ -713,8 +780,7 @@ function onRisk(m) {
     h = `<span class="fired">● FIRED ${m.fired.at}</span> — ${m.fired.reason}. Exit orders sent. Press Set to arm again.`;
   } else h = "Guard off. Type a stop-loss and/or target (and an optional trail), then Set.";
   el.innerHTML = h;
-  $("nrisk").textContent = m.armed ? "on" : m.fired ? "fired" : "off";
-  $("nrisk").style.color = m.armed ? "var(--up)" : m.fired ? "var(--down)" : "";
+  $("rk-set").classList.toggle("armed", !!m.armed);
   paintRiskSum();
 }
 $("rk-set").onclick = () => send({ op: "risk_set", stop: $("rk-stop").value, target: $("rk-target").value,
@@ -744,11 +810,12 @@ setView(S.view);
 // ── Stage 3b: settings, payoff graph, MTM graph ────────────────────────────
 S.settings = null;
 document.querySelectorAll("[data-close]").forEach((b) => (b.onclick = () => closeModal(b.dataset.close)));
-["settings", "graph"].forEach((id) => $(id).addEventListener("click", (e) => { if (e.target.id === id) closeModal(id); }));
+["settings", "graph", "replays"].forEach((id) => $(id).addEventListener("click", (e) => { if (e.target.id === id) closeModal(id); }));
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Escape") return;
   if (!$("settings").hidden) closeModal("settings");
   if (!$("graph").hidden) closeModal("graph");
+  if (!$("replays").hidden) closeModal("replays");
 });
 function closeModal(id) {
   $(id).hidden = true;
@@ -791,7 +858,8 @@ function strikeGap() {
 function svgChart(xs, ys, o = {}) {
   const W = 820, H = 300, L = 64, R = 16, T = 14, B = 30;
   const x0 = Math.min(...xs), x1 = Math.max(...xs);
-  let y0 = Math.min(0, ...ys), y1 = Math.max(0, ...ys);
+  // o.level: a price-level line on its own scale (e.g. ATM straddle), not P&L around zero
+  let y0 = o.level ? Math.min(...ys) : Math.min(0, ...ys), y1 = o.level ? Math.max(...ys) : Math.max(0, ...ys);
   if (y0 === y1) { y0 -= 1; y1 += 1; }
   const pad = (y1 - y0) * 0.08; y0 -= pad; y1 += pad;
   const X = (v) => L + ((v - x0) / (x1 - x0 || 1)) * (W - L - R);
@@ -814,6 +882,11 @@ function svgChart(xs, ys, o = {}) {
   const mark = o.mark != null && o.mark >= x0 && o.mark <= x1
     ? `<line class="g-spot" x1="${X(o.mark).toFixed(1)}" x2="${X(o.mark).toFixed(1)}" y1="${T}" y2="${H - B}"/>` +
       `<text class="g-spot-l" x="${(X(o.mark) + 5).toFixed(1)}" y="${T + 12}">${o.markLabel || ""}</text>` : "";
+  if (o.level) {
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${o.label || "chart"}">${grid}
+      <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2"/>
+      <line class="g-axis" x1="${L}" x2="${L}" y1="${T}" y2="${H - B}"/>${mark}${xl}</svg>`;
+  }
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${o.label || "chart"}">
     <defs><clipPath id="${id}a"><rect x="0" y="0" width="${W}" height="${zy}"/></clipPath>
           <clipPath id="${id}b"><rect x="0" y="${zy}" width="${W}" height="${H}"/></clipPath></defs>
@@ -858,7 +931,7 @@ $("btn-payoff").onclick = () => {
 
 // ── MTM graph: today's Session P&L, one point per N minutes ──
 S.g = { mins: LS.get("mtmMins", 1), inst: "all" };
-$("btn-mtm").onclick = () => {
+if ($("btn-mtm")) $("btn-mtm").onclick = () => {
   $("g-title").textContent = "MTM graph · Session P&L today";
   $("g-tools").innerHTML = `One point per <select id="g-mins">${[1, 2, 5, 10, 15, 30, 60].map((n) => `<option value="${n}">${n} min</option>`).join("")}</select>` +
     ` <select id="g-inst"><option value="all">All instruments</option></select>`;
@@ -895,6 +968,156 @@ function onMtm(m) {
   const mx = Math.max(...ys), mn = Math.min(...ys), ih = ys.indexOf(mx), il = ys.indexOf(mn);
   $("g-note").innerHTML = `Now <b class="${ys[ys.length - 1] >= 0 ? "up-t" : "dn-t"}">${fr(ys[ys.length - 1])}</b> · High <b class="up-t">${fr(mx)}</b> at ${hm(xs[ih])}` +
     ` · Low <b class="dn-t">${fr(mn)}</b> at ${hm(xs[il])} · ${pts.length} points, one per ${m.mins} min`;
+}
+
+
+// ── Replays: list recorded days, download the double-click file ─────────────
+$("btn-replays").onclick = async () => {
+  $("replays").hidden = false;
+  const tb = $("rp-list").querySelector("tbody");
+  tb.innerHTML = `<tr><td class="empty">Loading…</td></tr>`;
+  try {
+    const days = await (await fetch("/replays", { credentials: "include" })).json();
+    if (!days.length) { tb.innerHTML = `<tr><td class="empty">No recorded days yet — a day is recorded from your first order.</td></tr>`; return; }
+    tb.innerHTML = days.map((d) => `<tr>
+      <td class="l">${fmtDate(d.day)}${d.today ? ` <span class="dim">(today, still recording)</span>` : ""}</td>
+      <td class="dim">${d.html_mb != null ? d.html_mb + " MB" : "builds on download"}</td>
+      <td><a class="btn sm go" href="/replays/MCX_${d.day}.html" download="MCX_${d.day}.html">Download</a></td></tr>`).join("");
+  } catch (e) { tb.innerHTML = `<tr><td class="empty">Could not load the list: ${e}</td></tr>`; }
+};
+
+
+// ── right panel: margin (Kotak P account, read-only, cached by the engine) ──
+function askMargin() { send({ op: "margin", req: ++S.req }); }
+function onMargin(m) {
+  const f = (v) => (v == null ? "—" : "₹ " + nf2.format(v));
+  $("cp-mavail").textContent = f(m.available);
+  $("cp-mused").textContent = f(m.used);
+  $("cp-mnote").textContent = m.ok ? `Kotak P account · ${m.at || ""}` : `Kotak P account · ${m.msg || "not available"}`;
+}
+setInterval(askMargin, 30000);
+setTimeout(askMargin, 1500);
+
+
+// ── graphs column: MTM + CE/PE imbalance, always visible, refreshed every 5 s ──
+S.gpMins = LS.get("gpMins", 1);
+$("gp-mins").innerHTML = [1, 2, 5, 10, 15, 30, 60].map((n) => `<option value="${n}">${n} min</option>`).join("");
+$("gp-mins").value = S.gpMins;
+$("gp-mins").onchange = (e) => { S.gpMins = +e.target.value; LS.set("gpMins", S.gpMins); askInline(); };
+function askInline() {
+  if (getComputedStyle($("graphpane")).display === "none") return;
+  send({ op: "mtm_hist", mins: S.gpMins, inst: "all", kind: "pnl", tag: "gp-pnl", req: ++S.req });
+  send({ op: "mtm_hist", mins: S.gpMins, inst: "all", kind: "imb", tag: "gp-imb", req: ++S.req });
+}
+const hmIST = (t) => new Date(t * 1000).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+S.gpHist = { "gp-pnl": [], "gp-imb": [] };
+function onInlineGraph(m) {
+  S.gpHist[m.tag] = m.points || [];
+  drawInline(m.tag);
+}
+// live numbers right now (same formulas as the engine's 5-second samples)
+function liveNow() {
+  let tot = 0, ce = 0, pe = 0;
+  for (const p of S.book.positions) {
+    const r = posPnl(p);
+    tot += r.total;
+    if (p.net < 0 && r.ltp != null) {
+      if (/CE$/.test(p.symbol)) ce += r.ltp * -p.net * p.mult;
+      else if (/PE$/.test(p.symbol)) pe += r.ltp * -p.net * p.mult;
+    }
+  }
+  return { tot, ce, pe, imb: ce + pe > 0 ? ((ce - pe) / (ce + pe)) * 100 : null };
+}
+function drawInline(tag) {
+  let pts = S.gpHist[tag].slice();
+  if (S.book.positions.length) {                         // live last point, moves with every tick
+    const now = Date.now() / 1000, L = liveNow();
+    if (tag === "gp-pnl") pts.push([now, L.tot]);
+    else if (L.imb != null) pts.push([now, L.imb, L.ce, L.pe]);
+  }
+  const m = { tag, points: pts };
+  const box = m.tag === "gp-pnl" ? $("gp-mtm") : $("gp-imb");
+  const note = m.tag === "gp-pnl" ? $("gp-mtm-note") : $("gp-imb-note");
+  if (pts.length < 2) {
+    box.innerHTML = `<p class="gp-empty">${m.tag === "gp-pnl" ? "No trades yet today." : "Shows once you are short calls and/or puts."}</p>`;
+    note.textContent = "";
+    return;
+  }
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const span = (xs[xs.length - 1] - xs[0]) / 60;
+  box.innerHTML = svgChart(xs, ys, { xfmt: hmIST, xticks: Math.max(1, Math.min(5, Math.floor(span))),
+                                     label: m.tag === "gp-pnl" ? "session P&L" : "CE/PE imbalance %" });
+  const last = pts[pts.length - 1];
+  if (m.tag === "gp-pnl") {
+    note.innerHTML = `Now <b class="${last[1] >= 0 ? "up-t" : "dn-t"}">${fr(last[1])}</b> · High <b class="up-t">${fr(Math.max(...ys))}</b> · Low <b class="dn-t">${fr(Math.min(...ys))}</b>`;
+  } else {
+    note.innerHTML = `Now <b>${last[1] > 0 ? "+" : ""}${last[1].toFixed(1)}%</b> · CE <b>${nf2.format(last[2])}</b> · PE <b>${nf2.format(last[3])}</b>` +
+      ` <span class="dim">(above 0 = calls heavier)</span>`;
+  }
+}
+setInterval(askInline, 5000);
+setTimeout(askInline, 1200);
+// redraw the live tail at most 4 times a second, only while positions are moving
+setInterval(() => {
+  if (!S.gpDirty || getComputedStyle($("graphpane")).display === "none") return;
+  S.gpDirty = false;
+  drawInline("gp-pnl");
+  drawInline("gp-imb");
+}, 250);
+
+
+// ── ATM straddle (call + put at the money) per instrument, nearest expiry, from the engine once a second ──
+function onAtm(v) {
+  S.atmNow = v;
+  for (const [n, a] of Object.entries(v)) {
+    const txt = `ATM ${a[0]} · ${nf2.format(a[1])}`;
+    if ($("ta-" + n)) $("ta-" + n).textContent = txt;
+    if ($("ma-" + n)) $("ma-" + n).textContent = txt;
+  }
+}
+
+
+// ── ATM chart: ATM straddle premium through the day (nearest expiry), per instrument ──
+S.ga = { mins: LS.get("atmMins", 1), name: null };
+$("btn-atm").onclick = () => {
+  S.ga.name = S.cur.name;
+  $("g-title").textContent = "ATM chart · straddle premium (call + put), nearest expiry";
+  $("g-tools").innerHTML = `<select id="ga-name">${Object.values(S.prods).map((p) => `<option value="${p.name}">${p.label}</option>`).join("")}</select>` +
+    ` One point per <select id="ga-mins">${[1, 2, 5, 10, 15, 30, 60].map((n) => `<option value="${n}">${n} min</option>`).join("")}</select>`;
+  $("ga-name").value = S.ga.name;
+  $("ga-mins").value = S.ga.mins;
+  $("ga-name").onchange = (e) => { S.ga.name = e.target.value; askAtmHist(); };
+  $("ga-mins").onchange = (e) => { S.ga.mins = +e.target.value; LS.set("atmMins", S.ga.mins); askAtmHist(); };
+  $("g-body").innerHTML = `<p class="g-note">Loading…</p>`;
+  $("g-note").textContent = "";
+  $("graph").hidden = false;
+  askAtmHist();
+  clearInterval(S.gTimer);
+  S.gTimer = setInterval(askAtmHist, 5000);
+};
+function askAtmHist() { send({ op: "atm_hist", name: S.ga.name, mins: S.ga.mins, req: ++S.req }); }
+function onAtmHist(m) {
+  if ($("graph").hidden || !$("ga-name") || m.name !== S.ga.name) return;
+  const pts = (m.points || []).slice();
+  const live = (S.atmNow || {})[m.name];                  // live last point (engine sends it every second)
+  if (live) pts.push([Date.now() / 1000, live[1], live[0]]);
+  if (pts.length < 2) {
+    $("g-body").innerHTML = `<p class="g-note">Not enough points yet — the engine stores the ATM straddle every 5 s.</p>`;
+    $("g-note").textContent = "";
+    return;
+  }
+  const hm = (t) => new Date(t * 1000).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+  const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+  const lo = Math.min(...ys);
+  const spanMin = (xs[xs.length - 1] - xs[0]) / 60;
+  $("g-body").innerHTML = svgChart(xs, ys, { xfmt: hm, label: "ATM straddle", level: true,
+                                             xticks: Math.max(1, Math.min(6, Math.floor(spanMin))) });
+  const strikes = [...new Set(pts.map((p) => p[2]))];
+  const last = pts[pts.length - 1];
+  const mx = Math.max(...ys), imx = ys.indexOf(mx), imn = ys.indexOf(lo);
+  $("g-note").innerHTML = `Now <b>${nf2.format(last[1])}</b> (ATM ${last[2]}) · High <b>${nf2.format(mx)}</b> at ${hm(xs[imx])}` +
+    ` · Low <b>${nf2.format(lo)}</b> at ${hm(xs[imn])} · ${pts.length} points, one per ${m.mins} min` +
+    (strikes.length > 1 ? `<br><span class="dim">ATM strike moved during the day: ${strikes.join(" → ")}</span>` : "");
 }
 
 connect();

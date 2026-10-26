@@ -234,7 +234,18 @@ class PaperBook:
             self._save()
         log.info("paper %s %s %d (%d lots) %s limit %s -> ids %s", side, c.symbol, qty, lots, kind, limit, ids)
         self.on_change()
-        return {"ok": True, "ids": ids, "msg": f"{'BUY' if side == 'B' else 'SELL'} {lots} lot(s) {c.symbol}"}
+        mine = [o for o in self.orders if o["id"] in ids]
+        filled = sum(o["filled"] for o in mine)
+        avg = sum(o["avg"] * o["filled"] for o in mine) / filled if filled else None
+        word = "BOUGHT" if side == "B" else "SOLD"
+        if filled >= qty:
+            state, msg = "filled", f"{word} {lots} lot{'s' if lots != 1 else ''} {c.symbol} @ {avg:,.2f}"
+        elif filled:
+            state, msg = "partial", (f"{word} {filled // c.lot} of {lots} lots {c.symbol} @ {avg:,.2f} · "
+                                     f"{(qty - filled) // c.lot} waiting at {limit:g}")
+        else:
+            state, msg = "waiting", f"{'BUY' if side == 'B' else 'SELL'} {lots} lot{'s' if lots != 1 else ''} {c.symbol} waiting at {limit:g}"
+        return {"ok": True, "ids": ids, "state": state, "msg": msg}
 
     def _fill(self, o, px, q):
         o["avg"] = (o["avg"] * o["filled"] + px * q) / (o["filled"] + q)
@@ -368,8 +379,11 @@ class PaperBook:
         n_cancel = self.cancel_all()
         res = [self.exit_position(t, fraction, "exit all") for t, p in list(self.pos.items()) if p["net"]]
         bad = [r["msg"] for r in res if not r["ok"]]
-        return {"ok": not bad, "msg": f"exit sent for {len(res)} position(s), {n_cancel} order(s) cancelled"
-                + (f"; problems: {bad}" if bad else "")}
+        states = {r.get("state") for r in res if r["ok"]}
+        state = "filled" if states <= {"filled"} else "waiting"
+        return {"ok": not bad, "state": state if res else "filled",
+                "msg": (f"EXITED {len(res)} position(s)" if state == "filled" else f"exit sent for {len(res)} position(s), some waiting")
+                + (f", {n_cancel} order(s) cancelled" if n_cancel else "") + (f" · PROBLEM: {'; '.join(bad)}" if bad else "")}
 
     def basket(self, legs, source="basket") -> dict:
         """legs = [{token, side, qty}] placed together; BUYS FIRST (hedges before the sells, as live
@@ -378,8 +392,11 @@ class PaperBook:
         res = [self.place(int(l["token"]), l["side"], int(l["qty"]), "MKT", source=source) for l in legs]
         bad = [r["msg"] for r in res if not r["ok"]]
         ids = [i for r in res if r["ok"] for i in r["ids"]]
-        return {"ok": not bad, "ids": ids,
-                "msg": f"basket: {len(res) - len(bad)}/{len(res)} legs placed" + (f"; problems: {bad}" if bad else "")}
+        states = {r.get("state") for r in res if r["ok"]}
+        state = "filled" if states == {"filled"} else "waiting" if states else None
+        lines = [r["msg"] for r in res if r["ok"]]
+        return {"ok": not bad, "ids": ids, "state": state,
+                "msg": " · ".join(lines) + (f" · PROBLEM: {'; '.join(bad)}" if bad else "")}
 
     def move(self, token, steps: int, away: bool) -> dict:
         """Roll an open leg `steps` strikes: away = further OTM (CE up, PE down), close = toward ATM.
