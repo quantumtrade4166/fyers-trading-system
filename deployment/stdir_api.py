@@ -270,8 +270,103 @@ def live_status(date: str = Query(None)):
                 "history": True}
     t = _read(STATE / "TICK.json", {}) or {}
     eng = t.get("live") if t.get("date") == today else None
+    if eng is None or "trades" not in eng:
+        # engine not running / older engine: today's trades from Kotak D's own book
+        book = _kd_book_view(today)
+        if book:
+            eng = {**book, **(eng or {}), "trades": book["trades"], "n_trades": book["n_trades"]}
     return {"ok": True, "control": _kd_read(), "engine": eng, "engine_ts": t.get("ts"),
             "engine_date": t.get("date"), "date": today, "history": False}
+
+
+@router.get("/live/daily")
+def live_daily():
+    """Live vs paper vs backtest per day, ALL at the lots Kotak D traded that day.
+
+    live      Kotak D's own closed round trips (real fills), net of charges
+    paper     every closed paper trade (results/trades.jsonl) re-priced at live's quantity
+    backtest  the after-close Breeze re-run (results/backtest_daily.json) at live's quantity
+    Charges are recomputed at the scaled quantity (statutory_costs), never divided.
+    Lots of a day = what Kotak D traded; on a day it did not trade, the last lots used
+    (else the current control). Days start when Kotak D was first set up."""
+    from live_trading_options.nifty_st_directional.live_kotak import round_trips
+    from backtesting.options_pivot_intraday.costs import statutory_costs
+    from backtesting.options_st_directional.config import lot_size
+
+    def leg(sell, buy, qty, d):
+        return (sell - buy) * qty - statutory_costs(sell, buy, qty, d)["total"]
+
+    kd = {}
+    for f in sorted(RESULTS.glob("????-??-??_kotak_d.json")):
+        b = _read(f, {}) or {}
+        d = f.name[:10]
+        trips = [t for t in round_trips(b.get("fills") or [], d) if not t["open"]] if b.get("fills") else []
+        kd[d] = trips
+    if not kd:
+        return {"ok": True, "rows": [], "summary": {}}
+    first = min(kd)
+
+    paper = {}
+    pf = RESULTS / "trades.jsonl"
+    if pf.exists():
+        for line in pf.read_text(encoding="utf-8").splitlines():
+            try:
+                t = json.loads(line)
+            except Exception:
+                continue
+            if t.get("exit_price") is None or t.get("date", "") < first:
+                continue
+            paper.setdefault(t["date"], {})[t["trade_id"]] = t          # last write wins
+    bt = {d: v for d, v in (_read(RESULTS / "backtest_daily.json", {}) or {}).items() if d >= first}
+
+    days = sorted({d for d in kd if d in bt or d in paper or kd[d]} | set(paper) | set(bt))
+    lots_now = _kd_read().get("lots") or 1
+    last_lots, rows = None, []
+    for d in days:
+        trips = kd.get(d) or []
+        lots = None
+        for t in trips:
+            ls = lot_size(t.get("expiry") or d) if t.get("expiry") else None
+            if ls:
+                lots = max(lots or 0, round(t["qty"] / ls))
+        if lots is None and trips:
+            lots = max(round(t["qty"] / 65) for t in trips)
+        if lots is None:
+            lots = last_lots or lots_now
+        last_lots = lots
+        live_net = round(sum(t["net"] or 0 for t in trips), 2)
+        p_net = 0.0
+        for t in (paper.get(d) or {}).values():
+            q = lot_size(str(t["expiry"])[:10]) * lots
+            p_net += leg(float(t["entry_price"]), float(t["exit_price"]), q, d)
+        b_net, b_n = None, 0
+        if d in bt:
+            b_net = 0.0
+            for t in bt[d].get("detail") or []:
+                q = lot_size(str(t["expiry"])[:10]) * lots
+                b_net += leg(float(t["entry_price"]), float(t["exit_price"]), q, d)
+                b_n += 1
+        rows.append({"date": d, "lots": lots, "live_net": live_net, "live_trades": len(trips),
+                     "live_wins": sum(1 for t in trips if (t["net"] or 0) > 0),
+                     "live_charges": round(sum(t["charges"] or 0 for t in trips), 2),
+                     "paper_net": round(p_net, 2), "paper_trades": len(paper.get(d) or {}),
+                     "bt_net": None if b_net is None else round(b_net, 2), "bt_trades": b_n,
+                     "cpr_skipped": bool(bt.get(d, {}).get("cpr_skipped"))})
+    summ = {"days": len(rows)}
+    for k in ("live", "paper", "bt"):
+        cum, peak, mdd = 0.0, 0.0, 0.0
+        for r in rows:
+            v = r[f"{k}_net"]
+            if v is not None:
+                cum += v
+            peak = max(peak, cum)
+            r[f"{k}_cum"], r[f"{k}_dd"] = round(cum, 2), round(cum - peak, 2)
+            mdd = min(mdd, cum - peak)
+        summ[f"{k}_net"], summ[f"{k}_max_dd"] = round(cum, 2), round(mdd, 2)
+    summ["live_trades"] = sum(r["live_trades"] for r in rows)
+    summ["live_wins"] = sum(r["live_wins"] for r in rows)
+    summ["live_charges"] = round(sum(r["live_charges"] for r in rows), 2)
+    return {"ok": True, "rows": rows, "summary": summ}
 
 
 @router.get("/live/dates")

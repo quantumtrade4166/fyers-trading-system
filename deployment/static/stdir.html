@@ -259,6 +259,32 @@
       <tbody id="cmp-rows"></tbody>
     </table></div>
   </div>
+  <div data-view="live" class="card sect">
+    <div class="sect-h"><span class="t">Live vs paper vs backtest — net P&amp;L per day, all at the lots traded live</span>
+      <span id="kdd-sum" class="sub" style="margin:0"></span></div>
+    <div class="sub" style="margin:0 0 8px">live = Kotak D real fills · paper = the paper trades re-priced at live's lots · backtest = the after-close ICICI re-run at live's lots · charges recomputed at that quantity · lots of a day = what Kotak D traded (last lots on a no-trade day)</div>
+    <div style="display:flex;flex-wrap:wrap;gap:16px;font-size:11px;color:var(--muted);margin-bottom:6px">
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#a78bfa"></span><span style="width:10px;height:10px;border-radius:2px;background:#ec4899;margin-left:-3px"></span>Live (Kotak D): profit / loss</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#22c55e"></span><span style="width:10px;height:10px;border-radius:2px;background:#f43f5e;margin-left:-3px"></span>Paper: profit / loss</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:10px;height:10px;border-radius:2px;background:#3b82f6"></span><span style="width:10px;height:10px;border-radius:2px;background:#f59e0b;margin-left:-3px"></span>Backtest: profit / loss</span>
+    </div>
+    <div style="position:relative;height:260px"><canvas id="kdd-bars" role="img" aria-label="Live, paper and backtest net profit per day at live lots">Daily net P&amp;L of live, paper and backtest.</canvas></div>
+    <div class="sect-h" style="margin-top:16px"><span class="t">Cumulative net P&amp;L — live vs paper vs backtest</span><span id="kdd-cum-sum" class="sub" style="margin:0"></span></div>
+    <div style="display:flex;flex-wrap:wrap;gap:16px;font-size:11px;color:var(--muted);margin-bottom:6px">
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:16px;height:3px;background:#a78bfa"></span>Live (Kotak D)</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:16px;height:3px;background:#22c55e"></span>Paper</span>
+      <span style="display:flex;align-items:center;gap:6px"><span style="width:16px;height:0;border-top:2px dashed #3b82f6"></span>Backtest</span>
+    </div>
+    <div style="position:relative;height:240px"><canvas id="kdd-cum" role="img" aria-label="Cumulative net P&amp;L of live, paper and backtest">Cumulative profit of the three books.</canvas></div>
+    <div class="sub" style="margin:12px 0 6px">Drawdown from each curve's running peak (₹)</div>
+    <div style="position:relative;height:170px"><canvas id="kdd-dd" role="img" aria-label="Drawdown of live, paper and backtest">Drawdowns of the three books.</canvas></div>
+    <div class="scroll" style="margin-top:8px"><table>
+      <thead><tr><th>date</th><th class="r">lots</th><th class="r">live net</th><th class="r">paper net</th><th class="r">backtest net</th>
+        <th class="r">live − paper</th><th class="r">live − backtest</th><th class="r">trades (live / paper / bt)</th>
+        <th class="r">live cum</th><th class="r">paper cum</th><th class="r">bt cum</th></tr></thead>
+      <tbody id="kdd-rows"></tbody>
+    </table></div>
+  </div>
 </div>
 
 <script>
@@ -842,6 +868,54 @@ setInterval(() => {                    // the pill turns stale if the stream sto
   if (lastStream && !streamLive()) { const sp = $('stream-pill'); sp.textContent = 'stream stale'; sp.className = 'pill stale'; }
 }, 1000);
 
+// ── Live vs paper vs backtest at live lots: daily bars + cumulative + drawdown ──
+let kddBars = null, kddCum = null, kddDd = null;
+async function loadKdDaily() {
+  const d = await getJSON('/api/stdir/live/daily');
+  const rows = d.rows || [];
+  const labels = rows.map(r => r.date.slice(5));
+  const col = (v, up, dn) => (v ?? 0) < 0 ? dn : up;
+  const bars = { labels, datasets: [
+    { label: 'Live', data: rows.map(r => r.live_net), borderRadius: 3, backgroundColor: rows.map(r => col(r.live_net, '#a78bfa', '#ec4899')) },
+    { label: 'Paper', data: rows.map(r => r.paper_net), borderRadius: 3, backgroundColor: rows.map(r => col(r.paper_net, '#22c55e', '#f43f5e')) },
+    { label: 'Backtest', data: rows.map(r => r.bt_net), borderRadius: 3, backgroundColor: rows.map(r => col(r.bt_net, '#3b82f6', '#f59e0b')) },
+  ] };
+  const opts = { responsive: true, maintainAspectRatio: false, animation: false,
+    plugins: { legend: { display: false }, tooltip: { callbacks: {
+      title: i => `${rows[i[0].dataIndex].date} · ${rows[i[0].dataIndex].lots} lot(s)${rows[i[0].dataIndex].cpr_skipped ? ' · CPR skip' : ''}`,
+      label: c => ` ${c.dataset.label}: ${c.parsed.y === null ? 'not run' : signed(c.parsed.y)}` } } },
+    scales: { x: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 11 } } },
+              y: { grid: { color: '#162036' }, ticks: { color: '#94a3b8', font: { size: 11 }, callback: axisRs } } } };
+  if (!kddBars) kddBars = new Chart($('kdd-bars'), { type: 'bar', data: bars, options: opts });
+  else { kddBars.data = bars; kddBars.options = opts; kddBars.update(); }
+  const line = (label, data, color, dash, fill) => ({ label, data, borderColor: color, borderWidth: 2,
+    borderDash: dash ? [6, 4] : [], pointRadius: 3, pointBackgroundColor: color, tension: 0, spanGaps: true,
+    fill: fill || false, backgroundColor: fill ? color + '22' : undefined });
+  const cumSets = [line('Live (Kotak D)', rows.map(r => r.live_cum), '#a78bfa'),
+                   line('Paper', rows.map(r => r.paper_cum), '#22c55e'),
+                   line('Backtest', rows.map(r => r.bt_cum), '#3b82f6', true)];
+  const ddSets = [line('Live drawdown', rows.map(r => r.live_dd), '#ec4899', false, 'origin'),
+                  line('Paper drawdown', rows.map(r => r.paper_dd), '#f43f5e'),
+                  line('Backtest drawdown', rows.map(r => r.bt_dd), '#f59e0b', true)];
+  const ttl = i => rows[i[0].dataIndex].date + ' · ' + rows[i[0].dataIndex].lots + ' lot(s)';
+  if (!kddCum) kddCum = lineChart($('kdd-cum'), cumSets, labels, rows, false);
+  else { kddCum.data = { labels, datasets: cumSets }; kddCum.update(); }
+  if (!kddDd) kddDd = lineChart($('kdd-dd'), ddSets, labels, rows, true);
+  else { kddDd.data = { labels, datasets: ddSets }; kddDd.update(); }
+  kddCum.options.plugins.tooltip.callbacks.title = ttl; kddDd.options.plugins.tooltip.callbacks.title = ttl;
+  kddCum.update(); kddDd.update();
+  const s = d.summary || {};
+  $('kdd-sum').innerHTML = s.days ? `${s.days} day(s) · live ${s.live_trades} trades (${s.live_wins} won) · live charges ${money(s.live_charges)}` : 'no Kotak D days yet';
+  const nb = (v) => `<b class="${(v ?? 0) >= 0 ? 'pos' : 'neg'}">${signed(v)}</b>`;
+  $('kdd-cum-sum').innerHTML = s.days ? `live ${nb(s.live_net)} (DD ${signed(s.live_max_dd)}) · paper ${nb(s.paper_net)} (DD ${signed(s.paper_max_dd)}) · backtest ${nb(s.bt_net)} (DD ${signed(s.bt_max_dd)})` : '';
+  const cell = v => v === null || v === undefined ? '<td class="r num">—</td>' : `<td class="r num ${v >= 0 ? 'pos' : 'neg'}">${signed(v)}</td>`;
+  $('kdd-rows').innerHTML = rows.slice().reverse().map(r => `<tr><td>${r.date}${r.cpr_skipped ? ' <span class="sub">CPR skip</span>' : ''}</td>
+    <td class="r">${r.lots}</td>${cell(r.live_net)}${cell(r.paper_net)}${cell(r.bt_net)}
+    ${cell(r.live_net - r.paper_net)}${cell(r.bt_net === null ? null : r.live_net - r.bt_net)}
+    <td class="r">${r.live_trades} / ${r.paper_trades} / ${r.bt_trades}</td>
+    ${cell(r.live_cum)}${cell(r.paper_cum)}${cell(r.bt_cum)}</tr>`).join('') || '<tr><td colspan="11" class="empty">no Kotak D days yet</td></tr>';
+}
+
 async function refreshAll() {
   try { await loadState(); } catch (e) { console.error(e); }
   try { await loadMtm(); } catch (e) { console.error(e); }
@@ -849,6 +923,7 @@ async function refreshAll() {
   try { await loadDaily(); } catch (e) { console.error(e); }
   try { await loadCompare(); } catch (e) { console.error(e); }
   try { await loadLive(); } catch (e) { console.error(e); }
+  try { await loadKdDaily(); } catch (e) { console.error(e); }
 }
 (async () => {
   let v0 = 'paper';
@@ -862,6 +937,7 @@ async function refreshAll() {
   setInterval(() => { if (!document.hidden && isToday()) loadMtm().catch(console.error); }, 15000);
   setInterval(() => { if (!document.hidden) loadDaily().catch(console.error); }, 60000);
   setInterval(() => { if (!document.hidden) loadCompare().catch(console.error); }, 60000);
+  setInterval(() => { if (!document.hidden) loadKdDaily().catch(console.error); }, 60000);
   setInterval(() => { if (!document.hidden) loadLive().catch(console.error); }, 2000);
   setInterval(() => { loadDates().catch(console.error); }, 300000);
 })();

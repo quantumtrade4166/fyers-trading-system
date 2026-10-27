@@ -83,7 +83,7 @@ HTML_PAGE_ADD = '''  <div id="page-stdir" style="display:none">
 '''
 HTML_SWITCH_ANCHOR = '''  if (tab === 'ndp') { ndpInit(); ndpStartPoll(); } else { ndpStopPoll(); }
 '''
-HTML_SWITCH_ADD = '''  if (tab === 'stdir') { const f = document.getElementById('stdir-frame'); if (f && !f.src) f.src = '/static/stdir.html'; }
+HTML_SWITCH_ADD = '''  if (tab === 'stdir') { const f = document.getElementById('stdir-frame'); if (f && !f.src) f.src = '/static/stdir.html?v=' + Date.now(); }
 '''
 HTML_LIST_OLD = "'btcarb', 'ndp', 'terminal'].forEach"
 HTML_LIST_NEW = "'btcarb', 'ndp', 'stdir', 'terminal'].forEach"

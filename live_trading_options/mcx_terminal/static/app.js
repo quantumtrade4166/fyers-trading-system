@@ -52,6 +52,8 @@ function connect() {
         else if (m.op === "margin") onMargin(m);
         else if (m.op === "atm_hist") onAtmHist(m);
         else if (m.op === "settings_set") { onSettingsAck(m); toast(m.msg, !m.ok); }
+        else if (m.op === "refresh") { $("btn-refresh").classList.remove("spin"); if (m.margin) onMargin(m.margin); toast(m.msg, !m.ok, m.ok ? "info" : "bad"); }
+        else if (m.op === "mode_set") toast(m.msg, !m.ok, !m.ok ? "bad" : m.mode === "LIVE" ? "ok" : "info");
         else if (ORDER_ACKS.has(m.op))
           toast(m.msg || (m.ok ? "done" : "failed"), !m.ok,
                 !m.ok ? "bad" : m.state === "waiting" || m.state === "partial" ? "wait" : "ok");
@@ -68,6 +70,7 @@ function setFeed(txt, cls) { $("feedtxt").textContent = txt; $("feed").className
 
 // order pop-up: big + solid colour. kind: "ok" (executed, green) · "wait" (placed, waiting, amber) ·
 // "bad" (error, red) · "info" (small, neutral). Click to dismiss.
+const working = (o) => o.status === "OPEN" || o.status === "SENDING";
 function toast(msg, bad, kind) {
   kind = kind || (bad ? "bad" : "info");
   const el = document.createElement("div");
@@ -80,6 +83,21 @@ function toast(msg, bad, kind) {
   setTimeout(() => el.remove(), { bad: 8000, wait: 5000, ok: 4000 }[kind] || 3000);
 }
 const ORDER_ACKS = new Set(["order", "basket", "exit", "exit_all", "move"]);
+const _once = {};
+function toastOnce(key, msg, bad) { const n = Date.now(); if (!_once[key] || n - _once[key] > 30000) { _once[key] = n; toast(msg, bad); } }
+
+// PAPER / LIVE switch (the engine only accepts LIVE from the owner, with the typed word LIVE)
+function toggleMode() {
+  if (S.mode === "LIVE") {
+    if (confirm("Switch back to PAPER?\n\nNew orders will be paper. Open LIVE positions stay open on Kotak P (switch back to LIVE to see / exit them)."))
+      send({ op: "mode_set", mode: "PAPER" });
+    return;
+  }
+  const w = prompt("ARM LIVE TRADING on Kotak P?\n\nEvery order from this screen will be a REAL order on Kotak P (MCX).\nType LIVE to arm:");
+  if (w === null) return;
+  send({ op: "mode_set", mode: "LIVE", confirm: w });
+}
+document.getElementById("mode").onclick = toggleMode;
 
 // ── meta / controls ─────────────────────────────────────────────────────────
 function onMeta(m) {
@@ -95,12 +113,14 @@ function onMeta(m) {
       <span class="n">${p.label.toUpperCase()}</span><span class="p" id="tp-${p.name}">—</span>
       <span class="c" id="tc-${p.name}">—</span><span class="s" id="ts-${p.name}"></span>
       <span class="a" id="ta-${p.name}" title="ATM straddle (call + put), nearest expiry"></span>
+      <span class="e">${expLine(p)}</span>
     </div>`).join("");
   $("ip-menu").innerHTML = m.products.map((p) => `
     <div class="ip-item" data-n="${p.name}">
       <span class="n">${p.label.toUpperCase()}</span><span class="p mono" id="mp-${p.name}">—</span>
       <span class="c mono" id="mc-${p.name}"></span><span class="s mono" id="ms-${p.name}"></span>
       <span class="a mono" id="ma-${p.name}"></span>
+      <span class="e mono">${expLine(p)}</span>
     </div>`).join("");
   $("cp-inst").innerHTML = m.products.map((p) => `<option value="${p.name}">${p.label}</option>`).join("");
   $("cp-inst").onchange = () => paintPnl();
@@ -117,7 +137,7 @@ function pick(name, keepExpiry) {
   LS.set("inst", name);
   const saved = keepExpiry ? LS.get("exp." + name, null) : null;
   S.cur.expiry = p.expiries.includes(saved) ? saved : p.expiries[0];
-  $("expiry").innerHTML = p.expiries.map((e) => `<option value="${e}">${fmtDate(e)}</option>`).join("");
+  $("expiry").innerHTML = p.expiries.map((e) => `<option value="${e}">${fmtDate(e)} · ${daysLeft(e)}</option>`).join("");
   $("expiry").value = S.cur.expiry;
   document.querySelectorAll(".ip-item, .tk").forEach((b) => b.classList.toggle("on", b.dataset.n === name));
   $("ipb-n").textContent = p.label.toUpperCase();
@@ -166,6 +186,17 @@ $("tg-qty").onclick = () => { S.askQty = !S.askQty; LS.set("askQty", S.askQty); 
 $("tg-px").onclick = () => { S.askPx = !S.askPx; LS.set("askPx", S.askPx); paintToggles(); };
 paintToggles();
 
+// expiry helpers: days left counted on the IST calendar
+function daysLeft(iso) {
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+  const d = Math.round((new Date(iso + "T00:00:00Z") - new Date(today + "T00:00:00Z")) / 86400000);
+  return d <= 0 ? "today" : d === 1 ? "1 day" : d + " days";
+}
+const dm = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+function expLine(p) {
+  const oe = p.expiries[0], f = oe ? underlyingFut(p, oe) : p.futures[0];
+  return (oe ? `OPT ${dm(oe)} (${daysLeft(oe)})` : "") + (f ? ` · FUT ${dm(f.expiry)}` : "");
+}
 function fmtDate(iso) {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
 }
@@ -536,7 +567,7 @@ function onBook(m) {
   S.book = m;
   S.posTok = new Set(m.positions.map((p) => p.token));
   $("npos").textContent = m.positions.filter((p) => p.net).length;
-  $("nord").textContent = m.orders.filter((o) => o.status === "OPEN").length || m.orders.length;
+  $("nord").textContent = m.orders.filter(working).length || m.orders.length;
   renderPositions();
   renderOrders();
   markPositions();
@@ -609,8 +640,8 @@ function paintPnl() {
 
 function renderOrders() {
   let rows = S.book.orders;
-  if (S.ofilter === "open") rows = rows.filter((o) => o.status === "OPEN");
-  else if (S.ofilter === "done") rows = rows.filter((o) => o.status !== "OPEN");
+  if (S.ofilter === "open") rows = rows.filter(working);
+  else if (S.ofilter === "done") rows = rows.filter((o) => !working(o));
   const tb = $("ord-rows");
   if (!rows.length) { tb.innerHTML = `<tr><td colspan="10" class="empty">No orders.</td></tr>`; return; }
   tb.innerHTML = rows.map((o) => `<tr>
@@ -653,8 +684,16 @@ function markPositions() {
 // ── status / footer / clock ─────────────────────────────────────────────────
 function onStatus(m) {
   const f = m.feed || {};
-  $("mode").textContent = m.mode || "PAPER";
-  $("mode").className = "badge " + (m.mode === "LIVE" ? "live" : "paper");
+  S.mode = m.mode || "PAPER";
+  const live = S.mode === "LIVE";
+  const extra = !live && m.live_open ? ` · ${m.live_open} LIVE OPEN` : "";
+  $("mode").textContent = live ? "● LIVE · KOTAK P" : "PAPER" + extra;
+  $("mode").className = "badge " + (live ? "live" : "paper") + (extra ? " warn" : "");
+  $("mode").title = live ? `LIVE armed by ${(m.arm || {}).by || "?"} at ${(m.arm || {}).at || "?"} · click to go back to PAPER`
+    : "PAPER orders · click to arm LIVE Kotak P orders (owner only)";
+  document.body.classList.toggle("live-mode", live);
+  const b = m.broker || {};
+  if (live && b.ok === false) toastOnce("broker", "Kotak order book not readable: " + (b.msg || ""), true);
   if (!f.authed) setFeed(f.connected ? "authenticating…" : "feed down", "bad");
   $("f-sub").textContent = `subscribed ${f.subscribed ?? 0} · depth ${f.depth ?? 0} · reconnects ${Math.max(0, (f.connects || 1) - 1)}`;
   $("f-msg").textContent = m.error || f.error || "";
@@ -783,6 +822,14 @@ function onRisk(m) {
   $("rk-set").classList.toggle("armed", !!m.armed);
   paintRiskSum();
 }
+$("btn-refresh").onclick = () => {
+  $("btn-refresh").classList.add("spin");
+  setTimeout(() => $("btn-refresh").classList.remove("spin"), 4000);
+  if (!send({ op: "refresh", req: ++S.req })) { toast("not connected - reconnecting", true); return; }
+  requestChain();                                         // fresh chain snapshot
+  askInline();                                            // MTM + imbalance graphs
+  if (!$("graph").hidden && $("ga-name")) askAtmHist();   // ATM chart if open
+};
 $("rk-set").onclick = () => send({ op: "risk_set", stop: $("rk-stop").value, target: $("rk-target").value,
                                    trail: $("rk-trail").value, req: ++S.req });
 $("rk-clear").onclick = () => send({ op: "risk_clear", req: ++S.req });
@@ -856,7 +903,7 @@ function strikeGap() {
 
 // ── small SVG chart helper (one series, zero line, x labels) ──
 function svgChart(xs, ys, o = {}) {
-  const W = 820, H = 300, L = 64, R = 16, T = 14, B = 30;
+  const W = 820, H = 300, L = 64, R = o.now ? 84 : 16, T = 14, B = 30;
   const x0 = Math.min(...xs), x1 = Math.max(...xs);
   // o.level: a price-level line on its own scale (e.g. ATM straddle), not P&L around zero
   let y0 = o.level ? Math.min(...ys) : Math.min(0, ...ys), y1 = o.level ? Math.max(...ys) : Math.max(0, ...ys);
@@ -882,10 +929,20 @@ function svgChart(xs, ys, o = {}) {
   const mark = o.mark != null && o.mark >= x0 && o.mark <= x1
     ? `<line class="g-spot" x1="${X(o.mark).toFixed(1)}" x2="${X(o.mark).toFixed(1)}" y1="${T}" y2="${H - B}"/>` +
       `<text class="g-spot-l" x="${(X(o.mark) + 5).toFixed(1)}" y="${T + 12}">${o.markLabel || ""}</text>` : "";
+  svgChart.last = { xs, ys, X, Y, W, H, L, R, T, B, x0, x1, tip: o.tip };   // read by setChart() for hover
+  let now = "";
+  if (o.now) {                                            // current value: dashed line + price tag on the right
+    const v = ys[ys.length - 1], y = Y(v);
+    const t = o.nowFmt ? o.nowFmt(v) : nf2.format(v);
+    now = `<line class="g-now" x1="${L}" x2="${W - R}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"/>` +
+      `<circle class="g-now-tag" cx="${X(xs[xs.length - 1]).toFixed(1)}" cy="${y.toFixed(1)}" r="3.5"/>` +
+      `<rect class="g-now-tag" x="${W - R + 3}" y="${(y - 9).toFixed(1)}" width="${R - 5}" height="18" rx="3"/>` +
+      `<text class="g-now-txt" x="${W - R + 3 + (R - 5) / 2}" y="${(y + 4).toFixed(1)}" text-anchor="middle">${t}</text>`;
+  }
   if (o.level) {
     return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${o.label || "chart"}">${grid}
       <polyline points="${pts}" fill="none" stroke="var(--accent)" stroke-width="2"/>
-      <line class="g-axis" x1="${L}" x2="${L}" y1="${T}" y2="${H - B}"/>${mark}${xl}</svg>`;
+      <line class="g-axis" x1="${L}" x2="${L}" y1="${T}" y2="${H - B}"/>${mark}${now}${xl}<g class="g-hov" visibility="hidden"><line class="g-hl"/><circle class="g-hd" r="4"/><rect class="g-hb" rx="4"/><text class="g-ht"></text></g></svg>`;
   }
   return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${o.label || "chart"}">
     <defs><clipPath id="${id}a"><rect x="0" y="0" width="${W}" height="${zy}"/></clipPath>
@@ -897,8 +954,51 @@ function svgChart(xs, ys, o = {}) {
     <polyline points="${pts}" fill="none" stroke="var(--down)" stroke-width="2" clip-path="url(#${id}b)"/>
     <line class="g-zero" x1="${L}" x2="${W - R}" y1="${zy}" y2="${zy}"/>
     <line class="g-axis" x1="${L}" x2="${L}" y1="${T}" y2="${H - B}"/>
-    ${mark}${xl}</svg>`;
+    ${mark}${now}${xl}<g class="g-hov" visibility="hidden"><line class="g-hl"/><circle class="g-hd" r="4"/><rect class="g-hb" rx="4"/><text class="g-ht"></text></g></svg>`;
 }
+
+// ── chart hover: crosshair + dot + value box; survives the live redraws (setChart re-applies it) ──
+const CH = new WeakMap();                                 // chart box -> data of the chart drawn in it
+S.hov = null;                                             // {box, cx} while the mouse is over a chart
+function setChart(box, html) {
+  box.innerHTML = html;
+  CH.set(box, svgChart.last);
+  if (S.hov && S.hov.box === box) hoverAt(box, S.hov.cx);
+}
+const hms = (t) => new Date(t * 1000).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata" });
+function hoverAt(box, cx) {
+  const d = CH.get(box), svg = box.querySelector("svg"), g = svg && svg.querySelector(".g-hov");
+  if (!d || !g || !d.xs.length) return;
+  const pt = svg.createSVGPoint();
+  pt.x = cx; pt.y = 0;
+  const sx = pt.matrixTransform(svg.getScreenCTM().inverse()).x;
+  const xv = d.x0 + ((sx - d.L) / (d.W - d.L - d.R)) * (d.x1 - d.x0);
+  let lo = 0, hi = d.xs.length - 1;                       // nearest point (xs ascending)
+  while (hi - lo > 1) { const m = (lo + hi) >> 1; if (d.xs[m] < xv) lo = m; else hi = m; }
+  const i = Math.abs(d.xs[lo] - xv) <= Math.abs(d.xs[hi] - xv) ? lo : hi;
+  const x = d.X(d.xs[i]), y = d.Y(d.ys[i]);
+  const lines = d.tip ? d.tip(i) : [hms(d.xs[i]), nf2.format(d.ys[i])];
+  const hl = g.querySelector(".g-hl"), hd = g.querySelector(".g-hd"), hb = g.querySelector(".g-hb"), ht = g.querySelector(".g-ht");
+  hl.setAttribute("x1", x); hl.setAttribute("x2", x); hl.setAttribute("y1", d.T); hl.setAttribute("y2", d.H - d.B);
+  hd.setAttribute("cx", x); hd.setAttribute("cy", y);
+  const w = Math.max(...lines.map((l) => l.length)) * 6.7 + 16, h = lines.length * 15 + 9;
+  const bx = x + 12 + w > d.W - 4 ? x - 12 - w : x + 12;
+  const by = Math.min(Math.max(d.T, y - h / 2), d.H - d.B - h);
+  hb.setAttribute("x", bx); hb.setAttribute("y", by); hb.setAttribute("width", w); hb.setAttribute("height", h);
+  ht.innerHTML = lines.map((l, k) => `<tspan x="${bx + 8}" y="${by + 16 + k * 15}"${k ? "" : ' class="g-ht0"'}></tspan>`).join("");
+  ht.querySelectorAll("tspan").forEach((ts, k) => (ts.textContent = lines[k]));
+  g.setAttribute("visibility", "visible");
+}
+document.addEventListener("mousemove", (e) => {
+  const svg = e.target.closest && e.target.closest("svg");
+  const box = svg && svg.parentElement;
+  if (box && CH.has(box)) { S.hov = { box, cx: e.clientX }; hoverAt(box, e.clientX); return; }
+  if (S.hov) {
+    const g = S.hov.box.querySelector(".g-hov");
+    if (g) g.setAttribute("visibility", "hidden");
+    S.hov = null;
+  }
+});
 
 // ── payoff at expiry of the open positions in the chain on screen ──
 $("btn-payoff").onclick = () => {
@@ -921,7 +1021,8 @@ $("btn-payoff").onclick = () => {
   const now = legs.reduce((a, { p }) => a + posPnl(p).open, 0);
   $("g-title").textContent = `Payoff at expiry · ${m.fut ? m.fut.symbol.replace(/FUT$/, "") : m.name} options ${fmtDate(m.expiry)}`;
   $("g-tools").innerHTML = "";
-  $("g-body").innerHTML = svgChart(xs, ys, { mark: spot, markLabel: `now ${fp(spot, 0)}`, label: "payoff at expiry" });
+  setChart($("g-body"), svgChart(xs, ys, { mark: spot, markLabel: `now ${fp(spot, 0)}`, label: "payoff at expiry",
+                                       tip: (i) => [`At expiry ${nf.format(Math.round(xs[i]))}`, `P&L ${fr(ys[i])}`] }));
   $("g-note").innerHTML = `Max profit in range <b class="up-t">${fr(Math.max(...ys))}</b> · Max loss in range <b class="dn-t">${fr(Math.min(...ys))}</b>` +
     ` · Breakeven ${be.length ? be.map((b) => `<b>${nf.format(Math.round(b))}</b>`).join(" / ") : "<b>none in range</b>"}` +
     ` · Open P&L now <b>${fr(now)}</b><br><span class="dim">${legs.length} open leg(s) at their average prices, ±5 % around the strikes. ` +
@@ -964,7 +1065,8 @@ function onMtm(m) {
   const hm = (t) => new Date(t * 1000).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
   const span = (xs[xs.length - 1] - xs[0]) / 60;
-  $("g-body").innerHTML = svgChart(xs, ys, { xfmt: hm, label: "session P&L over time", xticks: Math.max(1, Math.min(6, Math.floor(span))) });
+  setChart($("g-body"), svgChart(xs, ys, { xfmt: hm, label: "session P&L over time", xticks: Math.max(1, Math.min(6, Math.floor(span))),
+                                       tip: (i) => [hms(xs[i]), `P&L ${fr(ys[i])}`] }));
   const mx = Math.max(...ys), mn = Math.min(...ys), ih = ys.indexOf(mx), il = ys.indexOf(mn);
   $("g-note").innerHTML = `Now <b class="${ys[ys.length - 1] >= 0 ? "up-t" : "dn-t"}">${fr(ys[ys.length - 1])}</b> · High <b class="up-t">${fr(mx)}</b> at ${hm(xs[ih])}` +
     ` · Low <b class="dn-t">${fr(mn)}</b> at ${hm(xs[il])} · ${pts.length} points, one per ${m.mins} min`;
@@ -1045,8 +1147,13 @@ function drawInline(tag) {
   }
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
   const span = (xs[xs.length - 1] - xs[0]) / 60;
-  box.innerHTML = svgChart(xs, ys, { xfmt: hmIST, xticks: Math.max(1, Math.min(5, Math.floor(span))),
-                                     label: m.tag === "gp-pnl" ? "session P&L" : "CE/PE imbalance %" });
+  const tip = m.tag === "gp-pnl"
+    ? (i) => [hms(xs[i]), `P&L ${fr(ys[i])}`]
+    : (i) => [hms(xs[i]), `Imbalance ${ys[i] > 0 ? "+" : ""}${ys[i].toFixed(1)}%`,
+              ...(pts[i][2] != null ? [`CE ${nf2.format(pts[i][2])} · PE ${nf2.format(pts[i][3])}`] : [])];
+  setChart(box, svgChart(xs, ys, { xfmt: hmIST, xticks: Math.max(1, Math.min(5, Math.floor(span))), now: true, tip,
+                                   nowFmt: m.tag === "gp-pnl" ? (v) => nf.format(Math.round(v)) : (v) => v.toFixed(1) + "%",
+                                   label: m.tag === "gp-pnl" ? "session P&L" : "CE/PE imbalance %" }));
   const last = pts[pts.length - 1];
   if (m.tag === "gp-pnl") {
     note.innerHTML = `Now <b class="${last[1] >= 0 ? "up-t" : "dn-t"}">${fr(last[1])}</b> · High <b class="up-t">${fr(Math.max(...ys))}</b> · Low <b class="dn-t">${fr(Math.min(...ys))}</b>`;
@@ -1069,6 +1176,7 @@ setInterval(() => {
 // ── ATM straddle (call + put at the money) per instrument, nearest expiry, from the engine once a second ──
 function onAtm(v) {
   S.atmNow = v;
+  if (S.ga && S.ga.hist && !$("graph").hidden && $("ga-name")) drawAtm();   // chart moves once a second
   for (const [n, a] of Object.entries(v)) {
     const txt = `ATM ${a[0]} · ${nf2.format(a[1])}`;
     if ($("ta-" + n)) $("ta-" + n).textContent = txt;
@@ -1086,7 +1194,7 @@ $("btn-atm").onclick = () => {
     ` One point per <select id="ga-mins">${[1, 2, 5, 10, 15, 30, 60].map((n) => `<option value="${n}">${n} min</option>`).join("")}</select>`;
   $("ga-name").value = S.ga.name;
   $("ga-mins").value = S.ga.mins;
-  $("ga-name").onchange = (e) => { S.ga.name = e.target.value; askAtmHist(); };
+  $("ga-name").onchange = (e) => { S.ga.name = e.target.value; S.ga.hist = null; askAtmHist(); };
   $("ga-mins").onchange = (e) => { S.ga.mins = +e.target.value; LS.set("atmMins", S.ga.mins); askAtmHist(); };
   $("g-body").innerHTML = `<p class="g-note">Loading…</p>`;
   $("g-note").textContent = "";
@@ -1098,6 +1206,12 @@ $("btn-atm").onclick = () => {
 function askAtmHist() { send({ op: "atm_hist", name: S.ga.name, mins: S.ga.mins, req: ++S.req }); }
 function onAtmHist(m) {
   if ($("graph").hidden || !$("ga-name") || m.name !== S.ga.name) return;
+  S.ga.hist = m;
+  drawAtm();
+}
+function drawAtm() {
+  const m = S.ga.hist;
+  if (!m || m.name !== S.ga.name) return;
   const pts = (m.points || []).slice();
   const live = (S.atmNow || {})[m.name];                  // live last point (engine sends it every second)
   if (live) pts.push([Date.now() / 1000, live[1], live[0]]);
@@ -1110,8 +1224,9 @@ function onAtmHist(m) {
   const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
   const lo = Math.min(...ys);
   const spanMin = (xs[xs.length - 1] - xs[0]) / 60;
-  $("g-body").innerHTML = svgChart(xs, ys, { xfmt: hm, label: "ATM straddle", level: true,
-                                             xticks: Math.max(1, Math.min(6, Math.floor(spanMin))) });
+  setChart($("g-body"), svgChart(xs, ys, { xfmt: hm, label: "ATM straddle", level: true, now: true,
+                                       xticks: Math.max(1, Math.min(6, Math.floor(spanMin))),
+                                       tip: (i) => [hms(xs[i]), `Straddle ${nf2.format(ys[i])}`, `ATM strike ${pts[i][2]}`] }));
   const strikes = [...new Set(pts.map((p) => p[2]))];
   const last = pts[pts.length - 1];
   const mx = Math.max(...ys), imx = ys.indexOf(mx), imn = ys.indexOf(lo);

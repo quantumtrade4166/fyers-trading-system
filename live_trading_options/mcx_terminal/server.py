@@ -3,7 +3,8 @@ mcx_terminal/server.py — the terminal's engine + web server (Kotak P, MCX opti
 ==================================================================================
 
 Own process, own port (47680), own Kotak session. Never touches the dashboard or any other engine.
-Stage 2 = PAPER orders (paper.py). No code in this process can send an order to Kotak.
+Orders: PAPER (paper.py) by default. LIVE (live.py, real Kotak P orders) only after the OWNER arms it on
+the screen (typed confirmation, owner email only, resets every day). Live positions = own tagged orders only.
 
 Speed path:  Kotak feed thread -> latest tick per token (dict) -> one flush scheduled on the asyncio
 loop -> each screen gets only the ticks for tokens it is watching, as one compact JSON frame.
@@ -36,6 +37,7 @@ from live_trading_options.mcx_terminal import instruments as I
 from live_trading_options.mcx_terminal.feed import KotakFeed
 from live_trading_options.mcx_terminal.kotak_session import SessionHolder
 from live_trading_options.mcx_terminal.paper import PaperBook
+from live_trading_options.mcx_terminal.live import LiveBook
 from live_trading_options.mcx_terminal.risk import RiskGuard
 from live_trading_options.mcx_terminal.settings import Settings
 from live_trading_options.mcx_terminal.mtm import AtmHistory, MtmHistory, SAMPLE_S
@@ -43,7 +45,13 @@ from live_trading_options.mcx_terminal.recorder import DayRecorder, now_ms, REPL
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 log = logging.getLogger("mcx.server")
-DAILY_RESTART = dt.time(8, 45)    # fresh Kotak login + contract list before MCX opens at 09:00
+DAILY_RESTART = dt.time(8, 45)
+
+
+def owner_users() -> set:
+    """Who may arm LIVE: the owner's Cloudflare email(s), plus "local" (on the VPS itself / SSH tunnel)."""
+    em = os.getenv("MCX_OWNER_EMAILS", "prakhar4sapa@gmail.com")
+    return {"local"} | {e.strip().lower() for e in em.split(",") if e.strip()}    # fresh Kotak login + contract list before MCX opens at 09:00
 REPLAY_BUILD_AT = dt.time(23, 58) # after MCX close (23:30 / 23:55): build the day's double-click replay file
 
 try:
@@ -76,10 +84,14 @@ class Engine:
         self.loop: asyncio.AbstractEventLoop | None = None
         self.clients: set["Client"] = set()
         self.feed: KotakFeed | None = None
-        self.book: PaperBook | None = None
-        self.risk: RiskGuard | None = None
+        self.paper: PaperBook | None = None
+        self.live: LiveBook | None = None
+        self.risks: dict = {}                      # "PAPER"/"LIVE" -> RiskGuard (both always watching)
+        self.mode = "PAPER"                        # which book the screen trades into
+        self.arm: dict = {}                        # who armed LIVE today, and when
         self.settings = Settings()
-        self.mtm = MtmHistory()
+        day = dt.datetime.now(IST).date().isoformat()
+        self.mtms = {"PAPER": MtmHistory(), "LIVE": MtmHistory(path=C.DATA / f"mtm_live_{day}.json")}
         self.atm_hist = AtmHistory()
         self.book_tokens: set[int] = set()         # tokens with an open position / open order
         self.rec: DayRecorder | None = None        # day recorder for the replay files (always on)
@@ -91,6 +103,71 @@ class Engine:
         self.error = ""
         self._plock = threading.Lock()
 
+    @property
+    def book(self):
+        return self.live if self.mode == "LIVE" else self.paper
+
+    @property
+    def risk(self):
+        return self.risks.get(self.mode)
+
+    @property
+    def mtm(self):
+        return self.mtms[self.mode]
+
+    # The day recorder (replay file) follows the LIVE book ONLY: live orders/positions, live MTM curve,
+    # live risk guard. Paper trading never appears in it and never starts it.
+    def _rec_book(self) -> dict:
+        return {"t": "book", **self.live.snapshot()}
+
+    def _rec_status(self) -> dict:
+        return {"t": "status", **self.status(), "mode": "LIVE"}
+
+    # ── LIVE arm (owner only) ───────────────────────────────────────────────
+    def _arm_path(self):
+        return C.DATA / f"live_arm_{dt.datetime.now(IST).date().isoformat()}.json"
+
+    def _load_arm(self):
+        """Armed only for the day it was armed: every new day starts in PAPER."""
+        try:
+            p = self._arm_path()
+            if p.exists():
+                a = json.loads(p.read_text(encoding="utf-8"))
+                if a.get("armed"):
+                    self.arm, self.mode = a, "LIVE"
+                    log.warning("LIVE re-armed from today's arm file (armed by %s at %s)", a.get("by"), a.get("at"))
+        except Exception:
+            log.exception("arm file")
+
+    def set_mode(self, mode: str, user: str, confirm: str = "") -> dict:
+        mode = str(mode).upper()
+        if mode not in ("PAPER", "LIVE"):
+            return {"ok": False, "msg": "mode must be PAPER or LIVE"}
+        if mode == "LIVE":
+            if user not in owner_users():
+                log.warning("LIVE arm refused for %s (not the owner)", user)
+                return {"ok": False, "msg": "only the owner can arm LIVE trading"}
+            if str(confirm).strip().upper() != "LIVE":
+                return {"ok": False, "msg": "type LIVE to arm real Kotak P orders"}
+            if not self.live.broker.get("ok", True):
+                return {"ok": False, "msg": f"Kotak order book not readable: {self.live.broker.get('msg')}"}
+        self.mode = mode
+        self.arm = {"armed": mode == "LIVE", "by": user, "at": dt.datetime.now(IST).strftime("%H:%M:%S")}
+        try:
+            self._arm_path().write_text(json.dumps(self.arm), encoding="utf-8")
+        except Exception:
+            log.exception("arm file write")
+        log.warning("MODE -> %s by %s", mode, user)
+        if self.rec:
+            self.rec.event("mode", {"mode": mode, **self.arm})
+        if self.loop:
+            for fn in (self._broadcast_status, self._broadcast_book, self._broadcast_risk):
+                self.loop.call_soon_threadsafe(fn)
+        n = self.live.open_positions()
+        return {"ok": True, "mode": mode,
+                "msg": ("LIVE ARMED - orders now go to Kotak P" if mode == "LIVE"
+                        else "PAPER - new orders are paper again" + (f" ({n} live position(s) still open)" if n else ""))}
+
     # ── startup ─────────────────────────────────────────────────────────────
     def start(self, loop):
         self.loop = loop
@@ -101,9 +178,14 @@ class Engine:
             self.error = f"startup: {e}"
             log.exception("startup failed")
             raise
-        self.book = PaperBook(self.universe, self.quote, on_change=self.on_book, settings=self.settings.get)
-        self.book_tokens = self.book.tokens()
-        self.risk = RiskGuard(self.book, self.ltp, on_change=self.on_risk)
+        self.paper = PaperBook(self.universe, self.quote, on_change=self.on_book, settings=self.settings.get)
+        self.live = LiveBook(self.universe, self.quote, self.sessions, armed=lambda: self.mode == "LIVE",
+                             on_change=self.on_book, settings=self.settings.get)
+        self.risks = {"PAPER": RiskGuard(self.paper, self.ltp, on_change=self.on_risk),
+                      "LIVE": RiskGuard(self.live, self.ltp, on_change=self.on_risk,
+                                        path=C.DATA / f"risk_live_{dt.datetime.now(IST).date().isoformat()}.json")}
+        self._load_arm()
+        self.book_tokens = self.paper.tokens() | self.live.tokens()
         self.rec = DayRecorder()
         if self.rec.active:                        # restarted mid-day: write a fresh header to today's file
             self.rec._activate_header = self._replay_header
@@ -123,9 +205,13 @@ class Engine:
 
     def _margin_loop(self):
         """Kotak P margins for the right panel: READ-ONLY limits() call every 30 s on its own thread
-        (never in the tick or order path). Field names are logged once so they can be checked."""
-        logged = False
+        (never in the tick or order path)."""
+        while True:
+            self.read_margin()
+            time.sleep(30)
 
+    def read_margin(self) -> dict:
+        """One READ-ONLY Kotak limits() call -> self.margin (also used by the screen's Refresh button)."""
         def num(d, *keys):
             for k in keys:
                 if isinstance(d, dict) and d.get(k) not in (None, ""):
@@ -134,23 +220,32 @@ class Engine:
                     except (TypeError, ValueError):
                         pass
             return None
-        while True:
-            try:
-                r = self.sessions.get().client.limits()
-                if isinstance(r, dict) and not r.get("error"):
-                    if not logged:
-                        log.info("Kotak limits() fields: %s", sorted(r.keys()))
-                        logged = True
-                    self.margin = {
-                        "ok": True,
-                        "available": num(r, "Net", "net", "MarginAvailable", "AvailableMargin", "availableMargin"),
-                        "used": num(r, "MarginUsed", "marginUsed", "MarginUtilized", "UtilizedMargin", "marginUtilized"),
-                        "at": dt.datetime.now(IST).strftime("%H:%M:%S")}
-                else:
-                    self.margin = {"ok": False, "msg": str(r)[:80]}
-            except Exception as e:
-                self.margin = {"ok": False, "msg": f"{type(e).__name__}"}
-            time.sleep(30)
+        try:
+            r = self.sessions.get().client.limits()
+            if isinstance(r, dict) and not r.get("error"):
+                self.margin = {
+                    "ok": True,
+                    "available": num(r, "Net", "net", "MarginAvailable", "AvailableMargin", "availableMargin"),
+                    "used": num(r, "MarginUsed", "marginUsed", "MarginUtilized", "UtilizedMargin", "marginUtilized"),
+                    "at": dt.datetime.now(IST).strftime("%H:%M:%S")}
+            else:
+                self.margin = {"ok": False, "msg": str(r)[:80]}
+        except Exception as e:
+            self.margin = {"ok": False, "msg": f"{type(e).__name__}"}
+        return self.margin
+
+    def refresh(self) -> dict:
+        """Screen's Refresh button: re-read margin and Kotak's order book now, re-send everything."""
+        m = self.read_margin()
+        changed = self.live.poll() if self.live else False
+        if self.loop:
+            for fn in (self._broadcast_status, self._broadcast_book, self._broadcast_risk):
+                self.loop.call_soon_threadsafe(fn)
+        ok = m.get("ok") and self.live.broker.get("ok", True)
+        msg = "refreshed: margin" + (f" ₹{m['available']:,.0f} available" if m.get("available") is not None else "") + \
+              (", Kotak orders read" + (" (updated)" if changed else "") if self.live.broker.get("ok", True)
+               else f", Kotak orders NOT readable: {self.live.broker.get('msg')}")
+        return {"ok": bool(ok), "msg": msg if m.get("ok") else f"margin NOT readable: {m.get('msg')}", "margin": m}
 
     def _housekeeping(self):
         """Every 0.5 s: re-price / push waiting paper orders. Every SAMPLE_S s: one MTM-curve point."""
@@ -171,15 +266,18 @@ class Engine:
                     log.warning("daily restart: engine born %s, now %s - exiting for a fresh start", born, n)
                     logging.shutdown()
                     os._exit(3)
-                self.book.housekeep()
+                self.paper.housekeep()
+                self.live.housekeep()
                 now = time.time()
                 if now - last_mtm >= SAMPLE_S:
                     last_mtm = now
-                    pos = [p for p in self.book.positions() if p["net"] or p["realized"]]
-                    n_before = len(self.mtm.pts)
-                    self.mtm.sample(pos, self.ltp, now)
-                    if len(self.mtm.pts) > n_before:
-                        self.rec.event("mtm", self.mtm.pts[-1])
+                    for mode, bk in (("PAPER", self.paper), ("LIVE", self.live)):
+                        h = self.mtms[mode]
+                        pos = [p for p in bk.positions() if p["net"] or p["realized"]]
+                        n_before = len(h.pts)
+                        h.sample(pos, self.ltp, now)
+                        if mode == "LIVE" and len(h.pts) > n_before:
+                            self.rec.event("mtm", h.pts[-1])
                     self.atm_hist.sample(self.atm_straddles(), now)
             except Exception:
                 log.exception("housekeeping")
@@ -237,22 +335,24 @@ class Engine:
             if not self.flush_scheduled and self.loop:
                 self.flush_scheduled = True
                 self.loop.call_soon_threadsafe(self._flush)
-        for tok in touched:                        # resting paper orders vs the new book
-            self.book.on_tick(tok)
-        if touched and self.risk:                  # MTM guard on every tick of a held contract
-            self.risk.check()
+        for tok in touched:                        # resting paper orders vs the new book (live: Kotak fills)
+            self.paper.on_tick(tok)
+        if touched:                                # MTM guards (paper AND live) on every tick of a held contract
+            for r in self.risks.values():
+                r.check()
 
     def on_status(self, st):
         if self.loop:
             self.loop.call_soon_threadsafe(self._broadcast_status)
 
     def on_book(self):
-        """Paper book changed (any thread)."""
-        self.book_tokens = self.book.tokens()
+        """Paper or live book changed (any thread)."""
+        self.book_tokens = self.paper.tokens() | self.live.tokens()
         if self.feed and self.book_tokens:
             self.feed.want_depth(list(self.book_tokens))
         if self.loop:
             self.loop.call_soon_threadsafe(self._broadcast_book)
+            self.loop.call_soon_threadsafe(self._broadcast_status)     # live open / working counts on the badge
 
     def on_risk(self):
         if self.loop:
@@ -260,7 +360,7 @@ class Engine:
 
     def _broadcast_risk(self):
         st = {"t": "risk", **self.risk.state()}
-        self.rec.event("risk", st)
+        self.rec.event("risk", {"t": "risk", **self.risks["LIVE"].state()})
         for c in list(self.clients):
             c.send_nowait(st)
 
@@ -306,14 +406,15 @@ class Engine:
 
     def _broadcast_status(self):
         st = self.status()
-        self.rec.event("status", {"t": "status", **st})
+        self.rec.event("status", self._rec_status())
         for c in list(self.clients):
             c.send_nowait({"t": "status", **st})
 
     def _broadcast_book(self):
         snap = {"t": "book", **self.book.snapshot()}
-        self.rec.event("book", snap)
-        if not self.rec.active and snap["orders"]:     # first order of the day starts the replay file
+        live = snap if self.mode == "LIVE" else self._rec_book()
+        self.rec.event("book", live)
+        if not self.rec.active and live["orders"]:     # first LIVE order of the day starts the replay file
             self.rec.activate(self._replay_header)
         for c in list(self.clients):
             c.refresh_watch(self.book_tokens)
@@ -321,16 +422,19 @@ class Engine:
 
     def status(self) -> dict:
         f = self.feed.status() if self.feed else {}
-        return {"feed": f, "error": self.error, "mode": C.MODE, "uptime": round(time.time() - self.started_at)}
+        lv = self.live
+        return {"feed": f, "error": self.error, "mode": self.mode, "uptime": round(time.time() - self.started_at),
+                "arm": self.arm, "live_open": lv.open_positions() if lv else 0, "live_working": lv.working() if lv else 0,
+                "broker": lv.broker if lv else {}}
 
     def _replay_header(self) -> dict:
         """Everything a replay needs at its start (called once by the recorder's writer thread)."""
         with self._plock:
             last = [list(v) for v in self.last.values()]
         return {"meta": self.meta(), "chains": list(self.chain_defs.values()), "last": last,
-                "book": {"t": "book", **self.book.snapshot()}, "risk": {"t": "risk", **self.risk.state()},
-                "status": {"t": "status", **self.status()}, "settings": self.settings.get(),
-                "mtm": list(self.mtm.pts)}
+                "book": self._rec_book(), "risk": {"t": "risk", **self.risks["LIVE"].state()},
+                "status": self._rec_status(), "settings": self.settings.get(),
+                "mtm": list(self.mtms["LIVE"].pts)}
 
     # ── screen requests ─────────────────────────────────────────────────────
     def meta(self) -> dict:
@@ -342,7 +446,7 @@ class Engine:
             prods.append({"name": n, "label": C.LABELS[n], "lot": p.lot, "tick": p.opt_tick,
                           "expiries": p.expiries(), "futures": futs})
         return {"t": "meta", "products": prods, "strikes": list(C.STRIKE_CHOICES),
-                "default_strikes": C.DEFAULT_STRIKES, "file_date": u.file_date, "mode": C.MODE,
+                "default_strikes": C.DEFAULT_STRIKES, "file_date": u.file_date, "mode": self.mode,
                 "max_lots": C.MAX_LOTS_PER_ORDER, "confirm_lots": C.CONFIRM_LOTS,
                 "qty_lots_max": C.MAX_QTY_LOTS_CHOICE, "buffer_pct": C.MKT_BUFFER_PCT,
                 "settings": self.settings.get()}
@@ -445,6 +549,8 @@ ORDER_OPS = {
     "risk_clear": lambda m: ENGINE.risk.clear(),
     "settings_set": lambda m: _settings_set(m),
     "margin": lambda m: {"quiet": True, **ENGINE.margin},
+    "refresh": lambda m: ENGINE.refresh(),
+    "mode_set": lambda m: ENGINE.set_mode(m.get("mode", ""), m.get("_user", ""), m.get("confirm", "")),
     "atm_hist": lambda m: {"ok": True, "quiet": True, **ENGINE.atm_hist.query(m.get("name", ""), m.get("mins", 1))},
     "mtm_hist": lambda m: {"ok": True, "quiet": True, "tag": m.get("tag"),
                            **ENGINE.mtm.query(m.get("mins", 1), m.get("inst", "all"), m.get("kind", "pnl"))},
@@ -517,6 +623,7 @@ async def ws_endpoint(ws: WebSocket):
     await ws.accept()
     loop = asyncio.get_running_loop()
     c = Client(ws, loop)
+    user = ws.scope.get("mcx_user", "local")       # set by AccessGuard (verified Cloudflare email)
     ENGINE.clients.add(c)
     wtask = asyncio.create_task(c.writer())
     try:
@@ -540,6 +647,7 @@ async def ws_endpoint(ws: WebSocket):
                                "u": [ENGINE.last[t] for t in c.watch if t in ENGINE.last]})
                 c.send_nowait({"t": "status", **ENGINE.status()})       # subscription counts changed
             elif op in ORDER_OPS:
+                msg["_user"] = user                        # who is asking (never taken from the screen)
                 try:
                     res = await loop.run_in_executor(None, ORDER_OPS[op], msg)
                 except Exception as e:
@@ -558,7 +666,7 @@ async def ws_endpoint(ws: WebSocket):
 def main():
     _setup_logging()
     sys.setswitchinterval(0.0005)   # background threads hand the CPU back to the feed / orders within 0.5 ms
-    log.info("MCX terminal starting on %s:%s (%s, stage 3: paper orders + risk guard)", C.HOST, C.PORT, C.MODE)
+    log.info("MCX terminal starting on %s:%s (stage 5: paper + owner-armed live Kotak P orders)", C.HOST, C.PORT)
     uvicorn.run(app, host=C.HOST, port=C.PORT, log_level="warning", ws_ping_interval=20, ws_ping_timeout=20)
 
 

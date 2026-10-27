@@ -6,7 +6,7 @@
 <title>MCX Desk</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=20261026p">
+<link rel="stylesheet" href="/static/app.css?v=20261027d">
 </head>
 <body>
 <header class="top">
@@ -97,7 +97,7 @@
       <label>Trail ₹<input id="rk-trail" type="number" step="500" placeholder="5000 step" class="mono"
         title="Every time P&amp;L rises this much, the stop rises by this much. With no stop typed it starts at P&amp;L − trail"></label>
     </div>
-    <div class="cp-btns"><button class="btn cp-set" id="rk-set">Set</button><button class="btn cp-clear" id="rk-clear">Clear</button></div>
+    <div class="cp-btns"><button class="btn cp-set" id="rk-set">Set</button><button class="btn cp-clear" id="rk-clear">Clear</button><button class="btn cp-refresh" id="btn-refresh" title="Re-read margin, Kotak orders, positions, chain and charts now">⟳ Refresh</button></div>
     <div class="rk-state mono" id="rk-state">Guard off.</div>
 
     <div class="cp-lbl">Quick exit (all positions)</div>
@@ -227,6 +227,6 @@
 </div>
 
 <div class="toasts" id="toasts"></div>
-<script src="/static/app.js?v=20261026p"></script>
+<script src="/static/app.js?v=20261027d"></script>
 </body>
 </html>

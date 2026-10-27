@@ -98,9 +98,11 @@ class AccessGuard:
             return await self.app(scope, receive, send)
         h = self._headers(scope)
         if not self.is_external(h):
+            scope["mcx_user"] = "local"                 # on the VPS itself / through an SSH tunnel
             return await self.app(scope, receive, send)
         ok, why = self.verify(self.token_of(h))
         if ok:
+            scope["mcx_user"] = why                     # the verified Cloudflare email (decides who may arm LIVE)
             return await self.app(scope, receive, send)
         now = time.time()
         if now - self._denied_log_at > 30:

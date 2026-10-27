@@ -398,6 +398,8 @@ a.btn { text-decoration: none; display: inline-block; }
 .cp-set { background: #138a6c; border-color: #138a6c; color: #fff; padding: 7px 20px; }
 .cp-set.armed { box-shadow: 0 0 0 2px rgba(31, 201, 122, .45); }
 .cp-clear { background: transparent; border-color: transparent; padding: 7px 14px; }
+.cp-refresh { margin-left: auto; padding: 7px 12px; }
+.cp-refresh.spin { opacity: .55; pointer-events: none; }
 .cp-exit { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
 .cp-exit .btn { background: #b8323a; border-color: #b8323a; color: #fff; padding: 8px 0; font-weight: 700; }
 .cp-exit .btn:hover { background: #d03a43; }
@@ -489,3 +491,28 @@ a.btn { text-decoration: none; display: inline-block; }
 .tk .a { grid-column: 1 / -1; font: 600 11px var(--mono); color: var(--accent); }
 .ip-item .a { grid-column: 1 / -1; font-size: 11px; color: var(--accent); }
 .ip-btn .a { font-size: 11.5px; color: var(--accent); font-weight: 600; }
+
+/* PAPER / LIVE switch */
+#mode { cursor: pointer; user-select: none; }
+.badge.paper.warn { background: #f0a020; }
+.badge.live { animation: livepulse 1.6s ease-in-out infinite; box-shadow: 0 0 0 2px rgba(255,60,60,.35); }
+@keyframes livepulse { 50% { box-shadow: 0 0 0 5px rgba(255,60,60,.15); } }
+body.live-mode { box-shadow: inset 0 3px 0 var(--down); }
+.st-SENDING { color: #f0a020; }
+
+/* live price tag on charts */
+.g-now { stroke: var(--accent); stroke-width: 1; stroke-dasharray: 4 3; opacity: .8; }
+.g-now-tag { fill: var(--accent); }
+.g-now-txt { fill: #0a0c0f; font: 700 11px var(--mono, monospace); }
+
+/* expiry line under each instrument (option + future expiry) */
+.tk .e, .ip-item .e { grid-column: 1 / -1; font: 500 10px var(--mono); color: var(--muted); letter-spacing: .02em; }
+.ip-item .e { font-size: 11px; }
+
+/* chart hover */
+.g-hl { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+.g-hd { fill: var(--accent); stroke: var(--bg); stroke-width: 2; }
+.g-hb { fill: var(--panel-2); stroke: var(--line); opacity: .96; }
+.g-ht { fill: var(--text); font: 500 11.5px var(--mono); }
+.g-ht .g-ht0, .g-ht0 { fill: var(--muted); }
+svg[role="img"] { cursor: crosshair; }

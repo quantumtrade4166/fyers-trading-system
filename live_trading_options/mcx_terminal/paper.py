@@ -50,6 +50,8 @@ def _round_tick(px: float, tick: float, up: bool) -> float:
 
 
 class PaperBook:
+    PREFIX = "paper_book_"          # day files: <PREFIX>YYYY-MM-DD.json (the live book uses its own)
+
     def __init__(self, universe, quotes, on_change=None, path=None, settings=None):
         """quotes(token) -> dict(ltp, bid, ask, bq, aq, depth=([(p,q)...] bids, [(p,q)...] asks))"""
         self.u = universe
@@ -58,7 +60,8 @@ class PaperBook:
         self.settings = settings or (lambda: {"entry_ref": "touch", "entry_buffer": C.MKT_BUFFER_PCT, "entry_unit": "%",
                                               "exit_ref": "touch", "exit_buffer": C.MKT_BUFFER_PCT, "exit_unit": "%",
                                               "reprice": False, "market_after_s": 0, "product": "NRML", "session": "AUTO"})
-        self.path = path or (C.DATA / f"paper_book_{today()}.json")
+        self.path = path or (C.DATA / f"{self.PREFIX}{today()}.json")
+        self._ids = itertools.count(1)      # order ids, per book (paper and live never share a counter)
         self.orders: list[dict] = []
         self.pos: dict[int, dict] = {}
         self.lock = threading.RLock()
@@ -73,16 +76,15 @@ class PaperBook:
             d = json.loads(self.path.read_text(encoding="utf-8"))
             self.orders = d.get("orders", [])
             self.pos = {int(k): v for k, v in d.get("positions", {}).items()}
-            global _ids
-            _ids = itertools.count(max([o["id"] for o in self.orders] or [0]) + 1)
-            log.info("paper book restored: %d orders, %d positions", len(self.orders), len(self.pos))
+            self._ids = itertools.count(max([o["id"] for o in self.orders] or [0]) + 1)
+            log.info(f"{self.PREFIX[:-1]} restored: %d orders, %d positions", len(self.orders), len(self.pos))
         except Exception:
             log.exception("paper book load failed; starting empty")
 
     def _carry_forward(self):
         """A new day: bring over yesterday's OPEN positions (NRML carry) at their average price.
         Realized P&L starts at 0 for the new day. Contracts no longer listed (expired) are dropped."""
-        prev = sorted(p for p in self.path.parent.glob("paper_book_*.json") if p.name < self.path.name)
+        prev = sorted(p for p in self.path.parent.glob(f"{self.PREFIX}*.json") if p.name < self.path.name)
         if not prev:
             return
         try:
@@ -177,9 +179,9 @@ class PaperBook:
                    for p, qq in levels)
 
     # ── orders ──────────────────────────────────────────────────────────────
-    def place(self, token: int, side: str, qty: int, kind: str = "MKT", limit: float | None = None,
-              source: str = "", buffer_pct: float | None = None) -> dict:
-        """-> {"ok": bool, "ids": [...], "msg": str}"""
+    def _prepare(self, token, side, qty, kind, limit, buffer_pct):
+        """Checks + system price shared by the paper and live books.
+        -> {"ok": False, "msg"} or {"c", "side", "lots", "st", "role", "limit", "slices"}"""
         c = self.u.by_token.get(token)
         if c is None:
             return {"ok": False, "msg": "unknown contract"}
@@ -205,12 +207,21 @@ class PaperBook:
                 return {"ok": False, "msg": "limit price required"}
             limit = _round_tick(limit, c.tick, side == "S")      # never round a limit into a worse price
         slices = [c.freeze] * (qty // c.freeze) + ([qty % c.freeze] if qty % c.freeze else []) if c.freeze else [qty]
+        return {"c": c, "side": side, "lots": lots, "st": st, "role": role, "limit": limit, "slices": slices}
+
+    def place(self, token: int, side: str, qty: int, kind: str = "MKT", limit: float | None = None,
+              source: str = "", buffer_pct: float | None = None) -> dict:
+        """-> {"ok": bool, "ids": [...], "msg": str}"""
+        pr = self._prepare(token, side, qty, kind, limit, buffer_pct)
+        if "c" not in pr:
+            return pr
+        c, side, lots, st, role, limit, slices = (pr[k] for k in ("c", "side", "lots", "st", "role", "limit", "slices"))
         with self.lock:
             levels = list(self._levels(token, side))                 # one working copy for all slices
             ids = []
             ts = dt.datetime.now(IST).strftime("%H:%M:%S.%f")[:-3]
             for i, sq in enumerate(slices):
-                o = {"id": next(_ids), "ts": ts, "t0": time.time(), "token": token, "symbol": c.symbol,
+                o = {"id": next(self._ids), "ts": ts, "t0": time.time(), "token": token, "symbol": c.symbol,
                      "name": c.name, "side": side, "qty": sq, "lot": c.lot, "kind": kind, "limit": limit,
                      "filled": 0, "avg": 0.0, "status": "OPEN", "reason": "", "source": source, "role": role,
                      "product": st.get("product", "NRML"), "session": st.get("session", "AUTO"), "t_rep": time.time(),
