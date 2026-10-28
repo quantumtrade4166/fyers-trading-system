@@ -82,8 +82,10 @@ class PaperBook:
             log.exception("paper book load failed; starting empty")
 
     def _carry_forward(self):
-        """A new day: bring over yesterday's OPEN positions (NRML carry) at their average price.
-        Realized P&L starts at 0 for the new day. Contracts no longer listed (expired) are dropped."""
+        """A new day: bring over yesterday's OPEN positions (NRML carry) at their average price — only if
+        config.PAPER_CARRY is on (off since 28-Oct: the owner wants every day to start clean at 00:05)."""
+        if not C.PAPER_CARRY:
+            return
         prev = sorted(p for p in self.path.parent.glob(f"{self.PREFIX}*.json") if p.name < self.path.name)
         if not prev:
             return
@@ -395,6 +397,19 @@ class PaperBook:
         return {"ok": not bad, "state": state if res else "filled",
                 "msg": (f"EXITED {len(res)} position(s)" if state == "filled" else f"exit sent for {len(res)} position(s), some waiting")
                 + (f", {n_cancel} order(s) cancelled" if n_cancel else "") + (f" · PROBLEM: {'; '.join(bad)}" if bad else "")}
+
+    def exit_instrument(self, name: str, fraction: float = 1.0) -> dict:
+        """Exit X % of every open position of ONE instrument (the Exit 25/50/75/100 % row + its timers)."""
+        with self.lock:
+            toks = [t for t, p in self.pos.items() if p["net"] and p.get("name") == name]
+        if not toks:
+            return {"ok": True, "state": "filled", "msg": f"no open {name} position"}
+        res = [self.exit_position(t, fraction, f"exit {name}") for t in toks]
+        bad = [r["msg"] for r in res if not r["ok"]]
+        state = "filled" if all(r.get("state") == "filled" for r in res if r["ok"]) else "waiting"
+        return {"ok": not bad, "state": state,
+                "msg": f"EXIT {int(fraction * 100)}% {name}: {len(res)} position(s)" +
+                       ("" if state == "filled" else ", some waiting") + (f" · PROBLEM: {'; '.join(bad)}" if bad else "")}
 
     def basket(self, legs, source="basket") -> dict:
         """legs = [{token, side, qty}] placed together; BUYS FIRST (hedges before the sells, as live

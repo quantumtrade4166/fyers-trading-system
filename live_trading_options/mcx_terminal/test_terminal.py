@@ -9,8 +9,12 @@ from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8")
 
+from live_trading_options.mcx_terminal import audit
 from live_trading_options.mcx_terminal import feed as F
 from live_trading_options.mcx_terminal import instruments as I
+
+import tempfile as _tf
+audit.DIR = Path(_tf.gettempdir()) / "mcx_audit_test"      # tests never write the real audit log
 
 HERE = Path(__file__).resolve().parent
 PASS = FAIL = 0
@@ -410,7 +414,14 @@ def test_carry_forward_overnight():
                         "net": -200, "avg": 480.0, "realized": 1234.0, "bought": 0, "sold": 200},
         "999999": {"token": 999999, "symbol": "OLDEXPIRED", "name": "CRUDEOIL", "lot": 100, "mult": 1.0,
                    "net": -100, "avg": 10.0, "realized": 0.0, "bought": 0, "sold": 100}}}), encoding="utf-8")
-    b = P.PaperBook(u, lambda t: {}, path=d / "paper_book_2026-10-23.json")
+    from live_trading_options.mcx_terminal import config as _C
+    off = P.PaperBook(u, lambda t: {}, path=d / "paper_book_2026-10-24.json")
+    check("default: every day starts clean (no carry)", not _C.PAPER_CARRY and not off.pos, off.pos)
+    _C.PAPER_CARRY = True
+    try:
+        b = P.PaperBook(u, lambda t: {}, path=d / "paper_book_2026-10-23.json")
+    finally:
+        _C.PAPER_CARRY = False
     p = b.pos.get(ce.token)
     check("open position carried", p and p["net"] == -200 and p["avg"] == 480.0 and p["carried"], p)
     check("realized reset for the new day", p and p["realized"] == 0.0, p)

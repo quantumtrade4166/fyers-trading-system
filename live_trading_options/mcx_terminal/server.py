@@ -31,6 +31,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from live_trading_options.mcx_terminal import audit
 from live_trading_options.mcx_terminal import config as C
 from live_trading_options.mcx_terminal.access import AccessGuard
 from live_trading_options.mcx_terminal import instruments as I
@@ -38,6 +39,7 @@ from live_trading_options.mcx_terminal.feed import KotakFeed
 from live_trading_options.mcx_terminal.kotak_session import SessionHolder
 from live_trading_options.mcx_terminal.paper import PaperBook
 from live_trading_options.mcx_terminal.live import LiveBook
+from live_trading_options.mcx_terminal.sched import ExitTimers
 from live_trading_options.mcx_terminal.risk import RiskGuard
 from live_trading_options.mcx_terminal.settings import Settings
 from live_trading_options.mcx_terminal.mtm import AtmHistory, MtmHistory, SAMPLE_S
@@ -45,7 +47,16 @@ from live_trading_options.mcx_terminal.recorder import DayRecorder, now_ms, REPL
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 log = logging.getLogger("mcx.server")
-DAILY_RESTART = dt.time(8, 45)
+RESET_AT = dt.time(0, 5)          # after MCX close: new day = fresh books, guards, arm (everything resets)
+REFRESH_AT = dt.time(8, 45)       # fresh Kotak login + today's contract list before MCX opens at 09:00
+
+
+def next_restart(born: dt.datetime) -> dt.datetime:
+    """The first reset/refresh moment after the engine was born."""
+    d = born.date()
+    cands = [dt.datetime.combine(d + dt.timedelta(days=k), t, tzinfo=IST)
+             for k in (0, 1) for t in (RESET_AT, REFRESH_AT)]
+    return min(x for x in cands if x > born)
 
 
 def owner_users() -> set:
@@ -90,6 +101,7 @@ class Engine:
         self.mode = "PAPER"                        # which book the screen trades into
         self.arm: dict = {}                        # who armed LIVE today, and when
         self.settings = Settings()
+        self.timers: ExitTimers | None = None      # exit-by-time (per instrument), fired by housekeeping
         day = dt.datetime.now(IST).date().isoformat()
         self.mtms = {"PAPER": MtmHistory(), "LIVE": MtmHistory(path=C.DATA / f"mtm_live_{day}.json")}
         self.atm_hist = AtmHistory()
@@ -158,6 +170,7 @@ class Engine:
         except Exception:
             log.exception("arm file write")
         log.warning("MODE -> %s by %s", mode, user)
+        audit.write("mode", user, what=f"MODE -> {mode}")
         if self.rec:
             self.rec.event("mode", {"mode": mode, **self.arm})
         if self.loop:
@@ -185,6 +198,8 @@ class Engine:
                       "LIVE": RiskGuard(self.live, self.ltp, on_change=self.on_risk,
                                         path=C.DATA / f"risk_live_{dt.datetime.now(IST).date().isoformat()}.json")}
         self._load_arm()
+        self.timers = ExitTimers(self._timer_fire, on_change=self.on_timers)
+        self.live.notify = self.on_note
         self.book_tokens = self.paper.tokens() | self.live.tokens()
         self.rec = DayRecorder()
         if self.rec.active:                        # restarted mid-day: write a fresh header to today's file
@@ -238,6 +253,8 @@ class Engine:
         """Screen's Refresh button: re-read margin and Kotak's order book now, re-send everything."""
         m = self.read_margin()
         changed = self.live.poll() if self.live else False
+        if self.live:
+            self.live.sync_positions()
         if self.loop:
             for fn in (self._broadcast_status, self._broadcast_book, self._broadcast_risk):
                 self.loop.call_soon_threadsafe(fn)
@@ -250,7 +267,8 @@ class Engine:
     def _housekeeping(self):
         """Every 0.5 s: re-price / push waiting paper orders. Every SAMPLE_S s: one MTM-curve point."""
         last_mtm = 0.0
-        born = dt.datetime.now(IST).date()
+        born = dt.datetime.now(IST)
+        restart_at = next_restart(born)
         built_today = False
         build_missing_replays()                    # a day whose file was never built (engine was down at 23:58)
         while True:
@@ -260,12 +278,15 @@ class Engine:
                     built_today = True
                     self.rec.flush()
                     spawn_replay_build(self.rec.day)
-                if n.date() > born and n.time() >= DAILY_RESTART:
-                    # a new trading day: exit so the scheduled task starts a fresh engine (new Kotak
-                    # session, today's contract list, today's paper book with positions carried over)
-                    log.warning("daily restart: engine born %s, now %s - exiting for a fresh start", born, n)
+                if n >= restart_at:
+                    # 00:05 = a new day (fresh books / guards / LIVE disarmed; positions re-read from Kotak);
+                    # 08:45 = fresh Kotak login + contract list. The scheduled task starts the new engine.
+                    log.warning("scheduled restart (%s): engine born %s - exiting", restart_at.strftime("%H:%M"), born)
+                    audit.write("engine", what=f"scheduled restart {restart_at:%H:%M}")
                     logging.shutdown()
                     os._exit(3)
+                if self.timers:
+                    self.timers.tick()
                 self.paper.housekeep()
                 self.live.housekeep()
                 now = time.time()
@@ -347,12 +368,34 @@ class Engine:
 
     def on_book(self):
         """Paper or live book changed (any thread)."""
+        if self.paper is None or self.live is None:      # still starting up (the live book reads Kotak in its constructor)
+            return
         self.book_tokens = self.paper.tokens() | self.live.tokens()
         if self.feed and self.book_tokens:
             self.feed.want_depth(list(self.book_tokens))
         if self.loop:
             self.loop.call_soon_threadsafe(self._broadcast_book)
             self.loop.call_soon_threadsafe(self._broadcast_status)     # live open / working counts on the badge
+
+    def _timer_fire(self, mode, name, frac) -> dict:
+        """A timer's exit, on the book that was active when it was set."""
+        book = self.live if mode == "LIVE" else self.paper
+        return book.exit_instrument(name, frac)
+
+    def on_note(self, ev: dict):
+        """A live fill / reject that arrived after the order's pop-up: tell every screen."""
+        if self.loop:
+            msg = {"t": "note", **ev}
+            self.loop.call_soon_threadsafe(lambda: [c.send_nowait(msg) for c in list(self.clients)])
+
+    def on_timers(self):
+        if self.loop:
+            self.loop.call_soon_threadsafe(self._broadcast_timers)
+
+    def _broadcast_timers(self):
+        msg = {"t": "timers", "items": self.timers.view() if self.timers else []}
+        for c in list(self.clients):
+            c.send_nowait(msg)
 
     def on_risk(self):
         if self.loop:
@@ -425,7 +468,10 @@ class Engine:
         lv = self.live
         return {"feed": f, "error": self.error, "mode": self.mode, "uptime": round(time.time() - self.started_at),
                 "arm": self.arm, "live_open": lv.open_positions() if lv else 0, "live_working": lv.working() if lv else 0,
-                "broker": lv.broker if lv else {}}
+                "broker": lv.broker if lv else {},
+                "pos_sync": {"ok": lv.positions_fresh(), "msg": lv.pos_sync.get("msg", ""),
+                             "age": round(time.time() - lv.pos_sync["at"], 1) if lv.pos_sync.get("at") else None}
+                if lv else {}}
 
     def _replay_header(self) -> dict:
         """Everything a replay needs at its start (called once by the recorder's writer thread)."""
@@ -558,6 +604,10 @@ ORDER_OPS = {
     "cancel_all": lambda m: {"ok": True, "msg": f"cancelled {ENGINE.book.cancel_all()} order(s)"},
     "exit": lambda m: ENGINE.book.exit_position(int(m["token"]), float(m.get("frac", 1.0))),
     "exit_all": lambda m: ENGINE.book.exit_all(float(m.get("frac", 1.0))),
+    "exit_inst": lambda m: ENGINE.book.exit_instrument(str(m.get("name", "")), float(m.get("frac", 1.0))),
+    "timer_set": lambda m: ENGINE.timers.set(str(m.get("name", "")), m.get("frac", 1.0), m.get("at", ""),
+                                             ENGINE.mode, m.get("_user", "")),
+    "timer_clear": lambda m: ENGINE.timers.clear(str(m.get("name", "")), m.get("frac", 1.0), m.get("_user", "")),
 }
 
 app = FastAPI(title="MCX Terminal")
@@ -577,6 +627,18 @@ async def index():
 
 
 DAY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+@app.get("/audit")
+async def audit_days():
+    return JSONResponse(audit.days())
+
+
+@app.get("/audit/{day}")
+async def audit_day(day: str):
+    if not DAY_RE.match(day):
+        return JSONResponse({"error": "bad day"}, status_code=400)
+    return JSONResponse(audit.read(day))
 
 
 @app.get("/replays")
@@ -618,6 +680,23 @@ async def health():
     return JSONResponse(ENGINE.status())
 
 
+QUIET_OPS = {"margin", "mtm_hist", "atm_hist"}
+SLOW_OPS = {"exit_all", "exit", "exit_inst", "refresh", "cancel_all"}
+
+
+async def run_op(c, loop, op, msg, user):
+    try:
+        res = await loop.run_in_executor(None, ORDER_OPS[op], msg)
+    except Exception as e:
+        log.exception("order op %s", op)
+        res = {"ok": False, "msg": f"{type(e).__name__}: {e}"}
+    if op not in QUIET_OPS:
+        args = {k: v for k, v in msg.items() if k not in ("op", "req", "_user", "confirm")}
+        audit.write("op", user, op=op, mode=ENGINE.mode, args=args, ok=res.get("ok"),
+                    result=str(res.get("msg", ""))[:300])
+    c.send_nowait({"t": "ack", "op": op, "req": msg.get("req"), **res})
+
+
 @app.websocket("/ws")
 async def ws_endpoint(ws: WebSocket):
     await ws.accept()
@@ -631,6 +710,7 @@ async def ws_endpoint(ws: WebSocket):
         c.send_nowait({"t": "status", **ENGINE.status()})
         c.send_nowait({"t": "book", **ENGINE.book.snapshot()})
         c.send_nowait({"t": "risk", **ENGINE.risk.state()})
+        c.send_nowait({"t": "timers", "items": ENGINE.timers.view() if ENGINE.timers else []})
         c.send_nowait({"t": "atm", "v": ENGINE.atm_straddles()})
         all_futs = {f.token for p in ENGINE.universe.products.values() for f in p.futures[:3]}
         while True:
@@ -646,14 +726,14 @@ async def ws_endpoint(ws: WebSocket):
                 c.send_nowait({"t": "d", "s": round(time.time(), 3),
                                "u": [ENGINE.last[t] for t in c.watch if t in ENGINE.last]})
                 c.send_nowait({"t": "status", **ENGINE.status()})       # subscription counts changed
+            elif op == "ui":                           # a button press on the screen (audit only)
+                audit.write("ui", user, what=str(msg.get("what", ""))[:120], mode=ENGINE.mode)
             elif op in ORDER_OPS:
                 msg["_user"] = user                        # who is asking (never taken from the screen)
-                try:
-                    res = await loop.run_in_executor(None, ORDER_OPS[op], msg)
-                except Exception as e:
-                    log.exception("order op %s", op)
-                    res = {"ok": False, "msg": f"{type(e).__name__}: {e}"}
-                c.send_nowait({"t": "ack", "op": op, "req": msg.get("req"), **res})
+                if op in SLOW_OPS:                         # exits can take seconds: never hold this screen's socket
+                    asyncio.create_task(run_op(c, loop, op, msg, user))
+                else:
+                    await run_op(c, loop, op, msg, user)
     except (WebSocketDisconnect, RuntimeError):
         pass
     except Exception:
@@ -667,6 +747,7 @@ def main():
     _setup_logging()
     sys.setswitchinterval(0.0005)   # background threads hand the CPU back to the feed / orders within 0.5 ms
     log.info("MCX terminal starting on %s:%s (stage 5: paper + owner-armed live Kotak P orders)", C.HOST, C.PORT)
+    audit.write("engine", what="terminal started")
     uvicorn.run(app, host=C.HOST, port=C.PORT, log_level="warning", ws_ping_interval=20, ws_ping_timeout=20)
 
 

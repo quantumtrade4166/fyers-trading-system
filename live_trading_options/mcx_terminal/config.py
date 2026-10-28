@@ -25,6 +25,7 @@ DEFAULT_STRIKES = 10
 MODE = "PAPER"              # start-up mode; LIVE only when the OWNER arms it on the screen (resets daily)
 MAX_LOTS_PER_ORDER = 300    # hard cap: an order above this is refused (typo guard)
 CONFIRM_LOTS = 50           # the screen asks "are you sure" above this many lots
+PAPER_CARRY = False          # paper positions do NOT carry to the next day (daily reset at 00:05)
 MKT_BUFFER_PCT = 1.0        # "market" = limit at best ask/bid +/- this % (Kotak takes no MARKET orders)
 MAX_QTY_LOTS_CHOICE = 100   # qty box offers 1..this many lots
 

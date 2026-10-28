@@ -6,7 +6,7 @@
 <title>MCX Desk</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=20261027d">
+<link rel="stylesheet" href="/static/app.css?v=20261028g">
 </head>
 <body>
 <header class="top">
@@ -16,13 +16,14 @@
     <div class="pnl" title="Session P&L: closed + open positions">
       <span class="lbl">SESSION P&amp;L</span><span class="val mono" id="pnl">0.00</span>
     </div>
-    <button class="btn danger" id="exitall" title="Cancel every open order and close every position">EXIT ALL</button>
+    <button class="btn danger" id="exitall" title="LIVE: cancel every working MCX order on Kotak P and close EVERY open MCX position Kotak shows (also ones placed by hand), then check Kotak is flat">EXIT ALL</button>
     <button class="kbtg" id="tg-kb" title="Keyboard trading: arrow keys move over the prices · − sells · + or = buys">⌨ KEYBOARD OFF</button>
     <span class="badge paper" id="mode">PAPER</span>
     <span class="pill" id="feed"><i class="led"></i><span id="feedtxt">connecting…</span></span>
     <span class="pill mono" id="ping" title="Screen ↔ engine round trip">— ms</span>
     <span class="clock mono" id="clock">--:--:--</span>
     <button class="gear rpbtn" id="btn-replays" title="Replays: download a day as a double-click file">⏵ Replays</button>
+    <button class="gear rpbtn" id="btn-logs" title="Logs: every order, fill and button press, append-only">☰ Logs</button>
     <button class="gear" id="gear" title="Settings">⚙</button>
   </div>
 </header>
@@ -106,7 +107,6 @@
       <button class="btn" data-frac="0.75">75%</button><button class="btn" data-frac="1">100%</button>
     </div>
     <button class="cp-link" id="cancelall">Cancel all pending orders</button>
-    <div class="rk-sum" id="rk-sum"></div>
 
     <div class="cp-margin">
       <div><span class="cp-lbl">Available margin</span><span class="mono" id="cp-mavail">—</span></div>
@@ -137,9 +137,27 @@
 </section>
 </div>
 
+<!-- short-premium strip, right above Positions -->
+<div class="sumbar mono" id="rk-sum"></div>
+
+<!-- exit the CURRENT instrument now or at a time (timers run on the VPS) -->
+<div class="exitbar" id="exitbar">
+  <span class="xb-l">EXIT <b id="xb-name">—</b></span>
+  <div class="xg" data-frac="0.25"><button class="xg-go" title="Exit 25% of the current instrument now">Exit 25%</button><button class="xg-clk" title="Exit 25% at a set time"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="xg-at"></span></button></div><div class="xg" data-frac="0.5"><button class="xg-go" title="Exit 50% of the current instrument now">Exit 50%</button><button class="xg-clk" title="Exit 50% at a set time"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="xg-at"></span></button></div><div class="xg" data-frac="0.75"><button class="xg-go" title="Exit 75% of the current instrument now">Exit 75%</button><button class="xg-clk" title="Exit 75% at a set time"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="xg-at"></span></button></div><div class="xg" data-frac="1.0"><button class="xg-go" title="Exit 100% of the current instrument now">Exit 100%</button><button class="xg-clk" title="Exit 100% at a set time"><svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 7v5l3 2" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="xg-at"></span></button></div>
+  <span class="xb-note mono" id="xb-note"></span>
+</div>
+<div class="xpop" id="xpop" hidden>
+  <div class="xp-t" id="xp-t">Exit 100% Time (24h)</div>
+  <input id="xp-time" class="mono" type="text" placeholder="HH:MM:SS" maxlength="8" autocomplete="off">
+  <button class="btn xp-set" id="xp-set">Set Time</button>
+  <button class="btn xp-clear" id="xp-clear" hidden>Clear timer</button>
+  <div class="xp-n" id="xp-n"></div>
+</div>
+
 <section class="dock" id="dock">
   <div class="dock-head">
     <button class="dt on" data-p="pos">Positions <span id="npos">0</span></button>
+    <span class="possrc mono" id="pos-src" title="Where the positions come from"></span>
     <button class="dt" data-p="ord">Orders <span id="nord">0</span></button>
     <div class="spacer"></div>
     <div class="dock-tools" id="tools-pos">
@@ -215,6 +233,22 @@
   </div>
 </div>
 
+<!-- logs (append-only audit) -->
+<div class="modal" id="logs" hidden>
+  <div class="panel wide">
+    <div class="p-head"><b>Logs</b>
+      <span class="g-tools"><select id="lg-day"></select>
+        <input id="lg-q" type="search" placeholder="filter… (e.g. EXIT, CRUDE, fill)" class="mono">
+        <select id="lg-kind"><option value="">everything</option><option value="order">orders + fills</option>
+          <option value="op">screen actions</option><option value="ui">button presses</option>
+          <option value="broker">Kotak positions</option><option value="exit-all">EXIT ALL</option></select></span>
+      <button class="x" data-close="logs">✕</button></div>
+    <p class="hint2">Append-only: nothing here is ever edited or deleted. One file per day on the VPS
+      (logs/mcx_audit), backed up to Google Drive. Newest first.</p>
+    <div class="lg-wrap"><table class="grid lg" id="lg-tab"><tbody><tr><td class="empty">Loading…</td></tr></tbody></table></div>
+  </div>
+</div>
+
 <!-- graphs -->
 <div class="modal" id="graph" hidden>
   <div class="panel wide">
@@ -227,6 +261,6 @@
 </div>
 
 <div class="toasts" id="toasts"></div>
-<script src="/static/app.js?v=20261027d"></script>
+<script src="/static/app.js?v=20261028g"></script>
 </body>
 </html>

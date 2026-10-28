@@ -46,6 +46,8 @@ function connect() {
       case "book": onBook(m); break;
       case "atm": onAtm(m.v || {}); break;
       case "risk": onRisk(m); break;
+      case "timers": onTimers(m.items || []); break;
+      case "note": toast(m.msg, !m.ok, m.ok ? "ok" : "bad"); break;    // a live fill / reject after the pop-up
       case "ack":
         if (m.op === "mtm_hist" && (m.tag === "gp-pnl" || m.tag === "gp-imb")) onInlineGraph(m);
         else if (m.op === "mtm_hist") onMtm(m);
@@ -53,10 +55,13 @@ function connect() {
         else if (m.op === "atm_hist") onAtmHist(m);
         else if (m.op === "settings_set") { onSettingsAck(m); toast(m.msg, !m.ok); }
         else if (m.op === "refresh") { $("btn-refresh").classList.remove("spin"); if (m.margin) onMargin(m.margin); toast(m.msg, !m.ok, m.ok ? "info" : "bad"); }
+        else if (m.op === "timer_set" || m.op === "timer_clear") toast(m.msg, !m.ok, m.ok ? "info" : "bad");
         else if (m.op === "mode_set") toast(m.msg, !m.ok, !m.ok ? "bad" : m.mode === "LIVE" ? "ok" : "info");
-        else if (ORDER_ACKS.has(m.op))
+        else if (ORDER_ACKS.has(m.op)) {
           toast(m.msg || (m.ok ? "done" : "failed"), !m.ok,
-                !m.ok ? "bad" : m.state === "waiting" || m.state === "partial" ? "wait" : "ok");
+                !m.ok ? "bad" : m.state === "waiting" || m.state === "partial" ? "wait" : "ok", S.pend.get(m.req));
+          S.pend.delete(m.req);
+        }
         else toast(m.msg || (m.ok ? "done" : "failed"), !m.ok, m.ok ? "info" : "bad");
         break;
       case "pong": $("ping").textContent = `${(performance.now() - m.c).toFixed(0)} ms`; break;
@@ -71,18 +76,23 @@ function setFeed(txt, cls) { $("feedtxt").textContent = txt; $("feed").className
 // order pop-up: big + solid colour. kind: "ok" (executed, green) · "wait" (placed, waiting, amber) ·
 // "bad" (error, red) · "info" (small, neutral). Click to dismiss.
 const working = (o) => o.status === "OPEN" || o.status === "SENDING";
-function toast(msg, bad, kind) {
+function toast(msg, bad, kind, el) {
   kind = kind || (bad ? "bad" : "info");
-  const el = document.createElement("div");
+  const fresh = !el || !el.isConnected;
+  if (fresh) el = document.createElement("div");
   el.className = "toast " + kind;
-  const head = { ok: "✔ EXECUTED", wait: "⏳ PLACED · WAITING", bad: "✖ ERROR" }[kind];
+  const head = { ok: "✔ EXECUTED", wait: "⏳ PLACED · WAITING", bad: "✖ ERROR", send: "➤ SENDING" }[kind];
   el.innerHTML = (head ? `<b class="t-h">${head}</b>` : "") + `<span class="t-m"></span>`;
   el.querySelector(".t-m").textContent = msg;
-  el.onclick = () => el.remove();
-  $("toasts").appendChild(el);
-  setTimeout(() => el.remove(), { bad: 8000, wait: 5000, ok: 4000 }[kind] || 3000);
+  if (fresh) { el.onclick = () => el.remove(); $("toasts").appendChild(el); }
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.remove(), { bad: 8000, wait: 5000, ok: 4000, send: 12000 }[kind] || 3000);
+  return el;
 }
-const ORDER_ACKS = new Set(["order", "basket", "exit", "exit_all", "move"]);
+// an order's pop-up appears the moment it is sent, then turns green / amber / red in the same box
+S.pend = new Map();
+function pendToast(req, text) { S.pend.set(req, toast(text, false, "send")); }
+const ORDER_ACKS = new Set(["order", "basket", "exit", "exit_all", "exit_inst", "move"]);
 const _once = {};
 function toastOnce(key, msg, bad) { const n = Date.now(); if (!_once[key] || n - _once[key] > 30000) { _once[key] = n; toast(msg, bad); } }
 
@@ -147,6 +157,7 @@ function pick(name, keepExpiry) {
   S.qtyLots = LS.get("qty." + name, 1);
   paintQty();
   requestChain();
+  paintExitBar();
 }
 
 function requestChain() {
@@ -391,9 +402,16 @@ function withHedges(legs) {
 function sendLegs(legs, lots, limit, source) {
   if (lots > S.meta.max_lots) return toast(`${lots} lots is over the cap of ${S.meta.max_lots}`, true);
   let ok;
-  if (legs.length === 1) ok = send({ op: "order", token: legs[0].tok, side: legs[0].side, lots, limit, source, req: ++S.req });
-  else ok = send({ op: "basket", legs: legs.map((l) => ({ token: l.tok, side: l.side, lots })), source, req: ++S.req });
-  if (!ok) toast("not connected", true);
+  const req = ++S.req;
+  if (legs.length === 1) ok = send({ op: "order", token: legs[0].tok, side: legs[0].side, lots, limit, source, req });
+  else ok = send({ op: "basket", legs: legs.map((l) => ({ token: l.tok, side: l.side, lots })), source, req });
+  if (!ok) return toast("not connected", true);
+  const i = S.sym.get(legs[0].tok) || {};
+  const what = legs.length === 1
+    ? `${legs[0].side === "B" ? "BUY" : "SELL"} ${lots} lot${lots > 1 ? "s" : ""} ${i.name || ""} ${i.k ?? ""} ${(i.side || "").toUpperCase()}` +
+      (limit ? ` @ ${limit}` : "")
+    : `basket of ${legs.length} legs × ${lots} lot${lots > 1 ? "s" : ""}`;
+  pendToast(req, what + (S.mode === "LIVE" ? " → Kotak" : " (paper)"));
 }
 
 function openTicket(legs, lots) {
@@ -463,7 +481,10 @@ $("ticket").addEventListener("keydown", (e) => {
   }
 });
 
-$("exitall").onclick = () => send({ op: "exit_all", req: ++S.req });
+$("exitall").onclick = () => {
+  if (send({ op: "exit_all", req: ++S.req }) && S.mode === "LIVE")
+    toast("EXIT ALL sent - closing every Kotak MCX position, checking Kotak until flat…", false, "wait");
+};
 document.querySelectorAll("#sidepane button[data-frac]").forEach((b) =>
   (b.onclick = () => send({ op: "exit_all", frac: +b.dataset.frac, req: ++S.req })));
 $("cancelall").onclick = () => send({ op: "cancel_all", req: ++S.req });
@@ -692,6 +713,13 @@ function onStatus(m) {
   $("mode").title = live ? `LIVE armed by ${(m.arm || {}).by || "?"} at ${(m.arm || {}).at || "?"} · click to go back to PAPER`
     : "PAPER orders · click to arm LIVE Kotak P orders (owner only)";
   document.body.classList.toggle("live-mode", live);
+  const ps = m.pos_sync || {};
+  const src = $("pos-src");
+  if (src) {
+    src.textContent = !live ? "" : ps.ok ? "mirrored from Kotak ✓" : "⚠ Kotak positions NOT readable - may be stale";
+    src.className = "possrc mono" + (live && !ps.ok ? " bad" : "");
+  }
+  if (live && ps.ok === false && ps.age !== null) toastOnce("possync", "Kotak positions NOT readable - what you see may be stale. " + (ps.msg || ""), true);
   const b = m.broker || {};
   if (live && b.ok === false) toastOnce("broker", "Kotak order book not readable: " + (b.msg || ""), true);
   if (!f.authed) setFeed(f.connected ? "authenticating…" : "feed down", "bad");
@@ -847,8 +875,13 @@ function paintRiskSum() {
   }
   const tot = ce + pe;
   const imb = tot ? ((ce - pe) / tot) * 100 : null;
-  $("rk-sum").innerHTML = `Short CE premium <b>${nf2.format(ce)}</b> (${nce} lots) · Short PE premium <b>${nf2.format(pe)}</b> (${npe} lots)` +
-    ` · Total <b>${nf2.format(tot)}</b> · CE/PE imbalance <b>${imb == null ? "—" : imb.toFixed(1) + "%"}</b> · Open legs <b>${legs}</b>`;
+  const imbCls = imb == null ? "" : Math.abs(imb) >= 20 ? " warn" : " ok";
+  $("rk-sum").innerHTML =
+    `<span class="sb${imbCls}" title="(short CE − short PE) ÷ total; above 0 = calls heavier">CE/PE imbalance <b>${imb == null ? "—" : (imb > 0 ? "+" : "") + imb.toFixed(1) + "%"}</b></span>` +
+    `<span class="sb">Short CE premium <b>${nf2.format(ce)}</b> <i>(${nce} lots)</i></span>` +
+    `<span class="sb">Short PE premium <b>${nf2.format(pe)}</b> <i>(${npe} lots)</i></span>` +
+    `<span class="sb">Total <b>${nf2.format(tot)}</b></span>` +
+    `<span class="sb">Open legs <b>${legs}</b></span>`;
 }
 
 setView(S.view);
@@ -1234,5 +1267,133 @@ function drawAtm() {
     ` · Low <b>${nf2.format(lo)}</b> at ${hm(xs[imn])} · ${pts.length} points, one per ${m.mins} min` +
     (strikes.length > 1 ? `<br><span class="dim">ATM strike moved during the day: ${strikes.join(" → ")}</span>` : "");
 }
+
+// ── EXIT row: X % of the CURRENT instrument now, or at a time (the timer runs on the VPS) ──
+S.timers = [];
+const pctOf = (f) => Math.round(f * 100);
+function timerFor(name, frac) {
+  return S.timers.find((x) => x.name === name && Math.abs(x.frac - frac) < 1e-9 && x.state === "armed");
+}
+function paintExitBar() {
+  const n = S.cur.name;
+  if (!n || !$("exitbar")) return;
+  $("xb-name").textContent = (S.prods[n] || {}).label ? S.prods[n].label.toUpperCase() : n;
+  document.querySelectorAll("#exitbar .xg").forEach((g) => {
+    const t = timerFor(n, +g.dataset.frac), clk = g.querySelector(".xg-clk");
+    clk.classList.toggle("armed", !!t);
+    g.querySelector(".xg-at").textContent = t ? t.at : "";
+    clk.title = t ? `Exit ${pctOf(t.frac)}% ${n} at ${t.at} IST (${t.mode}) - click to change or clear`
+                  : `Exit ${pctOf(+g.dataset.frac)}% at a set time`;
+  });
+  const others = S.timers.filter((x) => x.state === "armed" && x.name !== n);
+  $("xb-note").textContent = others.length
+    ? "also armed: " + others.map((x) => `${(S.prods[x.name] || {}).label || x.name} ${pctOf(x.frac)}% @ ${x.at}`).join(" · ") : "";
+}
+function onTimers(items) {
+  const before = new Map(S.timers.map((x) => [x.id, x.state]));
+  S.timers = items;
+  for (const x of items) {                                  // a timer just finished: say so, big
+    const was = before.get(x.id);
+    if (was && was !== x.state && (x.state === "done" || x.state === "failed"))
+      toast(`TIMER ${x.at} · Exit ${pctOf(x.frac)}% ${x.name}: ${x.result}`, x.state === "failed", x.state === "failed" ? "bad" : "ok");
+  }
+  paintExitBar();
+  if (!$("xpop").hidden) xpopPaint();
+}
+document.querySelectorAll("#exitbar .xg").forEach((g) => {
+  const frac = +g.dataset.frac;
+  g.querySelector(".xg-go").onclick = () => {
+    if (send({ op: "exit_inst", name: S.cur.name, frac, req: ++S.req }) && S.mode === "LIVE")
+      toast(`Exit ${pctOf(frac)}% ${S.cur.name} sent - checking Kotak…`, false, "wait");
+  };
+  g.querySelector(".xg-clk").onclick = (e) => { e.stopPropagation(); xpopOpen(g, frac); };
+});
+S.xp = null;
+function xpopOpen(g, frac) {
+  if (S.xp && S.xp.frac === frac && !$("xpop").hidden) { $("xpop").hidden = true; return; }
+  S.xp = { frac, name: S.cur.name };
+  const r = g.querySelector(".xg-clk").getBoundingClientRect(), pop = $("xpop");
+  pop.hidden = false;
+  const w = pop.offsetWidth;
+  pop.style.left = Math.max(8, Math.min(window.innerWidth - w - 8, r.right - w)) + "px";
+  const below = r.bottom + 6, h = pop.offsetHeight;
+  pop.style.top = (below + h > window.innerHeight - 8 ? r.top - h - 6 : below) + "px";
+  const t = timerFor(S.xp.name, frac);
+  $("xp-time").value = t ? t.at : new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata" });
+  xpopPaint();
+  $("xp-time").focus();
+  $("xp-time").select();
+}
+function xpopPaint() {
+  if (!S.xp) return;
+  const t = timerFor(S.xp.name, S.xp.frac);
+  $("xp-t").textContent = `Exit ${pctOf(S.xp.frac)}% Time (24h)`;
+  $("xp-clear").hidden = !t;
+  $("xp-n").textContent = (t ? `armed: ${t.at} IST · ` : "") + `${(S.prods[S.xp.name] || {}).label || S.xp.name} · ${S.mode}` +
+    (S.mode === "LIVE" ? " (exits what Kotak holds)" : "");
+}
+$("xp-set").onclick = () => {
+  if (!S.xp) return;
+  send({ op: "timer_set", name: S.xp.name, frac: S.xp.frac, at: $("xp-time").value.trim(), req: ++S.req });
+  $("xpop").hidden = true;
+};
+$("xp-clear").onclick = () => {
+  if (!S.xp) return;
+  send({ op: "timer_clear", name: S.xp.name, frac: S.xp.frac, req: ++S.req });
+  $("xpop").hidden = true;
+};
+$("xp-time").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); $("xp-set").click(); }
+  if (e.key === "Escape") $("xpop").hidden = true;
+});
+document.addEventListener("mousedown", (e) => {
+  if (!$("xpop").hidden && !e.target.closest("#xpop") && !e.target.closest(".xg-clk")) $("xpop").hidden = true;
+});
+
+// ── Logs: the engine's append-only audit, newest first ──
+S.lg = { timer: null };
+const esc = (x) => String(x ?? "").replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch]));
+async function lgLoad() {
+  const day = $("lg-day").value;
+  if (!day) return;
+  let rows = [];
+  try { rows = await (await fetch("/audit/" + day, { credentials: "include" })).json(); } catch { return; }
+  const q = $("lg-q").value.trim().toLowerCase(), k = $("lg-kind").value;
+  const pick = rows.filter((r) => (!k || (k === "order" ? ["order", "fill", "order-status", "modify", "cancel"].includes(r.kind) : r.kind === k))
+    && (!q || JSON.stringify(r).toLowerCase().includes(q)));
+  const detail = (r) => {
+    const x = { ...r }; delete x.t; delete x.kind; delete x.user; delete x.what;
+    if (x.op) { x.op = undefined; }
+    return Object.entries(x).filter(([, v]) => v !== undefined && v !== "" && !(Array.isArray(v) && !v.length))
+      .map(([a, v]) => `${a}=${typeof v === "object" ? JSON.stringify(v) : v}`).join(" · ");
+  };
+  $("lg-tab").querySelector("tbody").innerHTML = pick.length ? pick.slice(0, 1500).map((r) => `<tr class="lg-${esc(r.kind)}">
+    <td class="mono">${esc(r.t)}</td><td class="l">${esc(r.kind)}</td><td class="l dim">${esc((r.user || "").split("@")[0])}</td>
+    <td class="l"><b>${esc(r.what || r.op || "")}</b></td><td class="l detail">${esc(detail(r))}</td></tr>`).join("")
+    : `<tr><td class="empty">No entries${q || k ? " for this filter" : ""}.</td></tr>`;
+}
+$("btn-logs").onclick = async () => {
+  $("logs").hidden = false;
+  let days = [];
+  try { days = await (await fetch("/audit", { credentials: "include" })).json(); } catch { /* shown below */ }
+  $("lg-day").innerHTML = days.map((d) => `<option value="${d}">${fmtDate(d)}</option>`).join("") || `<option value="">no logs yet</option>`;
+  lgLoad();
+  clearInterval(S.lg.timer);
+  S.lg.timer = setInterval(() => { if ($("logs").hidden) clearInterval(S.lg.timer); else if ($("lg-day").selectedIndex === 0) lgLoad(); }, 3000);
+};
+$("lg-day").onchange = lgLoad; $("lg-kind").onchange = lgLoad; $("lg-q").oninput = lgLoad;
+
+// every button press / list choice goes to the audit log (who pressed what, in which mode)
+document.addEventListener("click", (e) => {
+  const b = e.target.closest && e.target.closest("button, .tk, .ip-item, .badge");
+  if (!b || b.closest("#logs")) return;
+  const what = (b.id ? b.id + ": " : "") + (b.textContent || "").replace(/\s+/g, " ").trim().slice(0, 60);
+  send({ op: "ui", what });
+}, true);
+document.addEventListener("change", (e) => {
+  const el = e.target;
+  if (!el || !el.id || el.closest("#logs")) return;
+  send({ op: "ui", what: `${el.id} = ${el.type === "checkbox" ? el.checked : el.value}` });
+}, true);
 
 connect();

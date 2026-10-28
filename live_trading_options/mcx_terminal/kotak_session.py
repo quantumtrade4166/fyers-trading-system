@@ -39,6 +39,8 @@ def login() -> Session:
     from dotenv import load_dotenv
     from neo_api_client import NeoAPI
 
+    from live_trading_options.mcx_terminal import fastrest
+    fastrest.install()                       # keep-alive + timeouts for every Kotak REST call in this process
     load_dotenv(C.ROOT / "deployment" / ".env")
     cr = {k: (os.getenv(k + C.ENV_SUFFIX) or "").strip() for k in _REQUIRED}
     missing = [k + C.ENV_SUFFIX for k, v in cr.items() if not v]

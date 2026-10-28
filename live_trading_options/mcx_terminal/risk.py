@@ -128,8 +128,11 @@ class RiskGuard:
                 self._save()
         if reason:
             log.warning("RISK FIRED — %s — exiting all", reason)
+            from live_trading_options.mcx_terminal import audit
+            audit.write("risk", what=f"RISK FIRED ({type(self.book).__name__}): {reason}")
             res = self.book.exit_all()
             log.warning("risk exit-all result: %s", res.get("msg"))
+            audit.write("risk", what=f"risk exit-all result: {res.get('msg')}")
         if changed:
             self.on_change()
         return reason
