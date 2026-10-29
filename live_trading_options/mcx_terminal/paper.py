@@ -50,6 +50,8 @@ def _round_tick(px: float, tick: float, up: bool) -> float:
 
 
 class PaperBook:
+    before_reduce = None          # auto stop-loss hook: called before any exit is sent (sl.py)
+    before_flatten = None
     PREFIX = "paper_book_"          # day files: <PREFIX>YYYY-MM-DD.json (the live book uses its own)
 
     def __init__(self, universe, quotes, on_change=None, path=None, settings=None):
@@ -218,6 +220,10 @@ class PaperBook:
         if "c" not in pr:
             return pr
         c, side, lots, st, role, limit, slices = (pr[k] for k in ("c", "side", "lots", "st", "role", "limit", "slices"))
+        if role == "exit" and self.before_reduce:
+            stop = self.before_reduce(token)
+            if stop:
+                return {"ok": False, "msg": stop}
         with self.lock:
             levels = list(self._levels(token, side))                 # one working copy for all slices
             ids = []
@@ -269,13 +275,15 @@ class PaperBook:
         c = self.u.by_token[token]
         p = self.pos.setdefault(token, {"token": token, "symbol": c.symbol, "name": c.name, "lot": c.lot,
                                         "mult": c.mult, "net": 0, "avg": 0.0, "realized": 0.0,
-                                        "bought": 0, "sold": 0})
+                                        "bought": 0, "sold": 0, "bval": 0.0, "sval": 0.0})
         sq = q if side == "B" else -q
         net = p["net"]
         if side == "B":
             p["bought"] += q
+            p["bval"] = round(p.get("bval", 0.0) + px * q * c.mult, 2)       # rupees bought today
         else:
             p["sold"] += q
+            p["sval"] = round(p.get("sval", 0.0) + px * q * c.mult, 2)
         if net == 0 or (net > 0) == (sq > 0):                       # opening / adding
             p["avg"] = (p["avg"] * abs(net) + px * q) / (abs(net) + q)
             p["net"] = net + sq
@@ -389,6 +397,8 @@ class PaperBook:
         return self.place(token, side, qty, "MKT", source=source)
 
     def exit_all(self, fraction: float = 1.0) -> dict:
+        if self.before_flatten:
+            self.before_flatten()
         n_cancel = self.cancel_all()
         res = [self.exit_position(t, fraction, "exit all") for t, p in list(self.pos.items()) if p["net"]]
         bad = [r["msg"] for r in res if not r["ok"]]
@@ -424,7 +434,7 @@ class PaperBook:
         return {"ok": not bad, "ids": ids, "state": state,
                 "msg": " · ".join(lines) + (f" · PROBLEM: {'; '.join(bad)}" if bad else "")}
 
-    def move(self, token, steps: int, away: bool) -> dict:
+    def move(self, token, steps: int, away: bool, lots: int | None = None) -> dict:
         """Roll an open leg `steps` strikes: away = further OTM (CE up, PE down), close = toward ATM.
         Closes the old strike and opens the same size at the new one, in one basket."""
         c = self.u.by_token.get(token)
@@ -433,14 +443,23 @@ class PaperBook:
             if not c or c.kind not in ("CE", "PE") or not p or not p["net"]:
                 return {"ok": False, "msg": "no open option position to move"}
             net = p["net"]
+        if lots:                                         # move only part of the position (Away qty / 1/4 / 1/2)
+            net = (1 if net > 0 else -1) * min(abs(net), int(lots) * c.lot)
         chain = self.u.products[c.name].chains.get(c.expiry, {})
         strikes = sorted(chain)
         i = strikes.index(c.strike)
         d = steps if (c.kind == "CE") == away else -steps
-        j = i + d
-        if not 0 <= j < len(strikes):
-            return {"ok": False, "msg": "no strike that far in this expiry"}
-        new = chain[strikes[j]][c.kind]
+        gap = ((self.settings() or {}).get("strike_gap") or {}).get(c.name)
+        if gap:                                          # one step = the owner's strike gap, in points
+            k = c.strike + d * gap
+            if k not in chain or c.kind not in chain[k]:
+                return {"ok": False, "msg": f"no {k:g} {c.kind} strike in this expiry"}
+            new = chain[k][c.kind]
+        else:
+            j = i + d
+            if not 0 <= j < len(strikes):
+                return {"ok": False, "msg": "no strike that far in this expiry"}
+            new = chain[strikes[j]][c.kind]
         close_side, open_side = ("S", "B") if net > 0 else ("B", "S")
         r = self.basket([{"token": token, "side": close_side, "qty": abs(net)},
                          {"token": new.token, "side": open_side, "qty": abs(net)}], source="move")

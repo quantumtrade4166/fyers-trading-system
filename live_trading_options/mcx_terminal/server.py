@@ -39,9 +39,11 @@ from live_trading_options.mcx_terminal.feed import KotakFeed
 from live_trading_options.mcx_terminal.kotak_session import SessionHolder
 from live_trading_options.mcx_terminal.paper import PaperBook
 from live_trading_options.mcx_terminal.live import LiveBook
+from live_trading_options.mcx_terminal.orderfeed import OrderFeed
+from live_trading_options.mcx_terminal.sl import AutoSL
 from live_trading_options.mcx_terminal.sched import ExitTimers
 from live_trading_options.mcx_terminal.risk import RiskGuard
-from live_trading_options.mcx_terminal.settings import Settings
+from live_trading_options.mcx_terminal.settings import GAP_CHOICES, Settings
 from live_trading_options.mcx_terminal.mtm import AtmHistory, MtmHistory, SAMPLE_S
 from live_trading_options.mcx_terminal.recorder import DayRecorder, now_ms, REPLAY_DIR
 
@@ -97,6 +99,7 @@ class Engine:
         self.feed: KotakFeed | None = None
         self.paper: PaperBook | None = None
         self.live: LiveBook | None = None
+        self.sls = None
         self.risks: dict = {}                      # "PAPER"/"LIVE" -> RiskGuard (both always watching)
         self.mode = "PAPER"                        # which book the screen trades into
         self.arm: dict = {}                        # who armed LIVE today, and when
@@ -130,7 +133,65 @@ class Engine:
     # The day recorder (replay file) follows the LIVE book ONLY: live orders/positions, live MTM curve,
     # live risk guard. Paper trading never appears in it and never starts it.
     def _rec_book(self) -> dict:
-        return {"t": "book", **self.live.snapshot()}
+        return {"t": "book", **self.live.snapshot(), "sl": self.sls["LIVE"].view() if self.sls else {}}
+
+    def book_msg(self) -> dict:
+        snap = self.book.snapshot()
+        self._enrich(snap["positions"])
+        return {"t": "book", **snap, "sl": self.sls[self.mode].view() if self.sls else {}}
+
+    def away_of(self, token, away: bool = True):
+        """The contract one strike GAP further out of the money (away: CE up, PE down) or one gap
+        toward the money (away=False: CE down, PE up), same expiry."""
+        c = self.universe.by_token.get(token)
+        if c is None or c.kind not in ("CE", "PE"):
+            return None
+        chain = self.universe.products[c.name].chains.get(c.expiry, {})
+        gap = ((self.settings.get().get("strike_gap") or {}).get(c.name)) or 0
+        up = (c.kind == "CE") == away
+        if gap:
+            k = c.strike + (gap if up else -gap)
+        else:
+            ks = sorted(chain)
+            i = ks.index(c.strike) + (1 if up else -1)
+            k = ks[i] if 0 <= i < len(ks) else None
+        leg = (chain.get(k) or {}).get(c.kind) if k is not None else None
+        return leg
+
+    def _enrich(self, positions):
+        """Columns the Positions table shows: index, strike, C/P, expiry, product, away contract."""
+        prod_default = self.settings.get().get("product", "NRML")
+        for p in positions:
+            c = self.universe.by_token.get(p["token"])
+            if c is None:
+                continue
+            p.update(strike=c.strike, kind=c.kind, expiry=c.expiry)
+            bp = p.get("by_prod") or {}
+            nz = sorted(((k, v) for k, v in bp.items() if v), key=lambda kv: -abs(kv[1]))
+            p["product"] = nz[0][0] if nz else (next(iter(bp), None) or prod_default)
+            p.pop("cf", None)
+            for key, out in (("away", True), ("close", False)):
+                a = self.away_of(c.token, out) if p.get("net") else None
+                if a is not None:
+                    p[key] = {"token": a.token, "strike": a.strike, "symbol": a.symbol}
+
+    def _away_tokens(self) -> set:
+        out = set()
+        for bk in (self.paper, self.live):
+            if bk is None:
+                continue
+            with bk.lock:
+                toks = [t for t, p in bk.pos.items() if p.get("net")]
+            for t in toks:
+                for way in (True, False):
+                    a = self.away_of(t, way)
+                    if a is not None:
+                        out.add(a.token)
+        return out
+
+    @property
+    def sl(self):
+        return self.sls[self.mode]
 
     def _rec_status(self) -> dict:
         return {"t": "status", **self.status(), "mode": "LIVE"}
@@ -200,7 +261,18 @@ class Engine:
         self._load_arm()
         self.timers = ExitTimers(self._timer_fire, on_change=self.on_timers)
         self.live.notify = self.on_note
-        self.book_tokens = self.paper.tokens() | self.live.tokens()
+        # per-position auto stop-loss (+ trail): real SL orders at Kotak in LIVE, watched in PAPER
+        self.sls = {"PAPER": AutoSL(self.paper, self.ltp, self.settings.get, live=False,
+                                    on_change=self.on_book, notify=self.on_note),
+                    "LIVE": AutoSL(self.live, self.ltp, self.settings.get, live=True,
+                                   on_change=self.on_book, notify=self.on_note)}
+        for mode, bk in (("PAPER", self.paper), ("LIVE", self.live)):
+            bk.before_reduce = self.sls[mode].before_reduce
+            bk.before_flatten = self.sls[mode].before_flatten
+        self.live.on_push_other = self.sls["LIVE"].on_push
+        self.orderfeed = OrderFeed(self.sessions, self.live.on_push, self.live.on_push_position,
+                                   on_reconnect=self.live._poll_kick.set).start()
+        self.book_tokens = self.paper.tokens() | self.live.tokens() | self._away_tokens()
         self.rec = DayRecorder()
         if self.rec.active:                        # restarted mid-day: write a fresh header to today's file
             self.rec._activate_header = self._replay_header
@@ -216,6 +288,8 @@ class Engine:
             self.feed.want_depth(list(self.book_tokens))
         self.feed.start()
         threading.Thread(target=self._housekeeping, daemon=True, name="Housekeeping").start()
+        for s in self.sls.values():
+            s.start()
         threading.Thread(target=self._margin_loop, daemon=True, name="Margin").start()
 
     def _margin_loop(self):
@@ -370,7 +444,7 @@ class Engine:
         """Paper or live book changed (any thread)."""
         if self.paper is None or self.live is None:      # still starting up (the live book reads Kotak in its constructor)
             return
-        self.book_tokens = self.paper.tokens() | self.live.tokens()
+        self.book_tokens = self.paper.tokens() | self.live.tokens() | self._away_tokens()
         if self.feed and self.book_tokens:
             self.feed.want_depth(list(self.book_tokens))
         if self.loop:
@@ -454,7 +528,7 @@ class Engine:
             c.send_nowait({"t": "status", **st})
 
     def _broadcast_book(self):
-        snap = {"t": "book", **self.book.snapshot()}
+        snap = self.book_msg()
         live = snap if self.mode == "LIVE" else self._rec_book()
         self.rec.event("book", live)
         if not self.rec.active and live["orders"]:     # first LIVE order of the day starts the replay file
@@ -469,6 +543,7 @@ class Engine:
         return {"feed": f, "error": self.error, "mode": self.mode, "uptime": round(time.time() - self.started_at),
                 "arm": self.arm, "live_open": lv.open_positions() if lv else 0, "live_working": lv.working() if lv else 0,
                 "broker": lv.broker if lv else {},
+                "order_push": dict(self.orderfeed.status) if getattr(self, "orderfeed", None) else {},
                 "pos_sync": {"ok": lv.positions_fresh(), "msg": lv.pos_sync.get("msg", ""),
                              "age": round(time.time() - lv.pos_sync["at"], 1) if lv.pos_sync.get("at") else None}
                 if lv else {}}
@@ -495,7 +570,7 @@ class Engine:
                 "default_strikes": C.DEFAULT_STRIKES, "file_date": u.file_date, "mode": self.mode,
                 "max_lots": C.MAX_LOTS_PER_ORDER, "confirm_lots": C.CONFIRM_LOTS,
                 "qty_lots_max": C.MAX_QTY_LOTS_CHOICE, "buffer_pct": C.MKT_BUFFER_PCT,
-                "settings": self.settings.get()}
+                "settings": self.settings.get(), "gap_choices": GAP_CHOICES}
 
     def chain(self, name, expiry) -> dict:
         p = self.universe.products[name]
@@ -584,15 +659,28 @@ def _basket(m):
 def _settings_set(m):
     r = ENGINE.settings.update(m.get("values") or {})
     ENGINE.rec.event("settings", ENGINE.settings.get())
-    return {**r, "settings": ENGINE.settings.get()}
+    return {**r, "settings": ENGINE.settings.get(), "tag": m.get("tag")}
+
+
+def _sl_apply(m):
+    """APPLY: save the row's values, then place / move every stop to them."""
+    if m.get("values"):
+        r = ENGINE.settings.update({"auto_sl": m["values"]})
+        if not r["ok"]:
+            return r
+    return {**ENGINE.sl.apply(), "settings": ENGINE.settings.get()}
 
 
 ORDER_OPS = {
     "order": _order,
     "basket": _basket,
-    "move": lambda m: ENGINE.book.move(int(m["token"]), int(m.get("steps", 1)), bool(m.get("away", True))),
+    "move": lambda m: ENGINE.book.move(int(m["token"]), int(m.get("steps", 1)), bool(m.get("away", True)),
+                                       int(m["lots"]) if m.get("lots") else None),
+    "sl_set": lambda m: ENGINE.sl.set_one(int(m["token"]), bool(m.get("on", True)), m.get("trigger"), m.get("qty")),
     "risk_set": lambda m: ENGINE.risk.set(m.get("stop"), m.get("target"), m.get("trail")),
     "risk_clear": lambda m: ENGINE.risk.clear(),
+    "sl_drop": lambda m: ENGINE.sl.drop(int(m["token"])),
+    "sl_apply": lambda m: _sl_apply(m),
     "settings_set": lambda m: _settings_set(m),
     "margin": lambda m: {"quiet": True, **ENGINE.margin},
     "refresh": lambda m: ENGINE.refresh(),
@@ -708,7 +796,7 @@ async def ws_endpoint(ws: WebSocket):
     try:
         c.send_nowait(ENGINE.meta())
         c.send_nowait({"t": "status", **ENGINE.status()})
-        c.send_nowait({"t": "book", **ENGINE.book.snapshot()})
+        c.send_nowait(ENGINE.book_msg())
         c.send_nowait({"t": "risk", **ENGINE.risk.state()})
         c.send_nowait({"t": "timers", "items": ENGINE.timers.view() if ENGINE.timers else []})
         c.send_nowait({"t": "atm", "v": ENGINE.atm_straddles()})

@@ -14,13 +14,16 @@ where an "at the market" limit price comes from and how a waiting order is chase
                          as an aggressive limit (best opposite price +/- 1 %, fills the rest);
                          0 = off. Applies to typed limits too.
   product / session      MIS | NRML · AUTO | REGULAR | AMO (recorded on paper orders; used live)
-  strike_gap             show every Nth strike in the Straddle / Strangle tables, per product
+  strike_gap             strike gap in POINTS per product (owner's choices, 29-Oct-2026): the chain shows only
+                         strikes on that grid, ATM snaps to it, and straddle / strangle / hedges / keyboard /
+                         Move-by all step by it. (Was "every Nth strike" before; old values are converted.)
 """
 import json
 import logging
 import threading
 
 from live_trading_options.mcx_terminal import config as C
+from live_trading_options.mcx_terminal import sl as SL
 
 log = logging.getLogger("mcx.settings")
 
@@ -29,8 +32,11 @@ DEFAULTS = {
     "exit_ref": "touch", "exit_buffer": 1.0, "exit_unit": "%",
     "reprice": True, "market_after_s": 0.0,
     "product": "NRML", "session": "AUTO",
-    "strike_gap": {"CRUDEOIL": 1, "GOLDM": 1, "SILVERM": 1},
+    "strike_gap": {"CRUDEOIL": 50, "GOLD": 500, "GOLDM": 500, "SILVERM": 1000},
+    "auto_sl": dict(SL.DEFAULTS),                # per-position auto stop-loss + trail (sl.py)
 }
+GAP_CHOICES = {"CRUDEOIL": (50, 100, 200), "GOLD": (500, 1000, 2000), "GOLDM": (500, 1000, 2000),
+               "SILVERM": (1000, 2000, 3000, 4000, 5000)}
 CHOICES = {"entry_ref": ("touch", "ltp"), "exit_ref": ("touch", "ltp"), "entry_unit": ("%", "pts"),
            "exit_unit": ("%", "pts"), "product": ("MIS", "NRML"), "session": ("AUTO", "REGULAR", "AMO")}
 
@@ -62,12 +68,20 @@ class Settings:
                 if f < 0 or (k.endswith("buffer") and f > 20 and self.v.get(k.replace("buffer", "unit")) == "%"):
                     raise ValueError(f"{k} out of range")
                 self.v[k] = f
+            elif k == "auto_sl" and isinstance(val, dict):
+                self.v[k] = SL.clean({**self.v.get(k, {}), **val})
             elif k == "reprice":
                 self.v[k] = bool(val)
             elif k == "strike_gap" and isinstance(val, dict):
                 for n, g in val.items():
-                    if n in self.v["strike_gap"] and int(g) in (1, 2, 3, 4, 5, 10):
-                        self.v["strike_gap"][n] = int(g)
+                    ch = GAP_CHOICES.get(n)
+                    if not ch:
+                        continue
+                    g = int(g)
+                    if g not in ch and g <= 10 and g * ch[0] in ch:   # old "every Nth strike" value
+                        g *= ch[0]
+                    if g in ch:
+                        self.v["strike_gap"][n] = g
 
     def update(self, new: dict) -> dict:
         try:

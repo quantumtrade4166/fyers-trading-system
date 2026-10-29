@@ -29,6 +29,21 @@ const LS = {
   set(k, v) { try { localStorage.setItem("mcxdesk." + k, JSON.stringify(v)); } catch { /* private mode */ } },
 };
 
+// ── theme (light / dark), remembered on this browser ──
+function paintTheme() {
+  const light = document.documentElement.dataset.theme === "light";
+  $("theme-btn").textContent = light ? "☾" : "☀";
+  $("theme-btn").title = light ? "Dark theme" : "Light theme";
+}
+$("theme-btn").onclick = () => {
+  const light = document.documentElement.dataset.theme !== "light";
+  if (light) document.documentElement.dataset.theme = "light"; else delete document.documentElement.dataset.theme;
+  LS.set("theme", light ? "light" : "dark");
+  paintTheme();
+  for (const t of ["gp-pnl", "gp-imb"]) if (S.book && S.gpHist && S.gpHist[t]) drawInline(t);   // charts pick up the new colours
+};
+paintTheme();
+
 // ── connection ──────────────────────────────────────────────────────────────
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
@@ -53,6 +68,15 @@ function connect() {
         else if (m.op === "mtm_hist") onMtm(m);
         else if (m.op === "margin") onMargin(m);
         else if (m.op === "atm_hist") onAtmHist(m);
+        else if (m.op === "sl_apply") {
+          if (m.settings) { S.settings = m.settings; paintSlBar(); }
+          toast(m.msg, !m.ok, m.ok ? "ok" : "bad");
+        }
+        else if (m.op === "settings_set" && m.tag === "slbar") {
+          if (m.settings) S.settings = m.settings;
+          paintSlBar();
+          toast(m.ok ? "auto stop-loss settings saved" : m.msg, !m.ok, m.ok ? "info" : "bad");
+        }
         else if (m.op === "settings_set") { onSettingsAck(m); toast(m.msg, !m.ok); }
         else if (m.op === "refresh") { $("btn-refresh").classList.remove("spin"); if (m.margin) onMargin(m.margin); toast(m.msg, !m.ok, m.ok ? "info" : "bad"); }
         else if (m.op === "timer_set" || m.op === "timer_clear") toast(m.msg, !m.ok, m.ok ? "info" : "bad");
@@ -112,6 +136,7 @@ document.getElementById("mode").onclick = toggleMode;
 // ── meta / controls ─────────────────────────────────────────────────────────
 function onMeta(m) {
   S.meta = m;
+  setTimeout(paintSlBar, 0);
   m.products.forEach((p) => (S.prods[p.name] = p));
   const name = S.cur.name || LS.get("inst", m.products[0].name);
   S.cur.strikes = LS.get("strikes", m.default_strikes);
@@ -242,7 +267,7 @@ function layout() {
   const m = S.chain;
   if (!m) return;
   const px = futPrice();
-  const rows = m.rows;
+  const rows = gridRows();
   const ai = px == null ? Math.floor(rows.length / 2) : nearestIdx(rows, px);
   const n = S.cur.strikes;
   const vis = rows.slice(Math.max(0, ai - n), ai + n + 1);
@@ -371,7 +396,7 @@ function startLegs(legs, opts = {}) {
   const lots = opts.lots || S.qtyLots;
   const full = withHedges(legs);
   if (!full) return;
-  if (S.askQty || (S.askPx && legs.length === 1) || opts.ticket) return openTicket(legs, lots);
+  if (!opts.noAsk && (S.askQty || (S.askPx && legs.length === 1) || opts.ticket)) return openTicket(legs, lots);
   if (lots > S.meta.confirm_lots) return openTicket(legs, lots);
   sendLegs(full, lots, null, opts.source || (S.kb ? "keyboard" : "button"));
 }
@@ -379,7 +404,12 @@ function startLegs(legs, opts = {}) {
 function hedgeTok(tok) {
   const info = S.sym.get(tok);
   if (!info || !S.chain) return null;
-  const rows = S.chain.rows;
+  const rows = S.chain.rows, g = gapPts();
+  if (g) {                                   // N strikes out = N x the strike gap, in points
+    const k = info.k + (info.side === "ce" ? 1 : -1) * S.hedgeN * g;
+    const r = rows.find((x) => Math.abs(x.k - k) < 1e-9);
+    return r ? (info.side === "ce" ? r.ce : r.pe) : null;
+  }
   const i = rows.findIndex((r) => r.k === info.k);
   const j = info.side === "ce" ? i + S.hedgeN : i - S.hedgeN;
   if (i < 0 || j < 0 || j >= rows.length) return null;
@@ -508,7 +538,7 @@ function onTicks(list) {
   if (futMoved) {
     const m = S.chain, px = futPrice();
     if (m && px != null) {
-      const k = m.rows[nearestIdx(m.rows, px)].k;
+      const g = gridRows(), k = g[nearestIdx(g, px)].k;
       if (k !== S.atm) layout(); else { shade(); paintUnderlying(); }
     }
   }
@@ -536,6 +566,7 @@ function paintTicker(tok) {
 }
 
 // the switch button repeats the current instrument's price + change from its list row
+// the top tickers are hidden (owner, 29-Oct) but still updated: the picker copies its live prices from them
 function ipMirror() {
   for (const n of Object.keys(S.prods)) {                // the list rows repeat the top tickers
     const src = $("tp-" + n), c = $("tc-" + n), sy = $("ts-" + n);
@@ -586,7 +617,7 @@ function paintUnderlying() {
 // ── positions / orders ──────────────────────────────────────────────────────
 function onBook(m) {
   S.book = m;
-  S.posTok = new Set(m.positions.map((p) => p.token));
+  S.posTok = new Set(m.positions.flatMap((p) => [p.token, ...(p.away ? [p.away.token] : []), ...(p.close ? [p.close.token] : [])]));
   $("npos").textContent = m.positions.filter((p) => p.net).length;
   $("nord").textContent = m.orders.filter(working).length || m.orders.length;
   renderPositions();
@@ -601,35 +632,404 @@ function posPnl(p) {
   return { ltp, open, total: p.realized + open };
 }
 
-function renderPositions() {
-  const rows = S.book.positions;
-  const tb = $("pos-rows");
-  if (!rows.length) { tb.innerHTML = `<tr><td colspan="7" class="empty">No positions yet.</td></tr>`; paintPnl(); return; }
-  tb.innerHTML = rows.map((p) => {
-    const lots = p.net / p.lot;
-    return `<tr class="${p.net ? "" : "flat"}" data-tok="${p.token}">
-      <td class="l">${p.symbol}</td>
-      <td class="${p.net > 0 ? "up-t" : p.net < 0 ? "dn-t" : ""}">${p.net ? (lots > 0 ? "+" : "") + lots + " lot" + (Math.abs(lots) === 1 ? "" : "s") : "flat"}</td>
-      <td>${p.net ? fp(p.avg) : "—"}</td><td class="pl-ltp">—</td><td class="pl-open">—</td><td>${fr(p.realized)}</td>
-      <td>${p.net ? `<button class="btn sm danger" data-x="exit">Exit</button> <button class="btn sm" data-x="add">Add</button>` +
-        (/(CE|PE)$/.test(p.symbol) ? ` <button class="btn sm" data-x="away" title="Roll this leg further out of the money">Move away</button> <button class="btn sm" data-x="close" title="Roll this leg toward the money">Move close</button>` : "") : ""}</td>
-    </tr>`;
-  }).join("") + `<tr class="tot"><td class="l">Total</td><td></td><td></td><td></td><td id="pl-tot-open"></td><td id="pl-tot-real"></td><td></td></tr>`;
-  paintPnl();
+// ── Positions table (Trademate-style): column groups, filters, grouping, per-row SL / Away / Exit / Add ──
+const PCOLS = [
+  { k: "sel", g: "", h: `<input type="checkbox" id="p-all" title="Select all shown">` },
+  { k: "symbol", g: "POSITION", h: "Symbol", f: 1, l: 1 },
+  { k: "name", g: "POSITION", h: "Index", f: 1, l: 1 },
+  { k: "strike", g: "POSITION", h: "Strike", f: 1 },
+  { k: "kind", g: "POSITION", h: "C|P", f: 1 },
+  { k: "mny", g: "POSITION", h: "ATM/OTM", f: 1 },
+  { k: "expiry", g: "POSITION", h: "Expiry", f: 1 },
+  { k: "product", g: "POSITION", h: "Product", f: 1 },
+  { k: "net", g: "POSITION", h: "Net qty", f: 1 },
+  { k: "avg", g: "POSITION", h: "Avg" },
+  { k: "ltp", g: "MARKET", h: "LTP" },
+  { k: "pnl", g: "P&L", h: "PNL" },
+  { k: "realized", g: "P&L", h: "Realized" },
+  { k: "bval", g: "VALUE", h: "Buy val" },
+  { k: "sval", g: "VALUE", h: "Sell val" },
+  { k: "sl", g: "RISK", h: `<input type="checkbox" id="p-slall" title="Stop-loss on / off for every row shown"> SL` },
+  { k: "away", g: "AWAY", h: "" },
+  { k: "close", g: "MOVE CLOSE", h: "" },
+  { k: "exit", g: "EXIT", h: "" },
+  { k: "add", g: "ADD", h: "" },
+];
+const PGROUPS = ["POSITION", "MARKET", "P&L", "VALUE", "RISK", "AWAY", "MOVE CLOSE", "EXIT", "ADD"];
+S.pHide = new Set(LS.get("p.hide", ["realized", "avg"]));
+S.pGroup = LS.get("p.group", true);
+S.pColl = new Set(LS.get("p.coll", []));
+S.pf = {};                      // column -> Set of allowed display values (filters)
+S.pin = {};                     // "tok:field" -> what the owner typed (kept across re-renders)
+S.pSel = new Set();             // selected rows (tokens)
+
+// future the option is written on, its price, the strike gap -> ATM / OTM n / ITM n (in strike gaps)
+function pFutPx(name, expiry) {
+  const pr = S.prods[name];
+  if (!pr || !pr.futures || !pr.futures.length) return null;
+  const f = underlyingFut(pr, expiry);
+  const t = f && S.T.get(f.token);
+  return t ? t[LTP] : null;
+}
+function pGap(p) {
+  const v = S.settings || (S.meta && S.meta.settings) || {};
+  return +((v.strike_gap || {})[p.name]) || (p.away ? Math.abs(p.away.strike - p.strike) : 0);
+}
+function money(p) {
+  if (p.kind !== "CE" && p.kind !== "PE") return "";
+  const fut = pFutPx(p.name, p.expiry), g = pGap(p);
+  if (fut == null || !g) return "";
+  const atm = Math.round(fut / g) * g;
+  const n = Math.round((p.strike - atm) / g) * (p.kind === "CE" ? 1 : -1);
+  return n === 0 ? "ATM" : n > 0 ? `OTM ${n}` : `ITM ${-n}`;
+}
+// ladder from the centre: per instrument + expiry, CE strikes high -> low, then PE strikes high -> low, futures last
+function ladder(list) {
+  const key = (p) => `${p.name}|${p.expiry}`;
+  const blocks = new Map();
+  for (const p of list) { if (!blocks.has(key(p))) blocks.set(key(p), []); blocks.get(key(p)).push(p); }
+  const out = [];
+  for (const k of [...blocks.keys()].sort()) {
+    const b = blocks.get(k);
+    const ce = b.filter((p) => p.kind === "CE").sort((x, y) => y.strike - x.strike);
+    const pe = b.filter((p) => p.kind === "PE").sort((x, y) => y.strike - x.strike);
+    const rest = b.filter((p) => p.kind !== "CE" && p.kind !== "PE");
+    out.push(...ce);
+    if (ce.length && pe.length) out.push({ mid: true, name: b[0].name, expiry: b[0].expiry });
+    out.push(...pe, ...rest);
+  }
+  return out;
+}
+const dmy = (iso) => (iso ? iso.slice(8, 10) + "-" + iso.slice(5, 7) + "-" + iso.slice(0, 4) : "");
+const pLots = (p) => p.net / p.lot;
+function pVal(p, k) {                                   // the display value a filter works on
+  switch (k) {
+    case "symbol": return p.kind === "FUT" ? `${p.name} FUT ${dmy(p.expiry)}` : `${p.name} ${fp(p.strike, p.strike % 1 ? 1 : 0)} ${p.kind} ${dmy(p.expiry)}`;
+    case "name": return p.name || "";
+    case "strike": return p.kind === "FUT" ? "FUT" : fp(p.strike, p.strike % 1 ? 1 : 0);
+    case "kind": return p.kind === "FUT" ? "FUT" : p.kind || "";
+    case "expiry": return dmy(p.expiry);
+    case "product": return p.product || "";
+    case "net": return String(pLots(p));
+    case "mny": return money(p);
+    default: return "";
+  }
+}
+const pCols = () => PCOLS.filter((c) => !S.pHide.has(c.k) && !S.pHide.has(c.g));
+function pShown() {
+  return S.book.positions.filter((p) => Object.entries(S.pf).every(([k, set]) => !set || set.has(pVal(p, k))));
 }
 
-$("pos-rows").addEventListener("click", (e) => {
-  const b = e.target.closest("button[data-x]");
-  if (!b) return;
-  const tok = +b.closest("tr").dataset.tok;
-  const p = S.book.positions.find((x) => x.token === tok);
-  if (!p) return;
-  if (b.dataset.x === "exit") send({ op: "exit", token: tok, req: ++S.req });
-  else if (b.dataset.x === "away" || b.dataset.x === "close")
-    send({ op: "move", token: tok, steps: +$("move-n").value, away: b.dataset.x === "away", req: ++S.req });
-  else startOrder(tok, p.net > 0 ? "B" : "S", { source: "add" });
+function renderPosHead() {
+  const cols = pCols();
+  let g1 = "", i = 0;
+  while (i < cols.length) {
+    let j = i;
+    while (j < cols.length && cols[j].g === cols[i].g) j++;
+    const g = cols[i].g;
+    g1 += `<th colspan="${j - i}" class="pg pg-${g.replace(/[^A-Z]/g, "").toLowerCase() || "x"}">${g}</th>`;
+    i = j;
+  }
+  const g2 = cols.map((c) => `<th class="${c.l ? "l" : ""} pc-${c.k}">${c.h}` +
+    (c.f ? ` <button class="pf ${S.pf[c.k] ? "on" : ""}" data-f="${c.k}" title="Filter">⏷</button>` : "") + `</th>`).join("");
+  $("pos-head").innerHTML = `<tr class="pgr">${g1}</tr><tr>${g2}</tr>`;
+}
+
+function inp(tok, f, def, cls = "pn") {
+  const v = S.pin[tok + ":" + f];
+  return `<input type="number" class="${cls}" data-in="${f}" min="1" step="1" value="${v != null ? v : def}">`;
+}
+function pCell(p, k) {
+  const tok = p.token, open = !!p.net, opt = p.kind === "CE" || p.kind === "PE";
+  switch (k) {
+    case "sel": return `<td><input type="checkbox" class="p-sel" ${S.pSel.has(tok) ? "checked" : ""}></td>`;
+    case "symbol": return `<td class="l" title="${p.symbol}">${pVal(p, "symbol")}</td>`;
+    case "name": case "strike": case "kind": case "expiry": case "product":
+      return `<td class="${k === "name" ? "l" : ""} ${k === "kind" ? (p.kind === "CE" ? "cp-ce" : "cp-pe") : ""}">${pVal(p, k)}</td>`;
+    case "mny": { const m = money(p); return `<td class="p-mny ${m === "ATM" ? "atm" : m.startsWith("ITM") ? "itm" : ""}">${m}</td>`; }
+    case "net": { const n = pLots(p); return `<td class="${n > 0 ? "up-t" : n < 0 ? "dn-t" : ""}">${n ? (n > 0 ? "+" : "") + n : "0"}</td>`; }
+    case "avg": return `<td>${open ? fp(p.avg) : "—"}</td>`;
+    case "ltp": return `<td class="pl-ltp">—</td>`;
+    case "pnl": return `<td class="pl-open">—</td>`;
+    case "realized": return `<td class="${p.realized > 0 ? "up-t" : p.realized < 0 ? "dn-t" : ""}">${fr(p.realized)}</td>`;
+    case "bval": return `<td>${nf2.format(p.bval || 0)}</td>`;
+    case "sval": return `<td>${nf2.format(p.sval || 0)}</td>`;
+    case "sl": {
+      if (!open || !opt) return `<td class="pc-sl"></td>`;
+      const r = (S.book.sl || {})[tok];
+      const on = !!r && r.state !== "hit";
+      const v = S.pin[tok + ":slpx"] != null ? S.pin[tok + ":slpx"] : r && r.trigger != null ? r.trigger : "";
+      const qm = (r && r.qty_mode) || slCfg().qty || "full";
+      const st = r ? ({ pending: ["at Kotak", "ok"], watching: ["watched", "warn"], past: ["already past", "bad"], hit: ["HIT", "bad"], new: ["…", ""] }[r.state] || [r.state, ""]) : ["", ""];
+      return `<td class="pc-sl"><input type="checkbox" class="p-slon" ${on ? "checked" : ""} title="Stop-loss on / off">` +
+        `<input type="number" class="pn sl" data-in="slpx" step="any" value="${v}" placeholder="—" title="Stop-loss trigger price (Enter to apply)">` +
+        `<select class="p-slq"><option value="full" ${qm === "full" ? "selected" : ""}>Full</option><option value="half" ${qm === "half" ? "selected" : ""}>50%</option></select>` +
+        `<span class="p-slx">Exit</span><i class="sld ${st[1]}" title="${st[0]}${r && r.msg ? " — " + r.msg.replace(/"/g, "'") : ""}"></i></td>`;
+    }
+    case "away": {
+      if (!open || !p.away) return `<td class="pc-away"></td>`;
+      return `<td class="pc-away"><span class="p-awl mono">—</span> <span class="dim">(${fp(p.away.strike, p.away.strike % 1 ? 1 : 0)})</span>` +
+        inp(tok, "aw", 1) + `<button class="pb aw" data-x="away">Away</button><button class="pb" data-x="aw" data-fr="0.25">1/4</button><button class="pb" data-x="aw" data-fr="0.5">1/2</button></td>`;
+    }
+    case "close": {
+      if (!open || !p.close) return `<td class="pc-close"></td>`;
+      return `<td class="pc-close"><span class="p-cll mono">—</span> <span class="dim">(${fp(p.close.strike, p.close.strike % 1 ? 1 : 0)})</span>` +
+        inp(tok, "cl", 1) + `<button class="pb cl" data-x="closer" title="Move toward the money by the strike gap">Close</button>` +
+        `<button class="pb" data-x="cl" data-fr="0.25">1/4</button><button class="pb" data-x="cl" data-fr="0.5">1/2</button></td>`;
+    }
+    case "exit":
+      if (!open) return `<td class="pc-exit"></td>`;
+      return `<td class="pc-exit">${inp(tok, "ex", 1)}<button class="pb ex" data-x="exit">Exit</button><button class="pb" data-x="ex" data-fr="0.25">1/4</button>` +
+        `<button class="pb" data-x="ex" data-fr="0.5">1/2</button><button class="pb" data-x="ex" data-fr="1">1</button></td>`;
+    case "add":
+      if (!open) return `<td class="pc-add"></td>`;
+      return `<td class="pc-add">${inp(tok, "ad", 1)}<button class="pb ad" data-x="add">Add</button><button class="pb" data-x="ad" data-fr="0.25">1/4</button>` +
+        `<button class="pb" data-x="ad" data-fr="0.5">1/2</button><button class="pb" data-x="ad" data-fr="1">1</button></td>`;
+  }
+  return "<td></td>";
+}
+
+function renderPositions() {
+  const tb = $("pos-rows");
+  if (tb.contains(document.activeElement) && /INPUT|SELECT/.test(document.activeElement.tagName)) { S.posDirty = true; return; }
+  S.posDirty = false;
+  renderPosHead();
+  const cols = pCols();
+  const all = S.book.positions;
+  const rows = pShown();
+  if (!all.length || !rows.length) {
+    tb.innerHTML = `<tr><td colspan="${cols.length}" class="empty">${all.length ? "No position matches the filters." : "No positions yet."}</td></tr>`;
+    paintPnl(); return;
+  }
+  const rowHtml = (p) => p.mid
+    ? `<tr class="p-mid"><td colspan="${cols.length}"><span>${p.name} FUT <b class="p-midpx" data-n="${p.name}" data-e="${p.expiry}">${fp(pFutPx(p.name, p.expiry))}</b></span></td></tr>`
+    : `<tr class="${p.net ? "" : "flat"}" data-tok="${p.token}">${cols.map((c) => pCell(p, c.k)).join("")}</tr>`;
+  let html = "";
+  if (S.pGroup) {
+    const groups = [["sell", "SELL POSITIONS", (p) => p.net < 0], ["buy", "BUY POSITIONS", (p) => p.net > 0], ["closed", "CLOSED", (p) => !p.net]];
+    for (const [id, title, test] of groups) {
+      const g = rows.filter(test);
+      if (!g.length) continue;
+      const ce = g.filter((p) => p.kind === "CE").reduce((s, p) => s + pLots(p), 0);
+      const pe = g.filter((p) => p.kind === "PE").reduce((s, p) => s + pLots(p), 0);
+      const net = g.reduce((s, p) => s + pLots(p), 0);
+      const coll = S.pColl.has(id);
+      html += `<tr class="p-gh" data-g="${id}"><td colspan="${cols.length}" class="l">${coll ? "▸" : "▾"} <b>${title}</b>` +
+        ` <span class="dim">COUNT</span> ${g.length}` + (id !== "closed" ? ` <span class="dim">QTY CE</span> ${ce} <span class="dim">PE</span> ${pe} <span class="dim">NET</span> ${net}` : "") + `</td></tr>`;
+      if (!coll) html += ladder(g).map(rowHtml).join("");
+    }
+  } else html = ladder(rows).map(rowHtml).join("");
+  html += `<tr class="tot">${cols.map((c) => c.k === "symbol" ? `<td class="l">Total</td>` : c.k === "pnl" ? `<td id="pl-tot-open"></td>` :
+    c.k === "realized" ? `<td id="pl-tot-real"></td>` : `<td></td>`).join("")}</tr>`;
+  tb.innerHTML = html;
+  const sel = $("p-all");
+  if (sel) sel.checked = rows.length > 0 && rows.every((p) => S.pSel.has(p.token));
+  const sla = $("p-slall");
+  if (sla) { const o = rows.filter((p) => p.net && (p.kind === "CE" || p.kind === "PE")); sla.checked = o.length > 0 && o.every((p) => { const r = (S.book.sl || {})[p.token]; return r && r.state !== "hit"; }); }
+  paintPnl();
+}
+// re-render once the owner leaves a box (renders are held while typing)
+$("pos-rows").addEventListener("focusout", () => setTimeout(() => { if (S.posDirty) renderPositions(); }, 0));
+$("pos-rows").addEventListener("input", (e) => {
+  const el = e.target.closest("[data-in]"), tr = e.target.closest("tr[data-tok]");
+  if (el && tr) S.pin[tr.dataset.tok + ":" + el.dataset.in] = el.value;
 });
 
+const live = () => S.mode === "LIVE";
+function lotsFor(p, fr_) { const n = Math.abs(pLots(p)); return Math.max(1, Math.floor(n * fr_ + 1e-9)); }
+function typed(tr, f) { const el = tr.querySelector(`[data-in="${f}"]`); const v = Math.floor(+(el && el.value) || 0); return v > 0 ? v : 0; }
+function doAway(p, lots, away = true) {
+  const n = Math.abs(pLots(p));
+  send({ op: "move", token: p.token, steps: +$("move-n").value, away, lots: lots >= n ? null : lots, req: ++S.req });
+}
+function doExit(p, lots) {
+  const n = Math.abs(pLots(p));
+  sendLegs([{ tok: p.token, side: p.net > 0 ? "S" : "B" }], Math.min(lots, n), null, "positions exit");
+}
+function doAdd(p, lots) { startLegs([{ tok: p.token, side: p.net > 0 ? "B" : "S" }], { lots, source: "add", noAsk: true }); }
+function slSet(tok, extra) { send({ op: "sl_set", token: tok, ...extra, req: ++S.req }); }
+
+$("pos-rows").addEventListener("click", (e) => {
+  const gh = e.target.closest("tr.p-gh");
+  if (gh) { const g = gh.dataset.g; S.pColl.has(g) ? S.pColl.delete(g) : S.pColl.add(g); LS.set("p.coll", [...S.pColl]); return renderPositions(); }
+  const tr = e.target.closest("tr[data-tok]");
+  if (!tr) return;
+  const tok = +tr.dataset.tok;
+  const p = S.book.positions.find((x) => x.token === tok);
+  if (!p) return;
+  if (e.target.classList.contains("p-sel")) { e.target.checked ? S.pSel.add(tok) : S.pSel.delete(tok); return; }
+  if (e.target.classList.contains("p-slon")) {
+    if (!e.target.checked && live() && !confirm(`Remove the stop-loss of ${p.symbol}? It is cancelled at Kotak and not re-armed until the position is closed (Apply or this tick puts it back).`)) { e.target.checked = true; return; }
+    delete S.pin[tok + ":slpx"];
+    return slSet(tok, { on: e.target.checked });
+  }
+  const b = e.target.closest("button[data-x]");
+  if (!b) return;
+  const x = b.dataset.x, f = +b.dataset.fr;
+  if (x === "away") return doAway(p, typed(tr, "aw") || 1);
+  if (x === "aw") return doAway(p, lotsFor(p, f));
+  if (x === "closer") return doAway(p, typed(tr, "cl") || 1, false);
+  if (x === "cl") return doAway(p, lotsFor(p, f), false);
+  if (x === "exit") return doExit(p, typed(tr, "ex") || 1);
+  if (x === "ex") return f >= 1 ? send({ op: "exit", token: tok, req: ++S.req }) : doExit(p, lotsFor(p, f));
+  if (x === "add") return doAdd(p, typed(tr, "ad") || 1);
+  if (x === "ad") return doAdd(p, lotsFor(p, f));
+});
+$("pos-rows").addEventListener("change", (e) => {
+  const tr = e.target.closest("tr[data-tok]");
+  if (!tr) return;
+  const tok = +tr.dataset.tok;
+  if (e.target.dataset.in === "slpx") {
+    const v = +e.target.value;
+    if (!(v > 0)) return;
+    delete S.pin[tok + ":slpx"];
+    return slSet(tok, { on: true, trigger: v });
+  }
+  if (e.target.classList.contains("p-slq")) return slSet(tok, { on: true, qty: e.target.value });
+});
+$("pos-rows").addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.dataset.in === "slpx") e.target.blur(); });
+
+// header: select all, SL all, filters
+$("pos-head").addEventListener("click", (e) => {
+  if (e.target.id === "p-all") {
+    const rows = pShown();
+    rows.forEach((p) => (e.target.checked ? S.pSel.add(p.token) : S.pSel.delete(p.token)));
+    return renderPositions();
+  }
+  if (e.target.id === "p-slall") {
+    const rows = pShown().filter((p) => p.net && (p.kind === "CE" || p.kind === "PE"));
+    if (!rows.length) return;
+    const on = e.target.checked;
+    if (live() && !confirm(on ? `Put a stop-loss on ${rows.length} position(s) shown - REAL orders at Kotak?` :
+                                `Remove the stop-loss of ${rows.length} position(s) shown?`)) { e.target.checked = !on; return; }
+    rows.forEach((p) => { const r = (S.book.sl || {})[p.token]; if (on !== !!(r && r.state !== "hit")) slSet(p.token, { on }); });
+    return;
+  }
+  const fb = e.target.closest("button.pf");
+  if (fb) { e.stopPropagation(); openFilter(fb); }
+});
+function openFilter(btn) {
+  const k = btn.dataset.f, m = $("p-filt");
+  const vals = [...new Set(S.book.positions.map((p) => pVal(p, k)))].sort((a, b) => (isFinite(a) && isFinite(b) ? a - b : a < b ? -1 : 1));
+  const cur = S.pf[k];
+  m.innerHTML = `<div class="pf-h">${PCOLS.find((c) => c.k === k).h}</div><input class="pf-q" placeholder="search…">` +
+    `<div class="pf-l">${vals.map((v) => `<label><input type="checkbox" value="${v}" ${!cur || cur.has(v) ? "checked" : ""}> ${v || "—"}</label>`).join("")}</div>` +
+    `<div class="pf-b"><button class="btn sm" data-a="all">All</button><button class="btn sm" data-a="none">None</button><button class="btn sm go" data-a="ok">OK</button></div>`;
+  const r = btn.getBoundingClientRect();
+  m.style.left = Math.min(r.left, innerWidth - 240) + "px";
+  m.style.top = Math.max(8, r.top - 8 - Math.min(320, 90 + vals.length * 24)) + "px";
+  m.hidden = false;
+  m.dataset.k = k;
+  m.querySelector(".pf-q").oninput = (ev) => m.querySelectorAll(".pf-l label").forEach((l) => (l.hidden = !l.textContent.toLowerCase().includes(ev.target.value.toLowerCase())));
+}
+$("p-filt").addEventListener("click", (e) => {
+  e.stopPropagation();
+  const a = e.target.dataset.a, m = $("p-filt");
+  if (!a) return;
+  const boxes = [...m.querySelectorAll(".pf-l input")];
+  if (a === "all") return boxes.forEach((b) => (b.checked = true));
+  if (a === "none") return boxes.forEach((b) => (b.checked = false));
+  const on = boxes.filter((b) => b.checked).map((b) => b.value);
+  if (on.length === boxes.length) delete S.pf[m.dataset.k]; else S.pf[m.dataset.k] = new Set(on);
+  m.hidden = true;
+  renderPositions();
+});
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#p-filt")) $("p-filt").hidden = true;
+  if (!e.target.closest("#p-colmenu") && e.target.id !== "p-cols") $("p-colmenu").hidden = true;
+});
+
+// toolbar
+$("p-group").classList.toggle("on", S.pGroup);
+$("p-group").onclick = () => { S.pGroup = !S.pGroup; LS.set("p.group", S.pGroup); $("p-group").classList.toggle("on", S.pGroup); renderPositions(); };
+$("p-cols").onclick = () => {
+  const m = $("p-colmenu");
+  const items = PGROUPS.map((g) => `<div class="pcm-g"><label><input type="checkbox" data-c="${g}" ${S.pHide.has(g) ? "" : "checked"}> <b>${g}</b></label>` +
+    PCOLS.filter((c) => c.g === g && c.h && !c.h.startsWith("<")).map((c) =>
+      `<label class="pcm-c"><input type="checkbox" data-c="${c.k}" ${S.pHide.has(c.k) ? "" : "checked"}> ${c.h}</label>`).join("") + `</div>`).join("");
+  m.innerHTML = items;
+  const r = $("p-cols").getBoundingClientRect();
+  m.style.left = Math.max(8, r.right - 260) + "px";
+  m.style.top = Math.max(8, r.top - 8 - 420) + "px";
+  m.hidden = !m.hidden;
+};
+$("p-colmenu").addEventListener("change", (e) => {
+  const c = e.target.dataset.c;
+  if (!c) return;
+  e.target.checked ? S.pHide.delete(c) : S.pHide.add(c);
+  LS.set("p.hide", [...S.pHide]);
+  renderPositions();
+});
+$("p-csv").onclick = () => {
+  const cols = PCOLS.filter((c) => ["symbol", "name", "strike", "kind", "expiry", "product", "net", "avg", "realized", "bval", "sval"].includes(c.k));
+  const lines = [[...cols.map((c) => c.h), "LTP", "PNL", "SL"].join(",")];
+  for (const p of pShown()) {
+    const r = posPnl(p), sl = (S.book.sl || {})[p.token];
+    lines.push([...cols.map((c) => c.k === "avg" ? p.avg : c.k === "realized" ? p.realized : c.k === "bval" ? p.bval || 0 :
+      c.k === "sval" ? p.sval || 0 : pVal(p, c.k)), r.ltp ?? "", r.total.toFixed(2), sl && sl.trigger != null ? sl.trigger : ""].join(","));
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([lines.join("\n")], { type: "text/csv" }));
+  a.download = `positions_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+};
+function selRows() { return S.book.positions.filter((p) => p.net && S.pSel.has(p.token)); }
+$("p-exit-sel").onclick = () => {
+  const rows = selRows(), f = +$("p-size").value;
+  if (!rows.length) return toast("tick the rows to exit first", true);
+  if (live() && !confirm(`Exit ${f * 100}% of ${rows.length} selected position(s) on Kotak?`)) return;
+  rows.forEach((p) => (f >= 1 ? send({ op: "exit", token: p.token, req: ++S.req }) : doExit(p, lotsFor(p, f))));
+};
+$("p-add-sel").onclick = () => {
+  const rows = selRows(), f = +$("p-size").value;
+  if (!rows.length) return toast("tick the rows to add to first", true);
+  if (live() && !confirm(`Add ${f * 100}% to each of ${rows.length} selected position(s) on Kotak?`)) return;
+  rows.forEach((p) => doAdd(p, lotsFor(p, f)));
+};
+$("p-cancel").onclick = () => send({ op: "cancel_all", req: ++S.req });
+
+
+// ── per-position auto stop-loss (engine: sl.py) ──
+const SL_KEYS = ["arm_on", "sl_auto", "sl_val", "sl_unit", "qty", "on_hit", "trail_auto", "trail_on", "trail_every"];
+function slCfg() { const v = S.settings || (S.meta && S.meta.settings) || {}; return v.auto_sl || {}; }
+function paintSlBar() {
+  const c = slCfg();
+  for (const k of SL_KEYS) {
+    const el = $("sl-" + k);
+    if (!el || c[k] == null || document.activeElement === el) continue;
+    if (el.type === "checkbox") el.checked = !!c[k]; else el.value = c[k];
+  }
+  const live = S.mode === "LIVE";
+  const w = $("sl-where");
+  w.textContent = live ? "● At broker" : "● Watched (paper)";
+  w.className = "slbadge " + (live ? "on" : "");
+}
+function saveSlBar() {
+  const v = {};
+  for (const k of SL_KEYS) {
+    const el = $("sl-" + k);
+    v[k] = el.type === "checkbox" ? el.checked : el.type === "number" ? +el.value : el.value;
+  }
+  if (!(v.sl_val > 0) || !(v.trail_every > 0)) { paintSlBar(); return toast("stop-loss and trail values must be above 0", true); }
+  if (v.sl_auto && !slCfg().sl_auto && S.mode === "LIVE" &&
+      !confirm(`Auto stop-loss ON (LIVE): every ${v.arm_on === "all" ? "" : v.arm_on + " "}option position on Kotak P gets a REAL stop-loss order at ${v.sl_val}${v.sl_unit === "%" ? "%" : " pts"} from its entry, including positions already open. Continue?`)) {
+    $("sl-sl_auto").checked = false; return;
+  }
+  send({ op: "settings_set", values: { auto_sl: v }, tag: "slbar", req: ++S.req });
+}
+SL_KEYS.forEach((k) => { const el = $("sl-" + k); if (el) el.addEventListener("change", saveSlBar); });
+$("sl-apply").onclick = () => {
+  const v = { val: +$("sl-sl_val").value, unit: $("sl-sl_unit").value, on: $("sl-arm_on").value };
+  const n = (S.book ? S.book.positions : []).filter((p) => p.net && /(CE|PE)$/.test(p.symbol) &&
+    (v.on === "all" || (v.on === "sell" ? p.net < 0 : p.net > 0))).length;
+  if (!n) return toast(`no open ${v.on === "all" ? "" : v.on + " "}option position`, true);
+  if (S.mode === "LIVE" && !confirm(`Place / move the stop-loss of ${n} open ${v.on === "all" ? "" : v.on + " "}position(s) to ${v.val}${v.unit === "%" ? "%" : " pts"} from entry - REAL orders at Kotak. Continue?`)) return;
+  const values = {};
+  for (const k of SL_KEYS) { const el = $("sl-" + k); values[k] = el.type === "checkbox" ? el.checked : el.type === "number" ? +el.value : el.value; }
+  if (!(values.sl_val > 0) || !(values.trail_every > 0)) return toast("stop-loss and trail values must be above 0", true);
+  send({ op: "sl_apply", values, req: ++S.req });
+};
 function paintPnl() {
   let total = 0, open = 0, real = 0;
   const per = {};                                        // instrument MTM for the right panel
@@ -639,14 +1039,26 @@ function paintPnl() {
     per[p.name] = (per[p.name] || 0) + r.total;
     const tr = document.querySelector(`#pos-rows tr[data-tok="${p.token}"]`);
     if (tr) {
-      tr.querySelector(".pl-ltp").textContent = fp(r.ltp);
+      const l = tr.querySelector(".pl-ltp");
+      if (l) l.textContent = fp(r.ltp);
       const o = tr.querySelector(".pl-open");
-      o.textContent = p.net ? fr(r.open) : "—";
-      o.className = "pl-open " + (r.open > 0 ? "up-t" : r.open < 0 ? "dn-t" : "");
+      if (o) {
+        o.textContent = fr(r.total);
+        o.className = "pl-open " + (r.total > 0 ? "up-t" : r.total < 0 ? "dn-t" : "");
+      }
+      const aw = p.away && tr.querySelector(".p-awl");
+      if (aw) { const t = S.T.get(p.away.token); aw.textContent = t ? fp(t[LTP]) : "—"; }
+      const mn = tr.querySelector(".p-mny");
+      if (mn) { const m = money(p); if (mn.textContent !== m) { mn.textContent = m; mn.className = "p-mny " + (m === "ATM" ? "atm" : m.startsWith("ITM") ? "itm" : ""); } }
+      const cl = p.close && tr.querySelector(".p-cll");
+      if (cl) { const t = S.T.get(p.close.token); cl.textContent = t ? fp(t[LTP]) : "—"; }
     }
   }
   const to = $("pl-tot-open"), tr_ = $("pl-tot-real");
-  if (to) { to.textContent = fr(open); to.className = open > 0 ? "up-t" : open < 0 ? "dn-t" : ""; }
+  if (to) { to.textContent = fr(total); to.className = total > 0 ? "up-t" : total < 0 ? "dn-t" : ""; }
+  document.querySelectorAll(".p-midpx").forEach((b) => (b.textContent = fp(pFutPx(b.dataset.n, b.dataset.e))));
+  const pm = $("p-mtm");
+  if (pm) { pm.textContent = "MTM " + fr(total); pm.className = "pmtm mono " + (total > 0 ? "up-t" : total < 0 ? "dn-t" : ""); }
   if (tr_) { tr_.textContent = fr(real); tr_.className = real > 0 ? "up-t" : real < 0 ? "dn-t" : ""; }
   const el = $("pnl");
   el.textContent = fr(total);
@@ -706,6 +1118,7 @@ function markPositions() {
 function onStatus(m) {
   const f = m.feed || {};
   S.mode = m.mode || "PAPER";
+  if ($("sl-where")) paintSlBar();
   const live = S.mode === "LIVE";
   const extra = !live && m.live_open ? ` · ${m.live_open} LIVE OPEN` : "";
   $("mode").textContent = live ? "● LIVE · KOTAK P" : "PAPER" + extra;
@@ -767,21 +1180,16 @@ document.querySelectorAll("#view button").forEach((b) => (b.onclick = () => setV
 function buildCombo() {
   const m = S.chain;
   if (!m || S.view === "chain") return;
-  const rows = m.rows;
+  const rows = gridRows();                   // already on the strike-gap grid
   const ai = rows.findIndex((r) => r.k === S.atm);
   if (ai < 0) return;
   const n = S.cur.strikes;
   const pairs = [];
   if (S.view === "straddle") {
-    const g = strikeGap();
-    for (const r of S.visRows) {
-      const off = rows.indexOf(r) - ai;
-      if (off % g === 0) pairs.push({ a: r.ce, b: r.pe, ka: r.k, kb: r.k });
-    }
+    for (const r of S.visRows) pairs.push({ a: r.ce, b: r.pe, ka: r.k, kb: r.k });
     $("cb-h1").textContent = "Strike"; $("cb-h2").textContent = "";
   } else {
-    const g = strikeGap();
-    for (let i = 0; i <= n * g; i += g) {
+    for (let i = 0; i <= n; i++) {
       const up = rows[ai + i], dn = rows[ai - i];
       if (up && dn) pairs.push({ a: up.ce, b: dn.pe, ka: up.k, kb: dn.k, w: i });
     }
@@ -908,10 +1316,11 @@ $("gear").onclick = () => {
   if (!v) return toast("settings not loaded yet", true);
   for (const k of SKEYS) $("s-" + k).value = v[k];
   $("s-reprice").checked = !!v.reprice;
-  $("s-gaps").innerHTML = Object.values(S.prods).map((p) => `<label>${p.label}<select data-gap="${p.name}">` +
-    [1, 2, 3, 4, 5, 10].map((g) => `<option value="${g}">${g === 1 ? "every strike" : "every " + g + "th"}</option>`).join("") +
-    `</select></label>`).join("");
-  document.querySelectorAll("#s-gaps select").forEach((s) => (s.value = (v.strike_gap || {})[s.dataset.gap] || 1));
+  const gc = S.meta.gap_choices || {};
+  $("s-gaps").innerHTML = Object.values(S.prods).filter((p) => gc[p.name]).map((p) =>
+    `<label>${p.label}<select data-gap="${p.name}">` +
+    gc[p.name].map((g) => `<option value="${g}">${nf.format(g)}</option>`).join("") + `</select></label>`).join("");
+  document.querySelectorAll("#s-gaps select").forEach((s) => (s.value = (v.strike_gap || {})[s.dataset.gap] || gc[s.dataset.gap][0]));
   $("s-note").textContent = "";
   $("settings").hidden = false;
 };
@@ -927,16 +1336,28 @@ $("s-save").onclick = () => {
 function onSettingsAck(m) {
   if (m.settings) S.settings = m.settings;
   $("s-note").textContent = m.ok ? "saved ✓" : m.msg;
-  if (m.ok) { setTimeout(() => closeModal("settings"), 500); buildCombo(); }
+  if (m.ok) { setTimeout(() => closeModal("settings"), 500); S.atm = null; layout(); }
 }
-function strikeGap() {
+// the owner's strike gap for the current instrument, in points (0 = every listed strike)
+function gapPts() {
   const v = S.settings || (S.meta && S.meta.settings) || {};
-  return ((v.strike_gap || {})[S.cur.name]) || 1;
+  return +((v.strike_gap || {})[S.cur.name]) || 0;
+}
+// chain rows on the strike-gap grid (strike a whole multiple of the gap); all rows if the grid is too thin
+function gridRows() {
+  const m = S.chain, g = gapPts();
+  if (!m) return [];
+  if (!g) return m.rows;
+  const f = m.rows.filter((r) => Math.abs(r.k / g - Math.round(r.k / g)) < 1e-9);
+  return f.length >= 3 ? f : m.rows;
 }
 
 // ── small SVG chart helper (one series, zero line, x labels) ──
 function svgChart(xs, ys, o = {}) {
-  const W = 820, H = 300, L = 64, R = o.now ? 84 : 16, T = 14, B = 30;
+  // o.W / o.H: draw at the box's real pixel size (small side charts) so lines and text are not shrunk
+  const W = Math.round(o.W || 820), H = Math.round(o.H || 300), sm = W < 600;
+  const L = sm ? 52 : 64, R = o.now ? (sm ? 72 : 84) : 16, T = sm ? 8 : 14, B = sm ? 22 : 30;
+  if (sm) o = { ...o, xticks: Math.max(1, Math.min(o.xticks || 6, Math.floor((W - L - R) / 70))) };
   const x0 = Math.min(...xs), x1 = Math.max(...xs);
   // o.level: a price-level line on its own scale (e.g. ATM straddle), not P&L around zero
   let y0 = o.level ? Math.min(...ys) : Math.min(0, ...ys), y1 = o.level ? Math.max(...ys) : Math.max(0, ...ys);
@@ -1014,11 +1435,11 @@ function hoverAt(box, cx) {
   const hl = g.querySelector(".g-hl"), hd = g.querySelector(".g-hd"), hb = g.querySelector(".g-hb"), ht = g.querySelector(".g-ht");
   hl.setAttribute("x1", x); hl.setAttribute("x2", x); hl.setAttribute("y1", d.T); hl.setAttribute("y2", d.H - d.B);
   hd.setAttribute("cx", x); hd.setAttribute("cy", y);
-  const w = Math.max(...lines.map((l) => l.length)) * 6.7 + 16, h = lines.length * 15 + 9;
+  const w = Math.max(...lines.map((l) => l.length)) * 7.6 + 18, h = lines.length * 17 + 10;
   const bx = x + 12 + w > d.W - 4 ? x - 12 - w : x + 12;
   const by = Math.min(Math.max(d.T, y - h / 2), d.H - d.B - h);
   hb.setAttribute("x", bx); hb.setAttribute("y", by); hb.setAttribute("width", w); hb.setAttribute("height", h);
-  ht.innerHTML = lines.map((l, k) => `<tspan x="${bx + 8}" y="${by + 16 + k * 15}"${k ? "" : ' class="g-ht0"'}></tspan>`).join("");
+  ht.innerHTML = lines.map((l, k) => `<tspan x="${bx + 9}" y="${by + 18 + k * 17}"${k ? "" : ' class="g-ht0"'}></tspan>`).join("");
   ht.querySelectorAll("tspan").forEach((ts, k) => (ts.textContent = lines[k]));
   g.setAttribute("visibility", "visible");
 }
@@ -1146,6 +1567,20 @@ function askInline() {
 }
 const hmIST = (t) => new Date(t * 1000).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
 S.gpHist = { "gp-pnl": [], "gp-imb": [] };
+// redraw the side charts whenever their box changes size (window resize, panel drag)
+if (window.ResizeObserver) {
+  // side by side or stacked: whichever gives each chart a shape nearer 2:1 in the panel's actual size
+  new ResizeObserver(() => {
+    const gp = $("graphpane"), w = gp.clientWidth, h = gp.clientHeight;
+    if (!w || !h) return;
+    const off = (a) => Math.abs(Math.log(Math.max(a, 0.05) / 2));
+    const PAD = 24, HEAD = 62;                         // card padding / title + note line, per card
+    const side = (w - 10) / 2 - PAD, sideH = h - HEAD, stackH = (h - 10) / 2 - HEAD, stackW = w - PAD;
+    gp.classList.toggle("side", sideH > 0 && (stackH <= 40 || off(side / sideH) < off(stackW / stackH)));
+  }).observe($("graphpane"));
+  const ro = new ResizeObserver(() => { if (!S.book) return; for (const t of ["gp-pnl", "gp-imb"]) if (S.gpHist && S.gpHist[t]) drawInline(t); });
+  ["gp-mtm", "gp-imb"].forEach((id) => $(id) && ro.observe($(id)));
+}
 function onInlineGraph(m) {
   S.gpHist[m.tag] = m.points || [];
   drawInline(m.tag);
@@ -1173,6 +1608,7 @@ function drawInline(tag) {
   const m = { tag, points: pts };
   const box = m.tag === "gp-pnl" ? $("gp-mtm") : $("gp-imb");
   const note = m.tag === "gp-pnl" ? $("gp-mtm-note") : $("gp-imb-note");
+  const bw = box.clientWidth, bh = box.clientHeight;
   if (pts.length < 2) {
     box.innerHTML = `<p class="gp-empty">${m.tag === "gp-pnl" ? "No trades yet today." : "Shows once you are short calls and/or puts."}</p>`;
     note.textContent = "";
@@ -1184,7 +1620,9 @@ function drawInline(tag) {
     ? (i) => [hms(xs[i]), `P&L ${fr(ys[i])}`]
     : (i) => [hms(xs[i]), `Imbalance ${ys[i] > 0 ? "+" : ""}${ys[i].toFixed(1)}%`,
               ...(pts[i][2] != null ? [`CE ${nf2.format(pts[i][2])} · PE ${nf2.format(pts[i][3])}`] : [])];
-  setChart(box, svgChart(xs, ys, { xfmt: hmIST, xticks: Math.max(1, Math.min(5, Math.floor(span))), now: true, tip,
+  if (bw < 60 || bh < 40) return;                       // card too small to draw in (redrawn on resize)
+  setChart(box, svgChart(xs, ys, { W: bw, H: bh,
+                                   xfmt: hmIST, xticks: Math.max(1, Math.min(5, Math.floor(span))), now: true, tip,
                                    nowFmt: m.tag === "gp-pnl" ? (v) => nf.format(Math.round(v)) : (v) => v.toFixed(1) + "%",
                                    label: m.tag === "gp-pnl" ? "session P&L" : "CE/PE imbalance %" }));
   const last = pts[pts.length - 1];

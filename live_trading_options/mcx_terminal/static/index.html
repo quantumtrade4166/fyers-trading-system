@@ -6,7 +6,10 @@
 <title>MCX Desk</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/static/app.css?v=20261028g">
+<script>/* theme before first paint (no dark flash on a light page) */
+try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}
+</script>
+<link rel="stylesheet" href="/static/app.css?v=20261029q">
 </head>
 <body>
 <header class="top">
@@ -22,9 +25,10 @@
     <span class="pill" id="feed"><i class="led"></i><span id="feedtxt">connecting…</span></span>
     <span class="pill mono" id="ping" title="Screen ↔ engine round trip">— ms</span>
     <span class="clock mono" id="clock">--:--:--</span>
-    <button class="gear rpbtn" id="btn-replays" title="Replays: download a day as a double-click file">⏵ Replays</button>
+    <button class="gear rpbtn" id="btn-replays" title="Replays: download a day as a double-click file" hidden>⏵ Replays</button>
     <button class="gear rpbtn" id="btn-logs" title="Logs: every order, fill and button press, append-only">☰ Logs</button>
     <button class="gear" id="gear" title="Settings">⚙</button>
+    <button class="gear" id="theme-btn" title="Light / dark theme">☀</button>
   </div>
 </header>
 
@@ -58,6 +62,7 @@
   <div class="spacer"></div>
   <div class="und mono" id="und"></div>
 </section>
+
 
 <div class="workarea">
 <main class="chainwrap" id="chainwrap">
@@ -140,6 +145,35 @@
 <!-- short-premium strip, right above Positions -->
 <div class="sumbar mono" id="rk-sum"></div>
 
+<!-- per-position auto stop-loss + trail (engine: sl.py) -->
+<section class="bar slbar" id="slbar">
+  <div class="slg">
+    <span class="slh">AUTO ARM ON</span>
+    <select id="sl-arm_on" title="Which positions get a stop-loss automatically">
+      <option value="sell">Sell positions</option><option value="buy">Buy positions</option><option value="all">All positions</option>
+    </select>
+  </div>
+  <div class="slg">
+    <span class="slh">STOP LOSS</span>
+    <label class="chk" title="Every new position of the kind above gets a stop-loss"><input type="checkbox" id="sl-sl_auto"> Auto arm</label>
+    <input type="number" id="sl-sl_val" min="0" step="1" class="num" title="Stop-loss distance from the entry price">
+    <select id="sl-sl_unit"><option value="%">%</option><option value="pts">pts</option></select>
+    <span class="slh">QTY</span>
+    <select id="sl-qty"><option value="full">Full</option><option value="half">Half</option></select>
+    <span class="slh">ON HIT</span>
+    <select id="sl-on_hit" title="Kotak fills the stop-loss order itself, so on hit it always exits"><option value="exit">Exit</option></select>
+    <span class="slbadge" id="sl-where" title="LIVE: a real stop-loss order sits at Kotak, it works even if this terminal is down"></span>
+    <button class="btn sm go" id="sl-apply" title="Place / move the stop-loss of every open position (Auto arm on) to these settings NOW">Apply</button>
+  </div>
+  <div class="slg">
+    <span class="slh">TRAIL SL</span>
+    <label class="chk" title="New stop-losses trail automatically"><input type="checkbox" id="sl-trail_auto"> Auto arm</label>
+    <label class="chk" title="Trail every stop-loss now, including existing ones"><input type="checkbox" id="sl-trail_on"> On</label>
+    <span class="slh2">every</span>
+    <input type="number" id="sl-trail_every" min="0" step="1" class="num" title="Each time the price moves this much your way (from entry), the stop moves the same amount. Same unit as the stop-loss.">
+  </div>
+</section>
+
 <!-- exit the CURRENT instrument now or at a time (timers run on the VPS) -->
 <div class="exitbar" id="exitbar">
   <span class="xb-l">EXIT <b id="xb-name">—</b></span>
@@ -161,8 +195,19 @@
     <button class="dt" data-p="ord">Orders <span id="nord">0</span></button>
     <div class="spacer"></div>
     <div class="dock-tools" id="tools-pos">
+      <span class="pmtm mono" id="p-mtm">MTM 0.00</span>
+      <span class="lbl">SIZE</span>
+      <select id="p-size" title="How much of each ticked row Exit / Add acts on">
+        <option value="0.25">25%</option><option value="0.5">50%</option><option value="0.75">75%</option><option value="1" selected>100%</option>
+      </select>
+      <button class="btn sm danger" id="p-exit-sel" title="Exit SIZE of every ticked row">Exit →|</button>
+      <button class="btn sm" id="p-add-sel" title="Add SIZE to every ticked row">Add +</button>
+      <button class="btn sm" id="p-cancel" title="Cancel every working order">Cancel All</button>
       <span class="lbl">Move by</span>
-      <select id="move-n"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
+      <select id="move-n" title="Away / Close move this many strike gaps (away from / toward the money)"><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select>
+      <button class="btn sm" id="p-csv" title="Download the rows shown as CSV">⤓</button>
+      <button class="tg" id="p-group" title="Group by sell / buy / closed">Group</button>
+      <button class="btn sm" id="p-cols" title="Show / hide columns">Columns</button>
     </div>
     <div class="dock-tools" id="tools-ord" hidden>
       <div class="seg small" id="ofilter">
@@ -172,7 +217,7 @@
   </div>
   <div class="dock-body">
     <table class="grid" id="pos-table">
-      <thead><tr><th class="l">Contract</th><th>Net</th><th>Avg</th><th>LTP</th><th>P&amp;L</th><th>Realized</th><th></th></tr></thead>
+      <thead id="pos-head"></thead>
       <tbody id="pos-rows"></tbody>
     </table>
     <table class="grid" id="ord-table" hidden>
@@ -181,6 +226,9 @@
     </table>
   </div>
 </section>
+
+<div class="pfilt" id="p-filt" hidden></div>
+<div class="pcolmenu" id="p-colmenu" hidden></div>
 
 <footer class="foot mono">
   <span id="f-sub">—</span><span id="f-age">—</span><span id="f-kb"></span><span id="f-msg"></span>
@@ -215,8 +263,8 @@
       <label class="chk"><input id="s-reprice" type="checkbox"> Re-price unfilled system orders to the market every second</label>
       <label>Push any waiting order to market after (s, 0 = off)<input id="s-market_after_s" type="number" step="0.5" min="0"></label>
     </div>
-    <h4>Straddle / Strangle strike gap</h4>
-    <p class="hint2">Show only every Nth strike in the Straddle and Strangle tables.</p>
+    <h4>Strike gap (points)</h4>
+    <p class="hint2">The chain shows only strikes on this gap. Straddle, Strangle, Hedges, keyboard and Move-by all step by it.</p>
     <div class="sgrid" id="s-gaps"></div>
     <div class="p-foot"><span class="mono dim" id="s-note"></span><button class="btn go" id="s-save">Save</button></div>
   </div>
@@ -261,6 +309,6 @@
 </div>
 
 <div class="toasts" id="toasts"></div>
-<script src="/static/app.js?v=20261028g"></script>
+<script src="/static/app.js?v=20261029q"></script>
 </body>
 </html>

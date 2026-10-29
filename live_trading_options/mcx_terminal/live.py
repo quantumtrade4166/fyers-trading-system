@@ -117,7 +117,10 @@ class LiveBook(PaperBook):
         self._poll_kick = threading.Event()
         self._pos_kick = threading.Event()
         self._burst_until = 0.0
+        self._pushed = threading.Event()                # set by Kotak's push channel on any order change
+        self._early = {}                                # pushes that beat place_order's own reply {oid: row}
         self.notify = None                              # engine hook: a fill / reject that came after the pop-up
+        self.on_push_other = None                       # auto stop-loss: pushes for orders the book does not track
         self.broker = {"ok": True, "msg": "", "at": None}
         self.pos_sync = {"ok": False, "msg": "not read yet", "at": None}
         self._pool = ThreadPoolExecutor(max_workers=12, thread_name_prefix="KotakSend")
@@ -175,7 +178,13 @@ class LiveBook(PaperBook):
                 continue
             n = lambda k: _f(r.get(k)) or 0.0
             bq, sq = n("cfBuyQty") + n("flBuyQty"), n("cfSellQty") + n("flSellQty")
-            ba, sa = n("cfBuyAmt") + n("buyAmt"), n("cfSellAmt") + n("sellAmt")
+            # Kotak's amounts are price x qty x genNum/genDen (GOLDM: 1/10, checked 28-Oct-2026) -> undo it
+            gn, gd = _f(r.get("genNum")) or 1.0, _f(r.get("genDen")) or 1.0
+            scale = gd / gn if gn else 1.0
+            ba, sa = (n("cfBuyAmt") + n("buyAmt")) * scale, (n("cfSellAmt") + n("sellAmt")) * scale
+            cfq = n("cfBuyQty") - n("cfSellQty")
+            cfa = (n("cfBuyAmt") / n("cfBuyQty") if cfq > 0 and n("cfBuyQty") else
+                   n("cfSellAmt") / n("cfSellQty") if cfq < 0 and n("cfSellQty") else 0.0) * scale
             if not bq and not sq:
                 continue
             c = None
@@ -196,6 +205,7 @@ class LiveBook(PaperBook):
             p["_sa"] += sa
             prod = str(r.get("prod") or "NRML").upper()
             p["by_prod"][prod] = p["by_prod"].get(prod, 0) + int(bq - sq)
+            p.setdefault("cf", []).append((int(cfq), round(cfa, 4)))       # carried in from yesterday
         for p in new.values():
             bq, sq = p["bought"], p["sold"]
             bavg = p["_ba"] / bq if bq else 0.0
@@ -203,6 +213,7 @@ class LiveBook(PaperBook):
             p["net"] = bq - sq
             p["avg"] = round(bavg if p["net"] > 0 else savg if p["net"] < 0 else 0.0, 4)
             p["realized"] = round((savg - bavg) * min(bq, sq) * p["mult"], 2)
+            p["bval"], p["sval"] = round(p["_ba"] * p["mult"], 2), round(p["_sa"] * p["mult"], 2)
             del p["_ba"], p["_sa"]
         with self.lock:
             sig = lambda d: {t: (x["net"], round(x["avg"], 2), round(x["realized"], 2)) for t, x in d.items()}
@@ -225,6 +236,46 @@ class LiveBook(PaperBook):
         if changed or not was:
             self.on_change()
         return changed
+
+    def open_entry(self, token) -> float | None:
+        """Price of the lots STILL OPEN in `token` (oldest fills closed first), from Kotak's trade list.
+        Kotak's position average mixes in round trips already closed today (sold 11, bought back, sold
+        14.5 -> avg 12.75); a stop-loss belongs on 14.5. None if Kotak's trades don't add up to the position."""
+        with self.lock:
+            p = dict(self.pos.get(token) or {})
+        c = self.u.by_token.get(token)
+        if not p.get("net") or c is None:
+            return None
+        r = self._call("trade_report")
+        rows = r.get("data") if isinstance(r, dict) else r
+        if not isinstance(rows, list):
+            return None
+
+        def when(t):
+            for fmt in ("%d-%b-%Y %H:%M:%S", "%Y/%m/%d %H:%M:%S"):
+                try:
+                    return dt.datetime.strptime(str(t.get("exTm") or t.get("flDtTm") or ""), fmt)
+                except ValueError:
+                    pass
+            return dt.datetime.min
+
+        lots = [[q, px] for q, px in p.get("cf", []) if q]            # [signed qty, price]
+        for t in sorted((t for t in rows if str(t.get("trdSym")) == c.symbol), key=when):
+            q = int(_f(t.get("fldQty")) or 0) * (1 if str(t.get("trnsTp", "")).upper().startswith("B") else -1)
+            px = _f(t.get("avgPrc")) or 0.0
+            while q and lots and (lots[0][0] > 0) != (q > 0):
+                m = min(abs(q), abs(lots[0][0]))
+                lots[0][0] += m if lots[0][0] < 0 else -m
+                q += m if q < 0 else -m
+                if not lots[0][0]:
+                    lots.pop(0)
+            if q:
+                lots.append([q, px])
+        net = sum(q for q, _ in lots)
+        if net != p["net"] or not net:
+            log.warning("open_entry %s: Kotak trades give %s, position is %s - using Kotak's average", c.symbol, net, p["net"])
+            return None
+        return round(sum(q * px for q, px in lots) / net, 4)
 
     def positions_fresh(self) -> bool:
         a = self.pos_sync.get("at")
@@ -281,6 +332,10 @@ class LiveBook(PaperBook):
                 reduces = bool(p and p["net"] and (p["net"] > 0) == (side == "S") and qty <= abs(p["net"]))
             if not reduces:
                 return {"ok": False, "msg": "LIVE is not armed - only exits of open Kotak positions are allowed"}
+        if role == "exit" and self.before_reduce:
+            stop = self.before_reduce(token)            # its stop-loss order at Kotak is cancelled FIRST
+            if stop:
+                return {"ok": False, "msg": stop}
         if product not in ("NRML", "MIS"):
             product = st.get("product", "NRML") if st.get("product") in ("NRML", "MIS") else "NRML"
             if role == "exit":                  # close in the SAME product Kotak holds it in
@@ -309,6 +364,9 @@ class LiveBook(PaperBook):
             with self.lock:
                 if oid and not err:
                     o.update(broker_id=oid, status="OPEN", reason=f"sent to Kotak ({ms:.0f} ms)")
+                    early = self._early.pop(str(oid), None)
+                    if early is not None:                  # Kotak pushed the fill before its reply came back
+                        self._apply_row(o, early)
                 elif err and fastrest.is_timeout(err):
                     # no answer in time: the order MAY be at Kotak -> stay SENDING; the order-book poll
                     # finds it by its tag (or marks it rejected after 60 s if Kotak never had it)
@@ -327,8 +385,9 @@ class LiveBook(PaperBook):
         self._poll_kick.set()
         deadline = time.time() + (VERDICT_WAIT_S if kind == "MKT" else 0.25)  # a short look for the fill
         while time.time() < deadline and any(o["status"] not in TERMINAL for o in mine if o["broker_id"]):
-            time.sleep(0.1)
-            self.poll()
+            self._pushed.clear()
+            if not self._pushed.wait(0.1):              # a push wakes this at once; else read the book
+                self.poll()
         res = self._result(mine, side, lots, c, qty, limit)
         with self.lock:
             for o in mine:                              # anything still working is announced when it fills
@@ -428,6 +487,36 @@ class LiveBook(PaperBook):
         if changed:
             self.on_change()
         return changed
+
+    def on_push(self, r: dict):
+        """An order update pushed by Kotak (orderfeed.py): apply it now, no waiting for the next poll."""
+        oid = str(_dig(r, *_OID_KEYS) or "")
+        if not oid:
+            return
+        changed = False
+        with self.lock:
+            o = next((x for x in self.orders if x.get("broker_id") == oid), None)
+            if o is None and self.on_push_other:
+                self.on_push_other(r)
+            if o is None:
+                if any(x["status"] == "SENDING" and not x.get("broker_id") for x in self.orders):
+                    self._early[oid] = r                # our place_order reply hasn't landed yet
+                    if len(self._early) > 200:
+                        self._early.pop(next(iter(self._early)))
+                else:
+                    self._poll_kick.set()               # maybe ours from a restart: the poll adopts it by tag
+                return
+            if o["status"] in TERMINAL:
+                return
+            changed = self._apply_row(o, r)
+            if changed:
+                self._save()
+        self._pushed.set()
+        if changed:
+            self.on_change()
+
+    def on_push_position(self, _d: dict):
+        self._pos_kick.set()                            # Kotak says positions changed: re-read them now
 
     def _apply_row(self, o, r) -> bool:
         st = str(r.get("ordSt", "")).strip().lower()
@@ -637,6 +726,8 @@ class LiveBook(PaperBook):
             audit.write("exit-all", what=f"EXIT {what} STOPPED: cannot read Kotak positions", detail=str(e)[:200])
             return {"ok": False, "msg": f"EXIT {what} NOT SENT - cannot read Kotak positions ({e}). Square off in Kotak."}
         toks = None if name is None else {t for t, c in self.u.by_token.items() if c.name == name}
+        if self.before_flatten:
+            self.before_flatten()                       # auto stop-loss: no re-arming while this runs
         n_cancel = self._cancel_all_broker(name)
         legs = self._legs(toks)
         audit.write("exit-all", what=f"EXIT {what} {int(fraction * 100)}%: {len(legs)} Kotak position(s)",

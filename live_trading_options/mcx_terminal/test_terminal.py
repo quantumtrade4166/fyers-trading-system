@@ -281,6 +281,61 @@ def test_basket_buys_first_and_move():
     path.unlink(missing_ok=True)
 
 
+def test_strike_gap_setting_and_move():
+    import tempfile
+    from live_trading_options.mcx_terminal.settings import Settings
+    spath = Path(tempfile.gettempdir()) / "mcx_settings_gap.json"
+    spath.write_text('{"strike_gap": {"CRUDEOIL": 2, "GOLDM": 1, "SILVERM": 1}}', encoding="utf-8")
+    S = Settings(path=spath)
+    g = S.get()["strike_gap"]
+    check("old 'every 2nd' crude -> 100 pts", g["CRUDEOIL"] == 100, g)
+    check("old 1 -> native gap", g["GOLDM"] == 500 and g["SILVERM"] == 1000 and g["GOLD"] == 500, g)
+    check("allowed choice saved", S.update({"strike_gap": {"SILVERM": 4000}})["ok"] and S.get()["strike_gap"]["SILVERM"] == 4000)
+    S.update({"strike_gap": {"CRUDEOIL": 150, "NATURALGAS": 5}})
+    check("value not in the list ignored", S.get()["strike_gap"]["CRUDEOIL"] == 100 and "NATURALGAS" not in S.get()["strike_gap"])
+    spath.unlink(missing_ok=True)
+    # Move by 1 = one strike GAP (100 pts), not one listed strike (50 pts)
+    q = {}
+    u, b, path = _book("gapmove", q)
+    b.settings = S.get
+    ch = u.products["CRUDEOIL"].chains["2026-11-17"]
+    for k in (9200.0, 9300.0, 9400.0, 9500.0):
+        for leg in ch[k].values():
+            q[leg.token] = {"ltp": 100.0, "bid": 99.9, "ask": 100.0, "bq": 10**6, "aq": 10**6, "depth": None}
+    ce = ch[9300.0]["CE"]
+    b.place(ce.token, "S", 100, "MKT")
+    r = b.move(ce.token, 1, away=True)
+    check("move away 1 gap: 9300 -> 9400 CE", r["ok"] and b.pos[ch[9400.0]["CE"].token]["net"] == -100, r)
+    r = b.move(ch[9400.0]["CE"].token, 50, away=True)
+    check("too far refused with the strike named", not r["ok"] and "14400" in r["msg"], r)
+    path.unlink(missing_ok=True)
+
+
+def test_paper_auto_stop_loss():
+    import tempfile
+    from live_trading_options.mcx_terminal import sl as SL
+    q = {}
+    u, b, path = _book("papersl", q)
+    pe = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["PE"]
+    q[pe.token] = {"ltp": 200.0, "bid": 199.9, "ask": 200.0, "bq": 10**6, "aq": 10**6, "depth": None}
+    cfg = {"auto_sl": {"arm_on": "all", "sl_auto": True, "sl_val": 20, "sl_unit": "pts", "qty": "full"}}
+    spath = Path(tempfile.gettempdir()) / "mcx_paper_sl.json"
+    spath.unlink(missing_ok=True)
+    m = SL.AutoSL(b, lambda t: q[t]["ltp"], lambda: cfg, live=False, path=spath)
+    b.before_reduce = m.before_reduce
+    b.place(pe.token, "B", 100, "MKT")
+    m.step()
+    r = m.recs.get(pe.token)
+    check("paper long watched, stop 20 pts below entry", r and r["state"] == "watching" and r["trigger"] == r["entry"] - 20, r)
+    q[pe.token] = {"ltp": 170.0, "bid": 169.9, "ask": 170.0, "bq": 10**6, "aq": 10**6, "depth": None}
+    m.step()
+    check("paper stop hit -> flat", not b.pos[pe.token]["net"], b.pos.get(pe.token))
+    m.step()
+    check("no re-arm after the hit", pe.token not in m.recs)
+    spath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
 def test_settings_pricing_reprice_and_push():
     import tempfile
     from live_trading_options.mcx_terminal.settings import Settings

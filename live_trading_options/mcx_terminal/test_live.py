@@ -52,6 +52,7 @@ class FakeKotak:
         self.pos_fail = False    # positions() unreadable
         self.slow = {}           # symbol -> seconds place_order hangs
         self.fill_on_modify = False
+        self.gen_den = {}        # symbol -> genDen (Kotak divides GOLDM amounts by 10)
 
     def place_order(self, **kw):
         if kw["trading_symbol"] in self.slow:
@@ -64,7 +65,9 @@ class FakeKotak:
         row = {"nOrdNo": oid, "trdSym": kw["trading_symbol"], "trnsTp": kw["transaction_type"],
                "qty": int(kw["quantity"]), "fldQty": 0, "avgPrc": "0.00", "prc": kw["price"], "ordSt": "open",
                "prod": kw["product"], "tag": kw["tag"], "exSeg": kw["exchange_segment"]}
-        if self.instant == "complete":
+        if kw.get("order_type") == "SL":
+            row.update(ordSt="trigger pending", trgPrc=kw.get("trigger_price"))
+        elif self.instant == "complete":
             row.update(fldQty=row["qty"], avgPrc=kw["price"], ordSt="complete")
         elif self.instant == "rejected":
             row.update(ordSt="rejected", rejRsn="RMS:Margin Exceeds")
@@ -94,10 +97,20 @@ class FakeKotak:
                 a[3] += f * float(r["avgPrc"])
         if not agg:
             return {"stat": "Not_Ok", "stCode": 5203, "errMsg": "No Data"}
+        g = lambda s: self.gen_den.get(s, 1)
         return {"data": [{"trdSym": s, "prod": p, "exSeg": "mcx_fo", "flBuyQty": str(a[0]), "flSellQty": str(a[1]),
-                          "buyAmt": f"{a[2]:.2f}", "sellAmt": f"{a[3]:.2f}", "cfBuyQty": str(a[4]),
-                          "cfSellQty": str(a[5]), "cfBuyAmt": f"{a[6]:.2f}", "cfSellAmt": f"{a[7]:.2f}"}
+                          "buyAmt": f"{a[2] / g(s):.2f}", "sellAmt": f"{a[3] / g(s):.2f}", "cfBuyQty": str(a[4]),
+                          "cfSellQty": str(a[5]), "cfBuyAmt": f"{a[6] / g(s):.2f}", "cfSellAmt": f"{a[7] / g(s):.2f}",
+                          "genNum": "1", "genDen": str(g(s))}
                          for (s, p), a in agg.items()]}
+
+    def trade_report(self):
+        out = []
+        for i, r in enumerate(list(self.rows.values()) + list(self.manual.values())):
+            if int(r["fldQty"]):
+                out.append({"trdSym": r["trdSym"], "trnsTp": r["trnsTp"], "fldQty": int(r["fldQty"]),
+                            "avgPrc": r["avgPrc"], "exTm": f"28-Oct-2026 10:{i // 60:02d}:{i % 60:02d}"})
+        return {"data": out} if out else {"stat": "Not_Ok", "errMsg": "No Data"}
 
     def cancel_order(self, order_id, **kw):
         self.cancels.append(order_id)
@@ -108,6 +121,9 @@ class FakeKotak:
         self.mods.append(kw)
         r = self.rows[kw["order_id"]]
         r["prc"] = kw["price"]
+        r["qty"] = int(kw.get("quantity") or r["qty"])
+        if kw.get("order_type") == "SL":
+            r["trgPrc"] = kw.get("trigger_price")
         if self.fill_on_modify:
             r.update(fldQty=r["qty"], avgPrc=kw["price"], ordSt="complete")
         return {"nOrdNo": kw["order_id"], "stat": "Ok", "stCode": 200}
@@ -447,6 +463,282 @@ def test_late_fill_notice_and_timeout_kept_sending():
     check("timeout -> still SENDING, not REJECTED", o2["status"] == "SENDING" and "checking" in o2["reason"], o2)
     b.poll()
     check("found at Kotak by its tag", o2["broker_id"] and o2["status"] in ("OPEN", "COMPLETE"), o2)
+    path.unlink(missing_ok=True)
+
+
+def test_order_push():
+    from live_trading_options.mcx_terminal import orderfeed as OF
+    q = {}
+    u, b, k, flag, path = _live("push", q)
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[ce.token] = _q(500.0)
+    b.place(ce.token, "S", 100, "MKT")
+    o = b.orders[-1]
+    polls = []
+    real_report = k.order_report
+    k.order_report = lambda: polls.append(1) or real_report()
+    # Kotak pushes the fill: applied at once, without reading the order book
+    b.on_push({"nOrdNo": o["broker_id"], "ordSt": "complete", "fldQty": 100, "avgPrc": "498.50", "prc": "490.00"})
+    check("push fills the order with no poll", o["status"] == "COMPLETE" and o["avg"] == 498.5 and not polls, o)
+    b._pos_kick.clear()
+    b.on_push_position({"trdSym": ce.symbol})
+    check("position push -> positions re-read now", b._pos_kick.is_set())
+    n = o["filled"]
+    b.on_push({"nOrdNo": o["broker_id"], "ordSt": "complete", "fldQty": 100, "avgPrc": "498.50"})
+    check("repeat push changes nothing", o["filled"] == n == 100)
+    k.order_report = real_report
+    # the push beats Kotak's reply to place_order: kept, applied when the reply lands
+    real = k.place_order
+
+    def push_first(**kw):
+        r = real(**kw)
+        b.on_push({"nOrdNo": r["nOrdNo"], "ordSt": "complete", "fldQty": 100, "avgPrc": "497.00"})
+        return r
+    k.place_order = push_first
+    flag["armed"] = True
+    r = b.place(ce.token, "S", 100, "LMT", limit=480.0)
+    o2 = b.orders[-1]
+    check("early push applied", o2["status"] == "COMPLETE" and o2["avg"] == 497.0, o2)
+    # message parsing
+    check("parse order", OF.parse('{"type":"order","data":{"nOrdNo":"1"}}') == ("order", {"nOrdNo": "1"}))
+    check("parse connect ack", OF.parse('{"ak":"ok","type":"cn","task":"cn","msg":"connected"}')[0] == "cn")
+    check("parse junk", OF.parse("not json")[0] is None and OF.parse('{"ak":"nk"}')[0] is None)
+    path.unlink(missing_ok=True)
+
+
+def test_auto_stop_loss():
+    from live_trading_options.mcx_terminal import sl as SL
+    q = {}
+    u, b, k, flag, path = _live("autosl", q)
+    ch = u.products["CRUDEOIL"].chains["2026-11-17"]
+    ce, pe = ch[9300.0]["CE"], ch[9300.0]["PE"]
+    q[ce.token] = _q(100.0)
+    q[pe.token] = _q(50.0)
+    cfg = {"auto_sl": {"arm_on": "sell", "sl_auto": True, "sl_val": 50, "sl_unit": "%", "qty": "full",
+                       "trail_auto": True, "trail_on": False, "trail_every": 10}}
+    notes = []
+    spath = path.with_name("autosl_test.json")
+    spath.unlink(missing_ok=True)
+    m = SL.AutoSL(b, lambda t: (q.get(t) or {}).get("ltp"), lambda: cfg, live=True, path=spath, notify=notes.append)
+    b.before_reduce, b.before_flatten, b.on_push_other = m.before_reduce, m.before_flatten, m.on_push
+
+    def step(ltp=None):
+        if ltp is not None:
+            q[ce.token] = _q(ltp)
+        b.sync_positions()
+        for r in m.recs.values():
+            r["t_mod"] = 0.0
+        m._rows_at = 0.0
+        m.step()
+
+    # a short opened by hand in Kotak -> a real SL BUY order at Kotak
+    k.hand_trade(ce.symbol, "S", 100, 100.0)
+    step()
+    r = m.recs.get(ce.token)
+    o = k.sent[-1]
+    check("SL order sent for the short", r and r["state"] == "pending" and o["order_type"] == "SL"
+          and o["transaction_type"] == "B" and float(o["trigger_price"]) == 150.0, (r, o))
+    check("SL limit beyond trigger", float(o["price"]) == 157.5, o["price"])
+    # long positions are left alone when AUTO ARM ON = sell
+    k.hand_trade(pe.symbol, "B", 100, 50.0)
+    step()
+    check("buy position not armed (sell only)", pe.token not in m.recs)
+    # trail: 10 % of entry = 10 pts; price falls 11 -> stop 140, falls 21 -> 130
+    step(89.0)
+    check("trailed one step", m.recs[ce.token]["trigger"] == 140.0 and float(k.mods[-1]["trigger_price"]) == 140.0,
+          (m.recs[ce.token], k.mods[-1:]))
+    step(79.0)
+    check("trailed two steps", m.recs[ce.token]["trigger"] == 130.0)
+    step(95.0)
+    check("never trails back", m.recs[ce.token]["trigger"] == 130.0)
+    # added a lot -> the SL order grows with it
+    k.hand_trade(ce.symbol, "S", 100, 100.0)
+    step()
+    check("SL qty follows the position", m.recs[ce.token]["qty"] == 200 and int(k.mods[-1]["quantity"]) == 200, k.mods[-1:])
+    # terminal exit: SL order cancelled BEFORE the exit order goes out
+    sl_oid = m.recs[ce.token]["oid"]
+    n_sent = len(k.sent)
+    res = b.exit_position(ce.token, 0.5)
+    check("partial exit sent", res["ok"] and len(k.sent) == n_sent + 1, res)
+    check("SL cancelled first", sl_oid in k.cancels and ce.token not in m.recs, k.cancels)
+    k.fill(b.orders[-1]["broker_id"], 100, 96.0)
+    for rr in m.pause:
+        m.pause[rr] = 0
+    step()
+    check("re-armed for the rest, trail kept", m.recs[ce.token]["qty"] == 100 and m.recs[ce.token]["trigger"] == 130.0,
+          m.recs.get(ce.token))
+    # Kotak fills the SL -> HIT, flat, no re-arm
+    sl_oid = m.recs[ce.token]["oid"]
+    k.fill(sl_oid, 100, 131.0)
+    step()
+    check("hit announced", notes and "STOP-LOSS HIT" in notes[-1]["msg"], notes[-1:])
+    check("flat after the hit -> no SL left", ce.token not in m.recs and not b.pos.get(ce.token, {}).get("net"))
+    # SL filled at Kotak just before a terminal exit -> the exit is NOT sent
+    k.hand_trade(ce.symbol, "S", 100, 100.0)
+    step(100.0)
+    sl_oid = m.recs[ce.token]["oid"]
+    k.rows[sl_oid].update(fldQty=100, avgPrc="150.00", ordSt="complete")
+    real_cancel = k.cancel_order
+    k.cancel_order = lambda order_id, **kw: {"stat": "Not_Ok", "errMsg": "order already traded"}
+    msg = m.before_reduce(ce.token)          # Kotak's positions may lag the fill: the hook still stops the exit
+    check("exit blocked: SL already filled", msg and "already FILLED" in msg, msg)
+    k.cancel_order = real_cancel
+    step()
+    # stop already crossed when found -> not placed
+    k.hand_trade(ce.symbol, "S", 100, 100.0)
+    m.pause.clear()
+    step(160.0)
+    check("stop already crossed -> not placed", m.recs[ce.token]["state"] == "past" and not m.recs[ce.token]["oid"],
+          m.recs.get(ce.token))
+    step(120.0)
+    check("placed once back inside", m.recs[ce.token]["state"] == "pending")
+    # a stray SL order at Kotak (no record) is cancelled
+    k.n += 1
+    k.rows["STRAY1"] = {"nOrdNo": "STRAY1", "trdSym": ce.symbol, "trnsTp": "B", "qty": 100, "fldQty": 0, "avgPrc": "0",
+                        "prc": "200", "ordSt": "trigger pending", "prod": "NRML", "tag": "mcxs999", "exSeg": "mcx_fo"}
+    step()
+    check("stray SL order cancelled", "STRAY1" in k.cancels)
+    # Kotak refuses SL orders -> the terminal watches and exits itself
+    b.exit_position(ce.token, 1.0)
+    k.fill(b.orders[-1]["broker_id"], 100, 120.0)
+    step()
+    k.refuse = "SL order not allowed"
+    k.hand_trade(ce.symbol, "S", 100, 100.0)
+    for rr in m.pause:
+        m.pause[rr] = 0
+    step(100.0)
+    check("refused -> watching", m.recs[ce.token]["state"] == "watching" and "refused" in notes[-1]["msg"].lower(), m.recs.get(ce.token))
+    k.refuse = None
+    n_sent = len(k.sent)
+    step(151.0)
+    check("watched stop exits", len(k.sent) == n_sent + 1 and k.sent[-1]["transaction_type"] == "B"
+          and k.sent[-1]["order_type"] == "L", k.sent[-1:])
+    # settings validation
+    check("settings: bad values refused", SL.clean({"sl_val": 50, "sl_unit": "pts"})["sl_unit"] == "pts")
+    try:
+        SL.clean({"sl_val": -1})
+        check("negative SL refused", False)
+    except ValueError:
+        check("negative SL refused", True)
+    spath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
+def test_goldm_amounts_and_open_entry():
+    from live_trading_options.mcx_terminal import sl as SL
+    q = {}
+    u, b, k, flag, path = _live("goldm", q)
+    exp = sorted(u.products["GOLDM"].chains)[0]
+    ce = next(iter(u.products["GOLDM"].chains[exp].values()))["CE"]
+    k.gen_den[ce.symbol] = 10
+    # owner's 28-Oct trades: sold 11.0, bought back 11.5, sold again 14.5 -> short 1 lot opened at 14.5
+    k.hand_trade(ce.symbol, "S", 100, 11.0)
+    k.hand_trade(ce.symbol, "B", 100, 11.5)
+    k.hand_trade(ce.symbol, "S", 100, 14.5)
+    b.sync_positions()
+    p = b.pos[ce.token]
+    check("GOLDM average undoes Kotak's /10", p["net"] == -100 and abs(p["avg"] - 12.75) < 1e-6, p)
+    check("GOLDM realized in rupees", abs(p["realized"] - (12.75 - 11.5) * 100 * ce.mult) < 1e-6, (p["realized"], ce.mult))
+    check("open lot entry = 14.5 (oldest closed first)", b.open_entry(ce.token) == 14.5, b.open_entry(ce.token))
+    q[ce.token] = _q(15.5)
+    cfg = {"auto_sl": {"arm_on": "sell", "sl_auto": True, "sl_val": 50, "sl_unit": "%"}}
+    spath = path.with_name("autosl_goldm.json")
+    spath.unlink(missing_ok=True)
+    m = SL.AutoSL(b, lambda t: (q.get(t) or {}).get("ltp"), lambda: cfg, live=True, path=spath)
+    m.step()
+    r = m.recs[ce.token]
+    check("SL from 14.5 -> trigger 21.75, rounded to the 0.5 tick = 22 at Kotak", r["state"] == "pending" and r["entry"] == 14.5
+          and r["trigger"] == 22.0, r)
+    spath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
+def test_sl_apply_button():
+    from live_trading_options.mcx_terminal import sl as SL
+    q = {}
+    u, b, k, flag, path = _live("slapply", q)
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[ce.token] = _q(100.0)
+    cfg = {"auto_sl": {"arm_on": "sell", "sl_auto": True, "sl_val": 50, "sl_unit": "%"}}
+    spath = path.with_name("autosl_apply.json")
+    spath.unlink(missing_ok=True)
+    m = SL.AutoSL(b, lambda t: (q.get(t) or {}).get("ltp"), lambda: cfg, live=True, path=spath)
+    k.hand_trade(ce.symbol, "S", 100, 100.0)
+    b.sync_positions()
+    m.step()
+    first = m.recs[ce.token]["oid"]
+    check("dropped with x -> no re-arm", m.drop(ce.token)["ok"] and (m.step() or ce.token not in m.recs))
+    cfg["auto_sl"]["sl_val"] = 40
+    r = m.apply()
+    check("Apply puts it back at 40 %", r["ok"] and m.recs[ce.token]["trigger"] == 140.0
+          and m.recs[ce.token]["oid"] != first and "140" in r["msg"], (r, m.recs.get(ce.token)))
+    oid = m.recs[ce.token]["oid"]
+    n_sent = len(k.sent)
+    cfg["auto_sl"]["sl_val"] = 30
+    r = m.apply()
+    check("Apply moves the existing order (modify, no new order)", r["ok"] and len(k.sent) == n_sent
+          and m.recs[ce.token]["oid"] == oid and float(k.mods[-1]["trigger_price"]) == 130.0, (r, k.mods[-1:]))
+    q[ce.token] = _q(125.0)
+    cfg["auto_sl"]["sl_val"] = 20
+    r = m.apply()
+    check("Apply refuses a level the price already passed", not r["ok"] and m.recs[ce.token]["trigger"] == 130.0, r)
+    cfg["auto_sl"]["arm_on"] = "buy"
+    check("Apply with nothing matching says so", "no open buy" in m.apply()["msg"])
+    spath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
+def test_positions_row_controls():
+    from live_trading_options.mcx_terminal import sl as SL
+    q = {}
+    u, b, k, flag, path = _live("rowctl", q)
+    ch = u.products["CRUDEOIL"].chains["2026-11-17"]
+    ce = ch[9300.0]["CE"]
+    for kk in (9300.0, 9350.0, 9400.0):
+        q[ch[kk]["CE"].token] = _q(100.0)
+    cfg = {"auto_sl": {"arm_on": "sell", "sl_auto": False, "sl_val": 50, "sl_unit": "pts", "trail_on": True,
+                       "trail_every": 10, "trail_move": 5}}
+    spath = path.with_name("autosl_row.json")
+    spath.unlink(missing_ok=True)
+    m = SL.AutoSL(b, lambda t: (q.get(t) or {}).get("ltp"), lambda: cfg, live=True, path=spath)
+    k.hand_trade(ce.symbol, "S", 300, 100.0)
+    b.sync_positions()
+    p = b.pos[ce.token]
+    check("sell value in rupees", p["sval"] == 30000.0 and p["bval"] == 0.0, p)
+    m.step()
+    check("Auto arm off -> no stop", ce.token not in m.recs)
+    r = m.set_one(ce.token, True)
+    check("row tick -> stop at the row's default (entry + 50 pts)", r["ok"] and m.recs[ce.token]["trigger"] == 150.0, r)
+    r = m.set_one(ce.token, True, trigger=135)
+    check("typed stop 135 moved at Kotak", r["ok"] and m.recs[ce.token]["trigger"] == 135.0
+          and float(k.mods[-1]["trigger_price"]) == 135.0, r)
+    r = m.set_one(ce.token, True, trigger=95)
+    check("typed stop already crossed refused", not r["ok"] and m.recs[ce.token]["trigger"] == 135.0, r)
+    r = m.set_one(ce.token, True, qty="half")
+    check("Half -> 1 of 3 lots", r["ok"] and m.recs[ce.token]["qty"] == 100 and int(k.mods[-1]["quantity"]) == 100, r)
+    # trail every 10 pts, move SL 5 pts: price 100 -> 79 = 2 steps -> stop 135 - 10 = 125
+    q[ce.token] = _q(79.0)
+    b.sync_positions()
+    m.recs[ce.token]["t_mod"] = 0
+    m.step()
+    check("trail moves 5 per 10", m.recs[ce.token]["trigger"] == 125.0, m.recs[ce.token])
+    r = m.set_one(ce.token, False)
+    check("row untick -> stop cancelled, not re-armed", r["ok"] and ce.token not in m.recs and ce.token in m.done, r)
+    # Away 1 of 3 lots: 9300 CE -> 9350 CE (no strike gap set -> next listed strike)
+    b.before_reduce = m.before_reduce
+    r = b.move(ce.token, 1, True, lots=1)
+    check("partial Away sends 1 lot each leg", r["ok"] and all(int(o["quantity"]) == 100 for o in k.sent[-2:]), k.sent[-2:])
+    check("Away legs: buy back 9300, sell 9350", {(o["trading_symbol"], o["transaction_type"]) for o in k.sent[-2:]}
+          == {(ce.symbol, "B"), (ch[9350.0]["CE"].symbol, "S")}, k.sent[-2:])
+    for o in b.orders[-2:]:
+        k.fill(o["broker_id"], o["qty"], 100.0)
+    b.sync_positions()
+    m.pause.clear()
+    r = b.move(ch[9350.0]["CE"].token, 1, False, lots=1)
+    check("partial Move close: 9350 CE back to 9300 CE, 1 lot", r["ok"] and {(o["trading_symbol"], o["transaction_type"], int(o["quantity"]))
+          for o in k.sent[-2:]} == {(ch[9350.0]["CE"].symbol, "B", 100), (ce.symbol, "S", 100)}, k.sent[-2:])
+    check("move SL 0 = same as every", SL.clean({"trail_move": 0})["trail_move"] == 0.0)
+    spath.unlink(missing_ok=True)
     path.unlink(missing_ok=True)
 
 
