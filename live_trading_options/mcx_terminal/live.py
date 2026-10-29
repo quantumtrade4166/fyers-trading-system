@@ -493,11 +493,13 @@ class LiveBook(PaperBook):
         oid = str(_dig(r, *_OID_KEYS) or "")
         if not oid:
             return
+        # stop-loss orders live in sl.py: tell it OUTSIDE this book's lock (29-Oct freeze: calling it
+        # inside the lock deadlocked against the stop-loss loop, which takes its own lock, then this one)
+        if self.on_push_other and str(_dig(r, "tag", "ig") or "").startswith("mcxs"):
+            self.on_push_other(r)
         changed = False
         with self.lock:
             o = next((x for x in self.orders if x.get("broker_id") == oid), None)
-            if o is None and self.on_push_other:
-                self.on_push_other(r)
             if o is None:
                 if any(x["status"] == "SENDING" and not x.get("broker_id") for x in self.orders):
                     self._early[oid] = r                # our place_order reply hasn't landed yet
