@@ -247,6 +247,10 @@ def test_risk_guard_stop_trail_target():
     ltp[ce.token] = 511.0                                      # -1100 <= -1000 -> fire
     q[ce.token] = {"ltp": 511.0, "bid": 510.9, "ask": 511.0, "bq": 10**6, "aq": 10**6, "depth": None}
     reason = g.check()
+    check("first reading over the stop only starts the confirm", reason is None and b.pos[ce.token]["net"] == -100,
+          reason)
+    g._breach = (g._breach[0], g._breach[1] - 2.0)          # CONFIRM_S later, still over the line
+    reason = g.check()
     check("stop fired", reason is not None and "stop-loss" in reason, reason)
     check("flat after fire", b.pos[ce.token]["net"] == 0, b.pos[ce.token])
     check("disarmed after fire", not g.state()["armed"] and g.state()["fired"])
@@ -254,6 +258,44 @@ def test_risk_guard_stop_trail_target():
     check("set needs stop or target", not r["ok"])
     r = g.set(stop=10**9)
     check("stop above current P&L refused", not r["ok"], r)
+    rpath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
+def test_risk_guard_ignores_half_loaded_prices():
+    """30-Oct VPS: right after a restart only the LOSING legs had prices; legs with no price were left
+    out of the P&L, so it read -18,150 (real +5,950) and the -15,000 guard squared off all 5 positions."""
+    import tempfile
+    from live_trading_options.mcx_terminal.risk import RiskGuard
+    q = {}
+    u, b, path = _book("riskhalf", q)
+    ch = u.products["CRUDEOIL"].chains["2026-11-17"]
+    win, lose = ch[9300.0]["CE"], ch[9300.0]["PE"]
+    for t in (win, lose):
+        q[t.token] = {"ltp": 500.0, "bid": 500.0, "ask": 500.1, "bq": 10**6, "aq": 10**6, "depth": None}
+        b.place(t.token, "S", 100, "MKT")                      # short both at 500
+    ltp = {win.token: 300.0, lose.token: 600.0}               # real P&L: +200*100 -100*100 = +10,000
+    rpath = Path(tempfile.gettempdir()) / "mcx_risk_half_test.json"
+    rpath.unlink(missing_ok=True)
+    g = RiskGuard(b, lambda t: ltp.get(t), path=rpath)
+    check("guard set on full prices", g.set(stop=-5000)["ok"])
+    ltp.pop(win.token)                                        # restart: the winning leg has no price yet
+    for _ in range(3):
+        g._breach = None if g._breach is None else (g._breach[0], g._breach[1] - 5)
+        g.check()
+    check("no fire on a half-loaded P&L", g.state()["armed"] and b.pos[win.token]["net"] == -100
+          and b.pos[lose.token]["net"] == -100, g.state())
+    check("half-loaded P&L not shown as the guard's P&L", g.state()["pnl"] != -10000.0, g.state())
+    g.clear()
+    r = g.set(stop=-5000)
+    check("cannot set the guard while a price is missing", not r["ok"] and "no price" in r["msg"], r)
+    ltp[win.token] = 300.0
+    check("prices back: set works", g.set(stop=-5000)["ok"])
+    # a single bad reading (one tick) over the stop does not fire; a held one does
+    ltp[lose.token] = 800.0                                   # -30000 +20000 = -10,000 <= -5,000
+    check("one reading over the stop: not yet", g.check() is None and g.state()["armed"])
+    ltp[lose.token] = 600.0
+    check("back above: confirm reset", g.check() is None and g._breach is None)
     rpath.unlink(missing_ok=True)
     path.unlink(missing_ok=True)
 

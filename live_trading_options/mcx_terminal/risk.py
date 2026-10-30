@@ -14,6 +14,12 @@ screen, laptop or Wi-Fi is gone.
 
 A trigger fires EXIT ALL once (cancel open orders + close every position), records why, and
 disarms. Pressing Set again re-arms. State is saved to data/risk_YYYY-MM-DD.json.
+
+SAFETY (30-Oct: a restart fired the stop on a FALSE -18,150 while the real P&L was +5,950 - the
+losing legs had prices, the winning legs had none yet, and a leg with no price simply did not count):
+  * no decision unless EVERY open position has a price and (live) Kotak positions are fresh
+  * a stop / target must hold CONFIRM_S on repeated readings before EXIT ALL fires
+  * Set is refused while prices are incomplete (the trail base would be wrong)
 """
 import datetime as dt
 import json
@@ -25,17 +31,26 @@ from live_trading_options.mcx_terminal import config as C
 
 log = logging.getLogger("mcx.risk")
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
+CONFIRM_S = 1.0          # a stop / target must still be crossed this long after it was first seen
 
 
-def session_pnl(positions, ltp_of) -> float:
-    total = 0.0
+def pnl_detail(positions, ltp_of):
+    """-> (Session P&L, [symbols of open positions with NO price]). With anything missing the total
+    is NOT the real P&L (that leg's open MTM is left out) and must not be acted on."""
+    total, missing = 0.0, []
     for p in positions:
         total += p["realized"]
         if p["net"]:
             ltp = ltp_of(p["token"])
-            if ltp is not None:
+            if ltp is None or ltp <= 0:
+                missing.append(p.get("symbol") or str(p["token"]))
+            else:
                 total += (ltp - p["avg"]) * p["net"] * p["mult"]
-    return total
+    return total, missing
+
+
+def session_pnl(positions, ltp_of) -> float:
+    return pnl_detail(positions, ltp_of)[0]
 
 
 class RiskGuard:
@@ -47,7 +62,18 @@ class RiskGuard:
         self.lock = threading.Lock()
         self.s = {"armed": False, "stop": None, "target": None, "trail": None, "base": None,
                   "best": None, "set_at": None, "fired": None, "pnl": 0.0}
+        self._breach = None       # (kind, first seen) of a crossed stop / target waiting for CONFIRM_S
+        self._waiting_logged = 0.0
         self._load()
+
+    def _ready(self, positions):
+        """-> (pnl, why-not) : why-not is None when the P&L can be trusted."""
+        pnl, missing = pnl_detail(positions, self.ltp_of)
+        if hasattr(self.book, "positions_fresh") and not self.book.positions_fresh():
+            return pnl, "Kotak positions not read yet"
+        if missing:
+            return pnl, "no price yet for " + ", ".join(missing[:4]) + (" ..." if len(missing) > 4 else "")
+        return pnl, None
 
     def _load(self):
         try:
@@ -66,7 +92,9 @@ class RiskGuard:
             return dict(self.s)
 
     def set(self, stop=None, target=None, trail=None) -> dict:
-        pnl = session_pnl(self.book.positions(), self.ltp_of)
+        pnl, why = self._ready(self.book.positions())
+        if why:
+            return {"ok": False, "msg": f"MTM guard not set: {why} - try again in a moment"}
         stop = float(stop) if stop not in (None, "") else None
         target = float(target) if target not in (None, "") else None
         trail = float(trail) if trail not in (None, "") else None
@@ -99,13 +127,21 @@ class RiskGuard:
     def check(self) -> str | None:
         """Called on ticks of position tokens. -> reason if it fired."""
         positions = self.book.positions()
-        pnl = session_pnl(positions, self.ltp_of)
+        pnl, why = self._ready(positions)
         reason = None
         changed = False
         with self.lock:
             s = self.s
+            if why:
+                # half-loaded prices (a restart, a feed reconnect): the total is not the real P&L
+                self._breach = None
+                if s["armed"] and time.time() - self._waiting_logged > 30:
+                    self._waiting_logged = time.time()
+                    log.info("risk guard waiting: %s (P&L so far %.2f not acted on)", why, pnl)
+                return None
             s["pnl"] = pnl
             if not s["armed"]:
+                self._breach = None
                 return None
             if s["best"] is None or pnl > s["best"]:
                 s["best"] = pnl
@@ -116,10 +152,23 @@ class RiskGuard:
                     s["base"] += steps * s["trail"]
                     changed = True
                     log.info("risk trail: stop raised to %.2f (P&L %.2f)", s["stop"], pnl)
+            crossed = None
             if s["stop"] is not None and pnl <= s["stop"]:
-                reason = f"MTM stop-loss: Session P&L {pnl:,.2f} fell to the stop {s['stop']:,.2f}"
+                crossed = "stop"
             elif s["target"] is not None and pnl >= s["target"]:
-                reason = f"MTM target: Session P&L {pnl:,.2f} reached the target {s['target']:,.2f}"
+                crossed = "target"
+            now = time.time()
+            if crossed is None:
+                self._breach = None
+            elif self._breach is None or self._breach[0] != crossed:
+                self._breach = (crossed, now)                  # first reading over the line: confirm it
+                log.warning("risk %s crossed (P&L %.2f) - confirming for %.1fs", crossed, pnl, CONFIRM_S)
+            elif now - self._breach[1] >= CONFIRM_S:
+                if crossed == "stop":
+                    reason = f"MTM stop-loss: Session P&L {pnl:,.2f} fell to the stop {s['stop']:,.2f}"
+                else:
+                    reason = f"MTM target: Session P&L {pnl:,.2f} reached the target {s['target']:,.2f}"
+                self._breach = None
             if reason:
                 s["armed"] = False
                 s["fired"] = {"at": dt.datetime.now(IST).strftime("%H:%M:%S"), "reason": reason}

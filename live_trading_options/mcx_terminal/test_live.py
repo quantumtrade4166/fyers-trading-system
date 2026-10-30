@@ -53,6 +53,9 @@ class FakeKotak:
         self.slow = {}           # symbol -> seconds place_order hangs
         self.fill_on_modify = False
         self.gen_den = {}        # symbol -> genDen (Kotak divides GOLDM amounts by 10)
+        self.deaf_cancels = 0    # this many cancels answer Ok but leave the order working (Kotak, 30-Oct)
+        self.band = {}           # symbol -> high: SL orders with a limit above it are RMS-rejected (Kotak, 30-Oct)
+        self.sync_refuse_sl = 0  # this many SL placements refused at once ("error from core")
 
     def place_order(self, **kw):
         if kw["trading_symbol"] in self.slow:
@@ -64,9 +67,19 @@ class FakeKotak:
         oid = f"26102700{self.n}"
         row = {"nOrdNo": oid, "trdSym": kw["trading_symbol"], "trnsTp": kw["transaction_type"],
                "qty": int(kw["quantity"]), "fldQty": 0, "avgPrc": "0.00", "prc": kw["price"], "ordSt": "open",
-               "prod": kw["product"], "tag": kw["tag"], "exSeg": kw["exchange_segment"]}
+               "prod": kw["product"], "tag": kw["tag"], "exSeg": kw["exchange_segment"],
+               "prcTp": kw.get("order_type", "L")}
+        if kw.get("order_type") == "SL" and self.sync_refuse_sl:
+            self.sync_refuse_sl -= 1
+            self.sent.pop()
+            return {"Error": "error from core"}
         if kw.get("order_type") == "SL":
             row.update(ordSt="trigger pending", trgPrc=kw.get("trigger_price"))
+            hi = self.band.get(kw["trading_symbol"])
+            if hi is not None and float(kw["price"]) > hi:
+                row.update(ordSt="rejected", rejRsn=f"RMS:Rule: Check price range for options based on ltp range "
+                                                    f"exceeds ,Current:{float(kw['price']):.2f},  Low Price Range:0.00 "
+                                                    f"High Price Range:{hi:.2f}  for entity account-17IC2")
         elif self.instant == "complete":
             row.update(fldQty=row["qty"], avgPrc=kw["price"], ordSt="complete")
         elif self.instant == "rejected":
@@ -75,8 +88,10 @@ class FakeKotak:
         return {"nOrdNo": oid, "stat": "Ok", "stCode": 200}
 
     def order_report(self):
+        # like the real Kotak (checked 30-Oct): the order book does NOT echo the tag we sent
         rows = list(self.rows.values()) + list(self.manual.values())
-        return {"data": [dict(r) for r in rows]} if rows else {"stat": "Not_Ok", "errMsg": "No Data"}
+        return ({"data": [{k: v for k, v in r.items() if k != "tag"} for r in rows]} if rows
+                else {"stat": "Not_Ok", "errMsg": "No Data"})
 
     def positions(self):
         if self.pos_fail:
@@ -114,12 +129,21 @@ class FakeKotak:
 
     def cancel_order(self, order_id, **kw):
         self.cancels.append(order_id)
+        if self.deaf_cancels:
+            self.deaf_cancels -= 1
+            return {"result": order_id, "stat": "Ok", "stCode": 200}
         (self.rows.get(order_id) or self.manual.get(order_id))["ordSt"] = "cancelled"
         return {"result": order_id, "stat": "Ok", "stCode": 200}
 
     def modify_order(self, **kw):
         self.mods.append(kw)
         r = self.rows[kw["order_id"]]
+        hi = self.band.get(r["trdSym"])
+        if kw.get("order_type") == "SL" and hi is not None and float(kw["price"]) > hi:
+            # like Kotak 30-Oct: the reply says Ok, RMS refuses, the order keeps its OLD prices
+            r["rmk"] = (f"RMS:Rule: Check price range for options based on ltp range exceeds ,Current:"
+                        f"{float(kw['price']):.2f},  Low Price Range:0.00 High Price Range:{hi:.2f}  for entity x")
+            return {"nOrdNo": kw["order_id"], "stat": "Ok", "stCode": 200}
         r["prc"] = kw["price"]
         r["qty"] = int(kw.get("quantity") or r["qty"])
         if kw.get("order_type") == "SL":
@@ -318,6 +342,36 @@ def test_exit_all_refuses_when_kotak_unreadable():
     path.unlink(missing_ok=True)
 
 
+def test_one_slow_positions_read_is_retried():
+    """30-Oct VPS: Kotak's positions call timed out every few minutes and the NEXT read worked ->
+    'positions NOT readable' popped up and EXIT ALL would have been refused. One miss is retried now."""
+    q = {}
+    u, b, k, flag, path = _live("posretry", q)
+    a = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[a.token] = _q(200.0)
+    k.carry[(a.symbol, "NRML")] = [0, 100, 0.0, 20000.0]
+    b.sync_positions()
+    real = k.positions
+    misses = {"n": 1}
+
+    def flaky():
+        if misses["n"]:
+            misses["n"] -= 1
+            return {"Error": "ReadTimeout"}
+        return real()
+    k.positions = flaky
+    events = []
+    b.on_change = lambda: events.append(dict(b.pos_sync))
+    b.sync_positions()
+    check("one miss: still readable, no warning", b.positions_fresh() and not any(not e.get("ok", True) for e in events),
+          (b.pos_sync, events))
+    misses["n"] = 1
+    r = b.exit_all()
+    check("EXIT ALL goes ahead after one miss", "cannot read Kotak" not in r["msg"] and k.sent
+          and k.sent[-1]["transaction_type"] == "B", r)
+    path.unlink(missing_ok=True)
+
+
 def test_not_armed_blocks_new_risk_allows_exit():
     q = {}
     u, b, k, flag, path = _live("arm", q)
@@ -466,6 +520,48 @@ def test_late_fill_notice_and_timeout_kept_sending():
     path.unlink(missing_ok=True)
 
 
+class _SdkTimeout(Exception):
+    """Like the Kotak SDK's ApiException on a timeout: __str__ PRINTS the message and returns None."""
+    status, reason = 0, "ReadTimeout"
+    body = "HTTPSConnectionPool(host='e22.kotaksecurities.com', port=443): Read timed out. (read timeout=8.0)"
+
+    def __str__(self):
+        print("ERROR msg (0)\nReason: ReadTimeout")
+        return None
+
+
+def test_sdk_exception_in_reply_never_crashes():
+    """29/30-Oct VPS: {'Error': ApiException} replies crashed an order op mid-send and broke position reads
+    with '__str__ returned non-string'."""
+    check("txt() survives a None-returning __str__", "ReadTimeout" in L.txt(_SdkTimeout()), L.txt(_SdkTimeout()))
+    check("txt() of ordinary values unchanged", L.txt("abc") == "abc" and L.txt(12) == "12")
+    q = {}
+    u, b, k, flag, path = _live("sdkexc", q)
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[ce.token] = _q(500.0)
+    real = k.place_order
+
+    def timed_out(**kw):
+        real(**kw)                                  # it DID reach Kotak; only the reply was lost
+        return {"Error": _SdkTimeout()}
+    k.place_order = timed_out
+    try:
+        r = b.place(ce.token, "S", 100, "MKT")
+        crashed = None
+    except Exception as e:
+        r, crashed = {}, repr(e)
+    o = b.orders[-1]
+    check("order op does not crash", crashed is None, crashed)
+    check("treated as a timeout: SENDING, not REJECTED", o["status"] == "SENDING" and "checking" in o["reason"], o)
+    b.poll()
+    check("then found at Kotak by its tag", o["broker_id"] and o["status"] in ("OPEN", "COMPLETE"), o)
+    k.place_order = real
+    k.positions = lambda: {"Error": _SdkTimeout()}
+    b.sync_positions()
+    check("positions failure is readable", "ReadTimeout" in b.pos_sync.get("msg", ""), b.pos_sync)
+    path.unlink(missing_ok=True)
+
+
 def test_order_push():
     from live_trading_options.mcx_terminal import orderfeed as OF
     q = {}
@@ -565,6 +661,9 @@ def test_auto_stop_loss():
     for rr in m.pause:
         m.pause[rr] = 0
     step()
+    check("no re-arm before the terminal sees the exit filled", ce.token not in m.recs, m.recs.get(ce.token))
+    b.poll()
+    step()
     check("re-armed for the rest, trail kept", m.recs[ce.token]["qty"] == 100 and m.recs[ce.token]["trigger"] == 130.0,
           m.recs.get(ce.token))
     # Kotak fills the SL -> HIT, flat, no re-arm
@@ -592,15 +691,21 @@ def test_auto_stop_loss():
           m.recs.get(ce.token))
     step(120.0)
     check("placed once back inside", m.recs[ce.token]["state"] == "pending")
-    # a stray SL order at Kotak (no record) is cancelled
+    # a stray SL order at Kotak that WE placed (no record any more) is cancelled; Kotak shows no tag
     k.n += 1
     k.rows["STRAY1"] = {"nOrdNo": "STRAY1", "trdSym": ce.symbol, "trnsTp": "B", "qty": 100, "fldQty": 0, "avgPrc": "0",
-                        "prc": "200", "ordSt": "trigger pending", "prod": "NRML", "tag": "mcxs999", "exSeg": "mcx_fo"}
+                        "prc": "200", "ordSt": "trigger pending", "prod": "NRML", "exSeg": "mcx_fo", "prcTp": "SL"}
+    k.rows["HANDSL"] = {"nOrdNo": "HANDSL", "trdSym": ce.symbol, "trnsTp": "B", "qty": 100, "fldQty": 0, "avgPrc": "0",
+                        "prc": "210", "ordSt": "trigger pending", "prod": "NRML", "exSeg": "mcx_fo", "prcTp": "SL"}
+    m.placed["STRAY1"] = ce.symbol
     step()
-    check("stray SL order cancelled", "STRAY1" in k.cancels)
+    check("stray SL order (ours, by id) cancelled", "STRAY1" in k.cancels)
+    check("owner's own SL from the Kotak app left alone", "HANDSL" not in k.cancels, k.cancels)
+    k.rows.pop("HANDSL")
     # Kotak refuses SL orders -> the terminal watches and exits itself
     b.exit_position(ce.token, 1.0)
     k.fill(b.orders[-1]["broker_id"], 100, 120.0)
+    b.poll()
     step()
     k.refuse = "SL order not allowed"
     k.hand_trade(ce.symbol, "S", 100, 100.0)
@@ -621,6 +726,247 @@ def test_auto_stop_loss():
     except ValueError:
         check("negative SL refused", True)
     spath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
+def test_sl_cancel_verified_and_no_rearm_during_exit():
+    """30-Oct VPS: Kotak answered Ok to an SL cancel and left it working on a flat contract (5 SL orders,
+    4 positions), and a stop was re-armed while the exit was still working at Kotak."""
+    from live_trading_options.mcx_terminal import sl as SL
+    q = {}
+    u, b, k, flag, path = _live("slverify", q)
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[ce.token] = _q(100.0)
+    cfg = {"auto_sl": {"arm_on": "sell", "sl_auto": True, "sl_val": 50, "sl_unit": "%", "qty": "full",
+                       "trail_auto": False, "trail_on": False, "trail_every": 10}}
+    notes = []
+    spath = path.with_name("autosl_verify_test.json")
+    spath.unlink(missing_ok=True)
+    m = SL.AutoSL(b, lambda t: (q.get(t) or {}).get("ltp"), lambda: cfg, live=True, path=spath, notify=notes.append)
+    b.before_reduce, b.before_flatten, b.on_push_other = m.before_reduce, m.before_flatten, m.on_push
+
+    def step():
+        b.sync_positions()
+        m._rows_at = 0.0
+        m.step()
+
+    def working_sl():
+        return [o for o, r in k.rows.items() if r.get("prcTp") == "SL" and r["ordSt"] == "trigger pending"]
+
+    b.place(ce.token, "S", 100, "MKT")
+    k.fill(b.orders[-1]["broker_id"], 100, 100.0)
+    b.poll()
+    step()
+    sl1 = (m.recs.get(ce.token) or {}).get("oid")
+    check("SL placed for the short", sl1 and working_sl() == [sl1], (working_sl(), m.recs))
+    # exit sent, Kotak has NOT filled it yet; the 4 s pause runs out meanwhile
+    k.deaf_cancels = 1                              # Kotak says Ok to the cancel ... and ignores it
+    b.place(ce.token, "B", 100, "MKT")
+    ex = b.orders[-1]
+    m.pause.clear()
+    step()
+    check("no new SL while the exit is still working", ce.token not in m.recs, m.recs.get(ce.token))
+    check("ignored cancel is being watched", sl1 in m.cancelling, m.cancelling)
+    if sl1 in m.cancelling:
+        m.cancelling[sl1]["t"] = 0                  # RECANCEL_S passed
+    step()                                          # still working -> cancel sent again
+    step()                                          # next read of Kotak's book: confirmed cancelled
+    check("cancel re-sent and confirmed", k.rows[sl1]["ordSt"] == "cancelled" and k.cancels.count(sl1) == 2
+          and sl1 not in m.cancelling, (k.cancels, m.cancelling))
+    k.fill(ex["broker_id"], 100, 99.0)
+    b.poll()
+    step()
+    check("flat -> no SL order left at Kotak", working_sl() == [] and not m.recs, (working_sl(), m.recs))
+    # Kotak keeps ignoring: the owner is told after 3 tries
+    b.place(ce.token, "S", 100, "MKT")
+    k.fill(b.orders[-1]["broker_id"], 100, 100.0)
+    b.poll()
+    m.pause.clear()
+    step()
+    sl2 = (m.recs.get(ce.token) or {}).get("oid")
+    k.deaf_cancels = 99
+    b.place(ce.token, "B", 100, "MKT")
+    k.fill(b.orders[-1]["broker_id"], 100, 99.0)
+    b.poll()
+    for _ in range(3):
+        if sl2 in m.cancelling:
+            m.cancelling[sl2]["t"] = 0
+        step()
+    check("owner alerted when Kotak will not cancel",
+          any("NOT cancelling" in n["msg"] and str(sl2) in n["msg"] for n in notes), notes[-2:])
+    check("still watched, not forgotten", sl2 in m.cancelling, m.cancelling)
+    k.deaf_cancels = 0
+    # a restart keeps the unconfirmed cancel
+    m2 = SL.AutoSL(b, lambda t: (q.get(t) or {}).get("ltp"), lambda: cfg, live=True, path=spath, notify=notes.append)
+    check("unconfirmed cancel survives a restart", sl2 in m2.cancelling and sl2 in m2.placed, m2.cancelling)
+    spath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
+def test_sl_limit_kept_inside_kotak_price_band():
+    """30-Oct VPS: APPLY gave GOLD 141500CE trigger 900 / limit 945; Kotak's band was 0-931 -> rejected,
+    the stop fell back to the terminal watching. Now: limit pulled to 931 and sent again."""
+    from live_trading_options.mcx_terminal import sl as SL
+    q = {}
+    u, b, k, flag, path = _live("slband", q)
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[ce.token] = _q(600.0)
+    cfg = {"auto_sl": {"arm_on": "sell", "sl_auto": True, "sl_val": 300, "sl_unit": "pts", "qty": "full",
+                       "trail_auto": False, "trail_on": False, "trail_every": 10}}
+    notes = []
+    spath = path.with_name("autosl_band_test.json")
+    spath.unlink(missing_ok=True)
+    m = SL.AutoSL(b, lambda t: (q.get(t) or {}).get("ltp"), lambda: cfg, live=True, path=spath, notify=notes.append)
+    b.before_reduce, b.before_flatten, b.on_push_other = m.before_reduce, m.before_flatten, m.on_push
+
+    def step():
+        b.sync_positions()
+        m._rows_at = 0.0
+        m.step()
+
+    k.band[ce.symbol] = 931.0
+    b.place(ce.token, "S", 100, "MKT")
+    k.fill(b.orders[-1]["broker_id"], 100, 600.0)
+    b.poll()
+    step()                                         # placed 900 / 945 -> Kotak rejects it
+    step()                                         # reject seen -> band learned -> sent again
+    r = m.recs.get(ce.token) or {}
+    work = [x for x in k.rows.values() if x.get("prcTp") == "SL" and x["ordSt"] == "trigger pending"]
+    check("re-sent inside the band, at Kotak", r.get("state") == "pending" and r.get("limit") == 931.0
+          and len(work) == 1 and float(work[0]["prc"]) == 931.0 and float(work[0]["trgPrc"]) == 900.0, (r, work))
+    check("no 'watching' pop-up for a fixable band reject", not any("watching" in n["msg"] for n in notes), notes)
+    check("band remembered for later limits", m._limit(ce, "B", 900.0) == 931.0)
+    # trigger itself above the band -> cannot fit: the terminal watches (said once)
+    m.band[ce.token] = (0.0, 800.0, time.time())
+    check("trigger outside band -> limit unchanged", m._limit(ce, "B", 900.0) == 945.0)
+    spath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
+def test_watched_stop_offered_to_kotak_again():
+    """Kotak refused an SL once ("error from core"): the terminal watches, and every minute tries to
+    put it back AT Kotak (one pop-up, not one per retry)."""
+    from live_trading_options.mcx_terminal import sl as SL
+    q = {}
+    u, b, k, flag, path = _live("slretry", q)
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[ce.token] = _q(100.0)
+    cfg = {"auto_sl": {"arm_on": "sell", "sl_auto": True, "sl_val": 50, "sl_unit": "%", "qty": "full",
+                       "trail_auto": False, "trail_on": False, "trail_every": 10}}
+    notes = []
+    spath = path.with_name("autosl_retry_test.json")
+    spath.unlink(missing_ok=True)
+    m = SL.AutoSL(b, lambda t: (q.get(t) or {}).get("ltp"), lambda: cfg, live=True, path=spath, notify=notes.append)
+    b.before_reduce, b.before_flatten, b.on_push_other = m.before_reduce, m.before_flatten, m.on_push
+
+    def step():
+        b.sync_positions()
+        m._rows_at = 0.0
+        m.step()
+
+    k.sync_refuse_sl = 2
+    b.place(ce.token, "S", 100, "MKT")
+    k.fill(b.orders[-1]["broker_id"], 100, 100.0)
+    b.poll()
+    step()
+    r = m.recs[ce.token]
+    check("refused -> watching", r["state"] == "watching" and r.get("watch"), r)
+    n_pop = sum("refused" in n["msg"].lower() for n in notes)
+    r["t_retry"] = 0
+    step()                                          # retry 1: refused again, quietly
+    check("retry refused quietly", m.recs[ce.token]["state"] == "watching"
+          and sum("refused" in n["msg"].lower() for n in notes) == n_pop == 1, notes)
+    m.recs[ce.token]["t_retry"] = 0
+    step()                                          # retry 2: Kotak takes it
+    r = m.recs[ce.token]
+    check("back at Kotak", r["state"] == "pending" and r.get("oid") and not r.get("watch"), r)
+    check("owner told it is at Kotak again", any("at Kotak again" in n["msg"] for n in notes), notes[-1:])
+    spath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
+def test_sl_modify_refused_by_kotak_is_caught():
+    """30-Oct VPS: APPLY moved GOLD 142000CE to 645/677.5, Kotak said Ok, RMS refused (band max 635.46)
+    and the order stayed at 483 - the screen showed 645. Now the record is checked against Kotak."""
+    from live_trading_options.mcx_terminal import sl as SL
+    q = {}
+    u, b, k, flag, path = _live("slmodverify", q)
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[ce.token] = _q(300.0)
+    cfg = {"auto_sl": {"arm_on": "sell", "sl_auto": True, "sl_val": 40, "sl_unit": "%", "qty": "full",
+                       "trail_auto": False, "trail_on": False, "trail_every": 10}}
+    notes = []
+    spath = path.with_name("autosl_modverify_test.json")
+    spath.unlink(missing_ok=True)
+    m = SL.AutoSL(b, lambda t: (q.get(t) or {}).get("ltp"), lambda: cfg, live=True, path=spath, notify=notes.append)
+    b.before_reduce, b.before_flatten, b.on_push_other = m.before_reduce, m.before_flatten, m.on_push
+
+    def step():
+        b.sync_positions()
+        m._rows_at = 0.0
+        m.step()
+
+    def kotak_sl():
+        return next(x for x in k.rows.values() if x.get("prcTp") == "SL" and x["ordSt"] == "trigger pending")
+
+    b.place(ce.token, "S", 100, "MKT")
+    k.fill(b.orders[-1]["broker_id"], 100, 345.0)
+    b.poll()
+    step()
+    check("40% stop at Kotak", float(kotak_sl()["trgPrc"]) == 483.0, kotak_sl())
+    # the owner applies 300 pts -> 645 / 677.5, but Kotak's band now ends at 635.46
+    k.band[ce.symbol] = 635.46
+    cfg["auto_sl"].update(sl_val=300, sl_unit="pts")
+    res = m.apply()
+    check("APPLY answered (Kotak said Ok)", res["ok"] and m.recs[ce.token]["trigger"] == 645.0, res)
+    check("...but Kotak kept 483", float(kotak_sl()["trgPrc"]) == 483.0, kotak_sl())
+    m.recs[ce.token]["want"]["t"] -= 5                # Kotak has had its second
+    step()                                             # mismatch seen -> nearest stop inside the band
+    r, x = m.recs[ce.token], kotak_sl()
+    check("moved to the nearest stop Kotak allows", float(x["prc"]) <= 635.46 and float(x["trgPrc"]) > 483.0
+          and r["trigger"] == float(x["trgPrc"]) and r["limit"] == float(x["prc"]), (r, x))
+    check("owner told the stop is not 645", any("instead of 645" in n["msg"] for n in notes), notes[-1:])
+    step()
+    check("record and Kotak agree afterwards", m.recs[ce.token]["trigger"] == float(kotak_sl()["trgPrc"])
+          and "want" not in m.recs[ce.token], (m.recs[ce.token], kotak_sl()))
+    # asked further away again while the band is tighter than Kotak's current stop: Kotak's is kept
+    k.band[ce.symbol] = 560.0                          # best fit would be ~533: worse than the current one
+    held = float(kotak_sl()["trgPrc"])
+    cfg["auto_sl"].update(sl_val=400, sl_unit="pts")
+    m.apply()
+    m.recs[ce.token]["want"]["t"] -= 5
+    step()
+    check("never moved further from the asked stop", float(kotak_sl()["trgPrc"]) == held
+          and m.recs[ce.token]["trigger"] == held, (kotak_sl(), m.recs[ce.token]))
+    k.band.pop(ce.symbol)
+    # changed by hand in the Kotak app: the record follows Kotak
+    kotak_sl().update(trgPrc="500.00", prc="525.00")
+    step()
+    check("hand change in Kotak app adopted", m.recs[ce.token]["trigger"] == 500.0 and m.recs[ce.token]["limit"] == 525.0,
+          m.recs[ce.token])
+    spath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
+def test_lost_reply_matched_without_tag():
+    """Kotak's order book has no tag: a sent order whose reply was lost is matched by its fields."""
+    q = {}
+    u, b, k, flag, path = _live("notag", q)
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[ce.token] = _q(500.0)
+    k.hand_trade(ce.symbol, "S", 200, 480.0, status="open")     # someone's hand order: different qty
+    real = k.place_order
+
+    def lost(**kw):
+        real(**kw)
+        return {"Error": "HTTPSConnectionPool: Read timed out. (read timeout=8.0)"}
+    k.place_order = lost
+    b.place(ce.token, "S", 100, "MKT")
+    o = b.orders[-1]
+    b.poll()
+    check("lost order found without a tag",
+          o["broker_id"] and str(o["broker_id"]).startswith("26102700") and o["status"] == "OPEN", o)
+    check("hand order not taken for ours", not any(str(x.get("broker_id") or "").startswith("MANUAL") for x in b.orders))
     path.unlink(missing_ok=True)
 
 

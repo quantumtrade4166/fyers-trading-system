@@ -38,7 +38,7 @@ from live_trading_options.mcx_terminal import instruments as I
 from live_trading_options.mcx_terminal.feed import KotakFeed
 from live_trading_options.mcx_terminal.kotak_session import SessionHolder
 from live_trading_options.mcx_terminal.paper import PaperBook
-from live_trading_options.mcx_terminal.live import LiveBook
+from live_trading_options.mcx_terminal.live import LiveBook, txt as _txt
 from live_trading_options.mcx_terminal.orderfeed import OrderFeed
 from live_trading_options.mcx_terminal.sl import AutoSL
 from live_trading_options.mcx_terminal.sched import ExitTimers
@@ -777,7 +777,7 @@ async def run_op(c, loop, op, msg, user):
         res = await loop.run_in_executor(None, ORDER_OPS[op], msg)
     except Exception as e:
         log.exception("order op %s", op)
-        res = {"ok": False, "msg": f"{type(e).__name__}: {e}"}
+        res = {"ok": False, "msg": _txt(e)}
     if op not in QUIET_OPS:
         args = {k: v for k, v in msg.items() if k not in ("op", "req", "_user", "confirm")}
         audit.write("op", user, op=op, mode=ENGINE.mode, args=args, ok=res.get("ok"),

@@ -20,7 +20,11 @@ SAFETY (an SL order left resting after you exit would OPEN a new opposite positi
     if Kotak says the SL already FILLED, the exit is not sent
   * position flat / flipped at Kotak (hand exits in the Kotak app too) -> the SL order is cancelled
   * EXIT ALL cancels every working MCX order; re-arming pauses meanwhile
-  * a stray "mcxs" order at Kotak with no position behind it is cancelled
+  * a stray SL order WE placed (its Kotak id is remembered: Kotak does not echo our tag) with no
+    position behind it is cancelled
+  * a cancel is NOT trusted until Kotak's order book says cancelled (30-Oct: Kotak answered Ok to a
+    cancel and left the SL working on a flat contract) - re-sent, then the owner is alerted
+  * no re-arm while the terminal's own exit order in that contract is still working (30-Oct race)
   * Kotak refuses the SL order -> the terminal WATCHES the price and exits itself (said on screen)
   * the stop already crossed when the position is found -> NOT placed, shown red (never a surprise exit)
 PAPER: same rules, the terminal watches the price (no broker).
@@ -34,6 +38,7 @@ import time
 
 from live_trading_options.mcx_terminal import audit
 from live_trading_options.mcx_terminal import config as C
+from live_trading_options.mcx_terminal.live import txt, TERMINAL
 
 log = logging.getLogger("mcx.sl")
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
@@ -46,6 +51,10 @@ LOOP_S = 0.5
 STATUS_EVERY_S = 1.0       # live: read Kotak's order book this often while SL orders exist
 MODIFY_EVERY_S = 1.0       # at most one trail modify per position per second
 REARM_PAUSE_S = 4.0        # after an exit of a contract, wait this long before re-arming it
+RECANCEL_S = 2.0           # a cancelled SL still working at Kotak this long -> cancel sent again
+CANCEL_ALERT_TRIES = 3     # ... and after this many tries the owner is told to cancel it by hand
+BAND_KEEP_S = 900.0        # Kotak's option price band (learned from a reject) is used this long
+WATCH_RETRY_S = 60.0       # a stop the terminal watches (Kotak refused it) is offered to Kotak again
 
 DEFAULTS = {"arm_on": "sell", "sl_auto": False, "sl_val": 50.0, "sl_unit": "%", "qty": "full",
             "on_hit": "exit", "trail_auto": False, "trail_on": False, "trail_every": 10.0, "trail_move": 0.0}
@@ -86,6 +95,21 @@ def _rt(px, tick, up):
     return round(n * tick, 2)
 
 
+def price_band(reason):
+    """(low, high) from Kotak's RMS reject 'Check price range for options ... Low Price Range:0.00
+    High Price Range:931.00', else None (30-Oct: an SL limit 945 was rejected, the band was 0-931)."""
+    import re
+    t = str(reason or "")
+    lo = re.search(r"Low Price Range\s*:\s*([0-9.]+)", t)
+    hi = re.search(r"High Price Range\s*:\s*([0-9.]+)", t)
+    if not hi:
+        return None
+    try:
+        return float(lo.group(1)) if lo else 0.0, float(hi.group(1))
+    except ValueError:
+        return None
+
+
 def _f(x):
     try:
         return float(x)
@@ -114,6 +138,9 @@ class AutoSL:
         self._rows_at = 0.0
         self._kick = threading.Event()
         self._exits = []
+        self.placed = {}          # Kotak id -> symbol of every SL order placed today (strays are found by id)
+        self.cancelling = {}      # Kotak id -> {symbol, why, t, tries}: cancel sent, Kotak has not confirmed
+        self.band = {}            # token -> (low, high, at): Kotak's allowed price range for that option
         self._load()
 
     # ── state ──────────────────────────────────────────────────────────────
@@ -125,13 +152,18 @@ class AutoSL:
                 self.recs = {int(k): v for k, v in d.get("recs", {}).items() if v.get("oid")}
                 self.done = set(int(t) for t in d.get("done", []))
                 self.memo = {int(k): v for k, v in d.get("memo", {}).items()}
+                self.placed = dict(d.get("placed", {}))
+                self.cancelling = dict(d.get("cancelling", {}))
+                for r in self.recs.values():         # files from before 30-Oct have no "placed"
+                    self.placed.setdefault(str(r["oid"]), r.get("symbol", ""))
         except Exception:
             log.exception("auto SL state load failed")
 
     def _save(self):
         try:
             tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps({"recs": self.recs, "done": sorted(self.done), "memo": self.memo}, indent=1),
+            tmp.write_text(json.dumps({"recs": self.recs, "done": sorted(self.done), "memo": self.memo,
+                                       "placed": self.placed, "cancelling": self.cancelling}, indent=1),
                            encoding="utf-8")
             tmp.replace(self.path)
         except Exception:
@@ -163,7 +195,7 @@ class AutoSL:
                                     "trail": r.get("trail"), "dir": r["side"]}
             oid = r.get("oid")
             if self.live and oid and r.get("state") not in ("hit",):
-                err = self._cancel(oid)
+                err = self._retire(oid, r["symbol"], "exit sent")
                 if err:
                     st = self._status_of(oid)
                     if st and any(w in st for w in BROKER_FILLED):
@@ -254,7 +286,7 @@ class AutoSL:
             if r is None:
                 return {"ok": False, "msg": "no stop-loss on that position"}
             if self.live and r.get("oid"):
-                err = self._cancel(r["oid"])
+                err = self._retire(r["oid"], r["symbol"], "removed by owner")
                 if err:
                     return {"ok": False, "msg": f"Kotak refused to cancel the stop-loss: {err}"}
             self.recs.pop(token, None)
@@ -305,7 +337,7 @@ class AutoSL:
                     continue
                 if old:
                     if self.live and old.get("oid") and old.get("state") != "hit":
-                        self._cancel(old["oid"])
+                        self._retire(old["oid"], old["symbol"], "replaced by APPLY")
                     self.recs.pop(t, None)
                 self._arm(t, p, c, cfg)
                 r = self.recs.get(t) or {}
@@ -335,7 +367,54 @@ class AutoSL:
         try:
             return self._err(self._call("cancel_order", order_id=str(oid)))
         except Exception as e:
-            return str(e)
+            return txt(e)
+
+    def _retire(self, oid, symbol, why):
+        """Cancel one of our SL orders and KEEP checking until Kotak's order book says it is gone.
+        -> the cancel reply's error (None = Kotak said Ok, which is not trusted on its own)."""
+        oid = str(oid)
+        err = self._cancel(oid)
+        c = self.cancelling.setdefault(oid, {"symbol": symbol, "why": why, "tries": 0, "t0": time.time()})
+        c.update(t=time.time(), tries=c["tries"] + 1)
+        self._rows_at = 0.0                        # read Kotak's order book on the next loop
+        self._kick.set()
+        return err
+
+    def _check_cancels(self, by_oid, now) -> bool:
+        """Every cancel we sent stays listed until Kotak confirms it. Still working -> sent again; still
+        working after CANCEL_ALERT_TRIES -> the owner is told. FILLED -> loud alert (a new position)."""
+        changed = False
+        for oid, c in list(self.cancelling.items()):
+            x = by_oid.get(oid)
+            if x is None:
+                if now - c.get("t0", now) > 120:      # not in today's order book at all: nothing to cancel
+                    self.cancelling.pop(oid)
+                    changed = True
+                continue
+            st = str(x.get("ordSt", "")).lower()
+            if any(w in st for w in BROKER_FILLED):
+                self.cancelling.pop(oid)
+                log.error("SL %s %s FILLED after it was cancelled (%s)", oid, c["symbol"], c.get("why"))
+                audit.write("sl", what=f"SL {oid} {c['symbol']} FILLED although it was cancelled - check positions",
+                            result=st)
+                self.notify({"ok": False, "msg": f"CHECK POSITIONS: stop-loss {oid} {c['symbol']} FILLED at Kotak "
+                                                 f"after the terminal cancelled it ({c.get('why')})."})
+                changed = True
+            elif any(w in st for w in BROKER_DEAD):
+                self.cancelling.pop(oid)
+                changed = True
+            elif now - c.get("t", 0) >= RECANCEL_S:
+                err = self._cancel(oid)
+                c.update(t=now, tries=c["tries"] + 1)
+                log.warning("SL %s %s still '%s' at Kotak after cancel - cancel sent again (try %d): %s",
+                            oid, c["symbol"], st, c["tries"], err or "Ok")
+                audit.write("sl", what=f"SL {oid} {c['symbol']} still working after cancel - re-sent (try {c['tries']})",
+                            result=err or "sent")
+                if c["tries"] == CANCEL_ALERT_TRIES:
+                    self.notify({"ok": False, "msg": f"Kotak is NOT cancelling stop-loss {oid} {c['symbol']} "
+                                                     f"({c['tries']} tries). Cancel it in the Kotak app."})
+                changed = True
+        return changed
 
     def _status_of(self, oid):
         try:
@@ -359,7 +438,7 @@ class AutoSL:
                               order_type="SL", quantity=str(int(r["qty"])), validity="DAY", trading_symbol=c.symbol,
                               transaction_type=r["side"], trigger_price=self.book._px(r["trigger"]), tag=tag)
         except Exception as e:
-            return None, str(e)
+            return None, txt(e)
         err, oid = self._err(resp), extract_oid(resp)
         return (str(oid), None) if oid and not err else (None, err or "no order id")
 
@@ -371,9 +450,16 @@ class AutoSL:
                               instrument_token=str(c.token), exchange_segment=SEG, product=r["product"],
                               trading_symbol=c.symbol, transaction_type=r["side"],
                               trigger_price=self.book._px(trigger or r["trigger"]), filled_quantity="0")
-            return self._err(resp)
+            err = self._err(resp)
         except Exception as e:
-            return str(e)
+            return txt(e)
+        if not err:
+            # Kotak's Ok is not the end of it: its RMS can still refuse the change and keep the old prices
+            # (30-Oct: moved to 645 said Ok, the order stayed at 483). Checked against the order book.
+            w = r.get("want") or {}
+            r["want"] = {"trigger": float(trigger or r["trigger"]), "limit": float(limit or r["limit"]),
+                         "qty": int(qty or r["qty"]), "t": time.time(), "tries": w.get("tries", 0)}
+        return err
 
     # ── levels ─────────────────────────────────────────────────────────────
     def _levels(self, c, side, entry, cfg):
@@ -387,8 +473,25 @@ class AutoSL:
 
     def _limit(self, c, side, trig):
         if side == "B":
-            return max(_rt(trig * (1 + LIMIT_PCT / 100), c.tick, True), trig + 2 * c.tick)
-        return max(min(_rt(trig * (1 - LIMIT_PCT / 100), c.tick, False), trig - 2 * c.tick), c.tick)
+            lim = max(_rt(trig * (1 + LIMIT_PCT / 100), c.tick, True), trig + 2 * c.tick)
+        else:
+            lim = max(min(_rt(trig * (1 - LIMIT_PCT / 100), c.tick, False), trig - 2 * c.tick), c.tick)
+        return self._in_band(c, side, trig, lim)
+
+    def _in_band(self, c, side, trig, lim):
+        """Keep the limit inside Kotak's price band for the option (if known) without crossing the trigger:
+        a BUY stop's limit may come down to the band top, a SELL stop's go up to the band bottom."""
+        b = self.band.get(c.token)
+        if not b or time.time() - b[2] > BAND_KEEP_S:
+            return lim
+        low, high = b[0], b[1]
+        if side == "B" and lim > high:
+            top = _rt(high, c.tick, False)
+            return top if top >= trig else lim             # trigger itself outside: nothing fits
+        if side == "S" and lim < low:
+            bot = _rt(low, c.tick, True)
+            return bot if bot <= trig else lim
+        return lim
 
     def _step(self, r, cfg):
         e = cfg["trail_every"]
@@ -425,9 +528,16 @@ class AutoSL:
         now = time.time()
         with self.book.lock:
             pos = {t: dict(p) for t, p in self.book.pos.items() if p.get("net")}
+            # the terminal's own exit still working (sent, not filled yet): no new stop on that contract.
+            # Only MKT exits (fill in seconds) and any exit's first 30 s: a LMT exit left resting for long
+            # gets its stop back, else the position would sit unprotected while the limit waits.
+            busy = {o.get("token") for o in getattr(self.book, "orders", [])
+                    if o.get("live") and o.get("role") == "exit" and o.get("status") not in TERMINAL
+                    and (o.get("kind") == "MKT" or now - o.get("t0", now) < 30)}
         with self.lock:
             # 1. live: Kotak's view of our SL orders first (a fill there is a HIT, not a vanished position)
-            if self.live and (any(r.get("oid") for r in self.recs.values()) or now - self._rows_at > 15):
+            if self.live and (any(r.get("oid") for r in self.recs.values()) or self.cancelling
+                              or now - self._rows_at > 15):
                 if now - self._rows_at >= STATUS_EVERY_S:
                     changed |= self._broker_status(pos)
                     self._rows_at = now
@@ -442,7 +552,7 @@ class AutoSL:
                         changed = True
                         continue
                     if self.live and r.get("oid"):
-                        err = self._cancel(r["oid"])
+                        err = self._retire(r["oid"], r["symbol"], "position closed/flipped")
                         audit.write("sl", what=f"position {r['symbol']} closed/flipped -> SL {r['oid']} cancelled",
                                     result=err or "sent")
                     self.recs.pop(t)
@@ -458,7 +568,7 @@ class AutoSL:
                     c = self.u.by_token.get(t)
                     if t in self.recs or t in self.done or c is None or c.kind not in ("CE", "PE"):
                         continue
-                    if now < self.pause.get(t, 0):
+                    if now < self.pause.get(t, 0) or t in busy:
                         continue
                     if (cfg["arm_on"] == "sell" and p["net"] > 0) or (cfg["arm_on"] == "buy" and p["net"] < 0):
                         continue
@@ -527,16 +637,21 @@ class AutoSL:
         oid, err = self._place(r)
         verb = "BUY" if r["side"] == "B" else "SELL"
         if oid:
-            r.update(oid=oid, state="pending", msg="")
+            r.update(oid=oid, state="pending", msg="", watch=False)
+            r.pop("retrying", None)
+            self.placed[str(oid)] = r["symbol"]
             log.warning("SL placed: %s %s %d trigger %s limit %s -> %s", verb, r["symbol"], r["qty"], r["trigger"], r["limit"], oid)
             audit.write("sl", what=f"SL order at Kotak: {verb} {r['symbol']} qty {r['qty']} trigger {r['trigger']:g} "
                                    f"limit {r['limit']:g}", kotak_id=oid)
         else:
-            r.update(watch=True, state="watching", msg=f"Kotak refused the SL order ({err}) - terminal is watching instead")
+            retry = r.pop("retrying", False)
+            r.update(watch=True, state="watching", t_retry=time.time(),
+                     msg=f"Kotak refused the SL order ({err}) - terminal is watching instead")
             log.warning("SL order refused for %s: %s - watching", r["symbol"], err)
-            audit.write("sl", what=f"SL order REFUSED for {r['symbol']}: {err} - terminal watches the price")
-            self.notify({"ok": False, "msg": f"Kotak refused the stop-loss order for {r['symbol']}: {err}. "
-                                             f"The terminal is watching the price instead."})
+            if not retry:                              # the owner hears it once, not every retry
+                audit.write("sl", what=f"SL order REFUSED for {r['symbol']}: {err} - terminal watches the price")
+                self.notify({"ok": False, "msg": f"Kotak refused the stop-loss order for {r['symbol']}: {err}. "
+                                                 f"The terminal is watching the price instead."})
 
     def _maintain(self, t, r, p, c, cfg, now) -> bool:
         changed = False
@@ -548,6 +663,19 @@ class AutoSL:
             return False
         if r["state"] == "hit":
             return False
+        if (self.live and r["state"] == "watching" and r.get("watch")
+                and now - r.get("t_retry", r.get("t", now)) >= WATCH_RETRY_S
+                and not self._crossed(r["side"], ltp, r["trigger"])):
+            # Kotak refused it before (price band, a passing error): try to put it AT Kotak again
+            r.update(watch=False, retrying=True, band_tries=0, limit=self._limit(c, r["side"], r["trigger"]),
+                     t_retry=now)
+            self._send(r, c)
+            if r.get("oid"):
+                audit.write("sl", what=f"SL {r['symbol']} back at Kotak (trigger {r['trigger']:g} limit {r['limit']:g})",
+                            kotak_id=r["oid"])
+                self.notify({"ok": True, "msg": f"Stop-loss for {r['symbol']} is at Kotak again "
+                                                f"(trigger {r['trigger']:g}, limit {r['limit']:g})."})
+            return True
         # size follows the position (added lots / partial fills)
         want = self._want_qty(p, cfg, r)
         if want != r["qty"]:
@@ -590,6 +718,75 @@ class AutoSL:
             return True
         return changed
 
+    def _best_fit(self, c, side, trig):
+        """Nearest stop to `trig` Kotak's price band allows: the limit at the band edge, the trigger the
+        normal LIMIT_PCT inside it. -> (trigger, limit) or None (no band known / nothing fits)."""
+        b = self.band.get(c.token)
+        if not b:
+            return None
+        if side == "B":
+            lim = _rt(b[1], c.tick, False)
+            t2 = min(_rt(lim / (1 + LIMIT_PCT / 100), c.tick, False), trig)
+            return (t2, lim) if t2 > 0 and lim >= t2 + 2 * c.tick else None
+        lim = _rt(b[0], c.tick, True)
+        t2 = max(_rt(lim / (1 - LIMIT_PCT / 100), c.tick, True), trig)
+        return (t2, lim) if lim > 0 and lim <= t2 - 2 * c.tick else None
+
+    def _verify_levels(self, t, r, x) -> bool:
+        """Kotak's working SL order is the truth. If its trigger / limit / qty differ from our record
+        (a modify RMS refused, or a change in the Kotak app): pull a refused move inside Kotak's price
+        band and send it again, else take Kotak's prices into the record and tell the owner."""
+        kt, kl = _f(x.get("trgPrc")), _f(x.get("prc"))
+        kq = int(_f(x.get("qty")) or 0)
+        if kt is None or kl is None:
+            return False
+        if abs(kt - r["trigger"]) < 1e-6 and abs(kl - r["limit"]) < 1e-6 and (not kq or kq == r["qty"]):
+            r.pop("want", None)
+            return False
+        w = r.get("want")
+        now = time.time()
+        if w and now - w["t"] < 1.0:
+            return False                               # Kotak may still be applying the change
+        c = self.u.by_token[t]
+        band = price_band(x.get("rmk"))
+        if band:
+            self.band[t] = (band[0], band[1], now)
+        wanted = w["trigger"] if w else r["trigger"]
+        if w and band and w.get("tries", 0) < 2:
+            fit = self._limit(c, r["side"], w["trigger"])
+            lv = (w["trigger"], fit) if fit != w["limit"] else self._best_fit(c, r["side"], w["trigger"])
+            # only a stop CLOSER to what the owner asked than the one Kotak holds now is worth sending
+            closer = lv and (lv[0] > kt + 1e-6 if r["side"] == "B" else lv[0] < kt - 1e-6)
+            if closer:
+                tries = w.get("tries", 0) + 1
+                err = self._modify(r, trigger=lv[0], limit=lv[1], qty=w["qty"])
+                if r.get("want"):
+                    r["want"]["tries"] = tries
+                audit.write("sl", what=f"SL {r['oid']} {r['symbol']}: Kotak refused {w['trigger']:g}/{w['limit']:g} "
+                                       f"(price band {band[0]:g}-{band[1]:g}) -> sent {lv[0]:g}/{lv[1]:g}",
+                            result=err or "sent")
+                if not err:
+                    if r.get("init") == r["trigger"]:
+                        r["init"] = lv[0]
+                    r.update(trigger=lv[0], limit=lv[1])
+                    if abs(lv[0] - w["trigger"]) > 1e-6:
+                        r["msg"] = f"Kotak allows at most {band[1]:g} now: stop {lv[0]:g} instead of {w['trigger']:g}"
+                        self.notify({"ok": False, "msg": f"{r['symbol']}: Kotak's price range stops at {band[1]:g}, "
+                                                         f"so the stop-loss is {lv[0]:g} instead of {w['trigger']:g}."})
+                    return True
+        # nothing better possible: Kotak's prices ARE the stop
+        if r.get("init") == r["trigger"]:
+            r["init"] = kt
+        r.update(trigger=kt, limit=kl, qty=kq or r["qty"])
+        r.pop("want", None)
+        why = f": outside Kotak's price range (max {band[1]:g})" if band else ""
+        r["msg"] = f"Kotak kept the stop at {kt:g} (asked {wanted:g}{why})"
+        log.warning("SL %s %s: Kotak has trigger %s limit %s qty %s, terminal had %s - record follows Kotak%s",
+                    r["oid"], r["symbol"], kt, kl, kq, wanted, why)
+        audit.write("sl", what=f"SL {r['oid']} {r['symbol']}: Kotak kept trigger {kt:g} limit {kl:g} (asked {wanted:g}){why}")
+        self.notify({"ok": False, "msg": f"{r['symbol']}: stop-loss is {kt:g} at Kotak, not {wanted:g}{why}."})
+        return True
+
     def _hit(self, t, r, why):
         r.update(state="hit", msg=why)
         self.done.add(t)
@@ -609,10 +806,13 @@ class AutoSL:
             tag = str(x.get("tag") or x.get("ig") or "")
             st = str(x.get("ordSt", "")).lower()
             working = not any(w in st for w in BROKER_FILLED + BROKER_DEAD)
-            if tag.startswith(TAG_SL) and oid not in mine and working:
-                err = self._cancel(oid)             # an SL order with nothing of ours behind it: never leave it
-                log.warning("stray SL order %s (%s %s) cancelled: %s", oid, x.get("trdSym"), tag, err or "sent")
+            ours = tag.startswith(TAG_SL) or oid in self.placed      # Kotak does not echo tags: ids we placed
+            if ours and oid not in mine and oid not in self.cancelling and working:
+                err = self._retire(oid, str(x.get("trdSym")), "stray")  # nothing of ours behind it: never leave it
+                log.warning("stray SL order %s (%s) cancelled: %s", oid, x.get("trdSym"), err or "sent")
                 audit.write("sl", what=f"stray SL order {oid} {x.get('trdSym')} cancelled", result=err or "sent")
+                changed = True
+        changed |= self._check_cancels(by_oid, time.time())
         for oid, t in mine.items():
             r = self.recs[t]
             x = by_oid.get(oid)
@@ -631,9 +831,25 @@ class AutoSL:
                     changed = True
             elif "reject" in st:
                 c = self.u.by_token[t]
-                r.update(oid=None, watch=True, msg=f"Kotak rejected the SL order ({x.get('rejRsn') or st}) - terminal is watching")
+                why = x.get("rejRsn") or st
+                band = price_band(why)
+                if band:
+                    self.band[t] = (band[0], band[1], time.time())
+                fit = self._limit(c, r["side"], r["trigger"]) if band else r["limit"]
+                if band and fit != r["limit"] and r.get("band_tries", 0) < 2:
+                    # limit outside Kotak's price band: same trigger, limit pulled inside the band, sent again
+                    r["band_tries"] = r.get("band_tries", 0) + 1
+                    old_lim = r["limit"]
+                    r.update(oid=None, limit=fit, msg="")
+                    audit.write("sl", what=f"SL {oid} {r['symbol']} rejected (limit {old_lim:g} outside Kotak band "
+                                           f"{band[0]:g}-{band[1]:g}) -> sent again with limit {fit:g}")
+                    self._send(r, c)
+                    changed = True
+                    continue
+                r.update(oid=None, watch=True, t_retry=time.time(),
+                         msg=f"Kotak rejected the SL order ({why}) - terminal is watching")
                 self._send(r, c)
-                self.notify({"ok": False, "msg": f"Kotak rejected the stop-loss for {r['symbol']}: {x.get('rejRsn') or st}. "
+                self.notify({"ok": False, "msg": f"Kotak rejected the stop-loss for {r['symbol']}: {why}. "
                                                  f"The terminal is watching the price instead."})
                 changed = True
             elif "cancel" in st:
@@ -643,6 +859,8 @@ class AutoSL:
                 audit.write("sl", what=f"SL order {oid} {r['symbol']} cancelled at Kotak - not re-armed")
                 changed = True
             elif st in ("open", "trigger pending") or "open" in st:
+                if st == "trigger pending":
+                    changed |= self._verify_levels(t, r, x)
                 if st == "open":                       # triggered, limit not filled yet
                     r.setdefault("t_open", time.time())
                     if time.time() - r["t_open"] >= CHASE_S and not r.get("chased"):

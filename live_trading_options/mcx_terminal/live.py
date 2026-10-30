@@ -49,6 +49,7 @@ SLOW_POLL_S = 10.0                 # otherwise (finds orders a crash left behind
 VERDICT_WAIT_S = 0.8               # a MKT place() waits up to this for Kotak's fill (pop-up colour); later fills are pushed
 POS_POLL_S = 2.0                   # Kotak positions -> mirror
 POS_STALE_S = 15.0                 # older than this = positions UNKNOWN on the screen
+POS_RETRY_S = 0.3                  # a failed positions read is tried once more after this pause
 EXIT_PUSH_S = 2.5                  # EXIT ALL: an exit still working after this is pushed through the book
 EXIT_VERIFY_S = 8.0                # EXIT ALL: re-read Kotak this long, waiting to see flat
 TERMINAL = ("COMPLETE", "REJECTED", "CANCELLED", "PART-CANCELLED")
@@ -62,6 +63,36 @@ def _f(x):
         return float(x)
     except (TypeError, ValueError):
         return None
+
+
+def txt(x) -> str:
+    """str() that never raises. On a timeout the Kotak SDK puts its ApiException in the reply, and that
+    exception's __str__ PRINTS the message and returns None -> plain str() raises TypeError (29/30-Oct:
+    an order op crashed mid-send and position reads failed with '__str__ returned non-string')."""
+    if isinstance(x, BaseException):
+        parts = []
+        for a in ("status", "reason", "body", "message"):
+            try:
+                v = getattr(x, a, None)
+            except Exception:
+                v = None
+            if v not in (None, "", 0):
+                parts.append(v if isinstance(v, str) else repr(v))
+        try:
+            parts += [a if isinstance(a, str) else repr(a) for a in x.args if a not in (None, "")]
+        except Exception:
+            pass
+        return f"{type(x).__name__}: " + " | ".join(dict.fromkeys(parts)) if parts else type(x).__name__
+    try:
+        s = str(x)
+        if isinstance(s, str):
+            return s
+    except Exception:
+        pass
+    try:
+        return repr(x)
+    except Exception:
+        return type(x).__name__
 
 
 def _dig(d, *keys):
@@ -89,16 +120,16 @@ def extract_oid(resp):
 def resp_error(resp):
     """Readable reason if a Kotak response is a failure, else None."""
     if not isinstance(resp, dict):
-        return f"unexpected reply: {str(resp)[:160]}"
+        return f"unexpected reply: {txt(resp)[:160]}"
     for k in ("Error", "error", "Error Message"):
         if resp.get(k):
-            return str(resp[k])[:200]
+            return txt(resp[k])[:200]
     if extract_oid(resp):
         return None
     d = resp.get("data") if isinstance(resp.get("data"), dict) else resp
     stat = str(d.get("stat", "")).strip().lower()
     if d.get("errMsg") or (stat and stat not in ("ok", "success")):
-        return str(d.get("errMsg") or d.get("stat") or f"stCode={d.get('stCode')}")[:200]
+        return txt(d.get("errMsg") or d.get("stat") or f"stCode={d.get('stCode')}")[:200]
     return None
 
 
@@ -151,23 +182,30 @@ class LiveBook(PaperBook):
                 return d
             for k in ("Error", "error", "Error Message"):
                 if r.get(k):
-                    raise RuntimeError(str(r[k])[:200])
-            msg = str(r.get("errMsg") or r.get("message") or r.get("stat") or "")
+                    raise RuntimeError(txt(r[k])[:200])
+            msg = txt(r.get("errMsg") or r.get("message") or r.get("stat") or "")
             if "no data" in msg.lower():
                 return []                                   # Kotak's way of saying: no positions today
-            raise RuntimeError(f"unexpected positions reply: {str(r)[:160]}")
-        raise RuntimeError(f"unexpected positions reply: {str(r)[:160]}")
+            raise RuntimeError(f"unexpected positions reply: {txt(r)[:160]}")
+        raise RuntimeError(f"unexpected positions reply: {txt(r)[:160]}")
 
     def sync_positions(self, raise_errors: bool = False) -> bool:
         """Replace the book's positions with Kotak's MCX positions. -> changed?"""
         try:
-            rows = self._pos_rows()
+            try:
+                rows = self._pos_rows()
+            except Exception as e1:
+                # one slow Kotak answer is common (30-Oct: every few minutes, the next read 2 s later
+                # worked): try once more at once before calling positions unreadable / refusing EXIT ALL
+                log.info("positions read failed once (%s) - retrying", txt(e1)[:120])
+                time.sleep(POS_RETRY_S)
+                rows = self._pos_rows()
         except Exception as e:
             first = self.pos_sync.get("ok", True)
-            self.pos_sync = {**self.pos_sync, "ok": False, "msg": f"cannot read Kotak positions: {e}"}
+            self.pos_sync = {**self.pos_sync, "ok": False, "msg": f"cannot read Kotak positions: {txt(e)}"}
             if first:
-                log.warning("positions read failed: %s", e)
-                audit.write("broker", what="positions NOT readable", detail=str(e)[:200])
+                log.warning("positions read failed: %s", txt(e))
+                audit.write("broker", what="positions NOT readable", detail=txt(e)[:200])
                 self.on_change()
             if raise_errors:
                 raise
@@ -301,9 +339,9 @@ class LiveBook(PaperBook):
             r = getattr(self._client(), fn_name)(**kw)
         except Exception as e:
             r = {"Error": f"{type(e).__name__}: {e}"}
-        txt = str(r)[:300].lower() if not isinstance(r, list) else ""
-        if self._client_override is None and any(w in txt for w in ("2fa", "session", "unauthor", "invalid token", "401")):
-            log.warning("Kotak %s looked like an expired session (%s) - logging in again", fn_name, txt[:120])
+        low = txt(r)[:300].lower() if not isinstance(r, list) else ""
+        if self._client_override is None and any(w in low for w in ("2fa", "session", "unauthor", "invalid token", "401")):
+            log.warning("Kotak %s looked like an expired session (%s) - logging in again", fn_name, low[:120])
             try:
                 self.sessions.get(force=True)
                 r = getattr(self._client(), fn_name)(**kw)
@@ -428,7 +466,7 @@ class LiveBook(PaperBook):
             if isinstance(d, list):
                 return d
             if r.get("Error") or r.get("error"):
-                raise RuntimeError(str(r.get("Error") or r.get("error"))[:200])
+                raise RuntimeError(txt(r.get("Error") or r.get("error"))[:200])
             return []                                     # {'stat': 'Not_Ok', 'errMsg': 'No Data'} = no orders
         return r if isinstance(r, list) else []
 
@@ -449,6 +487,17 @@ class LiveBook(PaperBook):
                 if oid in known:
                     continue
                 tg = str(_dig(r, "tag", "orderTag", "ig") or "")
+                if not tg:
+                    # Kotak does NOT echo our tag in its order book (checked 30-Oct): a sent order whose
+                    # reply was lost is matched by exactly what we sent - symbol, side, qty, limit price
+                    lost = self._match_lost(r)
+                    if lost is not None:
+                        lost.update(broker_id=oid, status="OPEN", reason="Kotak id found in its order book")
+                        log.warning("lost reply: order %s %s %s matched to Kotak %s", lost["side"], lost["symbol"],
+                                    lost["qty"], oid)
+                        known.add(oid)
+                        changed = True
+                    continue
                 if not tg.startswith(TAG):
                     continue                               # not ours (manual trades on the same account)
                 lost = next((o for o in self.orders if o.get("tag") == tg and not o.get("broker_id")), None)
@@ -488,6 +537,21 @@ class LiveBook(PaperBook):
             self.on_change()
         return changed
 
+    def _match_lost(self, r):
+        """The oldest SENDING order with no Kotak id that matches row `r` field for field (stop-loss
+        orders are never ours here: sl.py owns those)."""
+        if str(r.get("prcTp", "")).upper().startswith("SL"):
+            return None
+        side = str(r.get("trnsTp", "")).upper()[:1]
+        qty = int(_f(r.get("qty")) or 0)
+        prc = _f(r.get("prc"))
+        for o in self.orders:
+            if (o["status"] == "SENDING" and not o.get("broker_id") and o.get("live")
+                    and o["symbol"] == str(r.get("trdSym", "")) and o["side"] == side and o["qty"] == qty
+                    and prc is not None and o.get("limit") is not None and abs(prc - float(o["limit"])) < 0.005):
+                return o
+        return None
+
     def on_push(self, r: dict):
         """An order update pushed by Kotak (orderfeed.py): apply it now, no waiting for the next poll."""
         oid = str(_dig(r, *_OID_KEYS) or "")
@@ -495,7 +559,8 @@ class LiveBook(PaperBook):
             return
         # stop-loss orders live in sl.py: tell it OUTSIDE this book's lock (29-Oct freeze: calling it
         # inside the lock deadlocked against the stop-loss loop, which takes its own lock, then this one)
-        if self.on_push_other and str(_dig(r, "tag", "ig") or "").startswith("mcxs"):
+        if self.on_push_other and (str(_dig(r, "tag", "ig") or "").startswith("mcxs")
+                                   or str(r.get("prcTp", "")).upper().startswith("SL")):
             self.on_push_other(r)
         changed = False
         with self.lock:
@@ -725,7 +790,7 @@ class LiveBook(PaperBook):
         try:
             self.sync_positions(raise_errors=True)
         except Exception as e:
-            audit.write("exit-all", what=f"EXIT {what} STOPPED: cannot read Kotak positions", detail=str(e)[:200])
+            audit.write("exit-all", what=f"EXIT {what} STOPPED: cannot read Kotak positions", detail=txt(e)[:200])
             return {"ok": False, "msg": f"EXIT {what} NOT SENT - cannot read Kotak positions ({e}). Square off in Kotak."}
         toks = None if name is None else {t for t, c in self.u.by_token.items() if c.name == name}
         if self.before_flatten:

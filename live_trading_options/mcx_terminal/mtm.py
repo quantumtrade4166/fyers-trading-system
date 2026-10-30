@@ -40,6 +40,9 @@ class MtmHistory:
         per: dict = {}
         ce = pe = 0.0
         for p in positions:
+            if p["net"] and not ltp_of(p["token"]):
+                return                               # a held contract has no price yet: no false dip on the chart
+        for p in positions:
             v = p["realized"]
             if p["net"]:
                 l = ltp_of(p["token"])
