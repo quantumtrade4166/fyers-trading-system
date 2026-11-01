@@ -18,6 +18,8 @@ returning a frame (same index as df) with these columns:
     exit_short   bool — close an open short this bar
     stop_long    float — stop price to use when opening a long  (NaN = auto)
     stop_short   float — stop price to use when opening a short (NaN = auto)
+    target_long  float — OPTIONAL take-profit price for a long opened on this
+    target_short float   bar's signal (NaN = none / fall back to target_r).
     force_exit   bool  — OPTIONAL. Close any open position at this bar's
                  close (reason "session") and take no new entry on it.
                  Used for intraday square-off (e.g. NSE MIS at 15:20).
@@ -65,6 +67,13 @@ HARNESS_DEFAULTS = {
     "default_stop_atr": 2.0,
     "atr_col":          "atr_14",
     "trailing":         False,
+    # Take-profit as a multiple of the initial risk (entry→stop distance),
+    # e.g. 2.0 = the classic "2R". Used when no target_long/short price is
+    # given (or that price is not beyond entry). None = no R target.
+    "target_r":         None,
+    # True: skip an entry whose stop is already on the wrong side of the fill
+    # (e.g. next-open gapped through it). False keeps the old behaviour.
+    "skip_if_stop_breached": False,
     # Round-trip trading cost in PRICE UNITS per ounce (USD/oz), charged
     # once per completed trade. Covers spread + slippage + commission.
     # XAUUSD reference points:
@@ -146,6 +155,10 @@ def run(df: pd.DataFrame, signals: pd.DataFrame, cfg: dict = None) -> list[Trade
                   if "stop_long" in signals else np.full(len(df), np.nan))
     stop_short = (signals["stop_short"].to_numpy(dtype=float)
                   if "stop_short" in signals else np.full(len(df), np.nan))
+    tgt_long = (signals["target_long"].to_numpy(dtype=float)
+                if "target_long" in signals else np.full(len(df), np.nan))
+    tgt_short = (signals["target_short"].to_numpy(dtype=float)
+                 if "target_short" in signals else np.full(len(df), np.nan))
     force_exit = (signals["force_exit"].fillna(False).to_numpy(dtype=bool)
                   if "force_exit" in signals else np.zeros(len(df), dtype=bool))
 
@@ -158,14 +171,17 @@ def run(df: pd.DataFrame, signals: pd.DataFrame, cfg: dict = None) -> list[Trade
     pos_units = 0.0
     pos_bar   = -1
     pos_time  = None
+    pos_target = np.nan
 
     pending = 0          # for entry_on="next_open": direction queued last bar
     pend_sl_long = np.nan
     pend_sl_short = np.nan
+    pend_tg_long = pend_tg_short = np.nan
 
     def _open(direction: int, i: int, price: float,
-              sl_long: float, sl_short: float) -> None:
-        nonlocal pos_dir, pos_entry, pos_stop, pos_units, pos_bar, pos_time
+              sl_long: float, sl_short: float,
+              tg_long: float = np.nan, tg_short: float = np.nan) -> None:
+        nonlocal pos_dir, pos_entry, pos_stop, pos_units, pos_bar, pos_time, pos_target
         raw_stop = sl_long if direction > 0 else sl_short
         if np.isnan(raw_stop):
             a = atr[i]
@@ -173,12 +189,22 @@ def run(df: pd.DataFrame, signals: pd.DataFrame, cfg: dict = None) -> list[Trade
                 return
             raw_stop = (price - c["default_stop_atr"] * a if direction > 0
                         else price + c["default_stop_atr"] * a)
+        if c["skip_if_stop_breached"] and (
+                (direction > 0 and raw_stop >= price) or (direction < 0 and raw_stop <= price)):
+            return
         dist = abs(price - raw_stop)
         units = _size(risk_amount, dist, price, max_cap)
         if units <= 0:
             return
         pos_dir, pos_entry, pos_stop = direction, price, raw_stop
         pos_units, pos_bar, pos_time = units, i, idx[i]
+        tg = tg_long if direction > 0 else tg_short
+        if not np.isnan(tg) and (tg - price) * direction > 0:
+            pos_target = tg
+        elif c["target_r"] is not None:
+            pos_target = price + direction * c["target_r"] * dist
+        else:
+            pos_target = np.nan
 
     cost_per_unit = c["cost_per_unit"]
     cost_pct      = c["cost_pct"]
@@ -211,7 +237,7 @@ def run(df: pd.DataFrame, signals: pd.DataFrame, cfg: dict = None) -> list[Trade
     for i in range(n):
         # ── Fill a queued next-open entry ────────────────────────────────
         if pending != 0 and pos_dir == 0:
-            _open(pending, i, open_[i], pend_sl_long, pend_sl_short)
+            _open(pending, i, open_[i], pend_sl_long, pend_sl_short, pend_tg_long, pend_tg_short)
         pending = 0
 
         # ── Manage an open position ──────────────────────────────────────
@@ -236,6 +262,14 @@ def run(df: pd.DataFrame, signals: pd.DataFrame, cfg: dict = None) -> list[Trade
             elif pos_dir < 0 and high[i] >= pos_stop:
                 _close(i, max(pos_stop, open_[i]), "stop")
 
+            # 1a. Take-profit — after the stop (if one bar touches both, the
+            #     stop is assumed first: the conservative reading). A bar that
+            #     opens beyond the target fills at the open.
+            if pos_dir > 0 and not np.isnan(pos_target) and high[i] >= pos_target:
+                _close(i, max(pos_target, open_[i]), "target")
+            elif pos_dir < 0 and not np.isnan(pos_target) and low[i] <= pos_target:
+                _close(i, min(pos_target, open_[i]), "target")
+
             # 1b. Session square-off (intraday) — after the stop, so a bar
             #     that hit the stop still books the stop price.
             if pos_dir != 0 and force_exit[i]:
@@ -258,8 +292,9 @@ def run(df: pd.DataFrame, signals: pd.DataFrame, cfg: dict = None) -> list[Trade
                 if next_open:
                     pending = new_dir
                     pend_sl_long, pend_sl_short = stop_long[i], stop_short[i]
+                    pend_tg_long, pend_tg_short = tgt_long[i], tgt_short[i]
                 else:
-                    _open(new_dir, i, close[i], stop_long[i], stop_short[i])
+                    _open(new_dir, i, close[i], stop_long[i], stop_short[i], tgt_long[i], tgt_short[i])
                 continue
 
         # ── Flat: look for a new entry ───────────────────────────────────
@@ -267,8 +302,9 @@ def run(df: pd.DataFrame, signals: pd.DataFrame, cfg: dict = None) -> list[Trade
             if next_open:
                 pending = entry_sig[i]
                 pend_sl_long, pend_sl_short = stop_long[i], stop_short[i]
+                pend_tg_long, pend_tg_short = tgt_long[i], tgt_short[i]
             else:
-                _open(entry_sig[i], i, close[i], stop_long[i], stop_short[i])
+                _open(entry_sig[i], i, close[i], stop_long[i], stop_short[i], tgt_long[i], tgt_short[i])
 
     if pos_dir != 0:
         _close(n - 1, close[-1], "eod")
@@ -357,6 +393,7 @@ def metrics(trades: list[Trade], capital: float,
         "reversals":        reasons.get("reverse", 0),
         "time_exits":       reasons.get("time", 0),
         "session_exits":    reasons.get("session", 0),
+        "target_exits":     reasons.get("target", 0),
         "date_start":       str(d0),
         "date_end":         str(d1),
     }

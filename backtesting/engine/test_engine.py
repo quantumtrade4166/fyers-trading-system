@@ -92,6 +92,33 @@ def test_session():
     check("no force_exit column = old behaviour", len(old) == 1 and old[0].exit_reason == "eod")
 
 
+def test_targets():
+    print("\n[2b] take-profit, stop precedence, breached stop")
+    idx = pd.date_range("2025-01-01 09:15", periods=5, freq="5min")
+    df = pd.DataFrame({"open": [100, 100, 101, 103, 104], "high": [101, 102, 104, 105, 106],
+                       "low": [99, 99.5, 100.5, 102, 103], "close": [100, 101, 103, 104, 105]},
+                      index=idx, dtype=float)
+    sig = harness.blank_signals(df); sig.loc[idx[0], "entry"] = 1; sig["stop_long"] = 98.0
+    tr = harness.run(df, sig, {"entry_on": "close", "target_r": 2.0})
+    check("2R target hit (entry 100, stop 98 -> 104)", tr[0].exit_reason == "target" and tr[0].exit_price == 104.0,
+          str(tr[0].to_dict()))
+    sig2 = sig.copy(); sig2["target_long"] = 102.0
+    tr2 = harness.run(df, sig2, {"entry_on": "close", "target_r": 2.0})
+    check("price target overrides 2R", tr2[0].exit_reason == "target" and tr2[0].exit_price == 102.0)
+    both = pd.DataFrame({"open": [100, 100], "high": [100, 105], "low": [100, 97], "close": [100, 100]},
+                        index=idx[:2], dtype=float)
+    s3 = harness.blank_signals(both); s3.loc[idx[0], "entry"] = 1; s3["stop_long"] = 98.0
+    tr3 = harness.run(both, s3, {"entry_on": "close", "target_r": 2.0})
+    check("bar touching stop AND target books the stop", tr3[0].exit_reason == "stop")
+    gap = pd.DataFrame({"open": [100, 97], "high": [100, 98], "low": [100, 96], "close": [100, 97]},
+                       index=idx[:2], dtype=float)
+    s4 = harness.blank_signals(gap); s4.loc[idx[0], "entry"] = 1; s4["stop_long"] = 98.0
+    check("next-open through the stop is skipped when asked",
+          harness.run(gap, s4, {"entry_on": "next_open", "skip_if_stop_breached": True}) == [])
+    old = harness.run(df, sig, {"entry_on": "close"})
+    check("no target settings = old behaviour (no target exit)", old[0].exit_reason == "eod")
+
+
 def test_mirror():
     print("\n[3] mirror symmetry")
     df = universe.load_in_stock("NSE_RELIANCE_EQ").iloc[:3000]
@@ -111,6 +138,33 @@ def test_mirror():
     check("short stops sit above the signal bar high", bool(ok))
 
 
+def test_levels_lookahead():
+    print("\n[5] book #1 levels + strategies — truncate and compare (NIFTY 5-min)")
+    from backtesting.engine import levels
+    S = importlib.import_module("backtesting.book_strategies.prabhu.strategies")
+    df = universe.load_in_index("NSE_NIFTY50_INDEX").iloc[:9000]
+    cut = 8000
+    # cut at the END of a session so the last day is complete in both
+    day = df.index.normalize()
+    cut = int(np.where(day[:cut] != day[cut - 1])[0][-1]) + 1
+    def build(x):
+        f = levels.add_levels(vpa.add_vpa_features(x, True))
+        fm = levels.add_levels(vpa.add_vpa_features(vpa.mirror(x), True))
+        return f, fm
+    f, fm = build(df); p, pm = build(df.iloc[:cut])
+    num = [c for c in p.columns if c != "day"]
+    check("levels columns", _equal(f[num].iloc[:cut], p[num]))
+    for name in ["od", "star_reclaim", "cprbo", "zone_break", "orb", "dayhigh_break", "gap_fill",
+                 "ma_trend", "ppt", "retrace", "double_test", "odr", "fc_break", "vcpr_rev",
+                 "gap_reject", "cpr_rev", "extreme_rev", "zone_rev", "gapborder_rej", "fake_break"]:
+        fn = getattr(S, name)
+        for cfg in ({}, {"sl": "level", "tgt": "level", "daytype": "trend", "entry": 2},
+                    {"dtrend": True, "pin": True, "or_min": 15, "tgt": "level", "tgt_ema": True}):
+            a = universe.combine_sides(fn, f, fm, cfg).iloc[:cut]
+            b = universe.combine_sides(fn, p, pm, cfg)
+            check(f"{name} {cfg or 'default'}", _equal(a, b))
+
+
 def test_shim():
     print("\n[4] Kaufman import path")
     from backtesting.book_strategies.kaufman.harness import backtest, run, blank_signals  # noqa
@@ -118,6 +172,6 @@ def test_shim():
 
 
 if __name__ == "__main__":
-    test_session(); test_mirror(); test_shim(); test_lookahead()
+    test_session(); test_targets(); test_mirror(); test_shim(); test_lookahead(); test_levels_lookahead()
     print(f"\n{PASS} passed, {FAIL} failed")
     sys.exit(1 if FAIL else 0)

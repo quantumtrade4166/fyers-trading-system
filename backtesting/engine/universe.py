@@ -69,10 +69,40 @@ def load_nifty500(sym: str) -> pd.DataFrame:
 
 
 from backtesting.engine import bhav  # noqa: E402
+from backtesting.engine import levels as lv  # noqa: E402
+
+
+def list_in_index() -> list[str]:
+    return ["NSE_NIFTY50_INDEX", "NSE_NIFTYBANK_INDEX"]
+
+
+def load_in_index(folder: str) -> pd.DataFrame:
+    """Index 5-min bars — like load_in_stock but keeps volume-0 rows (an index
+    has no traded volume of its own)."""
+    parts = [pd.read_parquet(f) for f in sorted((DATA / folder).glob("*/ohlcv_5min.parquet"))]
+    df = pd.concat(parts, ignore_index=True)
+    df["datetime"] = pd.to_datetime(df["datetime"])
+    df = (df.drop_duplicates("datetime").set_index("datetime").sort_index()
+            [["open", "high", "low", "close", "volume"]])
+    t = df.index.time
+    df = df[(t >= pd.Timestamp("09:15").time()) & (t <= pd.Timestamp("15:25").time())]
+    return df[df["high"] >= df["low"]]
+
+def list_btc() -> list[str]:
+    return ["BTCUSDT"]
+
+
+def load_btc(_sym: str = "BTCUSDT") -> pd.DataFrame:
+    """Binance BTCUSDT 5-min (UTC), from the 1-min archive via the Kaufman loader."""
+    from backtesting.book_strategies.kaufman.data_btc import get_bars
+    return get_bars("5min")[["open", "high", "low", "close", "volume"]]
+
 
 LOADERS = {"in_stocks_5m": (list_in_stocks, load_in_stock),
            "nifty500_1d": (list_nifty500, load_nifty500),
-           "bhav_1d": (bhav.list_symbols, bhav.load)}   # survivorship-free NSE
+           "bhav_1d": (bhav.list_symbols, bhav.load),
+           "in_index_5m": (list_in_index, load_in_index),
+           "btc_5m": (list_btc, load_btc)}   # survivorship-free NSE
 
 
 # ── Session rules ────────────────────────────────────────────────────────────
@@ -103,11 +133,15 @@ def combine_sides(fn, feat: pd.DataFrame, feat_m: pd.DataFrame, cfg: dict) -> pd
         sig["entry"] += (L["entry"] > 0).astype(int)
         sig["exit_long"] = L["exit_long"].fillna(False).astype(bool)
         sig["stop_long"] = L["stop_long"]
+        if "target_long" in L:
+            sig["target_long"] = L["target_long"]
     if sides in ("both", "short"):
         S = fn(feat_m, cfg)
         sig["entry"] -= (S["entry"] > 0).astype(int)
         sig["exit_short"] = S["exit_long"].fillna(False).astype(bool)
         sig["stop_short"] = -S["stop_long"]
+        if "target_long" in S:
+            sig["target_short"] = -S["target_long"]
     return sig
 
 
@@ -120,6 +154,14 @@ def _run_symbol(folder: str, specs: list, market: str) -> list[dict]:
         return []
     feat = vpa.add_vpa_features(df, intraday=mk["intraday"])
     feat_m = vpa.add_vpa_features(vpa.mirror(df), intraday=mk["intraday"])
+    if mk.get("levels"):
+        feat, feat_m = lv.add_levels(feat), lv.add_levels(feat_m)
+    peer = mk.get("peer", {}).get(folder)
+    if peer:                          # e.g. NIFTY <-> BANK NIFTY agreement filter
+        p = LOADERS[mk["loader"]][1](peer)
+        p_ret = p["close"] / p.groupby(p.index.normalize())["open"].transform("first") - 1
+        r = p_ret.reindex(feat.index)
+        feat["peer_ret"], feat_m["peer_ret"] = r, -r
     entry_ok, force = session_masks(feat, mk)
     if "tradable" in feat:          # point-in-time universe (e.g. bhavcopy top 500)
         entry_ok = entry_ok & feat["tradable"].to_numpy(bool)
@@ -128,6 +170,7 @@ def _run_symbol(folder: str, specs: list, market: str) -> list[dict]:
     pos = {t: k for k, t in enumerate(feat.index)}
     hcfg = {k: mk[k] for k in ("capital", "risk_pct", "max_position_pct",
                                "entry_on", "cost_pct", "calendar")}
+    hcfg.update({k: mk[k] for k in ("target_r", "skip_if_stop_breached", "funding_apr") if k in mk})
     hcfg["atr_col"] = "atr"
     risk = mk["capital"] * mk["risk_pct"]
 
@@ -146,7 +189,7 @@ def _run_symbol(folder: str, specs: list, market: str) -> list[dict]:
             if "adv20" in feat:
                 d["adv20"] = float(feat["adv20"].iat[a])
             rows.append(d)
-    return rows
+    return pd.DataFrame(rows)
 
 
 def run_universe(specs: list, market: str = "in_stocks_5m",
@@ -157,19 +200,20 @@ def run_universe(specs: list, market: str = "in_stocks_5m",
     with ProcessPoolExecutor(max_workers=workers) as ex:
         futs = {ex.submit(_run_symbol, s, specs, market): s for s in symbols}
         for k, f in enumerate(as_completed(futs), 1):
-            rows.extend(f.result())
+            rows.append(f.result())
             if k % 20 == 0 or k == len(futs):
                 print(f"  {k}/{len(futs)} symbols done", flush=True)
-    return pd.DataFrame(rows)
+    rows = [r for r in rows if len(r)]
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
 
 
 # ── Reporting ────────────────────────────────────────────────────────────────
 
-def _stats(t: pd.DataFrame, start, end) -> dict:
+def _stats(t: pd.DataFrame, start, end, calendar: str = "business") -> dict:
     if t.empty:
         return {"trades": 0}
     daily = t.groupby(t["exit_time"].dt.normalize())["R"].sum()
-    days = pd.bdate_range(start, end)
+    days = (pd.date_range if calendar == "calendar" else pd.bdate_range)(start, end)
     daily = daily.reindex(days.union(daily.index), fill_value=0.0)
     eq = daily.cumsum()
     wins, losses = t.loc[t["R"] > 0, "R"].sum(), -t.loc[t["R"] < 0, "R"].sum()
@@ -198,7 +242,8 @@ def summarize(trades: pd.DataFrame, market: str = "in_stocks_5m") -> pd.DataFram
     for (sid, cid), g in trades.groupby(["strategy", "cfg_id"]):
         isd, oos = g[g["exit_time"] < cut], g[g["exit_time"] >= cut]
         row = {"strategy": sid, "cfg_id": cid}
-        row.update({f"IS_{k}": v for k, v in _stats(isd, d0, cut - pd.Timedelta(days=1)).items()})
-        row.update({f"OOS_{k}": v for k, v in _stats(oos, cut, d1).items()})
+        cal = mk.get("calendar", "business")
+        row.update({f"IS_{k}": v for k, v in _stats(isd, d0, cut - pd.Timedelta(days=1), cal).items()})
+        row.update({f"OOS_{k}": v for k, v in _stats(oos, cut, d1, cal).items()})
         out.append(row)
     return pd.DataFrame(out)
