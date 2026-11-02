@@ -1140,13 +1140,42 @@ function onStatus(m) {
   $("f-msg").textContent = m.error || f.error || "";
 }
 
+// MCX trading hours (IST): Mon-Fri 09:00 to 23:30, or to 23:55 while US clocks are on winter time
+// (first Sunday of November to the second Sunday of March). Exchange holidays are not known here.
+function nthSunday(y, m, n) {             // day of month of the n-th Sunday (m: 0-11)
+  const first = new Date(Date.UTC(y, m, 1)).getUTCDay();
+  return 1 + ((7 - first) % 7) + 7 * (n - 1);
+}
+function mcxSession(nowMs) {
+  const t = new Date(nowMs + 330 * 60000);  // IST wall clock, read with getUTC*
+  const y = t.getUTCFullYear(), mo = t.getUTCMonth(), d = t.getUTCDate(), wd = t.getUTCDay();
+  const md = mo * 100 + d;
+  const winter = md >= 1000 + nthSunday(y, 10, 1) || md < 200 + nthSunday(y, 2, 2);
+  const closeMin = winter ? 23 * 60 + 55 : 23 * 60 + 30;
+  const mins = t.getUTCHours() * 60 + t.getUTCMinutes() + t.getUTCSeconds() / 60;
+  const weekday = wd >= 1 && wd <= 5;
+  const open = weekday && mins >= 9 * 60 && mins < closeMin;
+  let next = "";
+  if (!open) {
+    const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    let add = weekday && mins < 9 * 60 ? 0 : 1;
+    while ([0, 6].includes((wd + add) % 7)) add++;
+    next = add === 0 ? "opens 09:00" : add === 1 ? "opens 09:00 tomorrow" : `opens ${days[(wd + add) % 7]} 09:00`;
+  }
+  return { open, next, closeAt: winter ? "23:55" : "23:30", sinceOpen: mins - 9 * 60 };
+}
+if (typeof module !== "undefined") module.exports = { mcxSession };   // test hook (node)
+
 setInterval(() => {
   const rate = S.recv - S.recvShown;
   S.recvShown = S.recv;
   const age = S.lastTickAt ? (Date.now() - S.lastTickAt) / 1000 : null;
   if (S.ws && S.ws.readyState === 1) {
+    const ses = mcxSession(Date.now());
     if (age != null && age < 10) setFeed(`LIVE · ${rate} t/s`, "ok");
-    else setFeed(age == null ? "waiting for ticks" : "no ticks (market closed?)", "");
+    else if (!ses.open) setFeed(`MCX closed · ${ses.next}`, "");
+    else if (ses.sinceOpen < 2) setFeed("waiting for opening prices", "");
+    else setFeed(age == null ? "no prices yet - feed problem?" : `no prices for ${Math.round(age)} s - feed problem?`, "bad");
   }
   $("f-age").textContent = age == null ? "no ticks yet" : `last tick ${age.toFixed(1)} s ago`;
   $("clock").textContent = new Date().toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour12: false });

@@ -25,7 +25,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from backtesting.engine import bhav
+from backtesting.engine import bhav, bhav_fix
 from backtesting.book_strategies.schwager import strategies as S
 from backtesting.book_strategies.schwager.run_daily import stats, OOS_START, TARGET_VOL
 
@@ -50,7 +50,7 @@ def _chunk(syms):
     sums = {}; cnt = None; ntr = {s[0]: 0 for s in specs}; wins = {s[0]: 0 for s in specs}
     for sym in syms:
         try:
-            df = bhav.load(sym)
+            df = bhav_fix.load(sym)
         except Exception:
             continue
         df = df[df["close"] > 0]
@@ -85,7 +85,8 @@ def _chunk(syms):
 
 
 if __name__ == "__main__":
-    syms = bhav.list_symbols()
+    from backtesting.book_strategies.schwager.stock_universe import stock_symbols
+    syms = stock_symbols()
     chunks = [syms[i::12] for i in range(12)]
     t0 = time.time()
     print(f"{len(syms)} symbols, {len(_specs())} strategies …", flush=True)

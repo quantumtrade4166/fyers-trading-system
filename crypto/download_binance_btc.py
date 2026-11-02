@@ -107,7 +107,21 @@ def main() -> None:
         url = f"{BASE}/monthly/klines/{SYMBOL}/1m/{SYMBOL}-1m-{m:%Y-%m}.zip"
         raw = _fetch_zip(url)
         if raw is None:
-            print(f"  {m:%Y-%m}  missing on archive")
+            # Monthly zip is published a few days late: build the month from daily zips.
+            frames, d = [], m
+            nxt = (m.replace(day=28) + timedelta(days=4)).replace(day=1)
+            while d < nxt:
+                r = _fetch_zip(f"{BASE}/daily/klines/{SYMBOL}/1m/{SYMBOL}-1m-{d:%Y-%m-%d}.zip")
+                if r is not None:
+                    frames.append(_parse(r))
+                d += timedelta(days=1)
+            if len(frames) < (nxt - m).days:
+                print(f"  {m:%Y-%m}  missing on archive ({len(frames)} daily files) - not saved")
+                continue
+            df = pd.concat(frames)
+            _save(df, p)
+            got += 1
+            print(f"  {m:%Y-%m}  {len(df):>6,} bars from daily files")
             continue
         df = _parse(raw)
         _save(df, p)
