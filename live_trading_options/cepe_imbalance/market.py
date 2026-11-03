@@ -32,6 +32,15 @@ class Quote:
             return (self.bid + self.ask) / 2
         return self.ltp
 
+    def mark(self) -> float:
+        """Value used for MTM / imbalance: LTP kept inside the live bid-ask (owner 3-Nov-2026).
+        An illiquid strike's LTP can be yesterday's trade (SILVER 182000 CE: LTP 8,559 vs bid/ask
+        6,402 / 6,999), which made MTM and the imbalance wrong. Fills never use this."""
+        l = self.ltp or 0.0
+        if self.bid and self.ask and 0 < self.bid <= self.ask:
+            return min(max(l, self.bid), self.ask) if l > 0 else (self.bid + self.ask) / 2
+        return l
+
 
 class Market:
     def __init__(self, universe):
@@ -65,6 +74,10 @@ class Market:
     def ltp(self, key: str) -> float:
         q = self.quotes.get(key)
         return q.ltp if q else 0.0
+
+    def mark(self, key: str) -> float:
+        q = self.quotes.get(key)
+        return q.mark() if q else 0.0
 
     # ── chain helpers ───────────────────────────────────────────────────────
     def expiry(self, name: str, n: int = 0) -> str | None:

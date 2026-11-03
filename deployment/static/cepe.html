@@ -1,0 +1,595 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CE/PE Imbalance</title>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0b1120; --card: #111a2e; --card2: #0f172a; --line: #1e293b;
+    --muted: #64748b; --text: #cbd5e1; --hi: #f1f5f9; --pos: #22c55e; --neg: #f43f5e;
+    --warn: #f59e0b; --acc: #38bdf8; --ce: #f472b6; --pe: #60a5fa;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 12px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .num { font-variant-numeric: tabular-nums; }
+  .pos { color: var(--pos) !important; } .neg { color: var(--neg) !important; } .mut { color: var(--muted); }
+  .warn { color: var(--warn) !important; }
+  button, input { font: inherit; color: var(--text); background: var(--card2);
+    border: 1px solid #334155; border-radius: 6px; padding: 5px 10px; }
+  button { cursor: pointer; } button:hover { border-color: #475569; }
+  button.go { background: #065f46; border-color: #059669; color: #ecfdf5; font-weight: 600; }
+  button.stop { background: #3f2d0b; border-color: #b45309; color: #fde68a; font-weight: 600; }
+  button.kill { background: #4c0519; border-color: #be123c; color: #ffe4e6; font-weight: 600; }
+  button[disabled] { opacity: .4; cursor: not-allowed; }
+  input[type=number] { width: 80px; }
+  .lbl { font-size: 10px; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+
+  .top { display: flex; align-items: center; gap: 10px; padding: 8px 14px; border-bottom: 1px solid var(--line);
+         background: #0d1526; flex-wrap: wrap; }
+  .top .name { font-weight: 700; color: var(--hi); font-size: 14px; }
+  .pill { padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .05em;
+          text-transform: uppercase; background: #1e293b; color: #94a3b8; }
+  .pill.paper { background: #052e16; color: #4ade80; }
+  .pill.ok { background: #052e16; color: #4ade80; } .pill.bad { background: #4c0519; color: #fda4af; }
+  .top .right { margin-left: auto; display: flex; gap: 12px; align-items: center; }
+
+  .unds { display: flex; gap: 6px; padding: 8px 14px; overflow-x: auto; border-bottom: 1px solid var(--line); }
+  .und { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 6px 12px;
+         cursor: pointer; min-width: 112px; text-align: left; }
+  .und.on { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc) inset; }
+  .und .n { font-weight: 600; color: var(--hi); display: flex; gap: 6px; align-items: center; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: #475569; display: inline-block; }
+  .dot.in { background: var(--pos); } .dot.wait { background: var(--warn); } .dot.stop { background: var(--neg); }
+
+  .wrap { padding: 12px 14px; display: grid; gap: 12px; }
+  .cards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 1100px) { .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  @media (max-width: 600px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; min-width: 0; }
+  .big { font-size: 22px; font-weight: 700; color: var(--hi); margin-top: 2px; }
+  .sub { font-size: 11px; color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; }
+  .bar { position: relative; height: 8px; background: #1e293b; border-radius: 4px; margin-top: 8px; overflow: hidden; }
+  .bar .band { position: absolute; top: 0; bottom: 0; background: rgba(34,197,94,.18); }
+  .bar .mk { position: absolute; top: -2px; width: 3px; height: 12px; background: var(--hi); border-radius: 2px; }
+  .bar .mid { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: #475569; }
+
+  .ctl { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .ctl .msg { margin-left: 6px; }
+  .params { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+  .params label { display: grid; gap: 3px; }
+  .blocked { color: var(--warn); font-size: 11px; }
+
+  .charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  @media (max-width: 1100px) { .charts { grid-template-columns: 1fr; } }
+  .chart { height: 230px; }
+  .chead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; gap: 8px; }
+  .chead .tools { display: flex; gap: 6px; align-items: center; }
+  .zb { padding: 1px 8px; font-size: 13px; line-height: 18px; }
+  /* zoomed chart: the card fills the window */
+  .card.zoom { position: fixed; inset: 12px; z-index: 60; box-shadow: 0 0 0 9999px rgba(3,7,18,.82); display: flex; flex-direction: column; }
+  .card.zoom .chart { flex: 1; height: auto; }
+  body.zoomed { overflow: hidden; }
+
+  /* trading day */
+  .dayhead { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .dayhead select { font: inherit; color: var(--text); background: var(--card2); border: 1px solid #334155; border-radius: 6px; padding: 5px 8px; }
+  .daytot { font-size: 18px; font-weight: 700; }
+  .viewing { padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase;
+             background: #3f2d0b; color: #fde68a; }
+  .daytbl tr { cursor: pointer; }
+  .daytbl tr.on td { background: rgba(56,189,248,.08); }
+  .daytbl td:first-child, .daytbl th:first-child { text-align: left; }
+  .daytbl tfoot td { font-weight: 700; border-top: 1px solid var(--line); }
+
+  .lower { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 10px; }
+  @media (max-width: 1100px) { .lower { grid-template-columns: 1fr; } }
+  table { width: 100%; border-collapse: collapse; }
+  th { font-size: 10px; font-weight: 500; color: var(--muted); text-transform: uppercase; letter-spacing: .05em;
+       padding: 5px 6px; border-bottom: 1px solid var(--line); text-align: right; position: sticky; top: 0; background: var(--card); }
+  td { padding: 4px 6px; border-bottom: 1px solid #16203a; text-align: right; white-space: nowrap; }
+  .scroll { max-height: 520px; overflow: auto; }
+  /* option chain — same look as the MCX terminal */
+  .chain.card { background: #11151a; border-color: #222a33; padding: 0; overflow: hidden; }
+  .chain .chead { padding: 9px 12px 7px; margin: 0; border-bottom: 1px solid #222a33; }
+  .oc { width: 100%; border-collapse: collapse; font: 12.5px "JetBrains Mono", ui-monospace, Consolas, monospace; }
+  .oc thead th { position: sticky; z-index: 2; background: #11151a; color: #7d8794; text-transform: none;
+    font: 600 11px Inter, system-ui, "Segoe UI", sans-serif; letter-spacing: .03em; padding: 6px 8px; text-align: right;
+    border-bottom: 1px solid #222a33; }
+  .oc thead tr:first-child th { top: 0; height: 24px; padding: 4px 8px; }
+  .oc thead tr:nth-child(2) th { top: 24px; }
+  .oc thead .side th.ce { color: #1fc97a; text-align: center; letter-spacing: .2em; }
+  .oc thead .side th.pe { color: #f2525c; text-align: center; letter-spacing: .2em; }
+  .oc th.kh { text-align: center; color: #f5a524; }
+  .oc th.posh { color: #f5a524; text-align: center; }
+  .oc td { padding: 4px 8px; text-align: right; border-bottom: 1px solid #1a2028; color: #d9dee5; }
+  .oc tbody tr:hover td { background: rgba(255,255,255,.025); }
+  .oc td.k { text-align: center; font-weight: 600; background: #161b22; border-left: 1px solid #222a33;
+    border-right: 1px solid #222a33; min-width: 92px; }
+  .oc td.ltp { font-weight: 600; min-width: 80px; }
+  .oc td.ba { color: #aab3be; }
+  .oc td.itm { background: rgba(86,140,255,.13); }
+  .oc tr.atm td { background: rgba(245,165,36,.16); }
+  .oc tr.atm td.k { color: #f5a524; }
+  .oc tr.atm td.k::after { content: " ATM"; font-size: 9px; letter-spacing: .1em; vertical-align: 1px; }
+  .oc td.pos { min-width: 46px; text-align: center; font-weight: 700; color: #56606c; }
+  .oc td.pos.long { color: #1fc97a; background: rgba(31,201,122,.10); }
+  .oc td.pos.short { color: #f2525c; background: rgba(242,82,92,.12); }
+  .oc td.pos-short { box-shadow: inset 3px 0 0 #f2525c; }
+  .oc td.pos-long { box-shadow: inset 3px 0 0 #1fc97a; }
+  .oc tfoot td { position: sticky; bottom: 0; background: #161b22; border-top: 1px solid #222a33; color: #7d8794;
+    font: 600 11px Inter, system-ui, sans-serif; padding: 6px 8px; }
+  .oc tfoot b { color: #d9dee5; font-family: "JetBrains Mono", ui-monospace, Consolas, monospace; }
+  @keyframes fu1 { from { background: rgba(31,201,122,.42); } to { background: transparent; } }
+  @keyframes fu2 { from { background: rgba(31,201,122,.42); } to { background: transparent; } }
+  @keyframes fd1 { from { background: rgba(242,82,92,.42); } to { background: transparent; } }
+  @keyframes fd2 { from { background: rgba(242,82,92,.42); } to { background: transparent; } }
+  .oc td.fu1 { animation: fu1 .32s ease-out; } .oc td.fu2 { animation: fu2 .32s ease-out; }
+  .oc td.fd1 { animation: fd1 .32s ease-out; } .oc td.fd2 { animation: fd2 .32s ease-out; }
+  .chain .scroll { max-height: 560px; }
+  .ev td { text-align: left; white-space: normal; }
+  .tabs2 { display: flex; gap: 4px; margin-bottom: 8px; }
+  .tabs2 button.on { border-color: var(--acc); color: var(--acc); }
+  .err { color: var(--neg); }
+</style>
+</head>
+<body>
+<div class="top">
+  <span class="name">CE/PE Imbalance</span>
+  <span class="pill paper">Paper</span>
+  <span class="mut">Kotak tick feed · fills at live bid/ask</span>
+  <div class="right">
+    <span id="feed" class="pill">feed …</span>
+    <span id="clock" class="num mut"></span>
+  </div>
+</div>
+<div class="unds" id="unds"></div>
+
+<div class="wrap">
+  <div class="cards">
+    <div class="card"><div class="lbl" id="refLbl">Reference</div><div class="big num" id="ref">–</div><div class="sub num" id="refSub"></div></div>
+    <div class="card"><div class="lbl">ATM (strategy)</div><div class="big num" id="atm">–</div><div class="sub num" id="atmSub"></div></div>
+    <div class="card"><div class="lbl">CE/PE imbalance</div><div class="big num" id="imb">–</div>
+      <div class="bar"><div class="band" id="imbBand"></div><div class="mid"></div><div class="mk" id="imbMk" style="display:none"></div></div>
+      <div class="sub num" id="imbSub"></div></div>
+    <div class="card"><div class="lbl">MTM</div><div class="big num" id="mtm">–</div><div class="sub num" id="mtmSub"></div></div>
+    <div class="card"><div class="lbl">Status</div><div class="big" id="phase">–</div><div class="sub" id="phaseSub"></div></div>
+    <div class="card"><div class="lbl">Expiry · session</div><div class="big num" id="exp">–</div><div class="sub num" id="sess"></div></div>
+  </div>
+
+  <div class="card">
+    <div class="ctl">
+      <button class="go" id="bStart">▶ Start</button>
+      <button class="stop" id="bStop" title="Stop the rules, keep positions">⏸ Stop (keep positions)</button>
+      <button class="kill" id="bStopExit" title="Stop and buy back everything">⏹ Stop &amp; exit all</button>
+      <span class="msg mut" id="ctlMsg"></span>
+      <span class="auto" style="margin-left:auto;display:flex;gap:8px;align-items:center">
+        <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="aOn"> <b>Auto-start daily</b></label>
+        <span class="mut">at</span><input type="time" id="aTime" style="width:100px">
+        <span class="mut">IST</span>
+        <span class="mut" id="aMsg"></span>
+      </span>
+    </div>
+    <div class="blocked" id="blocked" style="margin-top:6px"></div>
+    <div class="params" style="margin-top:10px">
+      <label><span class="lbl">Lots / strike</span><input type="number" id="pLots" min="1" step="1"></label>
+      <label><span class="lbl">Band ±%</span><input type="number" id="pBand" min="1" step="0.5"></label>
+      <label><span class="lbl">Normal ±%</span><input type="number" id="pNormal" min="0" step="0.5"></label>
+      <label><span class="lbl">ATM buffer %</span><input type="number" id="pBuf" min="0" max="50" step="5"></label>
+      <label><span class="lbl">Strike step</span><input type="number" id="pStep" min="0" step="1"></label>
+      <label><span class="lbl">MTM stop ₹ (0=off)</span><input type="number" id="pStop" min="0" step="500"></label>
+      <label title="Never sell a strike whose bid-ask gap is wider than this % of its price (exits never wait)"><span class="lbl">Max quote gap %</span><input type="number" id="pGap" min="0.5" step="0.5"></label>
+      <button id="bSave">Save settings</button>
+      <span class="mut" id="pMsg"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="dayhead">
+      <span class="lbl">Trading day</span>
+      <select id="daySel"></select>
+      <span class="viewing" id="dayViewing" style="display:none">past day</span>
+      <span class="mut">Day P&amp;L, all instruments</span>
+      <span style="margin-left:auto" class="mut">Total</span><span class="daytot num" id="dayTot">–</span>
+    </div>
+    <div class="scroll" style="max-height:none">
+      <table class="daytbl">
+        <thead><tr><th>Instrument</th><th>Day P&amp;L</th><th>Status</th><th>Fills</th><th title="ATM-rule rolls">ATM rule</th><th title="Adjustment A">A</th><th title="Adjustment B">B</th><th>MTM high</th><th>MTM low</th><th>Imbalance range</th><th>First / last fill</th></tr></thead>
+        <tbody id="dayRows"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="charts">
+    <div class="card"><div class="chead"><span class="lbl">MTM ₹ <span id="chDay1"></span></span><span class="tools"><span class="num mut" id="cMtm"></span><button class="zb" data-zoom="0" title="Zoom (Esc closes)">⤢</button></span></div><div class="chart" id="chMtm"></div></div>
+    <div class="card"><div class="chead"><span class="lbl">CE/PE imbalance % <span id="chDay2"></span></span><span class="tools"><span class="num mut" id="cImb"></span><button class="zb" data-fit="1" title="Show the whole day">Fit</button><button class="zb" data-zoom="1" title="Zoom (Esc closes)">⤢ Zoom</button></span></div><div class="chart" id="chImb"></div></div>
+    <div class="card"><div class="chead"><span class="lbl">ATM premium <span id="chDay3"></span></span><span class="tools"><span class="num mut" id="cAtm"></span><button class="zb" data-zoom="2" title="Zoom (Esc closes)">⤢</button></span></div><div class="chart" id="chAtm"></div></div>
+  </div>
+
+  <div class="lower">
+    <div class="card chain">
+      <div class="chead"><span class="lbl">Option chain (strategy strikes)</span><span class="mut num" id="chainSub"></span></div>
+      <div class="scroll">
+        <table class="oc">
+          <thead>
+            <tr class="side"><th colspan="4" class="ce">CALLS</th><th class="kh"></th><th colspan="4" class="pe">PUTS</th></tr>
+            <tr><th>Bid</th><th>Ask</th><th>LTP</th><th class="posh" title="Our paper call position on this strike, in lots (− short, + long)">Lots</th>
+                <th class="kh">Strike</th>
+                <th class="posh" title="Our paper put position on this strike, in lots (− short, + long)">Lots</th><th>LTP</th><th>Bid</th><th>Ask</th></tr>
+          </thead>
+          <tbody id="chain"><tr><td colspan="9" style="text-align:center;color:#7d8794;padding:30px">Loading chain…</td></tr></tbody>
+          <tfoot><tr><td colspan="4" id="ocCe" style="text-align:right"></td><td style="text-align:center">Total</td><td colspan="4" id="ocPe" style="text-align:left"></td></tr></tfoot>
+        </table>
+      </div>
+    </div>
+    <div class="card">
+      <div class="tabs2"><button class="on" data-t="pos">Positions</button><button data-t="adj">Adjustments</button><button data-t="trd">Fills</button></div>
+      <div class="scroll" id="lowerR"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '/api/cepe';
+const IST = 19800;
+let SEL = localGet('cepe_sel') || 'CRUDEOIL';
+let STATE = null, ROW = null, lowerTab = 'pos', lastT = 0, histName = null;
+let paramsDirty = false;
+
+function localGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+function localSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = (v, d = 2) => v == null || isNaN(v) ? '–' : Number(v).toLocaleString('en-IN', {minimumFractionDigits: d, maximumFractionDigits: d});
+const rs = v => v == null ? '–' : (v < 0 ? '−₹' : '₹') + Math.abs(v).toLocaleString('en-IN', {maximumFractionDigits: 0});
+const cls = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
+const k0 = v => Number(v).toLocaleString('en-IN', {maximumFractionDigits: 2});
+
+async function api(path, body) {
+  const r = await fetch(API + path, body ? {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)} : {cache: 'no-store'});
+  const j = await r.json().catch(() => ({ok: false, error: 'bad response ' + r.status}));
+  if (!r.ok && j.ok === undefined) j.ok = false;
+  return j;
+}
+
+// ── charts ──────────────────────────────────────────────────────────────
+const LW = window.LightweightCharts;
+function mkChart(el) {
+  return LW.createChart(el, {
+    autoSize: true, layout: {background: {color: 'transparent'}, textColor: '#94a3b8', fontSize: 11},
+    grid: {vertLines: {color: '#16203a'}, horzLines: {color: '#16203a'}},
+    rightPriceScale: {borderColor: '#1e293b'}, timeScale: {borderColor: '#1e293b', timeVisible: true, secondsVisible: true, minBarSpacing: 0.001},
+    crosshair: {mode: 0}});
+}
+const chM = mkChart($('chMtm')), chI = mkChart($('chImb')), chA = mkChart($('chAtm'));
+const sMtm = chM.addBaselineSeries({baseValue: {type: 'price', price: 0}, lineWidth: 2,
+  topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,.25)', topFillColor2: 'rgba(34,197,94,.02)',
+  bottomLineColor: '#f43f5e', bottomFillColor1: 'rgba(244,63,94,.02)', bottomFillColor2: 'rgba(244,63,94,.25)'});
+const sImb = chI.addLineSeries({color: '#e2e8f0', lineWidth: 2});
+// ATM premium: ATM CE, ATM PE and their total (straddle); markers where the ATM strike changed
+const sStr = chA.addLineSeries({color: '#e2e8f0', lineWidth: 2, title: 'CE+PE'});
+const sAce = chA.addLineSeries({color: '#f472b6', lineWidth: 2, title: 'CE'});
+const sApe = chA.addLineSeries({color: '#60a5fa', lineWidth: 2, title: 'PE'});
+let bandLines = [];
+function setBandLines(band, normal) {
+  bandLines.forEach(l => sImb.removePriceLine(l));
+  bandLines = [
+    [band, '#f43f5e', 'band'], [-band, '#f43f5e', 'band'], [normal, '#22c55e', 'normal'], [-normal, '#22c55e', 'normal'], [0, '#475569', '']
+  ].map(([p, c, t]) => sImb.createPriceLine({price: p, color: c, lineWidth: 1, lineStyle: 2, axisLabelVisible: !!t, title: t}));
+}
+const series = {m: [], i: [], c: [], p: [], s: [], marks: []};
+let lastAtm = null, lastPrem = null;
+function pushRows(rows) {
+  for (const x of rows) {
+    const t = Math.floor(x.t) + IST;
+    const put = (arr, v) => { if (v == null) return; if (arr.length && arr[arr.length - 1].time === t) arr[arr.length - 1].value = v; else if (!arr.length || arr[arr.length - 1].time < t) arr.push({time: t, value: v}); };
+    put(series.m, x.mtm); put(series.i, x.imb);
+    if (x.ace != null && x.ape != null) {
+      put(series.c, x.ace); put(series.p, x.ape); put(series.s, Math.round((x.ace + x.ape) * 100) / 100);
+      if (x.atm && x.atm !== lastAtm) {
+        if (lastAtm != null && (!series.marks.length || series.marks[series.marks.length - 1].time < t))
+          series.marks.push({time: t, position: 'aboveBar', color: '#f59e0b', shape: 'arrowDown', text: 'ATM ' + k0(x.atm)});
+        lastAtm = x.atm;
+      }
+      lastPrem = {atm: x.atm, ce: x.ace, pe: x.ape};
+    }
+    lastT = Math.max(lastT, x.t);
+  }
+}
+function drawSeries() {
+  sMtm.setData(series.m); sImb.setData(series.i);
+  sAce.setData(series.c); sApe.setData(series.p); sStr.setData(series.s); sStr.setMarkers(series.marks);
+  $('cAtm').textContent = lastPrem ? `ATM ${k0(lastPrem.atm)} · CE ${fmt(lastPrem.ce)} + PE ${fmt(lastPrem.pe)} = ${fmt(lastPrem.ce + lastPrem.pe)}`
+    : (DAY ? 'not recorded this day' : 'waiting…');
+}
+// Today: first load downsampled, then raw increments. Past day: one downsampled load, no polling.
+async function loadHistory(full) {
+  const key = SEL + '|' + (DAY || 'live');
+  const fresh = full || histName !== key;
+  if (fresh) {
+    histName = key; lastT = 0; series.m = []; series.i = []; series.c = []; series.p = []; series.s = []; series.marks = [];
+    lastAtm = null; lastPrem = null;
+    drawSeries();
+  } else if (DAY) return;
+  const q = DAY ? `date=${DAY}&max_points=8000` : (lastT ? `since=${lastT}` : 'max_points=8000');
+  const j = await api(`/history/${SEL}?${q}`);
+  if (histName !== key) return;                             // instrument / day changed while loading
+  if (j.rows && j.rows.length) {
+    const first = !series.m.length;
+    pushRows(j.rows); drawSeries();
+    if (first || (!DAY && series.m.length < 900)) [0, 1, 2].forEach(fitChart);
+  }
+}
+
+// ── chart zoom ──────────────────────────────────────────────────────────
+const CH = [chM, chI, chA];
+// Whole loaded day in view (fitContent kept stale scroll offsets when switching days).
+function fitChart(i) {
+  const n = i === 0 ? series.m.length : i === 1 ? series.i.length : series.s.length;
+  if (n > 1) CH[i].timeScale().setVisibleLogicalRange({from: 0, to: n - 1});
+}
+function unzoom() {
+  if (document.querySelector('.card.zoom')) [60, 350].forEach(ms => setTimeout(() => [0, 1, 2].forEach(fitChart), ms));
+  document.querySelectorAll('.card.zoom').forEach(c => c.classList.remove('zoom'));
+  document.body.classList.remove('zoomed');
+  document.querySelectorAll('[data-zoom]').forEach(b => b.textContent = b.dataset.zoom === '1' ? '⤢ Zoom' : '⤢');
+}
+document.querySelectorAll('[data-zoom]').forEach(b => b.onclick = () => {
+  const card = b.closest('.card'), on = card.classList.contains('zoom');
+  unzoom();
+  if (!on) { card.classList.add('zoom'); document.body.classList.add('zoomed'); b.textContent = '✕ Close'; }
+  [60, 350].forEach(ms => setTimeout(() => fitChart(+b.dataset.zoom), ms));
+});
+document.querySelectorAll('[data-fit]').forEach(b => b.onclick = () => fitChart(1));
+document.addEventListener('keydown', e => { if (e.key === 'Escape') unzoom(); });
+
+// ── trading day ─────────────────────────────────────────────────────────
+let DAY = '', TODAY = '';
+async function loadDays() {
+  const j = await api('/days');
+  if (!j.days) return;
+  TODAY = j.today;
+  const sel = $('daySel'), cur = DAY || TODAY;
+  sel.innerHTML = j.days.map(d => {
+    const w = new Date(d + 'T00:00:00').toLocaleDateString('en-IN', {weekday: 'short', day: '2-digit', month: 'short', year: 'numeric'});
+    return `<option value="${esc(d)}">${esc(w)}${d === TODAY ? ' · today (live)' : ''}</option>`;
+  }).join('');
+  sel.value = cur;
+}
+$('daySel').onchange = () => {
+  const v = $('daySel').value;
+  DAY = v === TODAY ? '' : v;
+  $('dayViewing').style.display = DAY ? '' : 'none';
+  ['chDay1', 'chDay2', 'chDay3'].forEach(id => $(id).textContent = DAY ? '· ' + DAY : '');
+  renderDay(); loadHistory(true); renderLower();
+};
+async function renderDay() {
+  const d = DAY || TODAY; if (!d) return;
+  const j = await api(`/day/${d}`);
+  if (!j.rows || (DAY || TODAY) !== d) return;
+  $('dayTot').textContent = rs(j.total); $('dayTot').className = 'daytot num ' + cls(j.total);
+  $('dayRows').innerHTML = j.rows.map(r => {
+    const st = r.running != null ? (r.running ? (r.phase === 'in' ? '<span class="pos">running</span>' : '<span class="warn">waiting</span>')
+                                              : (r.traded ? 'stopped' : '<span class="mut">idle</span>'))
+                                 : (r.traded ? 'squared off' : '<span class="mut">no trade</span>');
+    const imb = r.imb_min == null ? '–' : `${fmt(r.imb_min, 1)}% … ${fmt(r.imb_max, 1)}%`;
+    return `<tr data-n="${esc(r.name)}" class="${r.name === SEL ? 'on' : ''}">
+      <td style="font-weight:600">${esc(r.label)}</td>
+      <td class="num ${cls(r.pnl)}" style="font-weight:700">${r.traded ? rs(r.pnl) : '–'}</td>
+      <td>${st}</td><td class="num">${r.fills || ''}</td><td class="num">${r.atm_rule || ''}</td>
+      <td class="num">${r.a || ''}</td><td class="num">${r.b || ''}</td>
+      <td class="num ${cls(r.mtm_high)}">${r.mtm_high == null ? '–' : rs(r.mtm_high)}</td>
+      <td class="num ${cls(r.mtm_low)}">${r.mtm_low == null ? '–' : rs(r.mtm_low)}</td>
+      <td class="num mut">${imb}</td><td class="num mut">${r.first ? r.first + ' – ' + r.last : ''}</td></tr>`;
+  }).join('');
+  document.querySelectorAll('#dayRows tr').forEach(tr => tr.onclick = () => selectUnd(tr.dataset.n));
+}
+function selectUnd(n) { SEL = n; localSet('cepe_sel', SEL); paramsDirty = false; refresh(true); renderDay(); }
+
+// ── rendering ───────────────────────────────────────────────────────────
+function renderUnds() {
+  $('unds').innerHTML = STATE.underlyings.map(u => {
+    const ph = u.phase, dc = ph === 'in' ? 'in' : ph === 'wait_entry' ? 'wait' : ph === 'stopped' ? 'stop' : '';
+    const m = u.mtm.total, has = u.open_positions || u.trades;
+    return `<div class="und ${u.name === SEL ? 'on' : ''}" data-n="${esc(u.name)}">
+      <div class="n"><span class="dot ${u.running ? dc : ''}"></span>${esc(u.label)}</div>
+      <div class="num ${cls(m)}">${has ? rs(m) : '<span class="mut">idle</span>'}</div>
+      <div class="num mut">${u.imbalance.pct == null ? '' : 'imb ' + fmt(u.imbalance.pct, 1) + '%'}</div></div>`;
+  }).join('');
+  document.querySelectorAll('.und').forEach(el => el.onclick = () => selectUnd(el.dataset.n));
+}
+
+const PHASE = {in: 'In trade', wait_entry: 'Waiting to enter', stopped: 'Stopped (MTM SL)', done: 'Squared off'};
+function renderCards() {
+  const u = ROW; if (!u) return;
+  const p = u.params || {};
+  $('refLbl').textContent = (u.name === 'NIFTY' || u.name === 'SENSEX') ? 'Spot' : 'Future';
+  $('ref').textContent = fmt(u.ref, 2);
+  $('refSub').textContent = u.ref_age == null ? 'no tick yet' : `tick ${u.ref_age}s ago` + (u.synthetic ? ` · options-implied ${fmt(u.synthetic, 1)}` : '');
+  $('atm').textContent = u.strat_atm ? k0(u.strat_atm) : (u.atm ? k0(u.atm) : '–');
+  $('atmSub').textContent = `step ${k0(u.step)} · buffer ${p.atm_buffer_pct}%` + (u.strat_atm ? '' : ' · (not started)');
+  const im = u.imbalance.pct, band = +p.band || 15;
+  $('imb').textContent = im == null ? '–' : (im > 0 ? '+' : '') + fmt(im, 2) + '%';
+  $('imb').className = 'big num ' + (im == null ? '' : Math.abs(im) > band ? 'neg' : Math.abs(im) <= (+p.normal_band || 5) ? 'pos' : 'warn');
+  $('imbSub').innerHTML = `<span style="color:var(--ce)">CE ${rs(u.imbalance.ce_value)}</span> · <span style="color:var(--pe)">PE ${rs(u.imbalance.pe_value)}</span>`;
+  const b = $('imbBand'); b.style.left = (50 - band / 2) + '%'; b.style.width = band + '%';
+  const mk = $('imbMk'); if (im == null) mk.style.display = 'none'; else { mk.style.display = ''; mk.style.left = `calc(${Math.max(0, Math.min(100, 50 + im / 2))}% - 1px)`; }
+  $('mtm').textContent = rs(u.mtm.total); $('mtm').className = 'big num ' + cls(u.mtm.total);
+  $('mtmSub').textContent = `realised ${rs(u.mtm.realized)} · open ${rs(u.mtm.unrealized)}` + (+p.mtm_stop ? ` · SL −₹${k0(p.mtm_stop)}` : '');
+  $('phase').textContent = u.running ? (PHASE[u.phase] || 'Running') : (PHASE[u.phase] && u.phase !== 'in' ? PHASE[u.phase] : 'Stopped');
+  $('phase').className = 'big ' + (u.running ? (u.phase === 'in' ? 'pos' : 'warn') : 'mut');
+  $('phaseSub').textContent = `${u.open_positions} open legs · ${u.trades} fills` + (u.errors ? ` · ${u.errors} errors` : '');
+  $('exp').textContent = u.expiry || '–';
+  const s = u.session;
+  $('sess').innerHTML = `${s.open}–${s.close} · exit ${s.square_off} · ` + (s.in_session ? '<span class="pos">open</span>' : '<span class="mut">closed</span>');
+  $('blocked').textContent = u.blocked ? '⚠ ' + u.blocked : (u.last_error ? 'error: ' + u.last_error : '');
+  $('bStart').disabled = u.running; $('bStop').disabled = !u.running;
+  if (document.activeElement !== $('aTime') && !autoDirty) { $('aOn').checked = !!u.auto_start; $('aTime').value = u.auto_time || ''; }
+  $('aMsg').innerHTML = !u.auto_start ? 'off'
+    : u.auto_done ? '<span class="pos">done for today</span>'
+    : `<span class="warn">waits for ${esc(u.auto_time)}</span>`;
+  if (!paramsDirty) {
+    $('pLots').value = p.lots; $('pBand').value = p.band; $('pNormal').value = p.normal_band;
+    $('pBuf').value = p.atm_buffer_pct; $('pStep').value = p.step || u.step; $('pStop').value = p.mtm_stop; $('pGap').value = p.max_spread_pct;
+  }
+  $('cMtm').textContent = rs(u.mtm.total); $('cImb').textContent = im == null ? '' : fmt(im, 1) + '%';
+  setBandLinesOnce(band, +p.normal_band || 5);
+}
+let lastBand = null;
+function setBandLinesOnce(b, n) { const k = b + '/' + n; if (k !== lastBand) { lastBand = k; setBandLines(b, n); } }
+
+// Chain: rows are built once per strike set, then cells are updated in place so LTP can flash on every change.
+const OC = {key: '', cells: new Map(), last: new Map(), flip: new Map(), centred: null};
+const setT = (el, t) => { if (el.textContent !== t) el.textContent = t; };
+function renderChain(j) {
+  const rows = j.rows || [];
+  const ref = j.ref || 0;
+  $('chainSub').textContent = j.expiry ? `${j.expiry} · step ${k0(j.step)} · ${ROW && (ROW.name === 'NIFTY' || ROW.name === 'SENSEX') ? 'spot' : 'future'} ${fmt(ref, 2)}` : '';
+  const key = SEL + '|' + j.expiry + '|' + rows.map(r => r.strike).join(',');
+  if (key !== OC.key) {
+    OC.key = key; OC.cells.clear(); OC.last.clear();
+    $('chain').innerHTML = rows.map(r =>
+      `<tr data-k="${r.strike}"><td class="ba"></td><td class="ba"></td><td class="ltp"></td><td class="pos"></td>` +
+      `<td class="k">${k0(r.strike)}</td>` +
+      `<td class="pos"></td><td class="ltp"></td><td class="ba"></td><td class="ba"></td></tr>`).join('')
+      || '<tr><td colspan="9" style="text-align:center;color:#7d8794;padding:30px">waiting for prices…</td></tr>';
+    $('chain').querySelectorAll('tr[data-k]').forEach(tr => {
+      const td = tr.children, k = +tr.dataset.k;
+      OC.cells.set(k, {tr, td, CE: {bid: td[0], ask: td[1], ltp: td[2], pos: td[3]}, PE: {pos: td[5], ltp: td[6], bid: td[7], ask: td[8]}});
+    });
+  }
+  let ceLots = 0, peLots = 0, ceVal = 0, peVal = 0;
+  for (const r of rows) {
+    const c = OC.cells.get(r.strike); if (!c) continue;
+    c.tr.classList.toggle('atm', !!r.atm);
+    const ceItm = ref && r.strike < ref, peItm = ref && r.strike > ref;
+    for (let i = 0; i < 4; i++) c.td[i].classList.toggle('itm', !!ceItm);
+    for (let i = 5; i < 9; i++) c.td[i].classList.toggle('itm', !!peItm);
+    for (const side of ['CE', 'PE']) {
+      const q = r[side], el = c[side], id = side + r.strike;
+      setT(el.bid, fmt(q.bid)); setT(el.ask, fmt(q.ask)); setT(el.ltp, fmt(q.ltp));
+      const prev = OC.last.get(id);
+      if (prev != null && q.ltp != null && q.ltp !== prev) {
+        const f = (OC.flip.get(id) || 0) ^ 1; OC.flip.set(id, f);
+        el.ltp.classList.remove('fu1', 'fu2', 'fd1', 'fd2');
+        el.ltp.classList.add((q.ltp > prev ? 'fu' : 'fd') + (f ? '1' : '2'));
+      }
+      if (q.ltp != null) OC.last.set(id, q.ltp);
+      const l = q.held || 0;
+      setT(el.pos, l ? (l > 0 ? '+' : '−') + Math.abs(l) : '');
+      el.pos.className = 'pos' + (l > 0 ? ' long' : l < 0 ? ' short' : '') + (el.pos.classList.contains('itm') ? ' itm' : '');
+      el.ltp.classList.toggle('pos-short', l < 0); el.ltp.classList.toggle('pos-long', l > 0);
+      if (l < 0) { if (side === 'CE') { ceLots += -l; ceVal += -l * (q.ltp || 0); } else { peLots += -l; peVal += -l * (q.ltp || 0); } }
+    }
+  }
+  $('ocCe').innerHTML = `CE short <b>${ceLots}</b> lots · premium <b>${fmt(ceVal, 2)}</b>`;
+  $('ocPe').innerHTML = `PE short <b>${peLots}</b> lots · premium <b>${fmt(peVal, 2)}</b>`;
+  if (OC.centred !== SEL) {
+    const a = $('chain').querySelector('tr.atm');
+    if (a) { const box = a.closest('.scroll'); box.scrollTop = a.offsetTop - box.clientHeight / 2; OC.centred = SEL; }
+  }
+}
+let chainBusy = false;
+async function chainLoop() {
+  if (chainBusy) return; chainBusy = true;
+  try { const c = await api(`/chain/${SEL}?n=10`); if (c.rows && c.name === SEL) renderChain(c); }
+  catch (e) {} finally { chainBusy = false; }
+}
+
+async function renderLower() {
+  if (lowerTab === 'pos') {
+    const j = await api(`/positions/${SEL}${DQ()}`);
+    const rows = (j.positions || []);
+    $('lowerR').innerHTML = `<table><thead><tr><th style="text-align:left">Contract</th><th>Lots</th><th>Avg</th><th>LTP</th><th>Open P&amp;L</th><th>Booked</th></tr></thead><tbody>` +
+      (rows.map(p => `<tr><td style="text-align:left;color:${p.kind === 'CE' ? 'var(--ce)' : 'var(--pe)'}">${esc(k0(p.strike))} ${esc(p.kind)}</td>
+        <td class="${p.lots < 0 ? 'neg' : p.lots > 0 ? 'pos' : 'mut'}">${p.lots}</td><td>${fmt(p.avg)}</td><td>${fmt(p.ltp)}</td>
+        <td class="${cls(p.unrealized)}">${rs(p.unrealized)}</td><td class="${cls(p.realized)}">${rs(p.realized)}</td></tr>`).join('')
+       || '<tr><td colspan="6" class="mut" style="text-align:center">no positions</td></tr>') + '</tbody></table>';
+  } else if (lowerTab === 'adj') {
+    const j = await api(`/events/${SEL}${DQ()}`);
+    const ev = (j.events || []).filter(e => e.event !== 'params' || true).slice().reverse();
+    $('lowerR').innerHTML = `<table class="ev"><thead><tr><th style="text-align:left">Time</th><th style="text-align:left">What</th><th style="text-align:left">Detail</th></tr></thead><tbody>` +
+      (ev.map(e => {
+        let what = e.event, det = '';
+        if (e.event === 'adjust') { what = e.action; det = `imb ${fmt(e.imb_before, 1)}% → ${fmt(e.imb_after, 1)}% · ` + (e.fills || []).join(' · '); }
+        else if (e.event === 'atm_change') det = `${k0(e.old)} → ${k0(e.new)} (price ${fmt(e.ref, 1)})`;
+        else { const o = {...e}; delete o.ts; delete o.time; delete o.event; det = Object.entries(o).map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : v}`).join(' · '); }
+        return `<tr><td class="num mut">${esc(e.time)}</td><td style="font-weight:600">${esc(what)}</td><td class="mut">${esc(det)}</td></tr>`;
+      }).join('') || '<tr><td colspan="3" class="mut">nothing yet</td></tr>') + '</tbody></table>';
+  } else {
+    const j = await api(`/trades/${SEL}${DQ()}`);
+    const tr = (j.trades || []).slice().reverse();
+    $('lowerR').innerHTML = `<table><thead><tr><th style="text-align:left">Time</th><th style="text-align:left">Contract</th><th>Side</th><th>Lots</th><th>Price</th><th>Bid/Ask</th><th style="text-align:left">Why</th></tr></thead><tbody>` +
+      (tr.map(t => `<tr><td class="num mut" style="text-align:left">${esc(t.time)}</td><td style="text-align:left">${esc(k0(t.strike))} ${esc(t.kind)}</td>
+        <td class="${t.side === 'SELL' ? 'neg' : 'pos'}">${esc(t.side)}</td><td>${t.lots}</td><td>${fmt(t.price)}</td>
+        <td class="mut">${fmt(t.bid)} / ${fmt(t.ask)}</td><td class="mut" style="text-align:left">${esc(t.reason)}</td></tr>`).join('')
+       || '<tr><td colspan="7" class="mut" style="text-align:center">no fills</td></tr>') + '</tbody></table>';
+  }
+}
+document.querySelectorAll('.tabs2 button').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tabs2 button').forEach(x => x.classList.toggle('on', x === b));
+  lowerTab = b.dataset.t; renderLower();
+});
+
+// ── controls ────────────────────────────────────────────────────────────
+async function control(action, confirmMsg) {
+  if (confirmMsg && !confirm(confirmMsg)) return;
+  $('ctlMsg').textContent = '…';
+  const j = await api(`/control/${SEL}`, {action});
+  $('ctlMsg').innerHTML = j.ok ? `<span class="pos">${esc(action)} ok</span>` : `<span class="err">${esc(j.error || 'failed')}</span>`;
+  refresh();
+}
+$('bStart').onclick = () => control('start', `Start CE/PE imbalance (PAPER) on ${ROW ? ROW.label : SEL}?\nIt sells ATM/+1/+2 CE and PE on the next tick.`);
+$('bStop').onclick = () => control('stop');
+$('bStopExit').onclick = () => control('stop_exit', `Stop ${ROW ? ROW.label : SEL} and buy back ALL paper positions?`);
+['pLots', 'pBand', 'pNormal', 'pBuf', 'pStep', 'pStop', 'pGap'].forEach(id => $(id).addEventListener('input', () => { paramsDirty = true; $('pMsg').textContent = 'unsaved'; }));
+let autoDirty = false;
+async function saveAuto() {
+  autoDirty = true;
+  const j = await api(`/auto/${SEL}`, {auto_start: $('aOn').checked, auto_time: $('aTime').value});
+  autoDirty = false;
+  $('ctlMsg').innerHTML = j.ok ? `<span class="pos">auto-start ${j.auto_start ? 'on at ' + esc(j.auto_time) : 'off'} (saved)</span>` : `<span class="err">${esc(j.error)}</span>`;
+  refresh();
+}
+$('aOn').onchange = saveAuto;
+$('aTime').onchange = saveAuto;
+$('bSave').onclick = async () => {
+  const body = {lots: +$('pLots').value, band: +$('pBand').value, normal_band: +$('pNormal').value,
+                atm_buffer_pct: +$('pBuf').value, step: +$('pStep').value, mtm_stop: +$('pStop').value, max_spread_pct: +$('pGap').value};
+  const j = await api(`/params/${SEL}`, body);
+  paramsDirty = !j.ok;
+  $('pMsg').innerHTML = j.ok ? '<span class="pos">saved</span>' : `<span class="err">${esc(j.error)}</span>`;
+  refresh();
+};
+
+// ── loops ───────────────────────────────────────────────────────────────
+let busy = false;
+async function refresh(full) {
+  if (busy && !full) return; busy = true;
+  try {
+    const s = await api('/state');
+    if (!s.underlyings) { $('feed').className = 'pill bad'; $('feed').textContent = s.error ? 'engine offline' : 'no data'; $('blocked').textContent = s.error || ''; return; }
+    STATE = s; ROW = s.underlyings.find(u => u.name === SEL) || s.underlyings[0]; SEL = ROW.name;
+    const f = s.feed || {};
+    $('feed').className = 'pill ' + (f.authed ? 'ok' : 'bad');
+    $('feed').textContent = f.authed ? `feed ok · ${f.subscribed ?? ''} subs` : 'feed down';
+    renderUnds(); renderCards();
+    await loadHistory(full);
+    if (full) { chainLoop(); renderLower(); }
+  } catch (e) { $('feed').className = 'pill bad'; $('feed').textContent = 'offline'; }
+  finally { busy = false; }
+}
+setInterval(() => { $('clock').textContent = new Date().toLocaleTimeString('en-IN', {timeZone: 'Asia/Kolkata', hour12: false}) + ' IST'; }, 500);
+setInterval(refresh, 1000);
+setInterval(chainLoop, 400);
+setInterval(() => { if (!DAY) renderLower(); }, 2000);
+setInterval(() => { if (!DAY) renderDay(); }, 3000);
+setInterval(loadDays, 60000);
+const DQ = () => DAY ? `?date=${DAY}` : '';
+loadDays().then(renderDay);
+refresh(true);
+</script>
+</body>
+</html>

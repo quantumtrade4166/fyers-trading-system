@@ -197,6 +197,9 @@
     <button class="tab-btn" id="tab-builder" onclick="switchTab('builder')">
       🧩 Strategy Builder
     </button>
+    <button class="tab-btn" id="tab-cepe" onclick="switchTab('cepe')">
+      ⚖️ CE/PE Imbalance
+    </button>
     <button class="tab-btn" id="tab-terminal" onclick="switchTab('terminal')">
       💼 Terminal
     </button>
@@ -1572,6 +1575,11 @@
     </div>
   </div>
 
+  <div id="page-cepe" style="display:none">
+    <iframe id="cepe-frame" title="CE/PE Imbalance"
+            style="width:100%;height:calc(100vh - 110px);min-height:1100px;border:0;display:block"></iframe>
+  </div>
+
   <div id="page-builder" style="display:none">
     <iframe id="builder-frame" title="Strategy Builder"
             style="width:100%;height:calc(100vh - 110px);min-height:860px;border:0;display:block"></iframe>
@@ -1839,7 +1847,8 @@ function switchTab(tab) {
   if (tab === 'stdir') { const f = document.getElementById('stdir-frame'); if (f && !f.src) f.src = '/static/stdir.html?v=' + Date.now(); }
   if (tab === 'takerflow') { const f = document.getElementById('takerflow-frame'); if (f && !f.src) f.src = '/static/takerflow.html'; }
   if (tab === 'builder') { const f = document.getElementById('builder-frame'); if (f && !f.src) f.src = '/static/builder.html?v=' + Date.now(); }
-  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'btcvwap', 'btcarb', 'takerflow', 'ndp', 'stdir', 'builder', 'terminal'].forEach(t => {
+  if (tab === 'cepe') { const f = document.getElementById('cepe-frame'); if (f && !f.src) f.src = '/static/cepe.html?v=' + Date.now(); }
+  ['statarb', 'dualmom', 'strangle', 'vwapstrangle', 'deltaneutral', 'btc', 'btcvwap', 'btcarb', 'takerflow', 'ndp', 'stdir', 'builder', 'cepe', 'terminal'].forEach(t => {
     const pg = document.getElementById('page-' + t);
     if (pg) pg.style.display = (t === tab) ? '' : 'none';
     const btn = document.getElementById('tab-' + t);

@@ -56,5 +56,16 @@ ORDER = tuple(UNDERLYINGS)
 STRIKES_EACH_SIDE = 15
 EXPIRIES_LIVE = 2
 
+# Strategy strike grid (owner, 3-Nov-2026). Kotak lists CRUDEOIL every 50; we trade every 200.
+STRIKE_STEP = {"NIFTY": 50, "SENSEX": 100, "CRUDEOIL": 200, "GOLDM": 500, "GOLD": 500,
+               "SILVERM": 1000, "SILVER": 1000}
+GRID_EACH_SIDE = 12          # grid strikes kept subscribed each side of ATM (prices ready before a roll)
+
 # MTM / imbalance history sampling (seconds) -> data/history/{date}/{name}.jsonl
-HISTORY_EVERY_S = 1.0
+HISTORY_EVERY_S = 0.5
+
+# Auto-start (owner, 3-Nov-2026): each instrument starts itself once a day at this IST time, Mon-Fri,
+# inside its session. Toggle / time per instrument on the screen (saved in data/settings.json).
+# A manual Start or Stop that day ends auto-start for that day.
+AUTO_START_DEFAULT = True
+AUTO_START_TIME = {"index": "09:20", "commodity": "09:05"}

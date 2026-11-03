@@ -228,6 +228,34 @@ async def _strategy_builder_proxy(path: str, request: _Request):
         return _JSONResponse(status_code=502, content={
             "ok": False, "error": f"Strategy Builder returned non-JSON: {r.text[:200]}"})
 
+# CE/PE Imbalance (PAPER) — PROXY to its own process (live_trading_options/cepe_imbalance, port 47690).
+_CEPE_BASE = os.getenv("CEPE_URL", "http://127.0.0.1:47690")
+
+
+@app.api_route("/api/cepe/{path:path}", methods=["GET", "POST"])
+async def _cepe_proxy(path: str, request: _Request):
+    qs = str(request.url.query)
+    full = f"{_CEPE_BASE}/{path}" + (f"?{qs}" if qs else "")
+    body = await request.body()
+
+    def _call():
+        if request.method == "POST":
+            return _requests.post(full, data=body, timeout=15, headers={"Content-Type": "application/json"})
+        return _requests.get(full, timeout=15)
+
+    try:
+        r = await asyncio.to_thread(_call)
+    except _requests.exceptions.ConnectionError:
+        return _JSONResponse(status_code=503, content={
+            "ok": False, "error": f"CE/PE imbalance engine is not running at {_CEPE_BASE}. "
+                                  f"Start it: python -m live_trading_options.cepe_imbalance.service"})
+    except Exception as _e:
+        return _JSONResponse(status_code=502, content={"ok": False, "error": f"CE/PE proxy: {type(_e).__name__}: {_e}"})
+    try:
+        return _JSONResponse(status_code=r.status_code, content=r.json())
+    except ValueError:
+        return _JSONResponse(status_code=502, content={"ok": False, "error": f"CE/PE returned non-JSON: {r.text[:200]}"})
+
 # ── tiny thread-safe TTL cache ───────────────────────────────────────────────
 # The pair-signal compute is ~0.5-3s. Running it on the event loop froze EVERY request
 # (a 16-byte /api/version took 2.3s). We (a) run it in a thread so it never blocks the loop

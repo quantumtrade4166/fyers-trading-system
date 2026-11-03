@@ -196,9 +196,10 @@ def test_engine_routes_ticks_and_session_end(universe):
     eng.on_ticks([tick(ce.key, 80, 79.5, 80.5), tick("nse_cm|Nifty 50", 23452)])
     assert r.strategy.ticks and ce.key in r.strategy.ticks[-1]
     eng.manual_order("NIFTY", 23500, "CE", "SELL", 1)
-    eng.tick_timer(dt.datetime(2026, 11, 2, 10, 0, tzinfo=IST))
+    day = dt.date.fromisoformat(r.date)                       # the engine's own day (no rollover)
+    eng.tick_timer(dt.datetime.combine(day, dt.time(10, 0), IST))
     assert r.strategy.timers == 1
-    eng.tick_timer(dt.datetime(2026, 11, 2, 15, 16, tzinfo=IST))
+    eng.tick_timer(dt.datetime.combine(day, dt.time(15, 16), IST))
     assert r.strategy.ended and r.book.positions[ce.key].lots == 0
     eng.on_ticks([tick(ce.key, 81, 80.5, 81.5)])          # after square-off: no more rule calls
     n = len(r.strategy.ticks)

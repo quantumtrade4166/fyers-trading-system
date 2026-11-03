@@ -22,6 +22,39 @@ from live_trading_options.cepe_imbalance.book import IST, PaperBook, today
 log = logging.getLogger("cepe.engine")
 
 
+# ── durable per-instrument settings (survive day rollover + restarts) ───────
+# data/settings.json = {name: {"params": {...}, "auto_start": bool, "auto_time": "HH:MM"}}
+_settings_lock = threading.Lock()
+
+
+def settings_path():
+    return C.DATA / "settings.json"
+
+
+def load_settings() -> dict:
+    p = settings_path()
+    try:
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
+    except ValueError:
+        log.exception("settings.json unreadable; using defaults")
+        return {}
+
+
+def save_settings(name, **fields):
+    with _settings_lock:
+        doc = load_settings()
+        doc.setdefault(name, {}).update(fields)
+        p = settings_path()
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".tmp")
+        tmp.write_text(json.dumps(doc, indent=1), encoding="utf-8")
+        tmp.replace(p)
+
+
+def default_auto(name) -> dict:
+    return {"auto_start": C.AUTO_START_DEFAULT, "auto_time": C.AUTO_START_TIME[C.UNDERLYINGS[name]["kind"]]}
+
+
 # ── session hours ───────────────────────────────────────────────────────────
 def _nth_sunday(year, month, n):
     d = dt.date(year, month, 1)
@@ -91,6 +124,15 @@ class Context:
     def log(self, event, **fields):
         self._r.event(event, **fields)
 
+    def save(self):
+        self._r.save_state()
+
+    def in_session(self, now=None):
+        """Open <= now < square-off time."""
+        now = now or self.now
+        o, _close, sq = session(self.name, now.date())
+        return o <= now < sq
+
 
 class Runner:
     def __init__(self, name, market, strategy_name=S.DEFAULT, date=None, persist=True):
@@ -110,7 +152,11 @@ class Runner:
         self.last_error = ""
         self.events: list = []
         self.ctx = Context(self)
+        self.auto = default_auto(name)
         if persist:
+            saved = load_settings().get(name, {})
+            self.params.update({k: v for k, v in (saved.get("params") or {}).items() if k in self.params})
+            self.auto.update({k: saved[k] for k in ("auto_start", "auto_time") if k in saved})
             self._load_state()
 
     # ── persistence ─────────────────────────────────────────────────────────
@@ -172,6 +218,15 @@ class Engine:
         self._last_sample = 0.0
         self._last_subs = 0.0
         self.started_at = time.time()
+        self.hist: dict[str, list] = {n: [] for n in self.runners}   # today's MTM/imbalance samples
+        if persist:
+            self._load_hist(today())
+
+    def _load_hist(self, date):
+        for n in self.runners:
+            p = C.DATA / "history" / date / f"{n}.jsonl"
+            rows = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
+            self.hist[n] = [json.loads(x) for x in rows if x.strip()]
 
     # ── subscriptions ───────────────────────────────────────────────────────
     def wanted_keys(self, name) -> list:
@@ -189,7 +244,19 @@ class Engine:
                     c = self.market.contract(name, e, s, kind)
                     if c:
                         keys.append(c.key)
-        r = self.runners.get(name)                 # open positions are always watched
+        r = self.runners.get(name)
+        e = self.market.expiry(name, r.expiry_n if r else 0)       # strategy grid around ATM
+        atm = self.market.atm(name, e) if e else None
+        if atm is not None:
+            step = float((r.params.get("step") if r else 0) or C.STRIKE_STEP.get(name) or 0)
+            if step > 0:
+                base = round(atm / step) * step
+                for i in range(-C.GRID_EACH_SIDE, C.GRID_EACH_SIDE + 1):
+                    for kind in ("CE", "PE"):
+                        c = self.market.contract(name, e, base + i * step, kind)
+                        if c:
+                            keys.append(c.key)
+        # open positions are always watched
         if r:
             keys += [k for k, p in r.book.positions.items() if p.lots]
         return keys
@@ -220,13 +287,14 @@ class Engine:
                     r.call(r.strategy.on_tick, ks)
 
     # ── controls ────────────────────────────────────────────────────────────
-    def start(self, name):
+    def start(self, name, how="manual"):
         with self.lock:
             r = self.runners[name]
+            r.state["auto_done"] = True                     # any start/stop today ends auto-start for today
             if r.running:
                 return {"ok": True, "note": "already running"}
             r.running, r.square_off_done = True, False
-            r.event("start", strategy=r.strategy_name)
+            r.event("start", strategy=r.strategy_name, how=how)
             r.call(r.strategy.on_start)
             r.save_state()
             return {"ok": True}
@@ -235,10 +303,83 @@ class Engine:
         with self.lock:
             r = self.runners[name]
             r.running = False
+            r.state["auto_done"] = True                     # a manual stop is not undone by auto-start
             out = r.book.exit_all("stop") if exit_positions else []
             r.event("stop", exited=len(out))
             r.save_state()
             return {"ok": True, "exits": out}
+
+    def set_params(self, name, changes: dict):
+        with self.lock:
+            r = self.runners[name]
+            allowed = set(getattr(r.strategy, "params", {}) or {})
+            bad = [k for k in changes if k not in allowed]
+            if bad:
+                return {"ok": False, "error": f"unknown params {bad}"}
+            for k, v in changes.items():
+                r.params[k] = type(r.strategy.params[k])(v) if r.strategy.params[k] is not None else v
+            r.event("params", **changes)
+            r.save_state()
+            if self.persist:
+                save_settings(name, params=r.params)        # carry to the next days
+            return {"ok": True, "params": r.params}
+
+    def set_auto(self, name, auto_start=None, auto_time=None):
+        with self.lock:
+            r = self.runners[name]
+            if auto_time is not None:
+                t = str(auto_time).strip()
+                dt.time.fromisoformat(t)                    # ValueError on a bad time
+                r.auto["auto_time"] = t[:5]
+            if auto_start is not None:
+                r.auto["auto_start"] = bool(auto_start)
+            r.event("auto", **r.auto)
+            if self.persist:
+                save_settings(name, **r.auto)
+            return {"ok": True, **r.auto}
+
+    def reset(self, name, start=True):
+        """Wipe today's PAPER book for one instrument and (optionally) start it fresh.
+        Nothing is deleted: today's files move to data/books/{date}/_reset_{HHMMSS}/ (history too)."""
+        import shutil
+        with self.lock:
+            r = self.runners[name]
+            stamp = dt.datetime.now(IST).strftime("%H%M%S")
+            moved = []
+            if self.persist:
+                arch = C.DATA / "books" / r.date / f"_reset_{stamp}"
+                arch.mkdir(parents=True, exist_ok=True)
+                for suffix in (".json", "_trades.jsonl", "_events.jsonl", "_state.json"):
+                    p = C.DATA / "books" / r.date / f"{name}{suffix}"
+                    if p.exists():
+                        shutil.move(str(p), str(arch / p.name))
+                        moved.append(p.name)
+                h = C.DATA / "history" / r.date / f"{name}.jsonl"
+                if h.exists():
+                    shutil.move(str(h), str(arch / f"{name}_history.jsonl"))
+                    moved.append(h.name)
+            nr = Runner(name, self.market, r.strategy_name, date=r.date, persist=self.persist)
+            nr.state["auto_done"] = True                     # reset = owner's action; no auto re-trigger
+            self.runners[name] = nr
+            self.hist[name] = []
+            nr.event("reset", archived=moved, folder=f"_reset_{stamp}")
+            nr.save_state()
+            out = {"ok": True, "archived": moved}
+            if start:
+                out["start"] = self.start(name, how="reset")
+            return out
+
+    def maybe_auto_start(self, n, r, now):
+        """Start once a day at auto_time (Mon-Fri, inside the session, before square-off)."""
+        if r.running or r.square_off_done or not r.auto.get("auto_start") or r.state.get("auto_done"):
+            return
+        if now.weekday() >= 5:
+            return
+        o, _close, sq = session(n, now.date())
+        at = dt.datetime.combine(now.date(), dt.time.fromisoformat(r.auto.get("auto_time") or "09:05"), IST)
+        if max(o, at) <= now < sq:
+            self.start(n, how="auto")
+            r.save_state()
 
     def manual_order(self, name, strike, kind, side, lots, expiry_n=None):
         with self.lock:
@@ -264,6 +405,7 @@ class Engine:
             self.refresh_subscriptions()
         with self.lock:
             for n, r in self.runners.items():
+                self.maybe_auto_start(n, r, now)
                 if not r.running or r.square_off_done:
                     continue
                 o, close, sq = session(n, now.date())
@@ -279,19 +421,28 @@ class Engine:
             self.sample(now)
 
     def sample(self, now):
-        if not self.persist:
-            return
         d = C.DATA / "history" / now.date().isoformat()
-        d.mkdir(parents=True, exist_ok=True)
+        if self.persist:
+            d.mkdir(parents=True, exist_ok=True)
         for n, r in self.runners.items():
             has_book = any(p.lots or p.realized for p in r.book.positions.values())
             if not (r.running or has_book):
                 continue
             m, im = r.book.mtm(), r.book.imbalance()
-            row = {"t": round(time.time(), 1), "mtm": m["total"], "imb": im["pct"],
-                   "ref": self.market.ref_price(n), "atm": self.market.atm(n)}
-            with open(d / f"{n}.jsonl", "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(row) + "\n")
+            e = self.market.expiry(n, r.expiry_n)
+            atm = r.state.get("atm") or self.market.atm(n, e)
+            row = {"t": round(time.time(), 2), "mtm": m["total"], "imb": im["pct"],
+                   "ce": im["ce_value"], "pe": im["pe_value"], "ref": self.market.ref_price(n, e), "atm": atm}
+            if atm and e:                                    # ATM premium chart: ATM CE / PE price
+                for kind, f in (("CE", "ace"), ("PE", "ape")):
+                    c = self.market.contract(n, e, atm, kind)
+                    px = self.market.mark(c.key) if c else 0.0
+                    row[f] = px if px > 0 else None
+            self.hist.setdefault(n, []).append(row)
+            del self.hist[n][:-200000]
+            if self.persist:
+                with open(d / f"{n}.jsonl", "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(row) + "\n")
 
     def rollover(self, date):
         """New day: fresh paper books (no carry), runners stopped."""
@@ -300,11 +451,12 @@ class Engine:
                 if any(p.lots for p in r.book.positions.values()):
                     r.event("rollover_with_open_positions_dropped")
                 self.runners[n] = Runner(n, self.market, r.strategy_name, date=date, persist=self.persist)
+                self.hist[n] = []
         log.info("day rollover -> %s", date)
 
     def run_timer(self):
         def loop():
-            while not self._stop.wait(1.0):
+            while not self._stop.wait(0.5):
                 try:
                     self.tick_timer()
                 except Exception:
@@ -331,6 +483,10 @@ class Engine:
                         "trades": len(r.book.trades), "errors": r.errors, "last_error": r.last_error,
                         "session": {"open": o.strftime("%H:%M"), "close": close.strftime("%H:%M"),
                                     "square_off": sq.strftime("%H:%M"), "in_session": o <= now < close},
-                        "square_off_done": r.square_off_done})
+                        "square_off_done": r.square_off_done, "phase": r.state.get("phase"),
+                        "strat_atm": r.state.get("atm"), "blocked": r.state.get("blocked"),
+                        "params": r.params, "step": float(r.params.get("step") or C.STRIKE_STEP.get(n) or 0),
+                        "auto_start": r.auto.get("auto_start"), "auto_time": r.auto.get("auto_time"),
+                        "auto_done": bool(r.state.get("auto_done"))})
         return {"now": now.isoformat(timespec="seconds"), "underlyings": out,
                 "feed": self.feed.status() if self.feed else None, "universe_date": self.u.file_date}

@@ -7,7 +7,7 @@ Quantity is in LOTS; rupees = price x lots x lot size x multiplier (GOLD x100, G
 
 CE/PE imbalance (owner's rules, same as Strategy Builder / MCX terminal, 25-Oct-2026):
   only CURRENT net-short option contracts count (longs/hedges ignored);
-  value = premium (LTP) x units;  imbalance % = (CE value - PE value) / (CE value + PE value) x 100
+  value = premium x units, premium = LTP kept inside the live bid/ask (market.Quote.mark);  imbalance % = (CE value - PE value) / (CE value + PE value) x 100
   -> None when there are no shorts.
 
 State is saved after every fill (atomic) to data/books/{date}/{name}.json; every fill is appended to
@@ -151,22 +151,29 @@ class PaperBook:
     def mtm(self) -> dict:
         with self.lock:
             real = sum(p.realized for p in self.positions.values())
-            unreal = sum(p.unrealized(self.market.ltp(p.key)) for p in self.positions.values())
+            unreal = sum(p.unrealized(self.market.mark(p.key)) for p in self.positions.values())
         return {"realized": round(real, 2), "unrealized": round(unreal, 2), "total": round(real + unreal, 2)}
 
     def imbalance(self) -> dict:
+        """pct is None until EVERY short leg has a live price: a missing leg counted as 0 made a
+        +19% imbalance out of a real -3.5% right after an engine restart (3-Nov-2026, two false Bs)."""
         ce = pe = 0.0
+        missing = []
         with self.lock:
             for p in self.positions.values():
                 if p.lots < 0 and p.kind in ("CE", "PE"):
-                    v = self.market.ltp(p.key) * -p.lots * p.unit_value
+                    px = self.market.mark(p.key)
+                    if not px or px <= 0:
+                        missing.append(f"{p.strike:g} {p.kind}")
+                        continue
+                    v = px * -p.lots * p.unit_value
                     if p.kind == "CE":
                         ce += v
                     else:
                         pe += v
         tot = ce + pe
-        return {"ce_value": round(ce, 2), "pe_value": round(pe, 2),
-                "pct": round((ce - pe) / tot * 100, 2) if tot > 0 else None}
+        return {"ce_value": round(ce, 2), "pe_value": round(pe, 2), "missing": missing,
+                "pct": round((ce - pe) / tot * 100, 2) if tot > 0 and not missing else None}
 
     def open_positions(self) -> list:
         with self.lock:
@@ -174,6 +181,6 @@ class PaperBook:
             for p in self.positions.values():
                 if not p.lots and not p.realized:
                     continue
-                ltp = self.market.ltp(p.key)
+                ltp = self.market.mark(p.key)
                 rows.append({**asdict(p), "ltp": ltp, "unrealized": round(p.unrealized(ltp), 2)})
             return sorted(rows, key=lambda r: (r["expiry"], r["kind"], r["strike"]))
