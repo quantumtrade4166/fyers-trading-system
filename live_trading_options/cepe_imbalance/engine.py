@@ -438,11 +438,31 @@ class Engine:
                     c = self.market.contract(n, e, atm, kind)
                     px = self.market.mark(c.key) if c else 0.0
                     row[f] = px if px > 0 else None
+            sp = self.spreads(n, r, e, atm)                    # bid-ask gap % of the 6 strategy strikes
+            if sp:
+                row["sp"] = sp
             self.hist.setdefault(n, []).append(row)
             del self.hist[n][:-200000]
             if self.persist:
                 with open(d / f"{n}.jsonl", "a", encoding="utf-8") as fh:
                     fh.write(json.dumps(row) + "\n")
+
+    def spreads(self, n, r, e, atm):
+        """Bid-ask gap as % of mid for ATM CE, CE+1, CE+2, ATM PE, PE-1, PE-2 (owner 4-Nov: spread chart).
+        None for a strike with no two-sided quote. [] if ATM / step unknown."""
+        step = float(r.params.get("step") or C.STRIKE_STEP.get(n) or 0)
+        if not (atm and e and step):
+            return []
+        out = []
+        for kind, sgn in (("CE", 1), ("PE", -1)):
+            for i in range(3):
+                c = self.market.contract(n, e, atm + sgn * i * step, kind)
+                q = self.market.quote(c.key) if c else None
+                if q and q.bid and q.ask and q.bid > 0 and q.ask >= q.bid:
+                    out.append(round((q.ask - q.bid) / ((q.ask + q.bid) / 2) * 100, 2))
+                else:
+                    out.append(None)
+        return out
 
     def rollover(self, date):
         """New day: fresh paper books (no carry), runners stopped."""
@@ -475,7 +495,7 @@ class Engine:
             e = self.market.expiry(n, r.expiry_n)
             rk = self.market.ref_key(n, e)
             rq = self.market.quote(rk) if rk else None
-            out.append({"name": n, "label": C.UNDERLYINGS[n]["label"], "running": r.running,
+            out.append({"name": n, "label": C.UNDERLYINGS[n]["label"], "kind": C.UNDERLYINGS[n]["kind"], "running": r.running,
                         "strategy": r.strategy_name, "expiry": e, "lot": self.u.underlyings[n].lot,
                         "ref": rq.ltp if rq else None, "ref_age": round(time.time() - rq.recv_ts, 1) if rq else None,
                         "atm": self.market.atm(n, e), "synthetic": self.market.synthetic(n, e), "mtm": r.book.mtm(), "imbalance": r.book.imbalance(),

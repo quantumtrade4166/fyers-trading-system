@@ -154,9 +154,17 @@ class CePeImbalance(Strategy):
         """Show a 'cannot act' reason; log it once per reason (`key`), not every tick."""
         ctx.state["blocked"] = why
         self._blk = True
-        if ctx.state.get("blocked_key") != (key or why):
-            ctx.state["blocked_key"] = key or why
+        key = key or why
+        now = getattr(self, "_keys_now", None)
+        if now is None:                                    # called outside evaluate(): old one-key memory
+            if ctx.state.get("blocked_key") != key:
+                ctx.state["blocked_key"] = key
+                ctx.log("blocked", why=why, **f)
+            return
+        # Several moves can wait at once (4-Nov fall-through): log each reason once while it stays waiting.
+        if key not in now and key not in (ctx.state.get("blocked_keys") or ()):
             ctx.log("blocked", why=why, **f)
+        now.add(key)
 
     # ── move builders (pure: take legs, return ops list or None) ───────────
     # op = (kind, strike, "BUY"|"SELL", lots)
@@ -282,12 +290,14 @@ class CePeImbalance(Strategy):
             c = ctx.contract(k, kind)
             if not c or not ctx.book.fill_price(c.key, side):
                 self.blocked(ctx, f"{reason}: no price for {kind} {k:g}", key=f"no price {kind} {k:g}")
+                self._fail = "price"
                 return False
             if side == "SELL":
                 ok, why = self.spread_ok(ctx, c)
                 if not ok:
                     self.blocked(ctx, f"{reason}: waiting, {k:g} {kind} quote too wide ({why})",
                                  key=f"wide {reason.split(' (')[0]} {k:g} {kind}")
+                    self._fail = "wide"
                     return False
             cs.append((c, side, lots))
         before = ctx.book.imbalance()["pct"]
@@ -297,6 +307,7 @@ class CePeImbalance(Strategy):
             fills.append(f"{side} {lots} {c.symbol} @{t.get('price')}" if t.get("ok") else f"FAILED {c.symbol}")
             if not t.get("ok"):
                 ctx.log("order_failed", reason=reason, error=t.get("error"))
+                self._fail = "order"
                 return False
         ctx.state["blocked"] = ctx.state["blocked_key"] = None
         ctx.log("adjust", action=reason, imb_before=before, imb_after=ctx.book.imbalance()["pct"],
@@ -359,25 +370,32 @@ class CePeImbalance(Strategy):
             ctx.state["entry_atm"] = atm
 
     def next_action(self, ctx, atm):
+        """First candidate move (or None). Kept for tests / callers wanting just the top move."""
+        return next(self.candidates(ctx, atm), None)
+
+    def candidates(self, ctx, atm):
+        """Moves in priority order. evaluate() tries each in turn: if one is held by a wide quote, the
+        next is tried (owner 4-Nov: while the ATM leg waits for a fair quote, keep balancing the book
+        with strikes that do have fair quotes, e.g. roll ITM CEs out with A)."""
         step, unit, band = self.step(ctx), self.unit(ctx), float(ctx.params["band"])
         legs = self.legs(ctx)
         for kind in ("CE", "PE"):                                  # hard rule first
             ops = self.op_atm(legs, kind, atm, unit)
             if ops:
-                return ops, f"ATM rule {kind}"
+                yield ops, f"ATM rule {kind}"
         im = ctx.book.imbalance()
         imb = im["pct"]
         if imb is None:
             if im.get("missing"):
                 self.blocked(ctx, "waiting for prices of " + ", ".join(im["missing"]), key="missing prices")
-            return None
+            return
         # GO NORMAL WHENEVER POSSIBLE (owner 3-Nov): if the clean ATM/+-1/+-2 set, priced now, is inside
         # +-normal_band, switch to it (only the differing strikes trade). Checked every tick, before A/B/C.
         ops = self.op_go_normal(legs, atm, step, unit)
         if ops:
             after = self.plan_imbalance(ctx, self.apply_ops(legs, ops))
             if after is not None and abs(after) <= float(ctx.params["normal_band"]):
-                return ops, f"back to normal (clean set {after:+.1f}%)"
+                yield ops, f"back to normal (clean set {after:+.1f}%)"
         # RE-CENTRE (owner 3-Nov): both sides adjusted (doubled strike / ITM leg) = they prop each other up.
         # Rebuild like entry: clean set + B/C on the light side only, if that plan is inside +-band.
         clean = {k: self.clean(k, atm, step, unit) for k in ("CE", "PE")}
@@ -386,23 +404,29 @@ class CePeImbalance(Strategy):
             if target is not None and target != legs and (target["CE"] == clean["CE"] or target["PE"] == clean["PE"]):
                 after = self.plan_imbalance(ctx, target)
                 if after is not None and abs(after) <= band:
-                    return self.op_to(legs, target), f"re-centre ({after:+.1f}%{', ' + ', '.join(notes) if notes else ''})"
+                    yield self.op_to(legs, target), f"re-centre ({after:+.1f}%{', ' + ', '.join(notes) if notes else ''})"
         if abs(imb) <= band:
-            return None
+            return
         heavy = "CE" if imb > 0 else "PE"
-        ops = self.op_A(legs, heavy, atm, step, unit)
-        if ops:
-            return ops, f"A ({heavy} heavy {imb:+.1f}%)"
-        ops = self.op_B(legs, heavy, atm, unit)
-        if ops:
-            return ops, f"B ({heavy} heavy {imb:+.1f}%)"
-        ops = self.op_C(legs, heavy, atm, step, unit)
-        if ops:
-            return ops, f"C ({heavy} heavy {imb:+.1f}%)"
-        self.blocked(ctx, f"{heavy} heavy {imb:+.1f}%: no A, B or C left", key=f"{heavy} heavy: no A/B/C")
-        return None
+        found = False
+        for tag, ops in (("A", self.op_A(legs, heavy, atm, step, unit)),
+                         ("B", self.op_B(legs, heavy, atm, unit)),
+                         ("C", self.op_C(legs, heavy, atm, step, unit))):
+            if ops:
+                found = True
+                yield ops, f"{tag} ({heavy} heavy {imb:+.1f}%)"
+        if not found:
+            self.blocked(ctx, f"{heavy} heavy {imb:+.1f}%: no A, B or C left", key=f"{heavy} heavy: no A/B/C")
 
     def evaluate(self, ctx):
+        self._keys_now = set()
+        try:
+            self._evaluate(ctx)
+        finally:
+            ctx.state["blocked_keys"] = sorted(self._keys_now)
+            self._keys_now = None
+
+    def _evaluate(self, ctx):
         ph = ctx.state.get("phase")
         if ph not in ("wait_entry", "in") or not ctx.in_session():
             return
@@ -423,11 +447,15 @@ class CePeImbalance(Strategy):
         acted = False
         self._blk = False
         for _ in range(int(ctx.params.get("max_actions", 8))):
-            nxt = self.next_action(ctx, atm)
-            if not nxt:
-                break
-            ops, reason = nxt
-            if not self.execute(ctx, ops, reason):
+            done = False
+            for ops, reason in self.candidates(ctx, atm):          # held by a wide quote -> try the next
+                self._fail = None
+                if self.execute(ctx, ops, reason):
+                    done = True
+                    break
+                if self._fail == "order":
+                    break
+            if not done:
                 break
             acted = True
         else:

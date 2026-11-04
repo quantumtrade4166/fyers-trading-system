@@ -80,6 +80,10 @@ function connect() {
         else if (m.op === "settings_set") { onSettingsAck(m); toast(m.msg, !m.ok); }
         else if (m.op === "refresh") { $("btn-refresh").classList.remove("spin"); if (m.margin) onMargin(m.margin); toast(m.msg, !m.ok, m.ok ? "info" : "bad"); }
         else if (m.op === "timer_set" || m.op === "timer_clear") toast(m.msg, !m.ok, m.ok ? "info" : "bad");
+        else if (m.op === "paper_reset") {
+          toast(m.msg, !m.ok, m.ok ? "ok" : "bad");
+          if (m.ok) { S.gpHist = { "gp-pnl": [], "gp-imb": [] }; askInline(); }
+        }
         else if (m.op === "mode_set") toast(m.msg, !m.ok, !m.ok ? "bad" : m.mode === "LIVE" ? "ok" : "info");
         else if (ORDER_ACKS.has(m.op)) {
           toast(m.msg || (m.ok ? "done" : "failed"), !m.ok,
@@ -1589,6 +1593,11 @@ S.gpMins = LS.get("gpMins", 1);
 $("gp-mins").innerHTML = [1, 2, 5, 10, 15, 30, 60].map((n) => `<option value="${n}">${n} min</option>`).join("");
 $("gp-mins").value = S.gpMins;
 $("gp-mins").onchange = (e) => { S.gpMins = +e.target.value; LS.set("gpMins", S.gpMins); askInline(); };
+$("gp-reset").onclick = () => {
+  if (S.mode !== "PAPER") return toast("Reset works in PAPER mode only", true, "bad");
+  if (!confirm("Reset PAPER?\n\nAll paper positions, orders and today's paper MTM are cleared and P&L starts again from 0.\nPaper stop-losses, the paper MTM guard and paper exit timers are cleared too.\n\nLIVE (Kotak P) is not touched.")) return;
+  send({ op: "paper_reset", req: ++S.req });
+};
 function askInline() {
   if (getComputedStyle($("graphpane")).display === "none") return;
   send({ op: "mtm_hist", mins: S.gpMins, inst: "all", kind: "pnl", tag: "gp-pnl", req: ++S.req });

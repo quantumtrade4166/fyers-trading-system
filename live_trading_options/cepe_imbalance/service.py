@@ -161,7 +161,7 @@ def day(date: str):
     """EOD P&L table for every instrument on one day (today = live numbers)."""
     rows = []
     for nm, r in E.runners.items():
-        s = days.summary(date, nm)
+        s = days.summary(date, nm, hist=list(E.hist.get(nm, [])) if date == r.date else None)
         if date == r.date:                                 # today: live MTM, not the last file sample
             m = r.book.mtm()
             s.update(pnl=m["total"], realized=m["realized"], open_lots=sum(abs(p.lots) for p in r.book.positions.values()),

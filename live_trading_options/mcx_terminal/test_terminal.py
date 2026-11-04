@@ -662,6 +662,56 @@ def test_atm_history():
     p.unlink(missing_ok=True)
 
 
+def test_paper_reset():
+    import tempfile
+    from live_trading_options.mcx_terminal.mtm import MtmHistory
+    from live_trading_options.mcx_terminal.risk import RiskGuard
+    from live_trading_options.mcx_terminal.sched import ExitTimers
+    q = {}
+    u, b, path = _book("reset", q)
+    tmp = Path(tempfile.gettempdir())
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[ce.token] = {"ltp": 500.0, "bid": 500.0, "ask": 500.1, "bq": 10**6, "aq": 10**6, "depth": None}
+    b.place(ce.token, "S", 100, "MKT")                         # short 1 lot
+    b.place(ce.token, "B", 100, "LMT", limit=400.0)            # resting order
+    ltp = {ce.token: 480.0}
+    mpath = tmp / "mcx_mtm_reset_test.json"; mpath.unlink(missing_ok=True)
+    h = MtmHistory(path=mpath)
+    h.sample(b.positions(), lambda t: ltp.get(t), now=1_800_000_000)
+    rpath = tmp / "mcx_risk_reset_test.json"; rpath.unlink(missing_ok=True)
+    g = RiskGuard(b, lambda t: ltp.get(t), path=rpath)
+    g.set(stop=-5000)
+    tpath = tmp / "mcx_timers_reset_test.json"; tpath.unlink(missing_ok=True)
+    tm = ExitTimers(lambda *a: {"ok": True}, path=tpath)
+    tm.items = [{"name": "CRUDEOIL", "frac": 1.0, "at": "23:00", "mode": "PAPER", "state": "armed"},
+                {"name": "CRUDEOIL", "frac": 1.0, "at": "23:00", "mode": "LIVE", "state": "armed"}]
+    check("before reset: position + orders", b.pos and len(b.orders) >= 2 and h.pts and g.state()["armed"])
+    before = set(tmp.glob("paper_reset_*.json"))
+    r = b.reset(); h.reset(); g.reset(); n = tm.clear_mode("PAPER")
+    check("reset ok", r["ok"], r)
+    check("reset: no positions / orders", b.pos == {} and b.orders == [] and b.snapshot()["positions"] == [])
+    check("reset: saved empty to disk", __import__("json").loads(path.read_text())["orders"] == [])
+    check("reset: mtm curve empty", h.pts == [] and mpath.read_text() == "[]")
+    check("reset: guard off, pnl 0", not g.state()["armed"] and g.state()["pnl"] == 0.0)
+    check("reset: only PAPER timers removed", n == 1 and [x["mode"] for x in tm.items] == ["LIVE"], tm.items)
+    backups = set(tmp.glob("paper_reset_*.json")) - before
+    check("reset: old book kept as backup", len(backups) == 1, backups)
+    check("backup not a carry-forward file", all(not x.name.startswith(b.PREFIX) for x in backups))
+    q[ce.token] = {"ltp": 300.0, "bid": 300.0, "ask": 300.1, "bq": 10**6, "aq": 10**6, "depth": None}
+    b.place(ce.token, "S", 100, "MKT")
+    check("trading works after reset", b.pos[ce.token]["net"] == -100 and b.pos[ce.token]["realized"] == 0, b.pos)
+    from live_trading_options.mcx_terminal import live as L
+    class Fake(L.LiveBook):
+        def __init__(self): pass
+    try:
+        Fake().reset(); refused = False
+    except RuntimeError:
+        refused = True
+    check("live book refuses reset", refused)
+    for x in [path, mpath, rpath, tpath, *backups]:
+        x.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:
         fn()

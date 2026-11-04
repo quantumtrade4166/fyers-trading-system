@@ -86,12 +86,13 @@ def positions(date: str, name: str) -> list:
     return sorted(doc.get("positions", {}).values(), key=lambda x: (x["expiry"], x["kind"], x["strike"]))
 
 
-def summary(date: str, name: str) -> dict:
-    """EOD numbers for one instrument on one saved day."""
+def summary(date: str, name: str, hist=None) -> dict:
+    """EOD numbers for one instrument on one saved day. `hist`: today's in-memory samples (never
+    re-parse today's growing history file: 7 x ~6 MB every 3 s pegged the CPU on 4-Nov)."""
     pos = positions(date, name)
     tr = trades(date, name)
     ev = events(date, name)
-    h = history(date, name)
+    h = history(date, name) if hist is None else hist
     realized = sum(p.get("realized", 0.0) for p in pos)
     open_lots = sum(abs(p.get("lots", 0)) for p in pos)
     last_mtm = h[-1]["mtm"] if h else realized

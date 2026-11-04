@@ -451,6 +451,23 @@ class Engine:
             self.loop.call_soon_threadsafe(self._broadcast_book)
             self.loop.call_soon_threadsafe(self._broadcast_status)     # live open / working counts on the badge
 
+    def paper_reset(self, user: str = "") -> dict:
+        """RESET button (PAPER only): clear paper trades, positions, MTM curve, paper stop-losses,
+        paper MTM guard and paper exit timers. LIVE is never touched."""
+        if self.mode != "PAPER":
+            return {"ok": False, "msg": "Reset works in PAPER mode only - switch to PAPER first"}
+        if not self.paper:
+            return {"ok": False, "msg": "engine still starting"}
+        r = self.paper.reset()
+        self.sls["PAPER"].reset()
+        self.risks["PAPER"].reset()
+        self.mtms["PAPER"].reset()
+        n_t = self.timers.clear_mode("PAPER") if self.timers else 0
+        if n_t:
+            r["msg"] += f", {n_t} paper exit timer(s) removed"
+        audit.write("paper_reset", user, what=r["msg"])
+        return r
+
     def _timer_fire(self, mode, name, frac) -> dict:
         """A timer's exit, on the book that was active when it was set."""
         book = self.live if mode == "LIVE" else self.paper
@@ -695,6 +712,7 @@ ORDER_OPS = {
     "exit_inst": lambda m: ENGINE.book.exit_instrument(str(m.get("name", "")), float(m.get("frac", 1.0))),
     "timer_set": lambda m: ENGINE.timers.set(str(m.get("name", "")), m.get("frac", 1.0), m.get("at", ""),
                                              ENGINE.mode, m.get("_user", "")),
+    "paper_reset": lambda m: ENGINE.paper_reset(m.get("_user", "")),
     "timer_clear": lambda m: ENGINE.timers.clear(str(m.get("name", "")), m.get("frac", 1.0), m.get("_user", "")),
 }
 

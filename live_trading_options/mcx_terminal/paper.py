@@ -116,6 +116,24 @@ class PaperBook:
         tmp.write_text(json.dumps({"orders": self.orders, "positions": self.pos}, default=str), encoding="utf-8")
         tmp.replace(self.path)
 
+    def reset(self) -> dict:
+        """PAPER ONLY: wipe today's paper orders and positions so the owner can start fresh.
+        A copy of the old book is kept as paper_reset_YYYY-MM-DD_HHMMSS.json (own prefix, so the
+        next day's carry-forward never picks it up). Order ids keep counting up."""
+        if type(self) is not PaperBook:
+            raise RuntimeError("reset is for the paper book only")
+        with self.lock:
+            n_o, n_p = len(self.orders), sum(1 for p in self.pos.values() if p.get("net") or p.get("realized"))
+            if self.path.exists():
+                stamp = dt.datetime.now(IST).strftime("%Y-%m-%d_%H%M%S")
+                bak = self.path.with_name(f"paper_reset_{stamp}.json")
+                bak.write_bytes(self.path.read_bytes())
+            self.orders, self.pos = [], {}
+            self._save()
+        log.warning("paper book RESET: %d orders, %d positions cleared", n_o, n_p)
+        self.on_change()
+        return {"ok": True, "msg": f"Paper reset: {n_p} position(s) and {n_o} order(s) cleared, MTM back to 0"}
+
     # ── book walking ────────────────────────────────────────────────────────
     def _levels(self, token, side):
         """Opposite-side levels to trade against: [(price, qty)], best first."""

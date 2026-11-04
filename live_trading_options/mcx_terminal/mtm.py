@@ -63,6 +63,15 @@ class MtmHistory:
                 tmp.write_text(json.dumps(self.pts), encoding="utf-8")
                 tmp.replace(self.path)
 
+    def reset(self):
+        """Start today's curve again from nothing (paper reset)."""
+        with self.lock:
+            self.pts = []
+            self._saved = 0.0
+            tmp = self.path.with_suffix(".tmp")
+            tmp.write_text("[]", encoding="utf-8")
+            tmp.replace(self.path)
+
     def query(self, mins: float = 1, inst: str = "all", kind: str = "pnl") -> dict:
         """kind "pnl": Session P&L (total or one instrument) · kind "imb": CE/PE imbalance % (+ce/pe premium)."""
         step = max(float(mins), 0.1) * 60

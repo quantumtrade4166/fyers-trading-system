@@ -457,6 +457,9 @@ a.btn { text-decoration: none; display: inline-block; }
 .gp-head { display: flex; align-items: baseline; gap: 8px; }
 .gp-head b { font-size: 12.5px; }
 .gp-head select { margin-left: auto; padding: 2px 6px; font-size: 11px; }
+.gp-head .gp-reset { margin-left: auto; flex: none; padding: 1px 8px; font-size: 10.5px; }
+.gp-head .gp-reset + select { margin-left: 4px; }
+body.live-mode .gp-reset { display: none; }
 .gp-body { flex: 1; min-height: 0; display: flex; align-items: center; }
 .gp-body { position: relative; overflow: hidden; }
 .gp-body svg { position: absolute; inset: 0; width: 100%; height: 100%; }

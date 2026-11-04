@@ -9,7 +9,7 @@
 <script>/* theme before first paint (no dark flash on a light page) */
 try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}
 </script>
-<link rel="stylesheet" href="/static/app.css?v=20261029q">
+<link rel="stylesheet" href="/static/app.css?v=20261104a">
 </head>
 <body>
 <header class="top">
@@ -130,6 +130,7 @@ try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") documen
 <section class="graphpane" id="graphpane">
   <div class="gp-card">
     <div class="gp-head"><b>MTM</b><span class="cp-lbl">Session P&amp;L today</span>
+      <button class="btn sm gp-reset" id="gp-reset" title="PAPER only: clear all paper trades and positions and start the MTM again from 0 (LIVE is never touched)">⟲ Reset paper</button>
       <select id="gp-mins" title="One point per"></select></div>
     <div class="gp-body" id="gp-mtm"><p class="gp-empty">No trades yet today.</p></div>
     <div class="gp-note" id="gp-mtm-note"></div>
@@ -309,6 +310,6 @@ try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") documen
 </div>
 
 <div class="toasts" id="toasts"></div>
-<script src="/static/app.js?v=20261102a"></script>
+<script src="/static/app.js?v=20261104a"></script>
 </body>
 </html>

@@ -159,6 +159,16 @@ class AutoSL:
         except Exception:
             log.exception("auto SL state load failed")
 
+    def reset(self):
+        """Paper reset: forget every paper stop-loss (paper only - live stops sit at Kotak)."""
+        if self.live:
+            raise RuntimeError("auto SL reset is for paper only")
+        with self.lock:
+            self.recs, self.done, self.memo, self.pause = {}, set(), {}, {}
+            self._exits = []
+            self._save()
+        self.on_change()
+
     def _save(self):
         try:
             tmp = self.path.with_suffix(".tmp")

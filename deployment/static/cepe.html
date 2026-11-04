@@ -63,6 +63,8 @@
   .blocked { color: var(--warn); font-size: 11px; }
 
   .charts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+  .charts .wide { grid-column: 1 / -1; }
+  .charts .wide .chart { height: 240px; }
   @media (max-width: 1100px) { .charts { grid-template-columns: 1fr; } }
   .chart { height: 230px; }
   .chead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; gap: 8px; }
@@ -206,6 +208,7 @@
     <div class="card"><div class="chead"><span class="lbl">MTM ₹ <span id="chDay1"></span></span><span class="tools"><span class="num mut" id="cMtm"></span><button class="zb" data-zoom="0" title="Zoom (Esc closes)">⤢</button></span></div><div class="chart" id="chMtm"></div></div>
     <div class="card"><div class="chead"><span class="lbl">CE/PE imbalance % <span id="chDay2"></span></span><span class="tools"><span class="num mut" id="cImb"></span><button class="zb" data-fit="1" title="Show the whole day">Fit</button><button class="zb" data-zoom="1" title="Zoom (Esc closes)">⤢ Zoom</button></span></div><div class="chart" id="chImb"></div></div>
     <div class="card"><div class="chead"><span class="lbl">ATM premium <span id="chDay3"></span></span><span class="tools"><span class="num mut" id="cAtm"></span><button class="zb" data-zoom="2" title="Zoom (Esc closes)">⤢</button></span></div><div class="chart" id="chAtm"></div></div>
+    <div class="card wide" id="spCard"><div class="chead"><span class="lbl">Quote gap % (bid–ask, of price) <span id="chDay4"></span></span><span class="tools"><span class="num mut" id="cSp"></span><button class="zb" data-fit="3" title="Show the whole day">Fit</button><button class="zb" data-zoom="3" title="Zoom (Esc closes)">⤢</button></span></div><div class="chart" id="chSp"></div></div>
   </div>
 
   <div class="lower">
@@ -263,7 +266,7 @@ function mkChart(el) {
     rightPriceScale: {borderColor: '#1e293b'}, timeScale: {borderColor: '#1e293b', timeVisible: true, secondsVisible: true, minBarSpacing: 0.001},
     crosshair: {mode: 0}});
 }
-const chM = mkChart($('chMtm')), chI = mkChart($('chImb')), chA = mkChart($('chAtm'));
+const chM = mkChart($('chMtm')), chI = mkChart($('chImb')), chA = mkChart($('chAtm')), chS = mkChart($('chSp'));
 const sMtm = chM.addBaselineSeries({baseValue: {type: 'price', price: 0}, lineWidth: 2,
   topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,.25)', topFillColor2: 'rgba(34,197,94,.02)',
   bottomLineColor: '#f43f5e', bottomFillColor1: 'rgba(244,63,94,.02)', bottomFillColor2: 'rgba(244,63,94,.25)'});
@@ -272,6 +275,21 @@ const sImb = chI.addLineSeries({color: '#e2e8f0', lineWidth: 2});
 const sStr = chA.addLineSeries({color: '#e2e8f0', lineWidth: 2, title: 'CE+PE'});
 const sAce = chA.addLineSeries({color: '#f472b6', lineWidth: 2, title: 'CE'});
 const sApe = chA.addLineSeries({color: '#60a5fa', lineWidth: 2, title: 'PE'});
+// Quote gap of the 6 strategy strikes around the current ATM; dashed line = max quote gap % (sell limit)
+const SP = [['ATM CE', '#f472b6', 2], ['CE+1', '#f9a8d4', 1], ['CE+2', '#fbcfe8', 1],
+            ['ATM PE', '#60a5fa', 2], ['PE−1', '#93c5fd', 1], ['PE−2', '#bfdbfe', 1]];
+const sSp = SP.map(([t, c, w]) => chS.addLineSeries({color: c, lineWidth: w, title: t, lastValueVisible: true, priceLineVisible: false}));
+let spLimitLine = null;
+sSp[0].applyOptions({autoscaleInfoProvider: orig => {          // keep 0 and the limit line in view
+  const r = orig(); if (!r) return r;
+  r.priceRange.minValue = Math.min(r.priceRange.minValue, 0);
+  r.priceRange.maxValue = Math.max(r.priceRange.maxValue, (lastGap || 3) * 1.25);
+  return r;
+}});
+function setSpLimit(v) {
+  if (spLimitLine) sSp[0].removePriceLine(spLimitLine);
+  spLimitLine = sSp[0].createPriceLine({price: v, color: '#f43f5e', lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: 'limit'});
+}
 let bandLines = [];
 function setBandLines(band, normal) {
   bandLines.forEach(l => sImb.removePriceLine(l));
@@ -279,13 +297,15 @@ function setBandLines(band, normal) {
     [band, '#f43f5e', 'band'], [-band, '#f43f5e', 'band'], [normal, '#22c55e', 'normal'], [-normal, '#22c55e', 'normal'], [0, '#475569', '']
   ].map(([p, c, t]) => sImb.createPriceLine({price: p, color: c, lineWidth: 1, lineStyle: 2, axisLabelVisible: !!t, title: t}));
 }
-const series = {m: [], i: [], c: [], p: [], s: [], marks: []};
+const series = {m: [], i: [], c: [], p: [], s: [], marks: [], sp: [[], [], [], [], [], []]};
+let lastSp = null;
 let lastAtm = null, lastPrem = null;
 function pushRows(rows) {
   for (const x of rows) {
     const t = Math.floor(x.t) + IST;
     const put = (arr, v) => { if (v == null) return; if (arr.length && arr[arr.length - 1].time === t) arr[arr.length - 1].value = v; else if (!arr.length || arr[arr.length - 1].time < t) arr.push({time: t, value: v}); };
     put(series.m, x.mtm); put(series.i, x.imb);
+    if (x.sp && x.sp.length === 6) { x.sp.forEach((v, j) => put(series.sp[j], v)); lastSp = x.sp; }
     if (x.ace != null && x.ape != null) {
       put(series.c, x.ace); put(series.p, x.ape); put(series.s, Math.round((x.ace + x.ape) * 100) / 100);
       if (x.atm && x.atm !== lastAtm) {
@@ -301,6 +321,9 @@ function pushRows(rows) {
 function drawSeries() {
   sMtm.setData(series.m); sImb.setData(series.i);
   sAce.setData(series.c); sApe.setData(series.p); sStr.setData(series.s); sStr.setMarkers(series.marks);
+  sSp.forEach((s, j) => s.setData(series.sp[j]));
+  $('cSp').textContent = lastSp ? SP.map(([t], j) => `${t} ${lastSp[j] == null ? '–' : lastSp[j].toFixed(1) + '%'}`).join(' · ')
+    : (DAY ? 'not recorded this day' : 'waiting…');
   $('cAtm').textContent = lastPrem ? `ATM ${k0(lastPrem.atm)} · CE ${fmt(lastPrem.ce)} + PE ${fmt(lastPrem.pe)} = ${fmt(lastPrem.ce + lastPrem.pe)}`
     : (DAY ? 'not recorded this day' : 'waiting…');
 }
@@ -310,7 +333,7 @@ async function loadHistory(full) {
   const fresh = full || histName !== key;
   if (fresh) {
     histName = key; lastT = 0; series.m = []; series.i = []; series.c = []; series.p = []; series.s = []; series.marks = [];
-    lastAtm = null; lastPrem = null;
+    series.sp = [[], [], [], [], [], []]; lastAtm = null; lastPrem = null; lastSp = null;
     drawSeries();
   } else if (DAY) return;
   const q = DAY ? `date=${DAY}&max_points=8000` : (lastT ? `since=${lastT}` : 'max_points=8000');
@@ -319,19 +342,19 @@ async function loadHistory(full) {
   if (j.rows && j.rows.length) {
     const first = !series.m.length;
     pushRows(j.rows); drawSeries();
-    if (first || (!DAY && series.m.length < 900)) [0, 1, 2].forEach(fitChart);
+    if (first || (!DAY && series.m.length < 900)) [0, 1, 2, 3].forEach(fitChart);
   }
 }
 
 // ── chart zoom ──────────────────────────────────────────────────────────
-const CH = [chM, chI, chA];
+const CH = [chM, chI, chA, chS];
 // Whole loaded day in view (fitContent kept stale scroll offsets when switching days).
 function fitChart(i) {
-  const n = i === 0 ? series.m.length : i === 1 ? series.i.length : series.s.length;
+  const n = i === 0 ? series.m.length : i === 1 ? series.i.length : i === 2 ? series.s.length : series.sp[0].length;
   if (n > 1) CH[i].timeScale().setVisibleLogicalRange({from: 0, to: n - 1});
 }
 function unzoom() {
-  if (document.querySelector('.card.zoom')) [60, 350].forEach(ms => setTimeout(() => [0, 1, 2].forEach(fitChart), ms));
+  if (document.querySelector('.card.zoom')) [60, 350].forEach(ms => setTimeout(() => [0, 1, 2, 3].forEach(fitChart), ms));
   document.querySelectorAll('.card.zoom').forEach(c => c.classList.remove('zoom'));
   document.body.classList.remove('zoomed');
   document.querySelectorAll('[data-zoom]').forEach(b => b.textContent = b.dataset.zoom === '1' ? '⤢ Zoom' : '⤢');
@@ -342,7 +365,7 @@ document.querySelectorAll('[data-zoom]').forEach(b => b.onclick = () => {
   if (!on) { card.classList.add('zoom'); document.body.classList.add('zoomed'); b.textContent = '✕ Close'; }
   [60, 350].forEach(ms => setTimeout(() => fitChart(+b.dataset.zoom), ms));
 });
-document.querySelectorAll('[data-fit]').forEach(b => b.onclick = () => fitChart(1));
+document.querySelectorAll('[data-fit]').forEach(b => b.onclick = () => fitChart(+b.dataset.fit));
 document.addEventListener('keydown', e => { if (e.key === 'Escape') unzoom(); });
 
 // ── trading day ─────────────────────────────────────────────────────────
@@ -362,7 +385,7 @@ $('daySel').onchange = () => {
   const v = $('daySel').value;
   DAY = v === TODAY ? '' : v;
   $('dayViewing').style.display = DAY ? '' : 'none';
-  ['chDay1', 'chDay2', 'chDay3'].forEach(id => $(id).textContent = DAY ? '· ' + DAY : '');
+  ['chDay1', 'chDay2', 'chDay3', 'chDay4'].forEach(id => $(id).textContent = DAY ? '· ' + DAY : '');
   renderDay(); loadHistory(true); renderLower();
 };
 async function renderDay() {
@@ -436,8 +459,11 @@ function renderCards() {
   }
   $('cMtm').textContent = rs(u.mtm.total); $('cImb').textContent = im == null ? '' : fmt(im, 1) + '%';
   setBandLinesOnce(band, +p.normal_band || 5);
+  const gap = +p.max_spread_pct || 3;                       // spread chart: commodities only, limit line = max quote gap
+  $('spCard').style.display = u.kind === 'commodity' ? '' : 'none';
+  if (gap !== lastGap) { lastGap = gap; setSpLimit(gap); }
 }
-let lastBand = null;
+let lastBand = null, lastGap = null;
 function setBandLinesOnce(b, n) { const k = b + '/' + n; if (k !== lastBand) { lastBand = k; setBandLines(b, n); } }
 
 // Chain: rows are built once per strike set, then cells are updated in place so LTP can flash on every change.

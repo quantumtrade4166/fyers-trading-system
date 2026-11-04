@@ -74,6 +74,18 @@ class ExitTimers:
         self.on_change()
         return {"ok": True, "msg": f"Exit {pct}% of {name} at {t} IST ({mode}) - armed"}
 
+    def clear_mode(self, mode: str) -> int:
+        """Remove every armed timer that was set on `mode` (paper reset). -> how many."""
+        with self.lock:
+            n = len(self.items)
+            self.items = [x for x in self.items if not (x.get("mode") == mode and x.get("state") == "armed")]
+            removed = n - len(self.items)
+            if removed:
+                self._save()
+        if removed:
+            self.on_change()
+        return removed
+
     def clear(self, name: str, frac: float, user: str = "") -> dict:
         frac = float(frac)
         with self.lock:

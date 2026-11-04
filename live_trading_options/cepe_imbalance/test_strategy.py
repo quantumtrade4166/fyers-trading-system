@@ -307,9 +307,12 @@ def test_atm_rule_waits_on_wide_sell(universe):
     g.m.apply([Tick(c.key, 150.0, 100.0, 200.0, 1, 1, 0, 0, 0, 0.0)])
     g.r.ctx.in_session = lambda now=None: True
     g.eng.on_ticks([Tick(g.fut.key, f, f - 1, f + 1, 1, 1, 0, 0, 0, 0.0)])
-    assert len(g.r.book.trades) == n and "quote too wide" in g.r.state["blocked"]
+    assert "quote too wide" in g.r.state["blocked"] and 9600 not in g.legs()["PE"]
+    assert g.actions()[-1].startswith("A (CE heavy")                       # 4-Nov: kept balancing meanwhile
+    assert 9400 not in g.legs()["CE"]                                      # ITM CE rolled out
+    m = len(g.r.book.trades)
     _quote(g, 9600, "PE", 149.5, 150.5)
-    new = [(t["side"], t["strike"], t["kind"]) for t in g.r.book.trades[n:n + 2]]
+    new = [(t["side"], t["strike"], t["kind"]) for t in g.r.book.trades[m:m + 2]]
     assert new == [("BUY", 9000.0, "PE"), ("SELL", 9600.0, "PE")]          # ATM rule went through once tight
     assert g.legs()["PE"].get(9600) == 1
 
@@ -478,3 +481,58 @@ def test_recentre_when_both_sides_doubled(universe):
     assert g.legs() == {"CE": {9400: 1, 9600: 1, 9800: 1}, "PE": {9000: 1, 9200: 1, 9400: 1}}
     assert abs(g.imb()) <= 15
     invariants(g)
+
+
+def test_wide_atm_quote_does_not_freeze_the_book(universe):
+    """GOLD 4-Nov: the new ATM PE stayed wide for hours, the engine waited and A never ran, so ITM CEs
+    sat there at +26%. Now: the ATM rule still waits, but A rolls the ITM CEs out meanwhile."""
+    g = Rig(universe, 9400)
+    g.eng.start(N)
+    n = len(g.r.book.trades)
+    f = 9810                                                                # ATM 9400 -> 9800
+    g.r.ctx.in_session = lambda now=None: False
+    g.move(f)
+    c = g.m.contract(N, g.e, 9800, "PE")
+    g.m.apply([Tick(c.key, 150.0, 100.0, 200.0, 1, 1, 0, 0, 0, 0.0)])     # new ATM PE wide
+    g.r.ctx.in_session = lambda now=None: True
+    g.eng.on_ticks([Tick(g.fut.key, f, f - 1, f + 1, 1, 1, 0, 0, 0, 0.0)])
+    lg = g.legs()
+    assert 9800 not in lg["PE"]                                             # never sold into the wide quote
+    assert "quote too wide" in (g.r.state["blocked"] or "") or any(
+        e["event"] == "blocked" and "quote too wide" in e["why"] for e in g.r.events)
+    assert len(g.r.book.trades) > n                                         # but it did keep adjusting
+    assert not [k for k in lg["CE"] if k < 9800], f"ITM CE left: {lg}"      # ITM CEs rolled out
+    assert sum(lg["CE"].values()) == sum(lg["PE"].values())
+    _quote(g, 9800, "PE", 149.5, 150.5)                                     # fair quote -> ATM rule goes through
+    assert g.legs()["PE"].get(9800)
+    invariants(g)
+
+
+def test_several_waiting_moves_log_once_each(universe):
+    """4-Nov: ATM rule, re-centre and A all waiting on wide quotes took turns -> a log line every tick."""
+    g = Rig(universe, 9400)
+    g.eng.start(N)
+    f = 9810
+    g.r.ctx.in_session = lambda now=None: False
+    g.move(f)
+    for k, kind in ((9800, "PE"), (10000, "CE"), (10200, "CE"), (10400, "CE")):
+        c = g.m.contract(N, g.e, k, kind)
+        g.m.apply([Tick(c.key, 150.0, 100.0, 200.0, 1, 1, 0, 0, 0, 0.0)])
+    g.r.ctx.in_session = lambda now=None: True
+    g.eng.on_ticks([Tick(g.fut.key, f, f - 1, f + 1, 1, 1, 0, 0, 0, 0.0)])
+    n = sum(1 for e in g.r.events if e["event"] == "blocked")
+    for _ in range(20):
+        g.eng.on_ticks([Tick(g.fut.key, f, f - 1, f + 1, 1, 1, 0, 0, 0, 0.0)])
+    assert sum(1 for e in g.r.events if e["event"] == "blocked") == n
+
+
+def test_history_records_six_strike_spreads(universe):
+    import datetime as dt
+    g = Rig(universe, 9400)
+    g.eng.start(N)
+    c = g.m.contract(N, g.e, 9600, "CE")
+    g.m.apply([Tick(c.key, 150.0, 140.0, 160.0, 1, 1, 0, 0, 0, 0.0)])     # CE+1 gap 20 on mid 150
+    g.eng.sample(dt.datetime.now())
+    sp = g.eng.hist[N][-1]["sp"]
+    assert len(sp) == 6 and sp[1] == round(20 / 150 * 100, 2)
+    assert all(v is not None and v < 5 for j, v in enumerate(sp) if j != 1)

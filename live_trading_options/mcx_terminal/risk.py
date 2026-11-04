@@ -124,6 +124,16 @@ class RiskGuard:
         self.on_change()
         return {"ok": True, "msg": "MTM guard cleared"}
 
+    def reset(self) -> dict:
+        """Paper reset: guard off and nothing remembered (no 'fired', P&L 0)."""
+        with self.lock:
+            self.s.update({"armed": False, "stop": None, "target": None, "trail": None, "base": None,
+                           "best": None, "set_at": None, "fired": None, "pnl": 0.0})
+            self._breach = None
+            self._save()
+        self.on_change()
+        return {"ok": True}
+
     def check(self) -> str | None:
         """Called on ticks of position tokens. -> reason if it fired."""
         positions = self.book.positions()

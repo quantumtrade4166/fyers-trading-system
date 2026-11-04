@@ -40,3 +40,9 @@ def test_downsample_keeps_ends(tmp_path, monkeypatch):
     assert len(got) == 10000                                           # broken last line skipped
     d = days.downsample(got, 500)
     assert len(d) <= 502 and d[0] == rows[0] and d[-1] == rows[-1]
+
+
+def test_summary_uses_in_memory_history_for_today():
+    rows = [{"t": 1, "mtm": -50.0, "imb": 3.0}, {"t": 2, "mtm": 80.0, "imb": -9.0}]
+    s = days.summary("2099-01-01", "GOLD", hist=rows)        # no files for that date
+    assert s["mtm_high"] == 80.0 and s["mtm_low"] == -50.0 and s["imb_min"] == -9.0
