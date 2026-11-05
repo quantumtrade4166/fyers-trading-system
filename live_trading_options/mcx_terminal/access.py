@@ -23,6 +23,8 @@ import os
 import threading
 import time
 
+from live_trading_options.mcx_terminal import config as C
+
 log = logging.getLogger("mcx.access")
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
@@ -31,10 +33,12 @@ LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 class AccessGuard:
     def __init__(self, app, team: str | None = None, aud: str | None = None, emails: str | None = None):
         self.app = app
-        self.team = (team if team is not None else os.getenv("MCX_ACCESS_TEAM", "")).strip()
-        a = aud if aud is not None else os.getenv("MCX_ACCESS_AUD", "")
+        # per desk: NSE_ACCESS_* (its own Cloudflare Access application), else the MCX ones
+        env = lambda k: os.getenv(f"{C.DESK}_ACCESS_{k}") or os.getenv(f"MCX_ACCESS_{k}", "")
+        self.team = (team if team is not None else env("TEAM")).strip()
+        a = aud if aud is not None else env("AUD")
         self.aud = [x.strip() for x in a.split(",") if x.strip()]        # one or more Access application AUD tags
-        em = emails if emails is not None else os.getenv("MCX_ACCESS_EMAILS", "")
+        em = emails if emails is not None else env("EMAILS")
         self.emails = {e.strip().lower() for e in em.split(",") if e.strip()}
         self._jwks = None
         self._jwks_at = 0.0
@@ -112,7 +116,7 @@ class AccessGuard:
         if scope["type"] == "websocket":
             await send({"type": "websocket.close", "code": 4403})
             return
-        body = f"403 - MCX Desk: {why}".encode()
+        body = f"403 - {C.DESK_LABEL}: {why}".encode()
         await send({"type": "http.response.start", "status": 403,
                     "headers": [(b"content-type", b"text/plain; charset=utf-8"),
                                 (b"content-length", str(len(body)).encode())]})

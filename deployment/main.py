@@ -526,6 +526,32 @@ async def api_strangle_charts(all: bool = False):
     return {"charts": out}
 
 
+@app.get("/api/strangle/pnl_history")
+async def api_strangle_pnl_history():
+    """Per-(date, index) realised P&L (1 lot) for the 0/1-DTE TRADED days, so the P&L
+    History view can filter by index and by DTE client-side and recompute the curve,
+    daily bars and stats for any selection. Each day's candle bars are fetched on demand
+    from /api/strangle/chart?version=V2."""
+    if not _CHART_DIR.exists():
+        return {"records": []}
+    recs = []
+    for f in sorted(_CHART_DIR.glob("*_V2.json")):
+        try:
+            j = _json.loads(f.read_text())
+        except Exception:
+            continue
+        idx, date = j.get("index"), j.get("date")
+        if idx not in ("NIFTY", "SENSEX") or not date:
+            continue
+        sel = j.get("selection") or {}
+        if sel.get("dte") not in (0, 1):
+            continue
+        recs.append({"date": date, "index": idx, "dte": sel.get("dte"),
+                     "pnl": (j.get("pnl") or {}).get("realized_pnl")})
+    recs.sort(key=lambda r: (r["date"], r["index"]))
+    return {"records": recs}
+
+
 _LIVE_DIR = (Path(__file__).parent.parent /
              "live_trading_options" / "strangle_strategy" / "data" / "live_state")
 _AUDIT_DIR = (Path(__file__).parent.parent /

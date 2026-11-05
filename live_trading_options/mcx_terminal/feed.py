@@ -11,6 +11,14 @@ WebSocket — Developer Guide", 2026-09):
   data   binary, little-endian, packed; one frame = a batch of packets, each starting with its
          own uint16 total length; route by header level byte (1 lite, 2/4/8 market picture)
 
+INDEX prices (checked live 05-Nov-2026, market hours): subscribing the index TOKEN (nse_cm|26000) only
+gives empty packets. Subscribe its NAME instead ({"event": "subscribeScrips", "inputtoken": "nse_cm|Nifty 50"})
+-> packets with code 7207, whose "token" is an id Kotak makes up (4247863880 for Nifty 50, no known
+formula). int32 fields after it: OPEN, prev close, high, low, LTP, time (prices / divider) - the 5th is
+the live price (matched Kotak's REST ltp to the paisa, 05-Nov 09:37; the 1st stays at the open). The id is
+matched to our index by exchange (bse_cm: SENSEX alone) and, where an exchange has two (NIFTY ~24k and
+NIFTY BANK ~57k), by the nearest last known price (`ref_price`, from the REST backup in the engine).
+
 The server keeps no subscriptions across connections, so a reconnect re-auths and replays them.
 One thread owns the socket; ticks go out through `on_ticks(list_of_tick_tuples)`.
 
@@ -36,12 +44,15 @@ EXCH = {1: "nse_cm", 2: "nse_fo", 3: "cde_fo", 4: "nse_com", 5: "bse_cm", 6: "bs
 # Market Picture fixed body (guide §7.3): offsets from the start of the packet incl. 9-byte header
 MP = struct.Struct("<HHbBBBB I q q q q q I I I I I q I I I I h i I d i I I I I I B I")
 LITE = struct.Struct("<HHbBBBB I q I q I i i I B I")
+IDX = struct.Struct("<HHbBBBB I i i i i i i")       # index packet 7207: id, open, close, high, low, LTP, time
+EXCH_ID = {v: k for k, v in EXCH.items()}
 ROW = struct.Struct("<q i i")
 assert MP.size == 144 and LITE.size == 54
 
 
-def decode(frame: bytes, div: dict) -> list:
-    """One binary batch frame -> list of tick tuples (see module doc). Non-price packets skipped."""
+def decode(frame: bytes, div: dict, idx: list | None = None) -> list:
+    """One binary batch frame -> list of tick tuples (see module doc). Non-price packets skipped.
+    idx: if a list, index packets (7207) are added to it as (exchange id, kotak id, ltp, close, time)."""
     out = []
     off, n = 0, len(frame)
     while off + 2 <= n:
@@ -50,7 +61,11 @@ def decode(frame: bytes, div: dict) -> list:
             break                                   # truncated tail: skip
         code, ex, level = struct.unpack_from("<HbB", frame, off + 2)
         d = div.get(EXCH.get(ex, ""), 100) or 100
-        if code == 7208:
+        if code == 7207 and idx is not None and size >= IDX.size:
+            f = IDX.unpack_from(frame, off)
+            if f[12] > 0:                           # f[12] = live price (f[8] is the open)
+                idx.append((ex, f[7], f[12] / d, f[9] / d, f[13]))
+        elif code == 7208:
             if level == 1 and size >= LITE.size:
                 (_, _, _, _, _, _, _, tok, ltt, ltp, ltq, close, _chgp, chg, _lot, _pr, _mu) = LITE.unpack_from(frame, off)
                 out.append((tok, ltp / d, None, None, None, None, None, None, None, ltq, ltt, chg / d, None))
@@ -80,8 +95,14 @@ def decode(frame: bytes, div: dict) -> list:
 class KotakFeed:
     """Always-on feed. `want(tokens)` adds subscriptions (kept across reconnects)."""
 
-    def __init__(self, sessions, on_ticks, on_status=None):
+    def __init__(self, sessions, on_ticks, on_status=None, seg_of=None, indices=None, ref_price=None):
+        """indices: [(segment, Kotak name, our token)] e.g. ("nse_cm", "Nifty 50", 26000) - streamed by name.
+        ref_price(token): last known price of an index (to tell two indices of one exchange apart)."""
         self.sessions = sessions                   # kotak_session.SessionHolder
+        self.indices = list(indices or [])
+        self.ref_price = ref_price or (lambda tok: None)
+        self.idx_map: dict = {}                    # (exchange id, kotak id) -> our token
+        self.seg_of = seg_of or (lambda tok: "mcx_fo")   # token -> Kotak segment ("nse_fo|123", "bse_cm|1")
         self.on_ticks = on_ticks
         self.on_status = on_status or (lambda s: None)
         self.div = {}
@@ -143,13 +164,50 @@ class KotakFeed:
             part = toks[i:i + C.SUB_CHUNK]
             try:
                 self.ws.send(json.dumps({"event": event,
-                                         "inputtoken": ",".join(f"mcx_fo|{t}" for t in part)}))
+                                         "inputtoken": ",".join(f"{self.seg_of(t)}|{t}" for t in part)}))
                 if event == "subscribeScrips":
                     with self._lock:
                         self.sent.update(part)
             except Exception as e:
                 self.last_error = f"subscribe: {e}"
                 log.warning("subscribe failed: %s", e)
+
+    def _send_indices(self):
+        if not self.indices:
+            return
+        try:
+            self.ws.send(json.dumps({"event": "subscribeScrips",
+                                     "inputtoken": ",".join(f"{seg}|{name}" for seg, name, _ in self.indices)}))
+        except Exception as e:
+            self.last_error = f"index subscribe: {e}"
+            log.warning("index subscribe failed: %s", e)
+
+    def _index_ticks(self, packets) -> list:
+        """Index packets -> tick tuples on OUR index tokens (learning which Kotak id is which)."""
+        out = []
+        for ex, kid, ltp, close, t in packets:
+            tok = self.idx_map.get((ex, kid))
+            if tok is None:
+                tok = self._learn(ex, kid, ltp)
+                if tok is None:
+                    continue
+            out.append((tok, ltp, None, None, None, None, None, None, close or None, None, t or None,
+                        round(ltp - close, 2) if close else None, None))
+        return out
+
+    def _learn(self, ex, kid, ltp):
+        seg = EXCH.get(ex, "")
+        known = set(self.idx_map.values())
+        cands = [tok for s, _, tok in self.indices if s == seg and tok not in known]
+        if len(cands) > 1:                         # two indices on one exchange: the price tells them apart
+            near = [tok for tok in cands if (self.ref_price(tok) or 0) > 0
+                    and abs(ltp / self.ref_price(tok) - 1) < 0.15]
+            cands = near if len(near) == 1 else []
+        if len(cands) != 1:
+            return None
+        self.idx_map[(ex, kid)] = cands[0]
+        log.info("index stream: %s id %s = token %s (ltp %s)", seg, kid, cands[0], ltp)
+        return cands[0]
 
     def _run(self):
         backoff = 1.0
@@ -187,7 +245,10 @@ class KotakFeed:
         if isinstance(msg, (bytes, bytearray)) and msg[:1] == b"{":
             msg = msg.decode("utf-8", "replace")    # a JSON control frame delivered as bytes
         if isinstance(msg, (bytes, bytearray)):
-            ticks = decode(msg, self.div)
+            idx = [] if self.indices else None
+            ticks = decode(msg, self.div, idx)
+            if idx:
+                ticks = ticks + self._index_ticks(idx)
             if ticks:
                 self.ticks += len(ticks)
                 self.last_tick_at = time.time()
@@ -213,6 +274,7 @@ class KotakFeed:
                     toks = list(self.wanted)
                     dtoks = list(self.depth_wanted)
                 self._send_subs(toks)
+                self._send_indices()
                 if dtoks:
                     self._send_subs(dtoks, "subscribeDepth")
                 log.info("feed authed; subscribed %d tokens", len(toks))

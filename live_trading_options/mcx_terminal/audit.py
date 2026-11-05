@@ -18,7 +18,7 @@ from pathlib import Path
 from live_trading_options.mcx_terminal import config as C
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
-DIR = C.LOG_DIR / "mcx_audit"
+DIR = C.LOG_DIR / C.AUDIT_NAME            # mcx_audit / nse_audit
 _lock = threading.Lock()
 
 

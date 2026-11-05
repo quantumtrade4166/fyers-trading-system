@@ -43,8 +43,7 @@ from live_trading_options.mcx_terminal.live import txt, TERMINAL
 log = logging.getLogger("mcx.sl")
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
-TAG_SL = "mcxs"
-SEG = "mcx_fo"
+TAG_SL = C.TAG_SL          # "mcxs" MCX desk / "nses" NSE desk (Kotak does not echo it: ids are what count)
 LIMIT_PCT = 5.0            # SL limit price this far beyond the trigger
 CHASE_S = 2.0              # triggered but not filled this long -> limit moved through the book
 LOOP_S = 0.5
@@ -216,6 +215,15 @@ class AutoSL:
             self._save()
         self.on_change()
         return None
+
+    def working_ids(self, name: str | None = None) -> list:
+        """Kotak ids of this desk's stop-loss orders that may still be working (own-book EXIT ALL cancels them;
+        MCX's EXIT ALL cancels every working MCX order anyway)."""
+        with self.lock:
+            ids = [r["oid"] for t, r in self.recs.items() if r.get("oid") and r.get("state") != "hit"
+                   and (name is None or getattr(self.u.by_token.get(t), "name", None) == name)]
+            ids += [oid for oid in self.cancelling if oid not in ids]
+        return ids
 
     def before_flatten(self):
         with self.lock:
@@ -444,7 +452,7 @@ class AutoSL:
         c = self.u.by_token[r["token"]]
         tag = self._tag()
         try:
-            resp = self._call("place_order", exchange_segment=SEG, product=r["product"], price=self.book._px(r["limit"]),
+            resp = self._call("place_order", exchange_segment=c.seg, product=r["product"], price=self.book._px(r["limit"]),
                               order_type="SL", quantity=str(int(r["qty"])), validity="DAY", trading_symbol=c.symbol,
                               transaction_type=r["side"], trigger_price=self.book._px(r["trigger"]), tag=tag)
         except Exception as e:
@@ -457,7 +465,7 @@ class AutoSL:
         try:
             resp = self._call("modify_order", order_id=str(r["oid"]), price=self.book._px(limit or r["limit"]),
                               order_type="SL", quantity=str(int(qty or r["qty"])), validity="DAY",
-                              instrument_token=str(c.token), exchange_segment=SEG, product=r["product"],
+                              instrument_token=str(c.token), exchange_segment=c.seg, product=r["product"],
                               trading_symbol=c.symbol, transaction_type=r["side"],
                               trigger_price=self.book._px(trigger or r["trigger"]), filled_quantity="0")
             err = self._err(resp)
@@ -832,6 +840,10 @@ class AutoSL:
             if r.get("bst") != st:
                 r["bst"] = st
                 changed = True
+            fld = int(_f(x.get("fldQty")) or 0)
+            if fld and hasattr(self.book, "external_fill"):
+                # own book (NSE): the stop-loss fill IS a change of the desk's position (applied once per id)
+                changed |= bool(self.book.external_fill(oid, t, r["side"], _f(x.get("avgPrc")) or r["limit"], fld))
             if any(w in st for w in BROKER_FILLED):
                 if r["state"] != "hit":
                     self._hit(t, r, f"filled at Kotak @ {x.get('avgPrc')}")

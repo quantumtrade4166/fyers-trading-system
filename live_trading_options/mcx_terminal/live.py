@@ -22,6 +22,13 @@ account -> all exits sent IN PARALLEL (closing shorts first) -> re-read Kotak un
 pushing slow exits through the book. Sequential sending let one 60-second Kotak hang push every other
 exit past the 23:30 close (27-Oct: all 12 rejected).
 
+OWN BOOK (NSE desk, config.OWN_BOOK, owner 04-Nov-2026): other strategies trade NIFTY on the same Kotak
+account, so the NSE desk never mirrors the account. Its positions are ONLY its own fills (its orders,
+matched by Kotak order id, plus its own stop-loss fills). Kotak's positions are still read every
+POS_POLL_S, as a safety net: an exit is never bigger than what Kotak holds in that direction (a position
+closed by hand in the Kotak app can never be "closed" again into a new one), and EXIT ALL cancels only
+the desk's own working orders and stop-losses.
+
 Safety:
   * new risk only while LIVE is ARMED; exits of open Kotak positions are always allowed
   * can't read Kotak = UNKNOWN, never flat: the screen is told, and EXIT ALL refuses to act on stale data
@@ -40,8 +47,21 @@ from live_trading_options.mcx_terminal.paper import IST, PaperBook, _round_tick,
 
 log = logging.getLogger("mcx.live")
 
-SEG = "mcx_fo"
-TAG = "mcxd"                       # order tag prefix: MCX Desk orders on Kotak P
+TAG = C.TAG                        # order tag prefix: "mcxd" MCX Desk / "nsed" NSE Desk orders on Kotak P
+OWN = C.OWN_BOOK                   # NSE desk: positions = own fills only (see module doc)
+SEGS = set(C.SEGMENT.values())     # Kotak segments this desk trades
+
+
+def in_desk(seg) -> bool:
+    """Is a Kotak row's exSeg one of this desk's segments? (MCX rows matched loosely, as before)"""
+    s = str(seg or "").lower()
+    return s in SEGS or ("mcx" in s and "mcx_fo" in SEGS)
+
+
+def same_seg(c, seg) -> bool:
+    """A Kotak row (exSeg) belongs to contract c (tokens are only unique WITHIN a segment)."""
+    s = str(seg or "").lower()
+    return not s or s == c.seg or ("mcx" in s and c.seg == "mcx_fo")
 BURST_POLL_S = 0.15                # order-book poll for BURST_S right after an order is sent (fills show fast)
 BURST_S = 3.0
 FAST_POLL_S = 0.4                  # order-book poll while an order is working
@@ -155,21 +175,109 @@ class LiveBook(PaperBook):
         self.broker = {"ok": True, "msg": "", "at": None}
         self.pos_sync = {"ok": False, "msg": "not read yet", "at": None}
         self._pool = ThreadPoolExecutor(max_workers=12, thread_name_prefix="KotakSend")
+        self._ext: dict = {}                            # own book: Kotak id -> units already applied (stop-loss fills)
         super().__init__(universe, quotes, on_change=on_change, path=path or (C.DATA / f"live_book_{today()}.json"),
                          settings=settings)
-        self.pos = {}                                   # positions come ONLY from Kotak (never from the file)
+        self.own = OWN
+        if self.own and self.path.exists():             # stop-loss fills already applied (never twice after a restart)
+            try:
+                import json
+                self._ext = dict(json.loads(self.path.read_text(encoding="utf-8")).get("ext") or {})
+            except Exception:
+                log.exception("own book: ext read")
+        self.broker_pos: dict = {}                      # Kotak's own view, per token {net, by_prod} (own book: safety net)
+        self.mismatch: list = []                        # own book: contracts where Kotak holds LESS than the desk
+        self.sl_ids = None                              # own book: hook -> working stop-loss order ids (EXIT ALL)
+        if not self.own:
+            self.pos = {}                               # MCX: positions come ONLY from Kotak (never from the file)
         if start_poller:
             self.sync_positions()
             threading.Thread(target=self._poll_loop, daemon=True, name="LiveOrders").start()
             threading.Thread(target=self._pos_loop, daemon=True, name="LivePositions").start()
 
     def _carry_forward(self):
-        """Never: Kotak is the truth for positions, every day starts from what Kotak shows."""
-        return
+        """MCX: never - Kotak is the truth for positions, every day starts from what Kotak shows.
+        Own book (NSE): yesterday's open NRML positions of the desk come over at their average price
+        (MIS ones were squared off by Kotak, expired contracts are dropped)."""
+        if not getattr(self, "own", OWN):
+            return
+        prev = sorted(x for x in self.path.parent.glob(f"{self.PREFIX}*.json") if x.name < self.path.name)
+        if not prev:
+            return
+        import json
+        try:
+            d = json.loads(prev[-1].read_text(encoding="utf-8"))
+        except Exception:
+            log.exception("own-book carry-forward: cannot read %s", prev[-1].name)
+            return
+        kept, dropped = [], []
+        for k, p in d.get("positions", {}).items():
+            nrml = int((p.get("by_prod") or {}).get("NRML", 0))
+            if not nrml or not p.get("net") or (nrml > 0) != (p["net"] > 0):
+                continue
+            tok = int(k)
+            if tok not in self.u.by_token:
+                dropped.append(p.get("symbol", k))
+                continue
+            self.pos[tok] = {**p, "net": nrml, "realized": 0.0, "bought": 0, "sold": 0, "bval": 0.0, "sval": 0.0,
+                             "by_prod": {"NRML": nrml}, "carried": True}
+            kept.append(f"{p.get('symbol')} {nrml}")
+        if kept or dropped:
+            log.warning("own-book carry-forward from %s: kept %s, expired/unlisted dropped %s", prev[-1].name, kept, dropped)
+            audit.write("broker", what=f"own book carried from {prev[-1].name}: {kept}", dropped=dropped)
+            self._save()
 
     def _apply(self, token, side, px, q):
-        """A fill changes Kotak's positions; re-read them now instead of computing our own."""
+        """MCX: a fill changes Kotak's positions; re-read them now instead of computing our own.
+        Own book: the fill IS the position (average-cost, like paper), and Kotak is re-read as a check."""
+        if self.own:
+            PaperBook._apply(self, token, side, px, q)
         self._pos_kick.set()
+
+    def _fill(self, o, px, q):
+        PaperBook._fill(self, o, px, q)
+        if self.own:                                    # which product the desk holds it in (exits close the same)
+            p = self.pos[o["token"]]
+            bp = p.setdefault("by_prod", {})
+            prod = o.get("product") or "NRML"
+            bp[prod] = bp.get(prod, 0) + (q if o["side"] == "B" else -q)
+
+    def _save(self):
+        if not getattr(self, "own", OWN):
+            return PaperBook._save(self)
+        import json
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"orders": self.orders, "positions": self.pos, "ext": self._ext}, default=str),
+                       encoding="utf-8")
+        tmp.replace(self.path)
+
+    def external_fill(self, oid: str, token: int, side: str, px: float, filled: int, why: str = "stop-loss") -> bool:
+        """Own book: a desk order the book does not track (its stop-loss at Kotak) filled `filled` units in
+        total. Applied once per Kotak id (only the new part). -> applied something?"""
+        if not self.own or not filled:
+            return False
+        c = self.u.by_token.get(token)
+        if c is None:
+            return False
+        with self.lock:
+            done = self._ext.get(str(oid), 0)
+            new = int(filled) - done
+            if new <= 0:
+                return False
+            prod = None
+            p = self.pos.get(token) or {}
+            for pp, n in (p.get("by_prod") or {}).items():
+                if n and (n > 0) == (side == "S"):
+                    prod = pp
+                    break
+            o = {"token": token, "side": side, "product": prod or "NRML", "avg": 0.0, "filled": 0}
+            self._fill(o, float(px or 0), new)
+            self._ext[str(oid)] = int(filled)
+            self._save()
+        log.warning("own book: %s %s %s %d @ %s (Kotak %s)", why, side, c.symbol, new, px, oid)
+        audit.write("fill", what=f"{why} filled at Kotak: {side} {c.symbol} {new} @ {px}", kotak_id=str(oid))
+        self.on_change()
+        return True
 
     # ── Kotak positions -> mirror ───────────────────────────────────────────
     def _pos_rows(self) -> list:
@@ -212,7 +320,8 @@ class LiveBook(PaperBook):
             return False
         new, unknown = {}, []
         for r in rows:
-            if "mcx" not in str(r.get("exSeg", "")).lower():
+            seg = str(r.get("exSeg", "")).lower()
+            if not in_desk(seg):
                 continue
             n = lambda k: _f(r.get(k)) or 0.0
             bq, sq = n("cfBuyQty") + n("flBuyQty"), n("cfSellQty") + n("flSellQty")
@@ -230,9 +339,14 @@ class LiveBook(PaperBook):
                 c = self.u.by_token.get(int(r.get("tok")))
             except (TypeError, ValueError):
                 pass
+            if c is not None and not same_seg(c, seg):
+                c = None                                    # same number, other exchange
             c = c or self.by_symbol.get(str(r.get("trdSym", "")))
+            if c is not None and not same_seg(c, seg):
+                c = None
             if c is None:
-                unknown.append(str(r.get("trdSym")))
+                if not self.own:                            # NSE: other strategies' contracts are none of our business
+                    unknown.append(str(r.get("trdSym")))
                 continue
             p = new.setdefault(c.token, {"token": c.token, "symbol": c.symbol, "name": c.name, "lot": c.lot,
                                          "mult": c.mult, "net": 0, "avg": 0.0, "realized": 0.0, "bought": 0, "sold": 0,
@@ -253,6 +367,8 @@ class LiveBook(PaperBook):
             p["realized"] = round((savg - bavg) * min(bq, sq) * p["mult"], 2)
             p["bval"], p["sval"] = round(p["_ba"] * p["mult"], 2), round(p["_sa"] * p["mult"], 2)
             del p["_ba"], p["_sa"]
+        if self.own:
+            return self._own_check(new)
         with self.lock:
             sig = lambda d: {t: (x["net"], round(x["avg"], 2), round(x["realized"], 2)) for t, x in d.items()}
             old = sig(self.pos)
@@ -275,6 +391,42 @@ class LiveBook(PaperBook):
             self.on_change()
         return changed
 
+    def _own_check(self, broker: dict) -> bool:
+        """Own book: keep Kotak's positions as the safety net and note where Kotak holds LESS than the desk
+        (closed by hand in the Kotak app, MIS squared off by Kotak, ...). -> changed?"""
+        bp = {t: {"net": x["net"], "by_prod": dict(x.get("by_prod") or {})} for t, x in broker.items()}
+        with self.lock:
+            mism = []
+            for t, p in self.pos.items():
+                if not p.get("net"):
+                    continue
+                b = (bp.get(t) or {}).get("net", 0)
+                held = b if (b > 0) == (p["net"] > 0) else 0
+                if abs(held) < abs(p["net"]):
+                    mism.append(f"{p['symbol']} desk {p['net']} / Kotak {b}")
+            changed = mism != self.mismatch
+            was = self.pos_sync.get("ok")
+            self.broker_pos = bp
+            self.mismatch = mism
+            self.pos_sync = {"ok": True, "at": time.time(),
+                             "msg": ("Kotak holds LESS than the desk (closed outside the desk?): " + "; ".join(mism))
+                             if mism else ""}
+        if changed and mism:
+            log.warning("own book vs Kotak: %s", mism)
+            audit.write("broker", what="Kotak holds less than the desk", detail=mism)
+        if not was:
+            audit.write("broker", what="positions readable", open=sum(1 for p in self.pos.values() if p.get("net")))
+        if changed or not was:
+            self.on_change()
+        return changed
+
+    def _broker_held(self, token, prod, sign) -> int:
+        """Units Kotak holds of `token` in direction `sign` (+1 long / -1 short), product `prod` if known."""
+        b = self.broker_pos.get(token) or {}
+        n = (b.get("by_prod") or {}).get(prod) if prod else None
+        n = b.get("net", 0) if n is None else n
+        return abs(n) if n and (n > 0) == (sign > 0) else 0
+
     def open_entry(self, token) -> float | None:
         """Price of the lots STILL OPEN in `token` (oldest fills closed first), from Kotak's trade list.
         Kotak's position average mixes in round trips already closed today (sold 11, bought back, sold
@@ -284,6 +436,8 @@ class LiveBook(PaperBook):
         c = self.u.by_token.get(token)
         if not p.get("net") or c is None:
             return None
+        if self.own:
+            return float(p["avg"]) or None              # own book: the desk's own average IS the open price
         r = self._call("trade_report")
         rows = r.get("data") if isinstance(r, dict) else r
         if not isinstance(rows, list):
@@ -370,6 +524,13 @@ class LiveBook(PaperBook):
                 reduces = bool(p and p["net"] and (p["net"] > 0) == (side == "S") and qty <= abs(p["net"]))
             if not reduces:
                 return {"ok": False, "msg": "LIVE is not armed - only exits of open Kotak positions are allowed"}
+        if self.own and role == "exit":
+            with self.lock:
+                own_n = (self.pos.get(token) or {}).get("net", 0)
+                held = self._broker_held(token, None, own_n)
+            if qty > min(abs(own_n), held):
+                return {"ok": False, "msg": f"not sent - the desk holds {abs(own_n)} and Kotak holds {held} of "
+                                            f"{c.symbol}: an exit is never bigger than that"}
         if role == "exit" and self.before_reduce:
             stop = self.before_reduce(token)            # its stop-loss order at Kotak is cancelled FIRST
             if stop:
@@ -394,7 +555,7 @@ class LiveBook(PaperBook):
                 self.orders.append(o)
                 self._save()                                   # on disk BEFORE it goes to Kotak
             t = time.time()
-            r = self._call("place_order", exchange_segment=SEG, product=product, price=self._px(limit),
+            r = self._call("place_order", exchange_segment=c.seg, product=product, price=self._px(limit),
                            order_type="L", quantity=str(int(sq)), validity="DAY", trading_symbol=c.symbol,
                            transaction_type=side, tag=o["tag"])
             ms = (time.time() - t) * 1000
@@ -559,7 +720,7 @@ class LiveBook(PaperBook):
             return
         # stop-loss orders live in sl.py: tell it OUTSIDE this book's lock (29-Oct freeze: calling it
         # inside the lock deadlocked against the stop-loss loop, which takes its own lock, then this one)
-        if self.on_push_other and (str(_dig(r, "tag", "ig") or "").startswith("mcxs")
+        if self.on_push_other and (str(_dig(r, "tag", "ig") or "").startswith(C.TAG_SL)
                                    or str(r.get("prcTp", "")).upper().startswith("SL")):
             self.on_push_other(r)
         changed = False
@@ -648,7 +809,7 @@ class LiveBook(PaperBook):
         c = self.u.by_token[o["token"]]
         r = self._call("modify_order", order_id=str(o["broker_id"]), price=self._px(price), order_type="L",
                        quantity=str(int(o["qty"])), validity="DAY", instrument_token=str(c.token),
-                       exchange_segment=SEG, product=o["product"], trading_symbol=c.symbol,
+                       exchange_segment=c.seg, product=o["product"], trading_symbol=c.symbol,
                        transaction_type=o["side"], filled_quantity=str(int(o["filled"])))
         err = resp_error(r)
         if err:
@@ -703,7 +864,7 @@ class LiveBook(PaperBook):
     def _exit_price_fallback(self, token, side):
         """No live quote on this contract yet: price off Kotak's REST LTP, 2 % through it."""
         c = self.u.by_token[token]
-        r = self._call("quotes", instrument_tokens=[{"instrument_token": str(token), "exchange_segment": SEG}],
+        r = self._call("quotes", instrument_tokens=[{"instrument_token": str(token), "exchange_segment": c.seg}],
                        quote_type="ltp")
         try:
             ltp = float((r[0] if isinstance(r, list) else r["message"][0])["ltp"])
@@ -725,8 +886,16 @@ class LiveBook(PaperBook):
 
     def _legs(self, tokens=None):
         with self.lock:
-            return [(t, prod, n) for t, p in self.pos.items() if tokens is None or t in tokens
+            legs = [(t, prod, n) for t, p in self.pos.items() if tokens is None or t in tokens
                     for prod, n in (p.get("by_prod") or {}).items() if n]
+            if not self.own:
+                return legs
+            out = []                                    # own book: never more than Kotak holds that way
+            for t, prod, n in legs:
+                held = min(self._broker_held(t, prod, n), abs(n))
+                if held:
+                    out.append((t, prod, held if n > 0 else -held))
+            return out
 
     def _send_parallel(self, legs, fraction, source, timeout=12.0):
         """Closing shorts (buys) first, then closing longs (sells); each group sent at the same time."""
@@ -747,7 +916,8 @@ class LiveBook(PaperBook):
             return {"ok": False, "msg": f"not sent - cannot read Kotak positions: {e}"}
         legs = self._legs({token})
         if not legs:
-            return {"ok": False, "msg": "Kotak shows no open position in this contract"}
+            return {"ok": False, "msg": ("the desk has no open position Kotak still holds in this contract" if self.own
+                                         else "Kotak shows no open position in this contract")}
         res = self._send_parallel(legs, fraction, source)
         bad = [r["msg"] for r in res if not r["ok"]]
         if len(res) == 1:
@@ -757,14 +927,27 @@ class LiveBook(PaperBook):
 
     def _cancel_all_broker(self, name: str | None = None) -> int:
         """Cancel EVERY working MCX order on the account (terminal's and manual) - or only those of one
-        instrument (`name`, matched through the contract list so GOLD never catches GOLDM) - all at once."""
+        instrument (`name`, matched through the contract list so GOLD never catches GOLDM) - all at once.
+        Own book (NSE): ONLY the desk's own working orders and its own stop-loss orders."""
+        if self.own:
+            with self.lock:
+                ids = [str(o["broker_id"]) for o in self.orders if o["status"] not in TERMINAL and o.get("broker_id")
+                       and (name is None or o.get("name") == name)]
+            ids += [str(i) for i in (self.sl_ids(name) if self.sl_ids else []) if str(i) not in ids]
+            if not ids:
+                return 0
+            futs = [self._pool.submit(self._call, "cancel_order", order_id=i) for i in ids]
+            fwait(futs, timeout=8)
+            audit.write("exit-all", what=f"cancel sent for {len(ids)} of the desk's own working order(s)", ids=ids)
+            self._poll_kick.set()
+            return len(ids)
         try:
             rows = self._rows()
         except Exception as e:
             log.warning("exit all: cannot read Kotak orders to cancel: %s", e)
             return 0
         ids = [str(_dig(r, *_OID_KEYS)) for r in rows
-               if "mcx" in str(r.get("exSeg", "mcx")).lower() and _dig(r, *_OID_KEYS)
+               if in_desk(r.get("exSeg", "mcx_fo")) and _dig(r, *_OID_KEYS)
                and not any(w in str(r.get("ordSt", "")).lower() for w in BROKER_DONE)
                and (name is None or getattr(self.by_symbol.get(str(r.get("trdSym", ""))), "name", None) == name)]
         if not ids:
@@ -800,7 +983,9 @@ class LiveBook(PaperBook):
         audit.write("exit-all", what=f"EXIT {what} {int(fraction * 100)}%: {len(legs)} Kotak position(s)",
                     legs=[f"{self.u.by_token[t].symbol} {p} {n}" for t, p, n in legs])
         if not legs:
-            return {"ok": True, "state": "filled", "msg": f"Kotak shows no open {'MCX' if name is None else name} position" +
+            return {"ok": True, "state": "filled", "msg": (f"the desk has no open {name or ''} position".replace("  ", " ")
+                                                           if self.own else
+                                                           f"Kotak shows no open {'MCX' if name is None else name} position") +
                     (f" · {n_cancel} working order(s) cancelled" if n_cancel else "")}
         res = self._send_parallel(legs, fraction, src)
         bad = [r["msg"] for r in res if not r["ok"]]
@@ -830,8 +1015,10 @@ class LiveBook(PaperBook):
                 break
         secs = time.time() - t0
         if fraction >= 1.0 and not left:
-            msg = (f"FLAT - Kotak confirms 0 open {'MCX' if name is None else name} positions "
-                   f"({len(legs)} closed in {secs:.1f}s)")
+            msg = ((f"FLAT - the desk's own {'' if name is None else name + ' '}positions are closed, checked "
+                    f"against Kotak ({len(legs)} closed in {secs:.1f}s)") if self.own else
+                   (f"FLAT - Kotak confirms 0 open {'MCX' if name is None else name} positions "
+                    f"({len(legs)} closed in {secs:.1f}s)"))
             audit.write("exit-all", what=msg)
             return {"ok": True, "state": "filled", "msg": msg + (f" · {n_cancel} order(s) cancelled" if n_cancel else "")}
         if fraction < 1.0:

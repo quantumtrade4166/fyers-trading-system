@@ -131,15 +131,34 @@ function toggleMode() {
       send({ op: "mode_set", mode: "PAPER" });
     return;
   }
-  const w = prompt("ARM LIVE TRADING on Kotak P?\n\nEvery order from this screen will be a REAL order on Kotak P (MCX).\nType LIVE to arm:");
+  const w = prompt(`ARM LIVE TRADING on Kotak P?\n\nEvery order from this screen will be a REAL order on Kotak P (${DESK()}).` +
+    (S.meta && S.meta.own_book ? "\nThis desk sees and exits only its OWN trades." : "") + "\nType LIVE to arm:");
   if (w === null) return;
   send({ op: "mode_set", mode: "LIVE", confirm: w });
 }
 document.getElementById("mode").onclick = toggleMode;
 
+// ── desk (MCX / NSE): each desk is its own engine; the switch opens the other one ──
+const DESK = () => (S.meta && S.meta.desk) || "MCX";
+function paintDesk(m) {
+  const d = m.desk || "MCX";
+  document.title = m.desk_label || `${d} Desk`;
+  for (const k of ["MCX", "NSE"]) {
+    const a = $("dk-" + k);
+    if (!a) continue;
+    a.classList.toggle("on", k === d);
+    if (k === d) a.removeAttribute("href");
+    else a.href = (m.desk_urls || {})[k] || "#";
+  }
+  $("exitall").title = m.own_book
+    ? "LIVE: cancel the desk's OWN working orders and stop-losses and close the desk's OWN positions (other strategies on Kotak P are never touched)"
+    : "LIVE: cancel every working MCX order on Kotak P and close EVERY open MCX position Kotak shows (also ones placed by hand), then check Kotak is flat";
+}
+
 // ── meta / controls ─────────────────────────────────────────────────────────
 function onMeta(m) {
   S.meta = m;
+  paintDesk(m);
   setTimeout(paintSlBar, 0);
   m.products.forEach((p) => (S.prods[p.name] = p));
   const name = S.cur.name || LS.get("inst", m.products[0].name);
@@ -168,7 +187,8 @@ function onMeta(m) {
   pick(S.prods[name] ? name : m.products[0].name, true);
 }
 
-function underlyingFut(p, expiry) { return p.futures.find((f) => f.expiry >= expiry) || p.futures[p.futures.length - 1]; }
+// what the options are priced off: the index spot (NSE desk: p.und) or the first future expiring on/after them (MCX)
+function underlyingFut(p, expiry) { return p.und || p.futures.find((f) => f.expiry >= expiry) || p.futures[p.futures.length - 1]; }
 
 function pick(name, keepExpiry) {
   const p = S.prods[name];
@@ -235,7 +255,7 @@ function daysLeft(iso) {
 const dm = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
 function expLine(p) {
   const oe = p.expiries[0], f = oe ? underlyingFut(p, oe) : p.futures[0];
-  return (oe ? `OPT ${dm(oe)} (${daysLeft(oe)})` : "") + (f ? ` · FUT ${dm(f.expiry)}` : "");
+  return (oe ? `OPT ${dm(oe)} (${daysLeft(oe)})` : "") + (f && f.expiry ? ` · FUT ${dm(f.expiry)}` : f ? " · SPOT" : "");
 }
 function fmtDate(iso) {
   return new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { day: "2-digit", month: "short", year: "numeric" });
@@ -517,7 +537,8 @@ $("ticket").addEventListener("keydown", (e) => {
 
 $("exitall").onclick = () => {
   if (send({ op: "exit_all", req: ++S.req }) && S.mode === "LIVE")
-    toast("EXIT ALL sent - closing every Kotak MCX position, checking Kotak until flat…", false, "wait");
+    toast(S.meta && S.meta.own_book ? "EXIT ALL sent - closing the desk's own positions, checking Kotak…"
+      : "EXIT ALL sent - closing every Kotak MCX position, checking Kotak until flat…", false, "wait");
 };
 document.querySelectorAll("#sidepane button[data-frac]").forEach((b) =>
   (b.onclick = () => send({ op: "exit_all", frac: +b.dataset.frac, req: ++S.req })));
@@ -670,7 +691,7 @@ S.pSel = new Set();             // selected rows (tokens)
 // future the option is written on, its price, the strike gap -> ATM / OTM n / ITM n (in strike gaps)
 function pFutPx(name, expiry) {
   const pr = S.prods[name];
-  if (!pr || !pr.futures || !pr.futures.length) return null;
+  if (!pr || (!pr.und && (!pr.futures || !pr.futures.length))) return null;
   const f = underlyingFut(pr, expiry);
   const t = f && S.T.get(f.token);
   return t ? t[LTP] : null;
@@ -1144,40 +1165,46 @@ function onStatus(m) {
   $("f-msg").textContent = m.error || f.error || "";
 }
 
-// MCX trading hours (IST): Mon-Fri 09:00 to 23:30, or to 23:55 while US clocks are on winter time
-// (first Sunday of November to the second Sunday of March). Exchange holidays are not known here.
+// Trading hours (IST), Mon-Fri, per desk (meta.hours). MCX: 09:00 to 23:30, or to 23:55 while US clocks are on
+// winter time (first Sunday of November to the second Sunday of March). NSE: 09:15 to 15:30.
+// Exchange holidays are not known here.
 function nthSunday(y, m, n) {             // day of month of the n-th Sunday (m: 0-11)
   const first = new Date(Date.UTC(y, m, 1)).getUTCDay();
   return 1 + ((7 - first) % 7) + 7 * (n - 1);
 }
-function mcxSession(nowMs) {
+const MCX_HOURS = { open: "09:00", close: "23:30", winter_close: "23:55" };
+const hm2min = (s) => { const [h, m] = String(s).split(":").map(Number); return h * 60 + m; };
+function deskSession(nowMs, hours) {
+  hours = hours || MCX_HOURS;
   const t = new Date(nowMs + 330 * 60000);  // IST wall clock, read with getUTC*
   const y = t.getUTCFullYear(), mo = t.getUTCMonth(), d = t.getUTCDate(), wd = t.getUTCDay();
   const md = mo * 100 + d;
-  const winter = md >= 1000 + nthSunday(y, 10, 1) || md < 200 + nthSunday(y, 2, 2);
-  const closeMin = winter ? 23 * 60 + 55 : 23 * 60 + 30;
+  const winter = !!hours.winter_close && (md >= 1000 + nthSunday(y, 10, 1) || md < 200 + nthSunday(y, 2, 2));
+  const closeAt = winter ? hours.winter_close : hours.close;
+  const openMin = hm2min(hours.open), closeMin = hm2min(closeAt);
   const mins = t.getUTCHours() * 60 + t.getUTCMinutes() + t.getUTCSeconds() / 60;
   const weekday = wd >= 1 && wd <= 5;
-  const open = weekday && mins >= 9 * 60 && mins < closeMin;
+  const open = weekday && mins >= openMin && mins < closeMin;
   let next = "";
   if (!open) {
     const days = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
-    let add = weekday && mins < 9 * 60 ? 0 : 1;
+    let add = weekday && mins < openMin ? 0 : 1;
     while ([0, 6].includes((wd + add) % 7)) add++;
-    next = add === 0 ? "opens 09:00" : add === 1 ? "opens 09:00 tomorrow" : `opens ${days[(wd + add) % 7]} 09:00`;
+    next = add === 0 ? `opens ${hours.open}` : add === 1 ? `opens ${hours.open} tomorrow` : `opens ${days[(wd + add) % 7]} ${hours.open}`;
   }
-  return { open, next, closeAt: winter ? "23:55" : "23:30", sinceOpen: mins - 9 * 60 };
+  return { open, next, closeAt, sinceOpen: mins - openMin };
 }
-if (typeof module !== "undefined") module.exports = { mcxSession };   // test hook (node)
+const mcxSession = (nowMs) => deskSession(nowMs, MCX_HOURS);
+if (typeof module !== "undefined") module.exports = { mcxSession, deskSession };   // test hook (node)
 
 setInterval(() => {
   const rate = S.recv - S.recvShown;
   S.recvShown = S.recv;
   const age = S.lastTickAt ? (Date.now() - S.lastTickAt) / 1000 : null;
   if (S.ws && S.ws.readyState === 1) {
-    const ses = mcxSession(Date.now());
+    const ses = deskSession(Date.now(), S.meta && S.meta.hours);
     if (age != null && age < 10) setFeed(`LIVE · ${rate} t/s`, "ok");
-    else if (!ses.open) setFeed(`MCX closed · ${ses.next}`, "");
+    else if (!ses.open) setFeed(`${DESK()} closed · ${ses.next}`, "");
     else if (ses.sinceOpen < 2) setFeed("waiting for opening prices", "");
     else setFeed(age == null ? "no prices yet - feed problem?" : `no prices for ${Math.round(age)} s - feed problem?`, "bad");
   }
@@ -1571,7 +1598,7 @@ $("btn-replays").onclick = async () => {
     tb.innerHTML = days.map((d) => `<tr>
       <td class="l">${fmtDate(d.day)}${d.today ? ` <span class="dim">(today, still recording)</span>` : ""}</td>
       <td class="dim">${d.html_mb != null ? d.html_mb + " MB" : "builds on download"}</td>
-      <td><a class="btn sm go" href="/replays/MCX_${d.day}.html" download="MCX_${d.day}.html">Download</a></td></tr>`).join("");
+      <td><a class="btn sm go" href="/replays/${DESK()}_${d.day}.html" download="${DESK()}_${d.day}.html">Download</a></td></tr>`).join("");
   } catch (e) { tb.innerHTML = `<tr><td class="empty">Could not load the list: ${e}</td></tr>`; }
 };
 

@@ -1158,6 +1158,47 @@ def test_engine_arm_owner_only():
     e._arm_path().unlink(missing_ok=True)
 
 
+def test_nse_gold_mirror_and_orders():
+    """MCX desk: NSE gold orders go to nse_com; its positions are mirrored like MCX; a row is never matched to a
+    contract of another exchange."""
+    t = HERE / "testdata"
+    u = I.parse_many({"mcx_fo": (t / "mcx_scrip_sample.csv").read_text(encoding="utf-8"),
+                      "nse_com": (t / "nse_com_sample.csv").read_text(encoding="utf-8")}, today="2026-10-19")
+    seg = {c.symbol: c.seg for c in u.by_token.values()}
+
+    class Fake(FakeKotak):
+        def positions(self):
+            r = super().positions()
+            for row in r.get("data") or []:
+                row["exSeg"] = seg.get(row["trdSym"], "mcx_fo")
+            return r
+
+    k = Fake()
+    q = {}
+    path = Path(tempfile.gettempdir()) / "mcx_live_test_nsegold.json"
+    path.unlink(missing_ok=True)
+    b = L.LiveBook(u, lambda tok: q.get(tok, {}), sessions=None, armed=lambda: True, path=path, client=k, start_poller=False)
+    c = u.products["NSEGOLD"].chains["2026-11-27"][160000.0]["CE"]
+    q[c.token] = _q(3000.0)
+    k.instant = "complete"
+    b.place(c.token, "S", 1, "MKT")
+    s = k.sent[-1]
+    check("NSE gold order on nse_com, qty 1", s["exchange_segment"] == "nse_com" and s["quantity"] == "1"
+          and s["trading_symbol"] == "GOLD26NOV160000CE", s)
+    b.poll(); b.sync_positions()
+    p = b.pos.get(c.token)
+    check("NSE gold position mirrored from Kotak", p and p["net"] == -1 and p["name"] == "NSEGOLD", b.pos)
+    check("its money in rupees x100", p and abs(p["sval"] - float(s["price"]) * 100) < 1e-6, p)
+    n0 = len(k.sent)
+    r = b.exit_instrument("NSEGOLD")
+    check("Exit NSE Gold closes it on nse_com", any(x["exchange_segment"] == "nse_com" and x["transaction_type"] == "B"
+                                                   for x in k.sent[n0:]) and r["ok"], (r, k.sent[n0:]))
+    # a Kotak row whose token number exists in another exchange is not taken for our contract
+    check("row of another exchange never matched", not L.same_seg(c, "mcx_fo") and L.same_seg(c, "nse_com")
+          and L.in_desk("nse_com") and not L.in_desk("nse_fo"))
+    path.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:
         fn()

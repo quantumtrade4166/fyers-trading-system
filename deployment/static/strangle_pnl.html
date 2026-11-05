@@ -1,0 +1,293 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Strangle P&L History</title>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+:root{
+  --bg:#0b1220; --surface:#131c2e; --surface-2:#1b2740; --border:#2a3952;
+  --ink:#e6edf6; --ink-2:#9fb0c6; --muted:#6b7d96;
+  --nifty:#5b9bff; --sensex:#f5a623; --accent:#2fc27f; --neg:#f2706e;
+  --vwap:#a78bfa; --up:#2fc27f; --down:#f2706e; --grid:#1c293f;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box} html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font-family:var(--sans);line-height:1.45;-webkit-font-smoothing:antialiased;font-size:14px}
+.wrap{max-width:1080px;margin:0 auto;padding:18px max(14px,env(safe-area-inset-left,0px)) 40px}
+header.top{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 12px}
+h1{font-size:1.18rem;font-weight:700;letter-spacing:-.01em;margin:0}
+.sub{color:var(--muted);font-size:.8rem}
+.note{color:var(--ink-2);font-size:.78rem;margin:.4rem 0 14px;max-width:66ch}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.filters{display:flex;flex-wrap:wrap;align-items:center;gap:8px 16px;background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:10px 12px;margin-bottom:16px}
+.fgroup{display:flex;align-items:center;gap:8px}
+.flab{font-size:.64rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted)}
+.seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.seg button{appearance:none;border:0;background:var(--surface);color:var(--ink-2);font:600 .8rem/1 var(--sans);padding:7px 13px;cursor:pointer}
+.seg button+button{border-left:1px solid var(--border)}
+.seg button[aria-pressed="true"]{background:var(--surface-2);color:var(--ink)}
+.seg.idx button[data-idx="NIFTY"][aria-pressed="true"]{box-shadow:inset 0 -3px 0 var(--nifty)}
+.seg.idx button[data-idx="SENSEX"][aria-pressed="true"]{box-shadow:inset 0 -3px 0 var(--sensex)}
+.fsel{margin-left:auto;font-size:.76rem;color:var(--ink-2)} .fsel b{color:var(--ink);font-weight:600}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:9px;margin-bottom:18px}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:11px 13px}
+.tile .k{font-size:.64rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.tile .v{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:1.16rem;font-weight:600;margin-top:3px}
+.tile .v.small{font-size:.98rem}
+.pos{color:var(--accent)} .negc{color:var(--neg)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:15px 15px 10px;margin-bottom:18px}
+.card h2{font-size:.92rem;font-weight:600;margin:0 0 2px}
+.card .cap{color:var(--muted);font-size:.76rem;margin:0 0 11px}
+.bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:11px}
+select{font:500 .82rem var(--sans);color:var(--ink);background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 10px;max-width:100%}
+.legend{display:flex;flex-wrap:wrap;gap:13px;font-size:.78rem;color:var(--ink-2);margin:2px 2px 9px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.swatch{width:11px;height:11px;border-radius:3px;flex:none}
+.chart{width:100%;height:330px;position:relative}
+.chart.small{height:300px}
+.dayinfo{display:flex;flex-wrap:wrap;gap:7px 16px;font-size:.8rem;color:var(--ink-2);margin:3px 2px 11px}
+.dayinfo b{color:var(--ink);font-weight:600}
+.tag{font-family:var(--mono);font-size:.7rem;padding:2px 7px;border-radius:999px;border:1px solid var(--border);color:var(--ink-2)}
+.loading{color:var(--muted);font-size:.82rem;padding:28px 2px}
+.tt{position:absolute;pointer-events:none;z-index:5;background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:7px 9px;font-size:.74rem;box-shadow:0 4px 14px rgba(0,0,0,.4);font-variant-numeric:tabular-nums;display:none;min-width:118px}
+.tt .d{color:var(--muted);margin-bottom:3px}
+.tt .r{display:flex;justify-content:space-between;gap:12px}
+.foot{color:var(--muted);font-size:.72rem;margin-top:6px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top"><h1>VWAP Strangle · P&amp;L History</h1><span class="sub" id="range">loading…</span></header>
+  <p class="note">V2 tick engine, 1 lot per index. Filter by index and DTE — every number and chart below follows the selection.</p>
+
+  <div class="filters">
+    <div class="fgroup"><span class="flab">Index</span>
+      <div class="seg idx" id="idxseg">
+        <button data-idx="NIFTY" aria-pressed="true">NIFTY</button>
+        <button data-idx="SENSEX" aria-pressed="true">SENSEX</button>
+      </div>
+    </div>
+    <div class="fgroup"><span class="flab">DTE</span>
+      <div class="seg" id="dteseg">
+        <button data-dte="0" aria-pressed="true">0-DTE</button>
+        <button data-dte="1" aria-pressed="true">1-DTE</button>
+      </div>
+    </div>
+    <span class="fsel" id="fsel"></span>
+  </div>
+
+  <div class="tiles" id="tiles"></div>
+
+  <section class="card">
+    <h2>Cumulative P&amp;L</h2>
+    <p class="cap" id="curvecap"></p>
+    <div class="bar">
+      <div class="seg" id="curveseg" role="group" aria-label="Series">
+        <button data-k="combined" aria-pressed="true">Combined</button>
+        <button data-k="split" aria-pressed="false">By index</button>
+      </div>
+    </div>
+    <div class="legend" id="curvelegend"></div>
+    <div class="chart" id="curve"><div class="loading">Loading…</div></div>
+  </section>
+
+  <section class="card">
+    <h2>Daily P&amp;L</h2>
+    <p class="cap">Realised P&amp;L booked each trading day (1 lot). Green = up day, red = down day; hover for the split.</p>
+    <div class="chart" id="dailybars" style="height:230px"><div class="loading">Loading…</div></div>
+  </section>
+
+  <section class="card">
+    <h2>Traded-day bars</h2>
+    <p class="cap">Each traded day's combined-premium candles with cumulative VWAP and the entry/exit signals.</p>
+    <div class="bar"><label for="daypick" class="sub">Day</label><select id="daypick" aria-label="Pick a traded day"></select></div>
+    <div class="dayinfo" id="dayinfo"></div>
+    <div class="legend">
+      <span><i class="swatch" style="background:var(--up)"></i>up candle</span>
+      <span><i class="swatch" style="background:var(--down)"></i>down candle</span>
+      <span><i class="swatch" style="background:var(--vwap)"></i>VWAP</span>
+      <span><i class="swatch" style="background:var(--accent)"></i>▲ entry (sell)</span>
+      <span><i class="swatch" style="background:var(--neg)"></i>▼ exit (cover)</span>
+    </div>
+    <div class="chart small" id="day"><div class="loading">Pick a day…</div></div>
+    <p class="foot" id="dayfoot"></p>
+  </section>
+  <p class="foot">Source: V2 chart archives on this VPS, via <span class="num">/api/strangle/pnl_history</span>. Read-only.</p>
+</div>
+
+<script>
+const LWC=window.LightweightCharts;
+const INR0=new Intl.NumberFormat("en-IN",{maximumFractionDigits:0});
+const INR2=new Intl.NumberFormat("en-IN",{maximumFractionDigits:2});
+const money=(x,sign=false)=>{ if(x==null) return "—"; const s=x<0?"−":(sign?"+":""); return s+"₹"+INR0.format(Math.abs(Math.round(x))); };
+const cssv=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const r2=x=>Math.round(x*100)/100;
+function intradayTs(date,hhmm){ const [Y,M,D]=date.split("-").map(Number); const [h,m]=hhmm.split(":").map(Number); return Date.UTC(Y,M-1,D,h,m)/1000; }
+
+let DATA=null, VIEW=null, curveChart=null, curveMode="combined", dayChart=null, dailyChart=null, ro1=null, ro2=null, ro3=null;
+const selIdx=new Set(["NIFTY","SENSEX"]), selDte=new Set([0,1]);
+
+// DATA.records = [{date,index,dte,pnl}] for every 0/1-DTE traded archive.
+function derive(){
+  const recs=DATA.records.filter(r=>selIdx.has(r.index)&&selDte.has(r.dte));
+  const bydate={};
+  for(const r of recs){ const b=bydate[r.date]||(bydate[r.date]={t:0,NIFTY:null,SENSEX:null}); const p=r.pnl||0; b.t+=p; b[r.index]=(b[r.index]||0)+p; }
+  const dates=Object.keys(bydate).sort();
+  let cum=0,peak=0,mdd=0; const curve=[];
+  for(const dt of dates){ const v=r2(bydate[dt].t); cum=r2(cum+v); peak=Math.max(peak,cum); mdd=Math.min(mdd,cum-peak);
+    curve.push({date:dt,day_total:v,cumulative:cum,nifty:bydate[dt].NIFTY,sensex:bydate[dt].SENSEX}); }
+  const traded=curve.filter(c=>c.day_total!==0), wins=traded.filter(c=>c.day_total>0).length;
+  const best=traded.reduce((a,c)=>c.day_total>(a?.day_total??-1e9)?c:a,null);
+  const worst=traded.reduce((a,c)=>c.day_total<(a?.day_total??1e9)?c:a,null);
+  const stats={final:cum,peak:r2(peak),mdd:r2(mdd),sessions:traded.length,
+    winRate:traded.length?Math.round(100*wins/traded.length):0,best:best?best.day_total:0,worst:worst?worst.day_total:0,
+    start:dates[0]||null,end:dates[dates.length-1]||null,days:dates.length};
+  const dayList=recs.slice().sort((a,b)=> a.date<b.date?1:a.date>b.date?-1:(a.index<b.index?-1:1));
+  return {curve,stats,days:dayList};
+}
+
+function chartTheme(){ return {
+  layout:{background:{type:"solid",color:cssv("--surface")},textColor:cssv("--ink-2"),fontFamily:getComputedStyle(document.body).fontFamily},
+  grid:{vertLines:{color:cssv("--grid")},horzLines:{color:cssv("--grid")}},
+  rightPriceScale:{borderColor:cssv("--border")},timeScale:{borderColor:cssv("--border")},
+  crosshair:{mode:LWC.CrosshairMode.Magnet,vertLine:{color:cssv("--muted"),width:1,style:3,labelBackgroundColor:cssv("--ink-2")},horzLine:{color:cssv("--muted"),width:1,style:3,labelBackgroundColor:cssv("--ink-2")}}};
+}
+
+function buildCurve(){
+  const el=document.getElementById("curve"); el.innerHTML="";
+  if(curveChart){ curveChart.remove(); curveChart=null; }
+  curveChart=LWC.createChart(el,{width:el.clientWidth,height:el.clientHeight,...chartTheme(),localization:{priceFormatter:v=>(v<0?"−₹":"₹")+INR0.format(Math.abs(v))}});
+  const curve=VIEW.curve, idxList=[...selIdx];
+  if(curveMode==="split" && idxList.length>1){
+    for(const ix of idxList){ let c=0; const key=ix.toLowerCase();
+      const d=curve.map(p=>{ c=r2(c+(p[key]||0)); return {time:p.date,value:c}; });
+      curveChart.addLineSeries({color:cssv("--"+key),lineWidth:2,priceLineVisible:false}).setData(d); }
+  }else{
+    const s=curveChart.addAreaSeries({lineColor:cssv("--accent"),topColor:cssv("--accent")+"33",bottomColor:cssv("--accent")+"05",lineWidth:2,priceLineVisible:false});
+    s.setData(curve.map(d=>({time:d.date,value:d.cumulative})));
+  }
+  curveChart.timeScale().fitContent();
+  let tt=el.querySelector(".tt"); if(!tt){ tt=document.createElement("div"); tt.className="tt"; el.appendChild(tt); }
+  const byDate=Object.fromEntries(curve.map(d=>[d.date,d]));
+  curveChart.subscribeCrosshairMove(p=>{
+    if(!p.time||!p.point||p.point.x<0||p.point.y<0){ tt.style.display="none"; return; }
+    const d=byDate[p.time]; if(!d){ tt.style.display="none"; return; }
+    tt.innerHTML=`<div class="d">${d.date}</div>
+      <div class="r"><span>Cumulative</span><b>${money(d.cumulative,true)}</b></div>
+      <div class="r"><span>Day</span><b class="${d.day_total>=0?'pos':'negc'}">${money(d.day_total,true)}</b></div>
+      ${d.nifty!=null?`<div class="r"><span style="color:var(--nifty)">NIFTY</span><span>${money(d.nifty,true)}</span></div>`:""}
+      ${d.sensex!=null?`<div class="r"><span style="color:var(--sensex)">SENSEX</span><span>${money(d.sensex,true)}</span></div>`:""}`;
+    tt.style.display="block";
+    const w=tt.offsetWidth,cw=el.clientWidth; let x=p.point.x+16; if(x+w>cw)x=p.point.x-w-16;
+    tt.style.left=Math.max(4,x)+"px"; tt.style.top=Math.max(4,p.point.y-10)+"px";
+  });
+  const combined=!(curveMode==="split"&&idxList.length>1);
+  document.getElementById("curvelegend").innerHTML = combined
+    ? `<span><i class="swatch" style="background:var(--accent)"></i>Cumulative (selection, 1 lot)</span>`
+    : idxList.map(ix=>`<span><i class="swatch" style="background:var(--${ix.toLowerCase()})"></i>${ix} cumulative</span>`).join("");
+  if(ro1) ro1.disconnect();
+  ro1=new ResizeObserver(()=>curveChart&&curveChart.applyOptions({width:el.clientWidth,height:el.clientHeight})); ro1.observe(el);
+}
+
+function buildDaily(){
+  const el=document.getElementById("dailybars"); el.innerHTML="";
+  if(dailyChart){ dailyChart.remove(); dailyChart=null; }
+  dailyChart=LWC.createChart(el,{width:el.clientWidth,height:el.clientHeight,...chartTheme(),localization:{priceFormatter:v=>(v<0?"−₹":"₹")+INR0.format(Math.abs(v))}});
+  const h=dailyChart.addHistogramSeries({priceLineVisible:false,base:0});
+  const up=cssv("--accent"),dn=cssv("--neg");
+  h.setData(VIEW.curve.map(d=>({time:d.date,value:d.day_total,color:d.day_total>=0?up:dn})));
+  dailyChart.timeScale().fitContent();
+  let tt=el.querySelector(".tt"); if(!tt){ tt=document.createElement("div"); tt.className="tt"; el.appendChild(tt); }
+  const byDate=Object.fromEntries(VIEW.curve.map(d=>[d.date,d]));
+  dailyChart.subscribeCrosshairMove(p=>{
+    if(!p.time||!p.point||p.point.x<0){ tt.style.display="none"; return; }
+    const d=byDate[p.time]; if(!d||d.day_total===0){ tt.style.display="none"; return; }
+    tt.innerHTML=`<div class="d">${d.date}</div>
+      <div class="r"><span>Day P&amp;L</span><b class="${d.day_total>=0?'pos':'negc'}">${money(d.day_total,true)}</b></div>
+      ${d.nifty!=null?`<div class="r"><span style="color:var(--nifty)">NIFTY</span><span>${money(d.nifty,true)}</span></div>`:""}
+      ${d.sensex!=null?`<div class="r"><span style="color:var(--sensex)">SENSEX</span><span>${money(d.sensex,true)}</span></div>`:""}`;
+    tt.style.display="block";
+    const w=tt.offsetWidth,cw=el.clientWidth; let x=p.point.x+16; if(x+w>cw)x=p.point.x-w-16;
+    tt.style.left=Math.max(4,x)+"px"; tt.style.top="8px";
+  });
+  if(ro3) ro3.disconnect();
+  ro3=new ResizeObserver(()=>dailyChart&&dailyChart.applyOptions({width:el.clientWidth,height:el.clientHeight})); ro3.observe(el);
+}
+
+async function buildDay(meta){
+  const el=document.getElementById("day");
+  if(!meta){ el.innerHTML='<div class="loading">No traded days in this selection.</div>'; if(dayChart){dayChart.remove();dayChart=null;} document.getElementById("dayinfo").innerHTML=""; document.getElementById("dayfoot").textContent=""; return; }
+  el.innerHTML='<div class="loading">Loading '+meta.date+' '+meta.index+'…</div>';
+  let j; try{ j=await (await fetch(`/api/strangle/chart?date=${meta.date}&index=${meta.index}&version=V2`)).json(); }
+  catch(e){ el.innerHTML='<div class="loading">Could not load day: '+e+'</div>'; return; }
+  if(!j || j.error || !j.candles){ el.innerHTML='<div class="loading">No V2 chart for this day.</div>'; return; }
+  el.innerHTML="";
+  if(dayChart){ dayChart.remove(); dayChart=null; }
+  const th=chartTheme();
+  dayChart=LWC.createChart(el,{width:el.clientWidth,height:el.clientHeight,...th,timeScale:{...th.timeScale,timeVisible:true,secondsVisible:false},localization:{priceFormatter:v=>INR2.format(v)}});
+  const candle=dayChart.addCandlestickSeries({upColor:cssv("--up"),downColor:cssv("--down"),borderUpColor:cssv("--up"),borderDownColor:cssv("--down"),wickUpColor:cssv("--up"),wickDownColor:cssv("--down")});
+  const vwap=dayChart.addLineSeries({color:cssv("--vwap"),lineWidth:2,priceLineVisible:false,lastValueVisible:false});
+  candle.setData(j.candles.map(c=>({time:intradayTs(j.date,c.time),open:c.open,high:c.high,low:c.low,close:c.close})));
+  vwap.setData(j.candles.filter(c=>c.vwap!=null).map(c=>({time:intradayTs(j.date,c.time),value:c.vwap})));
+  const mk=(j.events||[]).map(e=>e.type==="entry"
+    ?{time:intradayTs(j.date,e.time),position:"belowBar",color:cssv("--accent"),shape:"arrowUp",text:"E "+INR2.format(e.price)}
+    :{time:intradayTs(j.date,e.time),position:"aboveBar",color:cssv("--neg"),shape:"arrowDown",text:"X "+INR2.format(e.price)});
+  mk.sort((a,b)=>a.time-b.time); candle.setMarkers(mk);
+  dayChart.timeScale().fitContent();
+  const pnl=(j.pnl||{}).realized_pnl||0, sel=j.selection||{};
+  document.getElementById("dayinfo").innerHTML=
+    `<span><b>${j.date}</b></span><span class="tag">${j.index}</span><span class="tag">${sel.dte}-DTE</span>
+     <span>CE <b>${j.ce_symbol||"—"}</b></span><span>PE <b>${j.pe_symbol||"—"}</b></span>
+     <span>Day P&amp;L <b class="${pnl>=0?'pos':'negc'}">${money(pnl,true)}</b> <span class="sub">(1 lot)</span></span>`;
+  const nE=(j.events||[]).filter(e=>e.type==="entry").length, nX=(j.events||[]).filter(e=>e.type==="exit").length;
+  document.getElementById("dayfoot").textContent=`${j.candles.length} five-minute bars · ${nE} entr${nE===1?"y":"ies"}, ${nX} exit${nX===1?"":"s"}`;
+  if(ro2) ro2.disconnect();
+  ro2=new ResizeObserver(()=>dayChart&&dayChart.applyOptions({width:el.clientWidth,height:el.clientHeight})); ro2.observe(el);
+}
+
+function renderStats(){
+  const s=VIEW.stats;
+  const T=[["Cumulative P&L",money(s.final,true),s.final>=0?"pos":"negc"],["Peak",money(s.peak,true),"pos"],
+    ["Max drawdown",money(s.mdd,true),"negc"],["Trade sessions",INR0.format(s.sessions),""],
+    ["Win rate",s.winRate+"%",""],["Best day",money(s.best,true),"pos small"],["Worst day",money(s.worst,true),"negc small"]];
+  document.getElementById("tiles").innerHTML=T.map(([k,v,cls])=>`<div class="tile"><div class="k">${k}</div><div class="v ${cls}">${v}</div></div>`).join("");
+  document.getElementById("range").textContent = s.start?`${s.start} → ${s.end} · ${s.days} days`:"no data";
+  document.getElementById("curvecap").textContent=`1-lot realised P&L for the current selection. Final ${money(s.final,true)}, peak ${money(s.peak,true)} (max drawdown ${money(s.mdd,true)}).`;
+  const ix=[...selIdx].join(" + ")||"none", dt=[...selDte].sort().map(d=>d+"-DTE").join(" + ")||"none";
+  document.getElementById("fsel").innerHTML=`Showing <b>${ix}</b> · <b>${dt}</b>`;
+}
+
+function initDays(){
+  const sel=document.getElementById("daypick");
+  sel.innerHTML=VIEW.days.map((d,i)=>`<option value="${i}">${d.date} · ${d.index} · ${d.dte}-DTE · ${money(d.pnl,true)}</option>`).join("");
+  sel.onchange=()=>buildDay(VIEW.days[+sel.value]);
+  buildDay(VIEW.days[0]||null);
+}
+
+function rebuild(){ if(!DATA) return; VIEW=derive(); renderStats(); buildCurve(); buildDaily(); initDays(); }
+
+function toggleChip(seg, set, cast){
+  seg.addEventListener("click",e=>{
+    const b=e.target.closest("button"); if(!b) return;
+    const val=cast(b.dataset.idx??b.dataset.dte);
+    if(set.has(val)){ if(set.size===1) return; set.delete(val); b.setAttribute("aria-pressed","false"); }
+    else { set.add(val); b.setAttribute("aria-pressed","true"); }
+    rebuild();
+  });
+}
+toggleChip(document.getElementById("idxseg"), selIdx, v=>v);
+toggleChip(document.getElementById("dteseg"), selDte, v=>+v);
+document.getElementById("curveseg").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return; curveMode=b.dataset.k; [...e.currentTarget.children].forEach(x=>x.setAttribute("aria-pressed",x===b)); buildCurve(); });
+window.addEventListener("resize",()=>{ ["curve","dailybars","day"].forEach((id,i)=>{ const c=[curveChart,dailyChart,dayChart][i]; if(c){const e=document.getElementById(id);c.applyOptions({width:e.clientWidth,height:e.clientHeight});} }); });
+
+fetch("/api/strangle/pnl_history").then(r=>r.json()).then(j=>{
+  DATA={records:(j.records||[]).filter(r=>r.dte===0||r.dte===1)};
+  if(!DATA.records.length){ document.getElementById("curve").innerHTML='<div class="loading">No V2 history found yet.</div>'; return; }
+  rebuild();
+}).catch(e=>{ document.getElementById("curve").innerHTML='<div class="loading">Could not load: '+e+'</div>'; });
+</script>
+</body>
+</html>

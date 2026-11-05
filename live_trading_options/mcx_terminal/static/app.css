@@ -17,11 +17,16 @@
   --down-flash: rgba(242, 82, 92, .42);
   --itm: rgba(86, 140, 255, .13);       /* in-the-money side: blue, clearly different from the amber ATM row */
   --atm: rgba(245, 165, 36, .16);
-  --mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+  /* numbers: Inter with equal-width digits (owner, 05-Nov-2026: JetBrains Mono's zero has a dot inside and
+     reads as 8 at a glance in a live market). Plain open zero; columns still line up (tnum below). */
+  --mono: Inter, system-ui, Segoe UI, sans-serif;
   --sans: Inter, system-ui, Segoe UI, sans-serif;
 }
 
 * { box-sizing: border-box; }
+/* equal-width digits everywhere, plain zero (never dotted / slashed). Set on EVERY element: the `font:`
+   shorthand used all over this sheet resets inherited font features in Chrome. Nothing else sets them. */
+*, *::before, *::after { font-feature-settings: "tnum" 1, "zero" 0 !important; }
 html, body { height: 100%; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
@@ -37,6 +42,11 @@ body {
 .brand { font-weight: 700; letter-spacing: .08em; font-size: 14px; white-space: nowrap; }
 .brand .mark { color: var(--accent); }
 .brand .dot { color: var(--accent); margin: 0 1px; }
+.brand.desks { display: flex; align-items: center; gap: 4px; }
+.brand .dk { color: var(--muted); text-decoration: none; padding: 2px 7px; border-radius: 5px; border: 1px solid transparent; cursor: pointer; }
+.brand .dk:hover { color: var(--text); border-color: var(--line); }
+.brand .dk.on { color: var(--text); border-color: var(--accent); cursor: default; }
+.brand .dk:not(.on) .dot { color: var(--muted); }
 .tickers { display: flex; gap: 10px; flex: 1; overflow-x: auto; scrollbar-width: none; }
 .tk {
   display: grid; grid-template-columns: auto auto; column-gap: 10px; align-items: baseline;

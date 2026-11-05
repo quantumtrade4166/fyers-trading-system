@@ -1,8 +1,9 @@
 """
-mcx_terminal/server.py — the terminal's engine + web server (Kotak P, MCX options).
-==================================================================================
+mcx_terminal/server.py — the terminal's engine + web server (Kotak P, MCX or NSE desk).
+====================================================================================
 
-Own process, own port (47680), own Kotak session. Never touches the dashboard or any other engine.
+Own process, own port (MCX 47680 / NSE 47682, config.py), own Kotak session. Never touches the dashboard
+or any other engine. The desk is picked by TERMINAL_DESK=MCX|NSE (config.py).
 Orders: PAPER (paper.py) by default. LIVE (live.py, real Kotak P orders) only after the OWNER arms it on
 the screen (typed confirmation, owner email only, resets every day). Live positions = own tagged orders only.
 
@@ -12,7 +13,8 @@ Ticks arriving while a flush is pending just overwrite the pending value (natura
 no fixed timer, nothing older than one loop turn).
 
     cd C:\\trading\\fyers_data_pipeline
-    .venv\\Scripts\\python.exe -m live_trading_options.mcx_terminal.server
+    .venv\\Scripts\\python.exe -m live_trading_options.mcx_terminal.server               (MCX desk)
+    set TERMINAL_DESK=NSE && .venv\\Scripts\\python.exe -m live_trading_options.mcx_terminal.server   (NSE desk)
 """
 import asyncio
 import datetime as dt
@@ -50,7 +52,7 @@ from live_trading_options.mcx_terminal.recorder import DayRecorder, now_ms, REPL
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 log = logging.getLogger("mcx.server")
 RESET_AT = dt.time(0, 5)          # after MCX close: new day = fresh books, guards, arm (everything resets)
-REFRESH_AT = dt.time(8, 45)       # fresh Kotak login + today's contract list before MCX opens at 09:00
+REFRESH_AT = C.REFRESH_AT         # fresh Kotak login + today's contract list before the desk opens
 
 
 def next_restart(born: dt.datetime) -> dt.datetime:
@@ -65,7 +67,15 @@ def owner_users() -> set:
     """Who may arm LIVE: the owner's Cloudflare email(s), plus "local" (on the VPS itself / SSH tunnel)."""
     em = os.getenv("MCX_OWNER_EMAILS", "prakhar4sapa@gmail.com")
     return {"local"} | {e.strip().lower() for e in em.split(",") if e.strip()}    # fresh Kotak login + contract list before MCX opens at 09:00
-REPLAY_BUILD_AT = dt.time(23, 58) # after MCX close (23:30 / 23:55): build the day's double-click replay file
+REPLAY_BUILD_AT = C.REPLAY_BUILD_AT   # after the desk's close: build the day's double-click replay file
+# price subscriptions: Kotak takes ~3000 per connection (config.SUB_BUDGET). An expiry with up to SUB_ALL_MAX
+# strikes is subscribed whole (MCX as before); a bigger one (NSE gold 545 strikes, NIFTY weeklies) only on the
+# screen's strike gap, SUB_GAPS gaps either side of the price - what the chain can show (04-Nov-2026: the whole
+# NSE gold expiry pushed the MCX desk to 2940 wanted > 2800 and prices went missing).
+SUB_ALL_MAX = 100
+SUB_GAPS = 30
+SPOT_POLL_S = 1.0                 # NSE: index price from Kotak REST when the feed has none for SPOT_STALE_S
+SPOT_STALE_S = 3.0
 
 try:
     from dotenv import load_dotenv
@@ -78,7 +88,7 @@ def _setup_logging():
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
     root = logging.getLogger()
     root.setLevel(logging.INFO)
-    fh = RotatingFileHandler(C.LOG_DIR / "mcx_terminal.log", maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+    fh = RotatingFileHandler(C.LOG_DIR / C.LOG_NAME, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
     fh.setFormatter(fmt)
     sh = logging.StreamHandler(sys.stdout)
     sh.setFormatter(fmt)
@@ -117,6 +127,7 @@ class Engine:
         self.started_at = time.time()
         self.error = ""
         self._plock = threading.Lock()
+        self._spot_toks: set = set()               # NSE: index spot tokens
 
     @property
     def book(self):
@@ -270,27 +281,81 @@ class Engine:
             bk.before_reduce = self.sls[mode].before_reduce
             bk.before_flatten = self.sls[mode].before_flatten
         self.live.on_push_other = self.sls["LIVE"].on_push
+        self.live.sl_ids = self.sls["LIVE"].working_ids        # own book (NSE): EXIT ALL cancels the desk's own stops
         self.orderfeed = OrderFeed(self.sessions, self.live.on_push, self.live.on_push_position,
                                    on_reconnect=self.live._poll_kick.set).start()
         self.book_tokens = self.paper.tokens() | self.live.tokens() | self._away_tokens()
         self.rec = DayRecorder()
         if self.rec.active:                        # restarted mid-day: write a fresh header to today's file
             self.rec._activate_header = self._replay_header
-        self.feed = KotakFeed(self.sessions, self.on_ticks, self.on_status)
+        self._spot_toks = {p.spot.token for p in self.universe.products.values() if p.spot}
+        idx = [(p.spot.seg, C.SPOT[p.name][3], p.spot.token) for p in self.universe.products.values() if p.spot]
+        self.feed = KotakFeed(self.sessions, self.on_ticks, self.on_status, seg_of=self.seg_of,
+                              indices=idx, ref_price=self.ltp)
         # always-on: every future + the nearest option expiry of each product
         first = []
         for p in self.universe.products.values():
-            first += [f.token for f in p.futures[:3]]
+            if not p.chains:
+                continue
+            first += [f.token for f in p.futures[:3]]                     # (an index streams by name: feed.py)
             if p.chains:
-                first += self.expiry_tokens(p.name, p.expiries()[0])
+                first += self.chain_tokens(p.name, p.expiries()[0])
         self.feed.want(first)
         if self.book_tokens:
             self.feed.want_depth(list(self.book_tokens))
         self.feed.start()
+        # at start no price is known yet, so big expiries were centred on their middle strike: once the
+        # futures / index have ticked, stream the strikes around the real price too
+        threading.Timer(8.0, self._recentre_nearest).start()
         threading.Thread(target=self._housekeeping, daemon=True, name="Housekeeping").start()
         for s in self.sls.values():
             s.start()
         threading.Thread(target=self._margin_loop, daemon=True, name="Margin").start()
+        if any(p.spot for p in self.universe.products.values()):
+            threading.Thread(target=self._spot_loop, daemon=True, name="SpotBackup").start()
+
+    def seg_of(self, token) -> str:
+        c = self.universe.by_token.get(token) if self.universe else None
+        return c.seg if c else "mcx_fo"
+
+    def _spot_loop(self):
+        """NSE desk: the index price (NIFTY 50 / NIFTY BANK / SENSEX) streams on the feed (by name, feed.py).
+        If it has not ticked for SPOT_STALE_S, Kotak's REST quotes() gives it (by name - it refuses the token),
+        once a second, so the chain's ATM never freezes. Its first price also lets the feed tell NIFTY from
+        NIFTY BANK. READ-ONLY."""
+        spots = [(p.spot, C.SPOT[p.name][3]) for p in self.universe.products.values() if p.spot]
+        seen_at = {}
+        while True:
+            time.sleep(SPOT_POLL_S)
+            try:
+                now = time.time()
+                for sp, _ in spots:
+                    t = self.last.get(sp.token)
+                    if t and t[1] and seen_at.get(sp.token, (None,))[0] != t[10]:
+                        seen_at[sp.token] = (t[10], now)          # a new feed tick (its time moved on)
+                stale = [(sp, nm) for sp, nm in spots if now - seen_at.get(sp.token, (None, 0.0))[1] > SPOT_STALE_S]
+                if not stale:
+                    continue
+                r = self.sessions.get().client.quotes(
+                    instrument_tokens=[{"instrument_token": nm, "exchange_segment": sp.seg} for sp, nm in stale],
+                    quote_type="ltp")
+                rows = r if isinstance(r, list) else (r or {}).get("message") or []
+                ticks = []
+                for sp, nm in stale:
+                    row = next((x for x in rows if isinstance(x, dict) and str(x.get("exchange_token")) == nm), None)
+                    px = float(row["ltp"]) if row and row.get("ltp") not in (None, "") else 0.0
+                    if px > 0:
+                        cur = self.last.get(sp.token)
+                        if not cur or cur[1] != px:
+                            ticks.append((sp.token, px, None, None, None, None, None, None, None, None,
+                                          int(now), None, None))
+                if ticks:
+                    self.on_ticks(ticks)
+                    for tk in ticks:                   # our own ticks never count as the feed being alive
+                        seen_at[tk[0]] = (self.last[tk[0]][10], seen_at.get(tk[0], (None, 0.0))[1])
+            except Exception:
+                log.exception("spot backup")
+                time.sleep(5)
 
     def _margin_loop(self):
         """Kotak P margins for the right panel: READ-ONLY limits() call every 30 s on its own thread
@@ -382,18 +447,49 @@ class Engine:
         ch = self.universe.products[name].chains.get(expiry, {})
         return [leg.token for legs in ch.values() for leg in legs.values()]
 
+    def chain_tokens(self, name, expiry) -> list:
+        """The tokens of an expiry worth streaming (see SUB_ALL_MAX / SUB_GAPS)."""
+        ch = self.universe.products[name].chains.get(expiry, {})
+        if len(ch) <= SUB_ALL_MAX:
+            return self.expiry_tokens(name, expiry)
+        p = self.universe.products[name]
+        ks = sorted(ch)
+        gap = float(((self.settings.get().get("strike_gap") or {}).get(name)) or 0)
+        on = [k for k in ks if gap and abs(k / gap - round(k / gap)) < 1e-9]
+        on = on if len(on) >= 3 else ks
+        t = self.und_tick(p, expiry)
+        ref = t[1] if t else ks[len(ks) // 2]
+        keep = sorted(on, key=lambda k: abs(k - ref))[:2 * SUB_GAPS + 1]
+        return [leg.token for k in keep for leg in ch[k].values()]
+
+    def _recentre_nearest(self):
+        try:
+            for p in self.universe.products.values():
+                if p.chains:
+                    self.feed.want(self.chain_tokens(p.name, p.expiries()[0]))
+        except Exception:
+            log.exception("recentre subscriptions")
+
+    def resubscribe_chains(self):
+        """Strike gap changed: stream the strikes the screens now show (chains already opened today)."""
+        if not self.feed:
+            return
+        for (name, expiry) in list(self.chain_defs):
+            self.feed.want_depth(self.chain_tokens(name, expiry))
+
     def ltp(self, token):
         t = self.last.get(token)
         return t[1] if t else None
 
     def quote(self, token) -> dict:
         """Prices + book for the paper engine, quantities in UNITS. Kotak's MCX feed reports bid/ask
-        and depth quantities in LOTS (seen 19-Oct: GOLDM depth 2,1,1,1,2 = lots of 100) -> x lot."""
+        and depth quantities in LOTS (seen 19-Oct: GOLDM depth 2,1,1,1,2 = lots of 100) -> x lot.
+        NSE/BSE report UNITS already (seen 04-Nov: NIFTY future bid 520 / ask 325 = 8 / 5 lots of 65)."""
         t = self.last.get(token)
         if not t:
             return {}
         c = self.universe.by_token.get(token)
-        lot = c.lot if c else 1
+        lot = c.lot if c and c.seg == "mcx_fo" else 1
         dp = self.depth.get(token)
         if dp:
             dp = ([(p, q * lot) for p, q in dp[0]], [(p, q * lot) for p, q in dp[1]])
@@ -410,6 +506,8 @@ class Engine:
         with self._plock:
             for t in ticks:
                 tok = t[0]
+                if tok in self._spot_toks and not t[1]:
+                    continue                           # an index packet with no price (feed after hours): keep the last
                 cur = self.last.get(tok)
                 if cur is None:
                     cur = [tok, None, None, None, None, None, None, None, None, None, None, None]
@@ -505,9 +603,8 @@ class Engine:
             if not p.chains:
                 continue
             exp = p.expiries()[0]
-            und = p.underlying(exp)
-            f = self.last.get(und.token) if und else None
-            if not f or f[1] is None:
+            f = self.und_tick(p, exp)
+            if not f:
                 continue
             ch = p.chains[exp]
             k = min(ch, key=lambda x: abs(x - f[1]))
@@ -515,6 +612,16 @@ class Engine:
             if ce and pe and ce[1] is not None and pe[1] is not None:
                 out[name] = [k, round(ce[1] + pe[1], 2), exp]
         return out
+
+    def und_tick(self, p, expiry):
+        """Latest tick of what `expiry`'s options are priced off: spot (NSE) or future (MCX); a spot with
+        no price yet falls back to the nearest future so ATM is never blank."""
+        und = p.underlying(expiry)
+        t = self.last.get(und.token) if und else None
+        if (not t or not t[1]) and p.spot is not None:
+            f = next((x for x in p.futures if x.expiry >= expiry), p.futures[-1] if p.futures else None)
+            t = self.last.get(f.token) if f else None
+        return t if t and t[1] else None
 
     def _flush(self):
         now_s = time.time()
@@ -580,21 +687,26 @@ class Engine:
         prods = []
         for n in C.INSTRUMENTS:
             p = u.products[n]
+            if not p.chains:
+                continue                               # its contract list did not load today: hidden
             futs = [{"token": f.token, "symbol": f.symbol, "expiry": f.expiry} for f in p.futures[:3]]
             prods.append({"name": n, "label": C.LABELS[n], "lot": p.lot, "tick": p.opt_tick,
-                          "expiries": p.expiries(), "futures": futs})
+                          "expiries": p.expiries(), "futures": futs,
+                          "und": {"token": p.spot.token, "symbol": p.spot.symbol, "expiry": ""} if p.spot else None})
         return {"t": "meta", "products": prods, "strikes": list(C.STRIKE_CHOICES),
                 "default_strikes": C.DEFAULT_STRIKES, "file_date": u.file_date, "mode": self.mode,
                 "max_lots": C.MAX_LOTS_PER_ORDER, "confirm_lots": C.CONFIRM_LOTS,
                 "qty_lots_max": C.MAX_QTY_LOTS_CHOICE, "buffer_pct": C.MKT_BUFFER_PCT,
-                "settings": self.settings.get(), "gap_choices": GAP_CHOICES}
+                "settings": self.settings.get(), "gap_choices": GAP_CHOICES,
+                "desk": C.DESK, "desk_label": C.DESK_LABEL, "desk_urls": C.DESK_URLS, "hours": C.HOURS,
+                "own_book": C.OWN_BOOK}
 
     def chain(self, name, expiry) -> dict:
         p = self.universe.products[name]
         if expiry not in p.chains:
             expiry = p.expiries()[0]
         toks = self.expiry_tokens(name, expiry)
-        self.feed.want_depth(toks)                 # 5-level book for paper fills on this chain
+        self.feed.want_depth(self.chain_tokens(name, expiry))   # 5-level book for paper fills (shown strikes)
         und = p.underlying(expiry)
         rows = [{"k": k, "ce": legs["CE"].token, "pe": legs["PE"].token,
                  "cs": legs["CE"].symbol, "ps": legs["PE"].symbol}
@@ -646,7 +758,7 @@ def build_missing_replays():
     today = dt.datetime.now(IST).date().isoformat()
     for raw in sorted(REPLAY_DIR.glob("raw_*.mcxr")):
         day = raw.stem[4:]
-        if day < today and not (REPLAY_DIR / f"MCX_{day}.html").exists():
+        if day < today and not (REPLAY_DIR / f"{C.DESK}_{day}.html").exists():
             spawn_replay_build(day)
 
 
@@ -676,6 +788,8 @@ def _basket(m):
 def _settings_set(m):
     r = ENGINE.settings.update(m.get("values") or {})
     ENGINE.rec.event("settings", ENGINE.settings.get())
+    if r.get("ok") and "strike_gap" in (m.get("values") or {}):
+        ENGINE.resubscribe_chains()
     return {**r, "settings": ENGINE.settings.get(), "tag": m.get("tag")}
 
 
@@ -716,7 +830,7 @@ ORDER_OPS = {
     "timer_clear": lambda m: ENGINE.timers.clear(str(m.get("name", "")), m.get("frac", 1.0), m.get("_user", "")),
 }
 
-app = FastAPI(title="MCX Terminal")
+app = FastAPI(title=f"{C.DESK} Terminal")
 app.add_middleware(AccessGuard)               # second lock behind Cloudflare Access
 app.mount("/static", StaticFiles(directory=C.STATIC), name="static")
 
@@ -753,19 +867,21 @@ async def replays():
     out = []
     for raw in sorted(REPLAY_DIR.glob("raw_*.mcxr"), reverse=True):
         day = raw.stem[4:]
-        html = REPLAY_DIR / f"MCX_{day}.html"
+        html = REPLAY_DIR / f"{C.DESK}_{day}.html"
         out.append({"day": day, "raw_mb": round(raw.stat().st_size / 1e6, 1),
                     "html_mb": round(html.stat().st_size / 1e6, 1) if html.exists() else None,
                     "today": day == ENGINE.rec.day if ENGINE.rec else False})
     return JSONResponse(out)
 
 
-@app.get("/replays/MCX_{day}.html")
-async def replay_file(day: str):
+@app.get("/replays/{desk}_{day}.html")
+async def replay_file(desk: str, day: str):
     """Download a day's replay file; (re)built first if the recording is newer (e.g. today, mid-session)."""
     if not DAY_RE.match(day):
         return JSONResponse({"error": "bad day"}, status_code=400)
-    raw, html = REPLAY_DIR / f"raw_{day}.mcxr", REPLAY_DIR / f"MCX_{day}.html"
+    if desk != C.DESK:
+        return JSONResponse({"error": "not this desk"}, status_code=404)
+    raw, html = REPLAY_DIR / f"raw_{day}.mcxr", REPLAY_DIR / f"{C.DESK}_{day}.html"
     if not raw.exists():
         return JSONResponse({"error": "no recording for that day"}, status_code=404)
     if ENGINE.rec and day == ENGINE.rec.day:
@@ -818,7 +934,7 @@ async def ws_endpoint(ws: WebSocket):
         c.send_nowait({"t": "risk", **ENGINE.risk.state()})
         c.send_nowait({"t": "timers", "items": ENGINE.timers.view() if ENGINE.timers else []})
         c.send_nowait({"t": "atm", "v": ENGINE.atm_straddles()})
-        all_futs = {f.token for p in ENGINE.universe.products.values() for f in p.futures[:3]}
+        all_futs = {f.token for p in ENGINE.universe.products.values() for f in p.futures[:3]} |                    {p.spot.token for p in ENGINE.universe.products.values() if p.spot}      # NSE: index spot too
         while True:
             msg = json.loads(await ws.receive_text())
             op = msg.get("op")
@@ -852,7 +968,8 @@ async def ws_endpoint(ws: WebSocket):
 def main():
     _setup_logging()
     sys.setswitchinterval(0.0005)   # background threads hand the CPU back to the feed / orders within 0.5 ms
-    log.info("MCX terminal starting on %s:%s (stage 5: paper + owner-armed live Kotak P orders)", C.HOST, C.PORT)
+    log.info("%s terminal starting on %s:%s (paper + owner-armed live Kotak P orders%s)", C.DESK, C.HOST, C.PORT,
+             ", OWN-BOOK: only the desk's own trades" if C.OWN_BOOK else "")
     audit.write("engine", what="terminal started")
     uvicorn.run(app, host=C.HOST, port=C.PORT, log_level="warning", ws_ping_interval=20, ws_ping_timeout=20)
 

@@ -207,6 +207,8 @@ class PaperBook:
         c = self.u.by_token.get(token)
         if c is None:
             return {"ok": False, "msg": "unknown contract"}
+        if c.kind not in ("CE", "PE", "FUT"):
+            return {"ok": False, "msg": f"{c.symbol} is an index, not a tradable contract"}
         side = side.upper()[:1]
         if side not in ("B", "S"):
             return {"ok": False, "msg": "side must be B or S"}

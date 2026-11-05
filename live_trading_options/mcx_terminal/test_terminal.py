@@ -712,6 +712,87 @@ def test_paper_reset():
         x.unlink(missing_ok=True)
 
 
+def _gold_universe():
+    t = HERE / "testdata"
+    return I.parse_many({"mcx_fo": (t / "mcx_scrip_sample.csv").read_text(encoding="utf-8"),
+                         "nse_com": (t / "nse_com_sample.csv").read_text(encoding="utf-8")}, today="2026-10-19")
+
+
+def test_nse_gold_products():
+    """NSE commodity GOLD / GOLDM (segment nse_com) on the MCX desk as NSEGOLD / NSEGOLDM (04-Nov-2026)."""
+    u = _gold_universe()
+    g, m = u.products["NSEGOLD"], u.products["NSEGOLDM"]
+    c = g.chains["2026-11-27"][160000.0]["CE"]
+    check("NSE gold on nse_com", c.seg == "nse_com" and c.name == "NSEGOLD", c)
+    check("strike x10000 matches the symbol", c.symbol == "GOLD26NOV160000CE" and c.strike == 160000.0, c)
+    check("NSE gold: lot 1, Rs 100 a point, freeze 10, tick 0.5", (c.lot, c.mult, c.freeze, c.tick) == (1, 100.0, 10, 0.5), c)
+    mc = next(iter(next(iter(m.chains.values())).values()))["CE"]
+    check("NSE gold mini: Rs 10 a point, freeze 100", (mc.lot, mc.mult, mc.freeze, mc.seg) == (1, 10.0, 100, "nse_com"), mc)
+    check("options priced off the next future (27-Nov opts on 04-Dec fut)", g.underlying("2026-11-27").symbol == "GOLD26DECFUT",
+          g.underlying("2026-11-27"))
+    check("NSE futures (FUTBLN) read", [f.symbol for f in g.futures][:2] == ["GOLD26NOVFUT", "GOLD26DECFUT"], g.futures[:2])
+    mg = u.products["GOLD"]
+    check("MCX GOLD keeps only MCX contracts", all(x.seg == "mcx_fo" for x in mg.futures)
+          and all(l.seg == "mcx_fo" for ch in mg.chains.values() for legs in ch.values() for l in legs.values()))
+    check("MCX GOLDM keeps only MCX contracts", all(l.seg == "mcx_fo" for ch in u.products["GOLDM"].chains.values()
+                                                    for legs in ch.values() for l in legs.values()))
+    check("no NSE contract named GOLD/GOLDM", not any(x.seg == "nse_com" and x.name in ("GOLD", "GOLDM") for x in u.by_token.values()))
+
+
+def test_nse_gold_paper_and_engine():
+    from live_trading_options.mcx_terminal import paper as P
+    from live_trading_options.mcx_terminal.server import Engine
+    import tempfile
+    u = _gold_universe()
+    c = u.products["NSEGOLD"].chains["2026-11-27"][160000.0]["CE"]
+    q = {c.token: {"ltp": 3000.0, "bid": 2999.0, "ask": 3001.0, "bq": 5, "aq": 5, "depth": None}}
+    path = Path(tempfile.gettempdir()) / "mcx_paper_test_nsegold.json"
+    path.unlink(missing_ok=True)
+    b = P.PaperBook(u, lambda t: q.get(t, {}), path=path)
+    b.place(c.token, "S", 1, "MKT")
+    q[c.token] = {"ltp": 2990.0, "bid": 2989.0, "ask": 2991.0, "bq": 5, "aq": 5, "depth": None}
+    b.place(c.token, "B", 1, "MKT")
+    check("NSE gold P&L: 8 pts x Rs 100", abs(b.pos[c.token]["realized"] - 800.0) < 1e-6, b.pos[c.token])
+    path.unlink(missing_ok=True)
+    e = Engine()
+    e.universe = u
+    check("feed segment nse_com", e.seg_of(c.token) == "nse_com")
+    e.last[c.token] = [c.token, 3000.0, 2999.0, 3001.0, 3, 2, 0, 0, 0, 1, 0, 0]
+    check("lot 1: quantities as sent", e.quote(c.token)["bq"] == 3)
+    names = [p["name"] for p in e.meta()["products"]]
+    check("meta offers NSE Gold and NSE Gold Mini", "NSEGOLD" in names and "NSEGOLDM" in names, names)
+    e.universe = I.parse((HERE / "testdata" / "mcx_scrip_sample.csv").read_text(encoding="utf-8"), today="2026-10-19")
+    names = [p["name"] for p in e.meta()["products"]]
+    check("no NSE list -> NSE gold hidden (not a broken tab)", "NSEGOLD" not in names and "CRUDEOIL" in names, names)
+
+
+def test_big_chains_subscribe_only_shown_strikes():
+    """Kotak caps price subscriptions (~3000): a big expiry streams only the screen's strike gap around the price."""
+    from live_trading_options.mcx_terminal import server as S
+    u = _gold_universe()
+    e = S.Engine()
+    e.universe = u
+    p = u.products["NSEGOLD"]
+    ch = p.chains["2026-11-27"]
+    allt = e.expiry_tokens("NSEGOLD", "2026-11-27")
+    check("small expiry: all of it", sorted(e.chain_tokens("NSEGOLD", "2026-11-27")) == sorted(allt))
+    old = S.SUB_ALL_MAX, S.SUB_GAPS
+    S.SUB_ALL_MAX, S.SUB_GAPS = 5, 1
+    try:
+        fut = p.underlying("2026-11-27")
+        e.last[fut.token] = [fut.token, 160120.0] + [None] * 10
+        e.settings.v["strike_gap"]["NSEGOLD"] = 500
+        toks = e.chain_tokens("NSEGOLD", "2026-11-27")
+        ks = sorted({u.by_token[t].strike for t in toks})
+        check("big expiry: gap multiples around the price", ks == [159500.0, 160000.0, 160500.0], ks)
+        check("both legs of each", len(toks) == 6, len(toks))
+        e.settings.v["strike_gap"]["NSEGOLD"] = 100
+        ks = sorted({u.by_token[t].strike for t in e.chain_tokens("NSEGOLD", "2026-11-27")})
+        check("gap 100 -> next strikes", ks == [160000.0, 160100.0, 160200.0], ks)
+    finally:
+        S.SUB_ALL_MAX, S.SUB_GAPS = old
+
+
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:
         fn()

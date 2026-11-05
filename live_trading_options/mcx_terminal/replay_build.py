@@ -93,14 +93,14 @@ def build(day: str, folder: Path | None = None) -> Path:
     import re
     html = re.sub(r'<link rel="stylesheet" href="/static/app.css[^"]*">',
                   lambda _: f"<style>\n{css}\n{rcss}\n</style>", html)
-    html = re.sub(r"<title>.*?</title>", f"<title>MCX Desk replay {day}</title>", html)
+    html = re.sub(r"<title>.*?</title>", f"<title>{C.DESK_LABEL} replay {day}</title>", html)
     payload = (f'<script id="rp-info" type="application/json">{json.dumps(info, separators=(",", ":"))}</script>\n'
                f'<script id="rp-ticks" type="application/octet-stream">{_b64gz(blob)}</script>\n'
                f'<script id="rp-events" type="application/octet-stream">'
                f'{_b64gz(json.dumps(ev, separators=(",", ":"), default=str).encode())}</script>\n'
                f"<script>\n{rjs}\n</script>\n<script>\n{app}\n</script>")
     html = re.sub(r'<script src="/static/app.js[^"]*"></script>', lambda _: payload, html)
-    out = folder / f"MCX_{day}.html"
+    out = folder / f"{C.DESK}_{day}.html"
     tmp = out.with_suffix(".tmp")
     tmp.write_text(html, encoding="utf-8")
     tmp.replace(out)

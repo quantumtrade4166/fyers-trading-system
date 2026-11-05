@@ -32,11 +32,10 @@ DEFAULTS = {
     "exit_ref": "touch", "exit_buffer": 1.0, "exit_unit": "%",
     "reprice": True, "market_after_s": 0.0,
     "product": "NRML", "session": "AUTO",
-    "strike_gap": {"CRUDEOIL": 50, "GOLD": 500, "GOLDM": 500, "SILVERM": 1000},
+    "strike_gap": dict(C.STRIKE_GAP),             # per desk (config.py)
     "auto_sl": dict(SL.DEFAULTS),                # per-position auto stop-loss + trail (sl.py)
 }
-GAP_CHOICES = {"CRUDEOIL": (50, 100, 200), "GOLD": (500, 1000, 2000), "GOLDM": (500, 1000, 2000),
-               "SILVERM": (1000, 2000, 3000, 4000, 5000)}
+GAP_CHOICES = dict(C.GAP_CHOICES)
 CHOICES = {"entry_ref": ("touch", "ltp"), "exit_ref": ("touch", "ltp"), "entry_unit": ("%", "pts"),
            "exit_unit": ("%", "pts"), "product": ("MIS", "NRML"), "session": ("AUTO", "REGULAR", "AMO")}
 

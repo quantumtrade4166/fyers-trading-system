@@ -3,17 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MCX Desk</title>
+<title>Desk</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script>/* theme before first paint (no dark flash on a light page) */
 try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}
 </script>
-<link rel="stylesheet" href="/static/app.css?v=20261104a">
+<link rel="stylesheet" href="/static/app.css?v=20261105y">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><span class="mark">◆</span> MCX<span class="dot">·</span>DESK</div>
+  <div class="brand desks" id="desks" title="Switch desk: each desk is its own engine, book and P&amp;L">
+    <span class="mark">◆</span>
+    <a class="dk" id="dk-MCX" data-d="MCX">MCX<span class="dot">·</span>DESK</a>
+    <a class="dk" id="dk-NSE" data-d="NSE">NSE<span class="dot">·</span>DESK</a>
+  </div>
   <div class="tickers" id="tickers"></div>
   <div class="right">
     <div class="pnl" title="Session P&L: closed + open positions">
@@ -310,6 +314,6 @@ try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") documen
 </div>
 
 <div class="toasts" id="toasts"></div>
-<script src="/static/app.js?v=20261104a"></script>
+<script src="/static/app.js?v=20261104n"></script>
 </body>
 </html>
