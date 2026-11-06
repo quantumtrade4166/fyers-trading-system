@@ -429,6 +429,9 @@ class Engine:
                 self.paper.housekeep()
                 self.live.housekeep()
                 now = time.time()
+                if now - last_mtm < SAMPLE_S:             # between samples: catch a short spike / dip
+                    for mode, bk in (("PAPER", self.paper), ("LIVE", self.live)):
+                        self.mtms[mode].watch([p for p in bk.positions() if p["net"] or p["realized"]], self.ltp, now)
                 if now - last_mtm >= SAMPLE_S:
                     last_mtm = now
                     for mode, bk in (("PAPER", self.paper), ("LIVE", self.live)):
@@ -436,8 +439,9 @@ class Engine:
                         pos = [p for p in bk.positions() if p["net"] or p["realized"]]
                         n_before = len(h.pts)
                         h.sample(pos, self.ltp, now)
-                        if mode == "LIVE" and len(h.pts) > n_before:
-                            self.rec.event("mtm", h.pts[-1])
+                        if mode == "LIVE":
+                            for pt in h.pts[n_before:]:
+                                self.rec.event("mtm", pt)
                     self.atm_hist.sample(self.atm_straddles(), now)
             except Exception:
                 log.exception("housekeeping")

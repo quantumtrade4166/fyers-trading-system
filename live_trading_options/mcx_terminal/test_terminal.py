@@ -435,11 +435,40 @@ def test_mtm_history_buckets():
     for i, px in enumerate([500, 498, 495, 497, 490]):        # one sample every 20 s
         h.sample(pos, lambda t, px=px: px if t == 1 else None, now=t0 + i * 20)
     r = h.query(1, "all")
-    check("1-min buckets keep last sample", [p[1] for p in r["points"]] == [750.0, 1250.0], r["points"])
+    # P&L 250, 450, 750 | 550, 1250 -> each minute keeps its low, high and last, in time order
+    check("1-min buckets keep low / high / last", [p[1] for p in r["points"]] == [250.0, 750.0, 550.0, 1250.0], r["points"])
+    check("true day high / low", r["hi"] == [t0 + 80, 1250.0] and r["lo"] == [t0, 250.0], (r["hi"], r["lo"]))
     check("instruments listed", r["instruments"] == ["CRUDEOIL", "GOLDM"])
     r = h.query(1, "GOLDM")
-    check("per-instrument curve", [p[1] for p in r["points"]] == [250.0, 250.0], r["points"])
+    check("per-instrument curve", {p[1] for p in r["points"]} == {250.0} and r["hi"][1] == r["lo"][1] == 250.0, r["points"])
     check("saved", mpath.exists())
+    mpath.unlink(missing_ok=True)
+
+
+def test_mtm_catches_spike_between_samples():
+    import tempfile
+    from live_trading_options.mcx_terminal.mtm import MtmHistory
+    mpath = Path(tempfile.gettempdir()) / "mcx_mtm_spike_test.json"
+    mpath.unlink(missing_ok=True)
+    h = MtmHistory(path=mpath)
+    pos = [{"token": 1, "name": "CRUDEOIL", "net": -100, "avg": 500.0, "mult": 1.0, "realized": 0.0}]
+    t0 = 1_800_000_000 - (1_800_000_000 % 60)
+    h.sample(pos, lambda t: 500.0, now=t0)                       # P&L 0
+    h.watch(pos, lambda t: 490.0, now=t0 + 1)                    # +1000 spike for one second
+    h.watch(pos, lambda t: 512.0, now=t0 + 2)                    # -1200 dip
+    h.watch(pos, lambda t: 499.0, now=t0 + 3)                    # +100 (not an extreme)
+    h.sample(pos, lambda t: 500.0, now=t0 + 5)                   # back to 0 at the 5-s sample
+    r = h.query(1, "all")
+    check("spike stored", r["hi"] == [t0 + 1, 1000.0], r)
+    check("dip stored", r["lo"] == [t0 + 2, -1200.0], r)
+    check("line reaches both", [p[1] for p in r["points"]] == [1000.0, -1200.0, 0.0], r["points"])
+    check("ordinary in-between value not stored", len(h.pts) == 4, h.pts)
+    h.watch(pos, lambda t: 495.0, now=t0 + 6)                    # +500: inside the day's range
+    h.sample(pos, lambda t: 500.0, now=t0 + 10)
+    check("no extra point inside the range", len(h.pts) == 5, h.pts)
+    h2 = MtmHistory(path=mpath)                                  # a restart keeps the extremes
+    h2.pts = h.pts; h2._hl = h2._extremes(h2.pts)
+    check("extremes rebuilt on load", h2._hl["all"] == [-1200.0, 1000.0], h2._hl)
     mpath.unlink(missing_ok=True)
 
 

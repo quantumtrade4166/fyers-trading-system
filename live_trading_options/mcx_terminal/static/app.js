@@ -1581,9 +1581,9 @@ function onMtm(m) {
   const span = (xs[xs.length - 1] - xs[0]) / 60;
   setChart($("g-body"), svgChart(xs, ys, { xfmt: hm, label: "session P&L over time", xticks: Math.max(1, Math.min(6, Math.floor(span))),
                                        tip: (i) => [hms(xs[i]), `P&L ${fr(ys[i])}`] }));
-  const mx = Math.max(...ys), mn = Math.min(...ys), ih = ys.indexOf(mx), il = ys.indexOf(mn);
-  $("g-note").innerHTML = `Now <b class="${ys[ys.length - 1] >= 0 ? "up-t" : "dn-t"}">${fr(ys[ys.length - 1])}</b> · High <b class="up-t">${fr(mx)}</b> at ${hm(xs[ih])}` +
-    ` · Low <b class="dn-t">${fr(mn)}</b> at ${hm(xs[il])} · ${pts.length} points, one per ${m.mins} min`;
+  const [hi, lo] = dayHL(m, pts);
+  $("g-note").innerHTML = `Now <b class="${ys[ys.length - 1] >= 0 ? "up-t" : "dn-t"}">${fr(ys[ys.length - 1])}</b> · High <b class="up-t">${fr(hi[1])}</b> at ${hm(hi[0])}` +
+    ` · Low <b class="dn-t">${fr(lo[1])}</b> at ${hm(lo[0])} · ${pts.length} points, ${m.mins} min buckets`;
 }
 
 
@@ -1648,7 +1648,15 @@ if (window.ResizeObserver) {
 }
 function onInlineGraph(m) {
   S.gpHist[m.tag] = m.points || [];
+  S.gpHL = S.gpHL || {};
+  S.gpHL[m.tag] = { hi: m.hi, lo: m.lo };
   drawInline(m.tag);
+}
+// the day's high / low = the engine's true extremes (every stored point), the drawn points and the live point
+function dayHL(m, pts) {
+  let hi = m.hi || pts[0], lo = m.lo || pts[0];
+  for (const p of pts) { if (p[1] > hi[1]) hi = p; if (p[1] < lo[1]) lo = p; }
+  return [hi, lo];
 }
 // live numbers right now (same formulas as the engine's 5-second samples)
 function liveNow() {
@@ -1692,7 +1700,8 @@ function drawInline(tag) {
                                    label: m.tag === "gp-pnl" ? "session P&L" : "CE/PE imbalance %" }));
   const last = pts[pts.length - 1];
   if (m.tag === "gp-pnl") {
-    note.innerHTML = `Now <b class="${last[1] >= 0 ? "up-t" : "dn-t"}">${fr(last[1])}</b> · High <b class="up-t">${fr(Math.max(...ys))}</b> · Low <b class="dn-t">${fr(Math.min(...ys))}</b>`;
+    const [hi, lo] = dayHL((S.gpHL || {})[m.tag] || {}, pts);
+    note.innerHTML = `Now <b class="${last[1] >= 0 ? "up-t" : "dn-t"}">${fr(last[1])}</b> · High <b class="up-t">${fr(hi[1])}</b> · Low <b class="dn-t">${fr(lo[1])}</b>`;
   } else {
     note.innerHTML = `Now <b>${last[1] > 0 ? "+" : ""}${last[1].toFixed(1)}%</b> · CE <b>${nf2.format(last[2])}</b> · PE <b>${nf2.format(last[3])}</b>` +
       ` <span class="dim">(above 0 = calls heavier)</span>`;
