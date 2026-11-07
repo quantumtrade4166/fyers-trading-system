@@ -58,6 +58,10 @@ def in_desk(seg) -> bool:
     return s in SEGS or ("mcx" in s and "mcx_fo" in SEGS)
 
 
+class _NOSEG:                      # stands in for "no such contract here" in same_seg()
+    seg = None
+
+
 def same_seg(c, seg) -> bool:
     """A Kotak row (exSeg) belongs to contract c (tokens are only unique WITHIN a segment)."""
     s = str(seg or "").lower()
@@ -345,8 +349,8 @@ class LiveBook(PaperBook):
             if c is not None and not same_seg(c, seg):
                 c = None
             if c is None:
-                if not self.own:                            # NSE: other strategies' contracts are none of our business
-                    unknown.append(str(r.get("trdSym")))
+                if not self.own and "mcx" in seg:           # NSE: other strategies' contracts are none of our business;
+                    unknown.append(str(r.get("trdSym")))    # nse_com: NSE desk's crude etc.
                 continue
             p = new.setdefault(c.token, {"token": c.token, "symbol": c.symbol, "name": c.name, "lot": c.lot,
                                          "mult": c.mult, "net": 0, "avg": 0.0, "realized": 0.0, "bought": 0, "sold": 0,
@@ -948,6 +952,8 @@ class LiveBook(PaperBook):
             return 0
         ids = [str(_dig(r, *_OID_KEYS)) for r in rows
                if in_desk(r.get("exSeg", "mcx_fo")) and _dig(r, *_OID_KEYS)
+               and ("mcx" in str(r.get("exSeg", "mcx_fo")).lower()          # nse_com: only contracts THIS desk trades
+                    or same_seg(self.by_symbol.get(str(r.get("trdSym", ""))) or _NOSEG, r.get("exSeg")))
                and not any(w in str(r.get("ordSt", "")).lower() for w in BROKER_DONE)
                and (name is None or getattr(self.by_symbol.get(str(r.get("trdSym", ""))), "name", None) == name)]
         if not ids:

@@ -55,7 +55,7 @@ def expanding_max_hl(pa, pb, step=21, warm=252):
 
 
 def sim(close_a, close_b, exec_a, exec_b, z, hl, max_hl, qa, qb, ez, sz, ann,
-        cost=0.0003, roll=0.0, next_open=False):
+        cost=0.0003, roll=0.0, next_open=False, entry_from=None, entry_until=None):
     """simulate() clone with fill price choice, roll cost and a daily MTM series.
     Decisions use the close of day t. Fill = close t, or open t+1 when next_open."""
     n = len(close_a); pos = 0; ea = eb = 0.0; e_i = 0; yr = 0.0; cur = None; cd = 0
@@ -83,6 +83,8 @@ def sim(close_a, close_b, exec_a, exec_b, z, hl, max_hl, qa, qb, ez, sz, ann,
                 yr += net; trades.append(dict(entry_date=dates[e_i], exit_date=dates[t], hold_days=(dates[t] - dates[e_i]).days,
                                               direction="LongA" if pos == 1 else "ShortA", net_pnl=net, exit_reason=d))
                 pos = 0; cd = t + COOLDOWN; prev_val = 0.0
+        if entry_until is not None and pos == 0 and pending is None and dates[t] > entry_until:
+            break                                     # entry window over and flat: this run is done
         if np.isnan(z[t]):
             continue
         # 2) mark open position to today's close
@@ -108,6 +110,8 @@ def sim(close_a, close_b, exec_a, exec_b, z, hl, max_hl, qa, qb, ez, sz, ann,
                     pos = 0; cd = t + COOLDOWN; prev_val = 0.0
             continue
         if pending is not None or t < cd or yr < -ann or hl[t] > max_hl[t]:
+            continue
+        if (entry_from is not None and dates[t] < entry_from) or (entry_until is not None and dates[t] > entry_until):
             continue
         d = 1 if z[t] < -ez else (-1 if z[t] > ez else 0)
         if d:

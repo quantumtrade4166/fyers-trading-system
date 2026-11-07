@@ -5,6 +5,7 @@ ONE code base, TWO desks. The desk is picked when the engine starts, by the envi
 TERMINAL_DESK (default MCX):
   MCX  MCX commodity options (CRUDEOIL, GOLD, GOLDM, SILVERM)     port 47680, data\\
   NSE  index options (NIFTY, BANKNIFTY on NSE, SENSEX on BSE)    port 47682, data_nse\\
+       + NSE commodity crude oil (NSECRUDE, segment nse_com, owner 07-Nov-2026)
 Each desk is its own process: own port, data folder, log, audit trail, Kotak session and order tags.
 
 OWN_BOOK (NSE): the desk's LIVE positions are only the trades IT placed (matched by Kotak order id),
@@ -47,21 +48,25 @@ _DESKS = {
     ),
     "NSE": dict(
         PORT=47682, DATA=HERE / "data_nse", LOG_NAME="nse_terminal.log", AUDIT_NAME="nse_audit",
-        INSTRUMENTS=("NIFTY", "BANKNIFTY", "SENSEX"),
-        LABELS={"NIFTY": "Nifty", "BANKNIFTY": "Bank Nifty", "SENSEX": "Sensex"},
-        SEGMENT={"NIFTY": "nse_fo", "BANKNIFTY": "nse_fo", "SENSEX": "bse_fo"},
-        SYMBOL={},
+        # NSECRUDE = NSE's commodity CRUDEOIL (segment nse_com: options on the future, 50-point strikes,
+        # 1 lot = 100 barrels, checked on Kotak's list 07-Nov-2026). Own name: MCX has CRUDEOIL.
+        INSTRUMENTS=("NIFTY", "BANKNIFTY", "SENSEX", "NSECRUDE"),
+        LABELS={"NIFTY": "Nifty", "BANKNIFTY": "Bank Nifty", "SENSEX": "Sensex", "NSECRUDE": "NSE Crude"},
+        SEGMENT={"NIFTY": "nse_fo", "BANKNIFTY": "nse_fo", "SENSEX": "bse_fo", "NSECRUDE": "nse_com"},
+        SYMBOL={"NSECRUDE": "CRUDEOIL"},
         # index spot: (segment, feed token, label, REST quote name) - checked on Kotak 04-Nov-2026: the feed
         # takes the token; REST quotes() refuses the token but answers to the name (backup price source)
         SPOT={"NIFTY": ("nse_cm", 26000, "NIFTY 50", "Nifty 50"),
               "BANKNIFTY": ("nse_cm", 26009, "NIFTY BANK", "Nifty Bank"),
               "SENSEX": ("bse_cm", 1, "SENSEX", "SENSEX")},
         OWN_BOOK=True, TAG="nsed", TAG_SL="nses",
-        STRIKE_GAP={"NIFTY": 50, "BANKNIFTY": 100, "SENSEX": 100},
-        GAP_CHOICES={"NIFTY": (50, 100, 200), "BANKNIFTY": (100, 200, 500), "SENSEX": (100, 200, 500)},
-        REFRESH_AT=dt.time(8, 45),                         # before the 09:15 open
-        REPLAY_BUILD_AT=dt.time(15, 45),                   # after the 15:30 close
-        HOURS={"open": "09:15", "close": "15:30"},
+        STRIKE_GAP={"NIFTY": 50, "BANKNIFTY": 100, "SENSEX": 100, "NSECRUDE": 50},
+        GAP_CHOICES={"NIFTY": (50, 100, 200), "BANKNIFTY": (100, 200, 500), "SENSEX": (100, 200, 500),
+                     "NSECRUDE": (50, 100, 200)},
+        REFRESH_AT=dt.time(8, 45),                         # before the 09:00 commodity open
+        REPLAY_BUILD_AT=dt.time(23, 58),                   # after crude's 23:30 / 23:55 close
+        # desk open = commodity hours (crude 09:00 - 23:30, 23:55 in winter); indices still 09:15 - 15:30
+        HOURS={"open": "09:00", "close": "23:30", "winter_close": "23:55"},
     ),
 }
 globals().update(_DESKS[DESK])

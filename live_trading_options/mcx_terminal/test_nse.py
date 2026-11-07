@@ -46,7 +46,8 @@ def check(name, cond, info=""):
 def universe():
     t = HERE / "testdata"
     return I.parse_many({"nse_fo": (t / "nse_fo_sample.csv").read_text(encoding="utf-8"),
-                         "bse_fo": (t / "bse_fo_sample.csv").read_text(encoding="utf-8")}, today=TODAY)
+                         "bse_fo": (t / "bse_fo_sample.csv").read_text(encoding="utf-8"),
+                         "nse_com": (t / "nse_com_crude_sample.csv").read_text(encoding="utf-8")}, today=TODAY)
 
 
 class FakeNse(TL.FakeKotak):
@@ -116,7 +117,35 @@ def test_universe():
     check("freeze from the list", n.chains["2026-11-09"][24000.0]["CE"].freeze == 1801)
     check("strike gap 50 / 100", sorted(n.chains["2026-11-09"])[1] - sorted(n.chains["2026-11-09"])[0] == 50
           and sorted(s.chains["2026-11-05"])[1] - sorted(s.chains["2026-11-05"])[0] == 100)
-    check("no MCX product", set(u.products) == {"NIFTY", "BANKNIFTY", "SENSEX"})
+    check("no MCX product", set(u.products) == {"NIFTY", "BANKNIFTY", "SENSEX", "NSECRUDE"})
+
+
+def test_nse_crude():
+    """NSE commodity CRUDEOIL on the NSE desk (owner 07-Nov-2026): real rows from Kotak's nse_com list."""
+    u = universe()
+    p = u.products["NSECRUDE"]
+    check("crude expiry 10-Nov (1980-based)", p.expiries()[0] == "2026-11-10", p.expiries())
+    ch = p.chains["2026-11-10"]
+    check("strikes /10000, 50 apart", sorted(ch)[:2] == [6400.0, 6450.0], sorted(ch))
+    c = ch[6600.0]["PE"]
+    check("contract", c.symbol == "CRUDEOIL26NOV6600PE" and c.seg == "nse_com" and c.lot == 1 and c.mult == 100
+          and abs(c.tick - 0.10) < 1e-9, c)
+    check("FUTENR futures read, mini not mixed in", [f.symbol for f in p.futures] == ["CRUDEOIL26NOVFUT", "CRUDEOIL26DECFUT"],
+          p.futures)
+    check("options priced off the Nov future", p.underlying("2026-11-10").symbol == "CRUDEOIL26NOVFUT" and p.spot is None)
+    check("NSE gold in the same file not loaded", all(x.name != "GOLD" for x in u.by_token.values()))
+    q = {c.token: _q(150.0)}
+    u, b, fake, path = _live("crude", q, u=u)
+    fake.instant = "complete"
+    r = b.place(c.token, "S", 1, "MKT")
+    s = fake.sent[-1]
+    check("crude order on nse_com, 1 lot", s["exchange_segment"] == "nse_com" and s["quantity"] == "1"
+          and s["trading_symbol"] == "CRUDEOIL26NOV6600PE" and s["tag"].startswith("nsed"), (r, s))
+    b.poll()
+    pos = b.pos.get(c.token)
+    check("own-book crude position", pos and pos["net"] == -1 and pos["name"] == "NSECRUDE", b.pos)
+    check("desk hours cover the crude evening", C.HOURS["close"] == "23:30" and C.REPLAY_BUILD_AT.hour == 23)
+    path.unlink(missing_ok=True)
 
 
 def test_feed_segments_and_units():
@@ -154,7 +183,7 @@ def test_feed_segments_and_units():
     e.on_ticks([(26000, 0.0, None, None, None, None, None, None, None, None, 0, None, None)])
     check("an index packet with no price keeps the last", e.last[26000][1] == 23990.0, e.last[26000])
     m = e.meta()
-    check("meta: desk + spot for the screen", m["desk"] == "NSE" and m["own_book"] and m["hours"]["open"] == "09:15"
+    check("meta: desk + spot for the screen", m["desk"] == "NSE" and m["own_book"] and m["hours"]["open"] == "09:00"
           and m["products"][0]["und"]["token"] == 26000, {k: m[k] for k in ("desk", "hours")})
 
 

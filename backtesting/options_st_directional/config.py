@@ -64,7 +64,8 @@ class Config:
 #   75 -> 65: last weekly with 75 = 23-Dec-2025, monthly 30-Dec-2025; first 65 = 06-Jan-2026
 # Expiries before 2024 are not configured and raise instead of guessing.
 LOT_SIZE_BY_EXPIRY = [
-    ("2024-01-01", 50),
+    ("2021-01-01", 75),     # NSE circular 28/2021: weeklies up to 22-Jul-2021 = 75
+    ("2021-07-29", 50),     # July-2021 monthly + Aug weeklies onward = 50
     ("2024-04-26", 25),
     ("2024-12-27", 75),
     ("2025-12-31", 65),

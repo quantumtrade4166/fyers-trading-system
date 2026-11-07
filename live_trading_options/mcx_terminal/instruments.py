@@ -83,7 +83,7 @@ def _f(v, default=0.0):
 
 
 OPT_TYPES = ("OPTFUT", "OPTIDX", "IO")
-FUT_TYPES = ("FUTCOM", "FUTIDX", "IF", "FUTBLN")
+FUT_TYPES = ("FUTCOM", "FUTIDX", "IF", "FUTBLN", "FUTENR")   # FUTENR: NSE commodity energy (crude)
 STRIKE_DIV = {"nse_com": 10000}            # default 100
 _E1980 = dt.datetime(1980, 1, 1, tzinfo=dt.timezone.utc)
 

@@ -23,7 +23,7 @@ def score(s):
 
 CPRS = [30, 40, 50, 60, 70, 80, 90, 100, None]
 rows = []
-for y in (2024, 2025, 2026):
+for y in (2021, 2022, 2023, 2024, 2025, 2026):
     for be in (False, True):
         s = daily(y, be)
         w = cpr.reindex(s.index)
@@ -33,7 +33,7 @@ for y in (2024, 2025, 2026):
 grid = pd.DataFrame(rows)
 grid.to_csv(OUT / "grid.csv", index=False)
 
-pairs = [(2024, 2025), (2025, 2026), (2025, 2024), (2026, 2025)]
+pairs = [(2021, 2022), (2022, 2023), (2023, 2024), (2024, 2025), (2025, 2026)]
 wf = []
 for ins, oos in pairs:
     for crit in ("net", "ret_dd"):

@@ -1199,6 +1199,29 @@ def test_nse_gold_mirror_and_orders():
     path.unlink(missing_ok=True)
 
 
+def test_mcx_exit_all_leaves_nse_desk_crude_alone():
+    """MCX desk EXIT ALL cancels MCX + NSE gold working orders, never the NSE desk's NSE-crude orders (also on
+    nse_com, 07-Nov-2026); an NSE-crude position is not reported as 'unknown' on the MCX desk."""
+    t = HERE / "testdata"
+    u = I.parse_many({"mcx_fo": (t / "mcx_scrip_sample.csv").read_text(encoding="utf-8"),
+                      "nse_com": (t / "nse_com_sample.csv").read_text(encoding="utf-8")}, today="2026-10-19")
+    k = FakeKotak()
+    path = Path(tempfile.gettempdir()) / "mcx_live_test_crude_alone.json"
+    path.unlink(missing_ok=True)
+    b = L.LiveBook(u, lambda tok: {}, sessions=None, armed=lambda: True, path=path, client=k, start_poller=False)
+    gold = u.products["NSEGOLD"].chains["2026-11-27"][160000.0]["CE"]
+    mcx = next(iter(u.products["CRUDEOIL"].chains.values()))
+    mcx = next(iter(mcx.values()))["CE"]
+    a = k.hand_trade(mcx.symbol, "S", 100, 50.0, status="open")
+    g = k.hand_trade(gold.symbol, "S", 1, 3000.0, status="open"); k.manual[g]["exSeg"] = "nse_com"
+    n = k.hand_trade("CRUDEOIL26NOV6600PE", "S", 1, 150.0, status="open"); k.manual[n]["exSeg"] = "nse_com"
+    s = k.hand_trade("CRUDEOIL26NOV6600PE", "B", 1, 300.0, status="trigger pending"); k.manual[s]["exSeg"] = "nse_com"
+    b._cancel_all_broker()
+    check("MCX + NSE gold orders cancelled", a in k.cancels and g in k.cancels, k.cancels)
+    check("NSE desk crude order + its stop-loss untouched", n not in k.cancels and s not in k.cancels, k.cancels)
+    path.unlink(missing_ok=True)
+
+
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:
         fn()
