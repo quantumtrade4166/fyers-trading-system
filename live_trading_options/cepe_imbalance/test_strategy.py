@@ -22,7 +22,7 @@ N = "CRUDEOIL"
 
 @pytest.fixture(scope="module")
 def universe():
-    texts = {s: (TD / f"scrip_{s}_sample.csv").read_text(encoding="utf-8") for s in ("nse_fo", "bse_fo", "mcx_fo")}
+    texts = {s: (TD / f"scrip_{s}_sample.csv").read_text(encoding="utf-8") for s in ("nse_fo", "bse_fo", "mcx_fo", "nse_com")}
     return I.build(texts, today="2026-11-02")
 
 
@@ -67,9 +67,24 @@ class Rig:
 
 
 def invariants(rig):
-    lg, atm = rig.legs(), rig.r.state["atm"]
-    assert lg["CE"].get(atm) and lg["PE"].get(atm), f"not short at ATM {atm}: {lg}"
+    """Band-only (owner 9-Nov): equal lots both sides, imbalance inside the band unless something waits."""
+    lg = rig.legs()
     assert sum(lg["CE"].values()) == sum(lg["PE"].values()), f"lots unequal: {lg}"
+    imb = rig.imb()
+    assert imb is None or abs(imb) <= 15 or rig.r.state.get("blocked"), f"imbalance {imb} left outside band: {lg}"
+
+
+def setup_book(universe, f, legs, atm, px=None):
+    """Rig holding `legs` (all short, 1 unit) at `atm`, running, nothing traded by the engine yet."""
+    g = Rig(universe, f, px)
+    g.r.ctx.in_session = lambda now=None: False
+    for kind, ks in legs.items():
+        for k, lots in ks.items():
+            g.r.book.order(g.m.contract(N, g.e, k, kind), "SELL", lots, "setup")
+    g.r.state.update(phase="in", atm=atm)
+    g.r.running = True
+    g.r.ctx.in_session = lambda now=None: True
+    return g
 
 
 # ── entry ─────────────────────────────────────────────────────────────────
@@ -93,19 +108,28 @@ def test_entry_pre_check_uses_B_not_sell_then_buy(universe):
     invariants(g)
 
 
-# ── hard ATM rule + A ─────────────────────────────────────────────────────
-def test_market_up_atm_rule_then_A(universe):
+# ── band-only (owner 9-Nov) ───────────────────────────────────────────────
+def test_inside_band_nothing_trades_even_if_atm_moved(universe):
+    """ATM 9400 -> 9600 while imbalance stays inside +-15%: no ATM rule, no go-normal, no trades."""
+    lg = {"CE": {9400: 1, 9600: 1, 9800: 1}, "PE": {9000: 1, 9200: 1, 9400: 1}}
+    px = {(9400, "CE"): 200.0, (9600, "CE"): 140.0, (9800, "CE"): 90.0,     # held legs still balanced
+          (9000, "PE"): 120.0, (9200, "PE"): 150.0, (9400, "PE"): 160.0}
+    g = setup_book(universe, 9545, lg, 9400, px)
+    g.move(9545, px)
+    assert g.r.state["atm"] == 9600
+    assert abs(g.imb()) <= 15, g.imb()
+    assert g.actions() == [] and g.legs() == lg                              # ITM 9400 CE held, PE not at ATM
+
+
+def test_market_up_breach_fixes_book(universe):
     g = Rig(universe, 9400)
     g.eng.start(N)
-    g.move(9545)                                   # ATM 9400 -> 9600 (past 9500 + 20% buffer)
+    g.move(9450)                                   # inside band -> nothing
+    assert g.actions() == ["entry"]
+    g.move(9545)                                   # ATM 9600 + breach -> fixed in one go
     assert g.r.state["atm"] == 9600
-    assert g.legs()["PE"] == {9200: 1, 9400: 1, 9600: 1}                     # farthest PE 9000 -> ATM
-    assert g.legs()["CE"] == {9400: 1, 9600: 1, 9800: 1}                     # ITM 9400 CE sits
-    assert abs(g.imb()) <= 15
-    g.move(9600)                                   # clean set at 9600 is balanced -> straight back to normal
-    assert any(a.startswith("back to normal") for a in g.actions()), g.actions()
+    assert len(g.actions()) > 1 and not any(a.startswith("ATM rule") for a in g.actions())
     assert g.legs()["CE"] == {9600: 1, 9800: 1, 10000: 1}
-    assert abs(g.imb()) <= 15
     invariants(g)
 
 
@@ -114,11 +138,34 @@ def test_market_down_is_mirror(universe):
     g.eng.start(N)
     g.move(9255)
     assert g.r.state["atm"] == 9200
-    assert g.legs()["CE"] == {9200: 1, 9400: 1, 9600: 1}
-    g.move(9200)
-    assert any(a.startswith("back to normal") for a in g.actions()), g.actions()
     assert g.legs()["PE"] == {8800: 1, 9000: 1, 9200: 1}
     invariants(g)
+
+
+def test_breach_rolls_itm_back_first(universe):
+    """Owner 9-Nov: an ITM leg held inside the band is the first thing moved once the band breaks."""
+    px = {(9200, "PE"): 30.0, (9400, "PE"): 60.0, (9600, "PE"): 90.0}        # PE cheap: going clean won't fit 5%
+    lg = {"CE": {9400: 1, 9600: 1, 9800: 1}, "PE": {9200: 1, 9400: 1, 9600: 1}}
+    g = setup_book(universe, 9600, lg, 9600, px)
+    n = len(g.r.book.trades)
+    g.move(9600, px)
+    assert g.actions()[0].startswith("ITM back (CE heavy"), g.actions()
+    first = [(t["side"], t["strike"], t["kind"]) for t in g.r.book.trades[n:n + 2]]
+    assert first == [("BUY", 9400.0, "CE"), ("SELL", 10000.0, "CE")]
+    assert 9400 not in g.legs()["CE"]
+
+
+def test_light_side_sells_atm_before_doubling(universe):
+    """Owner 9-Nov: on a breach the light side sells the ATM strike before B doubles a held one."""
+    px = {(9600, "CE"): 300.0, (9800, "CE"): 250.0, (10000, "CE"): 200.0,
+          (9000, "PE"): 30.0, (9200, "PE"): 50.0, (9400, "PE"): 80.0, (9600, "PE"): 150.0}
+    lg = {"CE": {9600: 1, 9800: 1, 10000: 1}, "PE": {9000: 1, 9200: 1, 9400: 1}}
+    g = setup_book(universe, 9600, lg, 9600, px)
+    n = len(g.r.book.trades)
+    g.move(9600, px)
+    assert g.actions()[0].startswith("roll PE to ATM"), g.actions()
+    first = [(t["side"], t["strike"], t["kind"]) for t in g.r.book.trades[n:n + 2]]
+    assert first == [("BUY", 9000.0, "PE"), ("SELL", 9600.0, "PE")]
 
 
 def test_trend_keeps_rolling_and_stays_at_atm(universe):
@@ -307,14 +354,11 @@ def test_atm_rule_waits_on_wide_sell(universe):
     g.m.apply([Tick(c.key, 150.0, 100.0, 200.0, 1, 1, 0, 0, 0, 0.0)])
     g.r.ctx.in_session = lambda now=None: True
     g.eng.on_ticks([Tick(g.fut.key, f, f - 1, f + 1, 1, 1, 0, 0, 0, 0.0)])
-    assert "quote too wide" in g.r.state["blocked"] and 9600 not in g.legs()["PE"]
-    assert g.actions()[-1].startswith("A (CE heavy")                       # 4-Nov: kept balancing meanwhile
+    assert 9600 not in g.legs()["PE"]                                      # never sold into the wide quote
+    assert any(e["event"] == "blocked" and "quote too wide" in e["why"] for e in g.r.events)
+    assert len(g.r.book.trades) > n                                        # 4-Nov: kept balancing meanwhile
     assert 9400 not in g.legs()["CE"]                                      # ITM CE rolled out
-    m = len(g.r.book.trades)
-    _quote(g, 9600, "PE", 149.5, 150.5)
-    new = [(t["side"], t["strike"], t["kind"]) for t in g.r.book.trades[m:m + 2]]
-    assert new == [("BUY", 9000.0, "PE"), ("SELL", 9600.0, "PE")]          # ATM rule went through once tight
-    assert g.legs()["PE"].get(9600) == 1
+    invariants(g)
 
 
 def test_no_adjustment_while_a_leg_has_no_price(universe):
@@ -356,7 +400,7 @@ def test_C_moves_one_unit_then_second(universe):
     assert s.op_C({"CE": {9400: 2, 9600: 1}, "PE": {}}, "PE", 9400, 200, 1) is None   # B still possible first
 
 
-def test_C_live_then_back_to_normal(universe):
+def test_C_live_then_held_inside_band(universe):
     g = Rig(universe, 9400)
     g.eng.start(N)
     rich_pe = {(9400, "PE"): 400.0, (9200, "PE"): 330.0, (9000, "PE"): 260.0}
@@ -367,10 +411,10 @@ def test_C_live_then_back_to_normal(universe):
     invariants(g)
     calm = {(9200, "CE"): 200.0, (9400, "CE"): 150.0, (9600, "CE"): 200.0, (9800, "CE"): 170.0,
             (9400, "PE"): 250.0, (9200, "PE"): 180.0, (9000, "PE"): 130.0}
-    g.move(9400, calm)                             # imbalance back inside +-5% (clean set would be too)
-    acts = g.actions()
-    assert any(a.startswith("back to normal") for a in acts), acts
-    assert g.legs()["CE"] == {9400: 1, 9600: 1, 9800: 1}
+    before, n = g.legs(), len(g.r.book.trades)
+    g.move(9400, calm)                             # calm again: inside the band -> band-only keeps the C legs
+    assert abs(g.imb()) <= 15
+    assert len(g.r.book.trades) == n and g.legs() == before
     invariants(g)
 
 
@@ -428,20 +472,30 @@ def test_reset_archives_and_starts_fresh(universe, tmp_path, monkeypatch):
 
 
 
-def test_go_normal_unwinds_itm_vs_b_clash(universe):
-    """3-Nov NIFTY: ITM CE on one side + B-doubled PE on the other, imbalance 'fine' -> go clean."""
-    g = Rig(universe, 9400)
-    g.eng.start(N)
-    clash = [("CE", 9400, "BUY", 1), ("CE", 9200, "SELL", 1),               # CE: 9200 (ITM) 9600 9800
-             ("PE", 9000, "BUY", 1), ("PE", 9200, "SELL", 1)]               # PE: 9200 x2, 9400
-    g.r.ctx.in_session = lambda now=None: False
-    for kind, k, side, lots in clash:
-        g.r.book.order(g.m.contract(N, g.e, k, kind), side, lots, "setup")
-    assert g.legs() == {"CE": {9200: 1, 9600: 1, 9800: 1}, "PE": {9200: 2, 9400: 1}}
-    g.r.ctx.in_session = lambda now=None: True
+def test_itm_vs_b_clash_held_inside_band(universe):
+    """3-Nov NIFTY shape: ITM CE + B-doubled PE at ~+11%. Trigger off (= band): held. Trigger 10 (owner
+    9-Nov default): goes back to normal early, since the clean set lands inside +-5%."""
+    clash = {"CE": {9200: 1, 9600: 1, 9800: 1}, "PE": {9200: 2, 9400: 1}}
+    clean = {"CE": {9400: 1, 9600: 1, 9800: 1}, "PE": {9000: 1, 9200: 1, 9400: 1}}
+    g = setup_book(universe, 9400, clash, 9400)
+    g.r.params["normal_trigger"] = 15
+    assert 10 < abs(g.imb()) <= 15, g.imb()
     g.move(9400)
-    assert g.legs() == {"CE": {9400: 1, 9600: 1, 9800: 1}, "PE": {9000: 1, 9200: 1, 9400: 1}}
-    assert any(a.startswith("back to normal") for a in g.actions())
+    assert g.actions() == [] and g.legs() == clash                          # trigger off: held
+    g.r.params["normal_trigger"] = 10
+    g.move(9400)
+    assert g.actions() and g.actions()[0].startswith("back to normal early"), g.actions()
+    assert g.legs() == clean and abs(g.imb()) <= 5
+
+
+def test_early_normal_never_does_A_or_B(universe):
+    """Between trigger and band only 'back to normal' may trade; a clean book is left alone."""
+    lg = {"CE": {9400: 1, 9600: 1, 9800: 1}, "PE": {9000: 1, 9200: 1, 9400: 1}}
+    px = {(9400, "CE"): 190.0, (9600, "CE"): 150.0, (9800, "CE"): 110.0}  # CE ~+12%, book already clean
+    g = setup_book(universe, 9400, lg, 9400, px)
+    assert 10 < g.imb() <= 15, g.imb()
+    g.move(9400, px)
+    assert g.actions() == [] and g.legs() == lg
 
 
 def test_itm_stays_when_going_clean_would_hurt(universe):
@@ -463,24 +517,14 @@ def test_itm_stays_when_going_clean_would_hurt(universe):
     assert not [t for t in g.r.book.trades[n:] if t["strike"] == 9200 and t["kind"] == "CE"]   # ITM CE kept
 
 
-def test_recentre_when_both_sides_doubled(universe):
-    """3-Nov NIFTY 10:53: CE 23650x2 + PE 23600x2 (B on both sides) at -1% -> rebuild like entry."""
+def test_both_sides_doubled_held_inside_band(universe):
+    """3-Nov NIFTY 10:53 shape: CE x2 + PE x2 at -1%. Band-only: no re-centre while inside the band."""
     px = {(9400, "CE"): 150.0, (9600, "CE"): 100.0, (9800, "CE"): 60.0,
           (9400, "PE"): 150.0, (9200, "PE"): 130.0, (9000, "PE"): 110.0}
-    g = Rig(universe, 9400, px)
-    g.r.ctx.in_session = lambda now=None: False
-    for kind, k, lots in (("CE", 9400, 2), ("CE", 9600, 1), ("PE", 9400, 1), ("PE", 9200, 2)):
-        g.r.book.order(g.m.contract(N, g.e, k, kind), "SELL", lots, "setup")
-    g.r.state.update(phase="in", atm=9400)
-    g.r.running = True
-    assert abs(g.imb()) < 5                                                 # looks 'fine' but both doubled
-    g.r.ctx.in_session = lambda now=None: True
-    g.move(9400, px)                                                         # clean set = -11.4%: not <=5
-    acts = g.actions()
-    assert any(a.startswith("re-centre") for a in acts), acts
-    assert g.legs() == {"CE": {9400: 1, 9600: 1, 9800: 1}, "PE": {9000: 1, 9200: 1, 9400: 1}}
-    assert abs(g.imb()) <= 15
-    invariants(g)
+    lg = {"CE": {9400: 2, 9600: 1}, "PE": {9400: 1, 9200: 2}}
+    g = setup_book(universe, 9400, lg, 9400, px)
+    g.move(9400, px)
+    assert g.actions() == [] and g.legs() == {"CE": {9400: 2, 9600: 1}, "PE": {9200: 2, 9400: 1}}
 
 
 def test_wide_atm_quote_does_not_freeze_the_book(universe):

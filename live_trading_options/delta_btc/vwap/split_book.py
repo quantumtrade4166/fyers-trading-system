@@ -68,6 +68,10 @@ class SplitVwapBook(VwapBook):
         # fires: 19-Oct a one-tick Delta MARK glitch (PE mark 34 while it traded at 7.5)
         # fired the -$70 stop at a real P&L of about -$43
         self.stop_confirm = int(cfg.get("stop_confirm_polls", 3))
+        # optional weekday filter (IST day the session starts): e.g. ["Fri", "Sat"]
+        # for "Vwap New Delta Ex Fri-Sat" (user 2026-11-09). Other days: no session.
+        names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        self.weekdays = {names.index(d) for d in (cfg.get("weekdays") or []) if d in names}
         self._stop_hits = 0
         self.control_file = self.state_dir / f"live_control_{name}.json"
         self.mode = "paper"
@@ -302,6 +306,11 @@ class SplitVwapBook(VwapBook):
             self.status = "waiting"
             if not self.active:
                 self._apply_control(now, None)
+            return
+        if not self.active and self.weekdays and b[0].weekday() not in self.weekdays:
+            self._apply_control(now, None)
+            self.status = "idle (trades " + "/".join(
+                ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"][i] for i in sorted(self.weekdays)) + " only)"
             return
         if not self.active:
             self._apply_control(now, None)

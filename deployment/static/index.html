@@ -1296,6 +1296,7 @@
           <button id="bv-v-ist_live" onclick="bvSetVersion('ist_live')" class="px-3 py-1 text-xs">Vwap New Paper</button>
           <button id="bv-v-ist_cap" onclick="bvSetVersion('ist_cap')" class="px-3 py-1 text-xs">Vwap 1.5x Paper</button>
           <button id="bv-v-ist_delta" onclick="bvSetVersion('ist_delta')" class="px-3 py-1 text-xs">Vwap New Delta Ex</button>
+          <button id="bv-v-ist_delta_fs" onclick="bvSetVersion('ist_delta_fs')" class="px-3 py-1 text-xs">Vwap New Delta Ex Fri-Sat</button>
         </div>
         <select id="bv-date" onchange="bvOnDateChange()"
                 class="bg-[#151a26] text-slate-300 text-xs rounded px-2 py-1 border border-[#2d3748]"></select>
@@ -6146,6 +6147,7 @@ const bvChartBase = {
 };
 
 let bvLegCharts = {}, bvAdoptLegs = [];
+const bvIsLiveVer = v => v === 'ist_delta' || v === 'ist_delta_fs';
 function bvInit() {
   if (!bvChart) {
     bvChart = LightweightCharts.createChart(document.getElementById('bv-chart'), bvChartBase);
@@ -6185,7 +6187,7 @@ function bvInit() {
 }
 
 function bvPaintVersion() {
-  ['full_expiry', 'ist_day', 'ist_live', 'ist_cap', 'ist_delta'].forEach(v => {
+  ['full_expiry', 'ist_day', 'ist_live', 'ist_cap', 'ist_delta', 'ist_delta_fs'].forEach(v => {
     const b = document.getElementById('bv-v-' + v);
     if (b) b.className = 'px-3 py-1 text-xs ' + (v === bvVersion ? 'bg-sky-600 text-white' : 'bg-slate-800 text-slate-300');
   });
@@ -6313,7 +6315,7 @@ function bvRender(d) {
   (d.equity || []).forEach(r => { const t = bvT(r.t); if (!seen.has(t) && r.mtm != null) { seen.add(t); pts.push({ time: t, value: Number(r.mtm) }); } });
   pts.sort((a, b) => a.time - b.time);
   bvEqLine.setData(pts);
-  document.getElementById('bv-eq-title').textContent = `${({ ist_day: 'IST day', full_expiry: 'Full expiry', ist_live: 'Vwap New Paper', ist_cap: 'Vwap 1.5x Paper', ist_delta: 'Vwap New Delta Ex' })[bvVersion]} · ${d.date || ''}` + (d.split ? ' · price P&L (marks, no fees) — what the stop watches' : '');
+  document.getElementById('bv-eq-title').textContent = `${({ ist_day: 'IST day', full_expiry: 'Full expiry', ist_live: 'Vwap New Paper', ist_cap: 'Vwap 1.5x Paper', ist_delta: 'Vwap New Delta Ex', ist_delta_fs: 'Vwap New Delta Ex Fri-Sat' })[bvVersion]} · ${d.date || ''}` + (d.split ? ' · price P&L (marks, no fees) — what the stop watches' : '');
   if (pts.length) {
     const vals = pts.map(x => x.value);
     const hi = Math.max(...vals), lo = Math.min(...vals), now = vals[vals.length - 1];
@@ -6465,7 +6467,7 @@ window.addEventListener('resize', () => {
 });
 async function bvRenderPerf() {
   const card = document.getElementById('bv-perf-card');
-  if (bvVersion !== 'ist_delta') { card.style.display = 'none'; return; }
+  if (!bvIsLiveVer(bvVersion)) { card.style.display = 'none'; return; }
   card.style.display = '';
   if (Date.now() - bvPerfAt < 30000 && bvPerf) return;
   bvPerfAt = Date.now();
@@ -6543,7 +6545,7 @@ async function bvRenderPerf() {
 
 async function bvRenderBroker() {
   const card = document.getElementById('bv-broker-card');
-  if (bvVersion !== 'ist_delta') { card.style.display = 'none'; return; }
+  if (!bvIsLiveVer(bvVersion)) { card.style.display = 'none'; return; }
   card.style.display = '';
   try {
     const b = await (await fetch('/api/btcvwap/broker', { cache: 'no-store' })).json();
@@ -6583,11 +6585,11 @@ async function bvRenderBroker() {
 function bvShowControl(d) {
   const box = document.getElementById('bv-control');
   if (!box) return;
-  box.style.display = bvVersion === 'ist_delta' ? 'flex' : 'none';
-  if (bvVersion !== 'ist_delta') return;
+  box.style.display = bvIsLiveVer(bvVersion) ? 'flex' : 'none';
+  if (!bvIsLiveVer(bvVersion)) return;
   // read the arm switch itself: before the first session of the day the engine has
   // no state for this version yet, so d.control alone would show PAPER while armed
-  fetch('/api/btcvwap/control', { cache: 'no-store' }).then(r => r.json()).then(x => {
+  fetch('/api/btcvwap/control?version=' + bvVersion, { cache: 'no-store' }).then(r => r.json()).then(x => {
     const c = x.control || d.control || {}, el = document.getElementById('bv-ctl-state');
     const armed = c.mode === 'live', running = (x.engine_mode || d.mode) === 'live';
     const killedToday = c.kill && String(c.updated || '').slice(0, 10) === new Date(Date.now() + 5.5 * 3600e3).toISOString().slice(0, 10);
@@ -6631,7 +6633,7 @@ async function bvSaveSize() {
   if (!confirm(`Vwap New Delta Ex: ${c} contracts per leg, stop -$${m}.\n\nApplies from the NEXT session start (09:30 IST) — a cycle already running keeps its size. Save?`)) return;
   try {
     const r = await (await fetch('/api/btcvwap/control', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'size', contracts: c, mtm_stop_usd: m }) })).json();
+      body: JSON.stringify({ action: 'size', contracts: c, mtm_stop_usd: m, version: bvVersion }) })).json();
     if (!r.ok) { alert(r.reason || 'failed'); return; }
     delete q.dataset.dirty; delete st.dataset.dirty;
     bvRefreshState();
@@ -6640,11 +6642,11 @@ async function bvSaveSize() {
 
 async function bvControl(action) {
   if (action === 'arm') {        // the real size, not a remembered one
-    try { bvSize = (await (await fetch('/api/btcvwap/control', { cache: 'no-store' })).json()).size || bvSize; } catch (e) {}
+    try { bvSize = (await (await fetch('/api/btcvwap/control?version=' + bvVersion, { cache: 'no-store' })).json()).size || bvSize; } catch (e) {}
   }
   const qty = bvSize && bvSize.contracts != null ? bvSize.contracts : '?';
   const stp = bvSize && bvSize.mtm_stop_usd != null ? bvSize.mtm_stop_usd : '?';
-  const msg = { arm: `ARM Vwap New Delta Ex for LIVE trading on Delta Exchange with REAL MONEY? ${qty} contracts per leg, 200x leverage, stop -$${stp}.`,
+  const msg = { arm: `ARM ${bvVersion === 'ist_delta_fs' ? 'Vwap New Delta Ex Fri-Sat' : 'Vwap New Delta Ex'} for LIVE trading on Delta Exchange with REAL MONEY? ${qty} contracts per leg, 200x leverage, stop -$${stp}.`,
                 paper: 'Switch Vwap New Delta Ex back to PAPER (takes effect when flat)?',
                 kill: 'KILL: buy back every open leg NOW and stop trading for today?',
                 adopt: `COPY PAPER → LIVE: sell the open paper leg(s) ${bvAdoptLegs.join(' + ')} on Delta NOW with REAL MONEY (same strikes, same size as the paper legs, never below 90% of the mark), then continue the strategy live. Today's live P&L and the -$${stp} stop start from these fills.` }[action];
@@ -6652,7 +6654,7 @@ async function bvControl(action) {
   if ((action === 'arm' || action === 'adopt') && prompt('Type LIVE to confirm real-money trading') !== 'LIVE') return;
   try {
     const r = await (await fetch('/api/btcvwap/control', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action }) })).json();
+      body: JSON.stringify({ action, version: bvVersion }) })).json();
     if (!r.ok) alert(r.reason || 'failed');
     bvRefreshState();
   } catch (e) { alert('control failed: ' + e); }

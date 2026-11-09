@@ -23,7 +23,7 @@ ENV_SUFFIX = "_D"            # Kotak P = env keys KOTAK_*_D (same login as the M
 SUB_BUDGET = 2800
 SUB_CHUNK = 400
 
-# Kotak NSE/BSE F&O expiry epochs count from 1980-01-01 UTC (MCX counts from 1970).
+# Kotak NSE F&O and NSE commodity expiry epochs count from 1980-01-01 UTC (BSE / MCX from 1970).
 EPOCH_1980 = 315532800
 
 # Session hours (IST, "HH:MM"). MCX closes 23:55 while the US is on standard time
@@ -48,6 +48,8 @@ UNDERLYINGS = {
     "GOLD":     {"seg": "mcx_fo", "scrip": "GOLD",     "spot": None,              "kind": "commodity", "label": "Gold"},
     "SILVERM":  {"seg": "mcx_fo", "scrip": "SILVERM",  "spot": None,              "kind": "commodity", "label": "Silver Mini"},
     "SILVER":   {"seg": "mcx_fo", "scrip": "SILVER",   "spot": None,              "kind": "commodity", "label": "Silver"},
+    # NSE commodity segment (owner 9-Nov): WTI crude, 100 bbl a lot, monthly options, same hours as MCX.
+    "NSECRUDE": {"seg": "nse_com", "scrip": "CRUDEOIL", "spot": None,             "kind": "commodity", "label": "NSE Crude"},
 }
 ORDER = tuple(UNDERLYINGS)
 
@@ -58,7 +60,7 @@ EXPIRIES_LIVE = 2
 
 # Strategy strike grid (owner, 3-Nov-2026). Kotak lists CRUDEOIL every 50; we trade every 200.
 STRIKE_STEP = {"NIFTY": 50, "SENSEX": 100, "CRUDEOIL": 200, "GOLDM": 500, "GOLD": 500,
-               "SILVERM": 1000, "SILVER": 1000}
+               "SILVERM": 1000, "SILVER": 1000, "NSECRUDE": 200}
 GRID_EACH_SIDE = 12          # grid strikes kept subscribed each side of ATM (prices ready before a roll)
 
 # MTM / imbalance history sampling (seconds) -> data/history/{date}/{name}.jsonl

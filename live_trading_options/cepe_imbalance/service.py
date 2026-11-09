@@ -15,6 +15,7 @@ API (dashboard will proxy /api/cepe/* here):
   GET  /history/{name}?date=&max_points=  MTM + imbalance samples (0.5 s; downsampled on request)
   GET  /days                         saved trading days
   GET  /day/{date}                   EOD P&L of every instrument that day (trades/events/positions take ?date= too)
+  GET  /pnl/{name}                   every traded day: day P&L, cumulative, drawdown (today live)
   POST /control/{name}  {"action": "start"|"stop"|"stop_exit"|"exit_all", "expiry_n": 0}
   POST /params/{name}   {"lots":1,"band":15,"normal_band":5,"atm_buffer_pct":20,"mtm_stop":0,"step":0}
   POST /reset/{name}    {"start": true}   archive today's paper book (data/books/{date}/_reset_*) + restart
@@ -168,6 +169,18 @@ def day(date: str):
                      fills=len(r.book.trades), traded=bool(r.book.trades), running=r.running, phase=r.state.get("phase"))
         rows.append(s)
     return {"date": date, "rows": rows, "total": round(sum(x["pnl"] for x in rows), 2)}
+
+
+@app.get("/pnl/{name}")
+def pnl(name: str):
+    """Day-by-day P&L of one instrument (today = live MTM) + cumulative + drawdown."""
+    nm = _name(name)
+    if not nm:
+        return _bad("unknown underlying", 404)
+    r = E.runners[nm]
+    live = r.book.mtm()["total"] if r.book.trades else None
+    rows = days.pnl_series(nm, today=r.date, today_pnl=live)
+    return {"name": nm, "today": r.date, "rows": rows}
 
 
 @app.post("/control/{name}")

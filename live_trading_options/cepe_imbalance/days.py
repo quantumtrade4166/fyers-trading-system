@@ -86,6 +86,34 @@ def positions(date: str, name: str) -> list:
     return sorted(doc.get("positions", {}).values(), key=lambda x: (x["expiry"], x["kind"], x["strike"]))
 
 
+def day_pnl(date: str, name: str):
+    """EOD P&L of one saved day, or None if the instrument never traded that day. Reads only the small
+    book + trades files; the big history file only when lots were left open (rare)."""
+    if not trades(date, name):
+        return None
+    pos = positions(date, name)
+    realized = sum(p.get("realized", 0.0) for p in pos)
+    if any(p.get("lots") for p in pos):
+        h = history(date, name)
+        if h and h[-1].get("mtm") is not None:
+            return round(h[-1]["mtm"], 2)
+    return round(realized, 2)
+
+
+def pnl_series(name: str, today: str = "", today_pnl=None) -> list:
+    """Every traded day oldest first: date, day P&L, cumulative P&L, drawdown from the running peak."""
+    out, cum, peak = [], 0.0, 0.0
+    dates = sorted(set(list_days()) | ({today} if today else set()))
+    for d in dates:
+        p = today_pnl if (d == today and today_pnl is not None) else (None if d == today else day_pnl(d, name))
+        if p is None:
+            continue
+        cum += p
+        peak = max(peak, cum)
+        out.append({"date": d, "pnl": round(p, 2), "cum": round(cum, 2), "dd": round(cum - peak, 2)})
+    return out
+
+
 def summary(date: str, name: str, hist=None) -> dict:
     """EOD numbers for one instrument on one saved day. `hist`: today's in-memory samples (never
     re-parse today's growing history file: 7 x ~6 MB every 3 s pegged the CPU on 4-Nov)."""
@@ -105,7 +133,7 @@ def summary(date: str, name: str, hist=None) -> dict:
         "pnl": round(realized if not open_lots else last_mtm, 2),
         "realized": round(realized, 2), "open_lots": open_lots,
         "fills": len(tr), "adjustments": len(adj),
-        "atm_rule": sum(1 for e in adj if str(e.get("action", "")).startswith("ATM rule")),
+        "atm_rule": sum(1 for e in adj if str(e.get("action", "")).startswith(("ATM rule", "roll "))),
         "a": sum(1 for e in adj if str(e.get("action", "")).startswith("A ")),
         "b": sum(1 for e in adj if str(e.get("action", "")).startswith("B ")),
         "mtm_high": max(mtms) if mtms else None, "mtm_low": min(mtms) if mtms else None,

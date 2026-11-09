@@ -43,7 +43,9 @@ import pandas as pd
 import vwap_history as H
 
 TRAIL = 0.60
-STOP = 70.0
+# env, not args: Pool workers re-import this module (same trick as BTC_GUARD)
+STOP = float(os.environ.get("BTC_SPLIT_STOP", "70"))     # day stop, $ (net view)
+GST = float(os.environ.get("BTC_SPLIT_GST", "0"))       # 0.18 = Delta India GST on every fee
 MODES = ("both", "C", "D")
 OUT = H.OUT
 
@@ -67,7 +69,7 @@ def leg_frames(df, pick, day):
 
 def replay(day, trades, fr, spot, mode, max_entries, use_stop):
     half = lambda p: H.spread_for(p) / 2
-    fee = lambda p: H.fee_for(max(p, 0), 1000, spot)
+    fee = lambda p: H.fee_for(max(p, 0), 1000, spot) * (1 + GST)
     trades = sorted(trades, key=lambda t: t["entry_time"])[:max_entries]
     ev = []
     for t in trades:
@@ -76,7 +78,7 @@ def replay(day, trades, fr, spot, mode, max_entries, use_stop):
     ev.sort(key=lambda e: (e[0], e[1]))
 
     pos = {}            # leg -> {"sell", "low", "split"}
-    st = {"realized": 0.0, "kept": None, "stopped": False}
+    st = {"realized": 0.0, "kept": None, "stopped": False, "fees": 0.0}
 
     def mark(leg, ts):
         m = fr[leg][0]
@@ -86,6 +88,7 @@ def replay(day, trades, fr, spot, mode, max_entries, use_stop):
     def close_leg(leg, price):
         p = pos.pop(leg)
         st["realized"] += p["sell"] - price - fee(price)
+        st["fees"] += fee(price)
         if st["kept"] == leg:
             st["kept"] = None
 
@@ -125,6 +128,7 @@ def replay(day, trades, fr, spot, mode, max_entries, use_stop):
                     if leg not in pos:
                         px = t[leg + "_sell"]
                         st["realized"] -= fee(px)
+                        st["fees"] += fee(px)
                         pos[leg] = {"sell": px, "low": px, "split": None}
                 st["kept"] = None
             else:
@@ -150,6 +154,8 @@ def replay(day, trades, fr, spot, mode, max_entries, use_stop):
     for leg in list(pos):
         mk = mark(leg, sq)
         close_leg(leg, mk + half(mk))
+    # net; the fees (+GST) go to replay.last_fees so callers can rebuild gross = net + fees
+    replay.last_fees = round(st["fees"], 4)
     return round(st["realized"], 4)
 
 
@@ -169,8 +175,9 @@ def run_day(day):
         for me in (3, 4):
             for s in (False, True):
                 for m in MODES:
-                    out[f"{m}|{me}|{'stop' if s else 'nostop'}"] = replay(
-                        day, r["trades"], fr, spot, m, me, s)
+                    key = f"{m}|{me}|{'stop' if s else 'nostop'}"
+                    out[key] = replay(day, r["trades"], fr, spot, m, me, s)
+                    out[key + "|fees"] = replay.last_fees
         return day, out
     except Exception as e:
         return day, {"skip": f"{type(e).__name__}: {e}"}
@@ -181,12 +188,13 @@ def main():
     ap.add_argument("--year", default="2026")
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--only", nargs="*")
+    ap.add_argument("--tag", default="")
     a = ap.parse_args()
     days = sorted(p.stem for p in (H.DATA / "raw").glob(f"{a.year}-*.parquet"))
     if a.only:
         days = [d for d in days if d in set(a.only)]
     OUT.mkdir(parents=True, exist_ok=True)
-    res_f = OUT / f"vwap_split_{a.year}.json"
+    res_f = OUT / f"vwap_split_{a.year}{a.tag}.json"
     done = json.loads(res_f.read_text(encoding="utf-8")) if res_f.exists() else {}
     todo = [d for d in days if d not in done]
     print(f"  {len(days)} days, {len(todo)} to run", flush=True)

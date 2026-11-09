@@ -179,6 +179,7 @@
       <label><span class="lbl">Lots / strike</span><input type="number" id="pLots" min="1" step="1"></label>
       <label><span class="lbl">Band ±%</span><input type="number" id="pBand" min="1" step="0.5"></label>
       <label><span class="lbl">Normal ±%</span><input type="number" id="pNormal" min="0" step="0.5"></label>
+      <label title="Between this and the band, only &quot;back to normal&quot; may trade (early clean-up). Set equal to the band to turn off."><span class="lbl">Go-normal at ±%</span><input type="number" id="pTrig" min="0" step="0.5"></label>
       <label><span class="lbl">ATM buffer %</span><input type="number" id="pBuf" min="0" max="50" step="5"></label>
       <label><span class="lbl">Strike step</span><input type="number" id="pStep" min="0" step="1"></label>
       <label><span class="lbl">MTM stop ₹ (0=off)</span><input type="number" id="pStop" min="0" step="500"></label>
@@ -231,6 +232,12 @@
       <div class="tabs2"><button class="on" data-t="pos">Positions</button><button data-t="adj">Adjustments</button><button data-t="trd">Fills</button></div>
       <div class="scroll" id="lowerR"></div>
     </div>
+  </div>
+
+  <div class="charts" id="pnlCharts">
+    <div class="card"><div class="chead"><span class="lbl">Daily P&amp;L ₹ <span class="mut" id="pnlName"></span></span><span class="num mut" id="pDay"></span></div><div class="chart" id="chPd"></div></div>
+    <div class="card"><div class="chead"><span class="lbl">Cumulative P&amp;L ₹</span><span class="num mut" id="pCum"></span></div><div class="chart" id="chPc"></div></div>
+    <div class="card"><div class="chead"><span class="lbl">Drawdown ₹</span><span class="num mut" id="pDd"></span></div><div class="chart" id="chPdd"></div></div>
   </div>
 </div>
 
@@ -346,6 +353,36 @@ async function loadHistory(full) {
   }
 }
 
+// ── day-by-day P&L of the selected instrument (bars, cumulative, drawdown) ─
+function mkDayChart(el) {
+  const c = mkChart(el);
+  c.applyOptions({timeScale: {timeVisible: false, secondsVisible: false, minBarSpacing: 2}});
+  return c;
+}
+const chPd = mkDayChart($('chPd')), chPc = mkDayChart($('chPc')), chPdd = mkDayChart($('chPdd'));
+const sPd = chPd.addHistogramSeries({base: 0, priceLineVisible: false});
+const sPc = chPc.addBaselineSeries({baseValue: {type: 'price', price: 0}, lineWidth: 2, priceLineVisible: false,
+  topLineColor: '#22c55e', topFillColor1: 'rgba(34,197,94,.25)', topFillColor2: 'rgba(34,197,94,.02)',
+  bottomLineColor: '#f43f5e', bottomFillColor1: 'rgba(244,63,94,.02)', bottomFillColor2: 'rgba(244,63,94,.25)'});
+const sPdd = chPdd.addAreaSeries({lineColor: '#f43f5e', topColor: 'rgba(244,63,94,.05)', bottomColor: 'rgba(244,63,94,.35)',
+  lineWidth: 2, priceLineVisible: false, invertFilledArea: true});
+let pnlKey = '';
+async function loadPnl() {
+  const n = SEL, j = await api(`/pnl/${n}`);
+  if (!j.rows || n !== SEL) return;
+  const rows = j.rows, key = n + '|' + rows.length;
+  sPd.setData(rows.map(r => ({time: r.date, value: r.pnl, color: r.pnl >= 0 ? '#22c55e' : '#f43f5e'})));
+  sPc.setData(rows.map(r => ({time: r.date, value: r.cum})));
+  sPdd.setData(rows.map(r => ({time: r.date, value: r.dd})));
+  if (key !== pnlKey) { pnlKey = key; [chPd, chPc, chPdd].forEach(c => c.timeScale().fitContent()); }
+  const last = rows[rows.length - 1], maxDd = rows.reduce((m, r) => Math.min(m, r.dd), 0);
+  const win = rows.filter(r => r.pnl > 0).length;
+  $('pnlName').textContent = ROW ? '· ' + ROW.label : '';
+  $('pDay').innerHTML = rows.length ? `${rows.length} days · <span class="pos">${win} green</span> · <span class="neg">${rows.length - win} red</span>` : 'no traded days yet';
+  $('pCum').innerHTML = last ? `<span class="${cls(last.cum)}">${rs(last.cum)}</span>` : '';
+  $('pDd').innerHTML = last ? `now <span class="${cls(last.dd)}">${rs(last.dd)}</span> · worst <span class="neg">${rs(maxDd)}</span>` : '';
+}
+
 // ── chart zoom ──────────────────────────────────────────────────────────
 const CH = [chM, chI, chA, chS];
 // Whole loaded day in view (fitContent kept stale scroll offsets when switching days).
@@ -454,7 +491,7 @@ function renderCards() {
     : u.auto_done ? '<span class="pos">done for today</span>'
     : `<span class="warn">waits for ${esc(u.auto_time)}</span>`;
   if (!paramsDirty) {
-    $('pLots').value = p.lots; $('pBand').value = p.band; $('pNormal').value = p.normal_band;
+    $('pLots').value = p.lots; $('pBand').value = p.band; $('pNormal').value = p.normal_band; $('pTrig').value = p.normal_trigger;
     $('pBuf').value = p.atm_buffer_pct; $('pStep').value = p.step || u.step; $('pStop').value = p.mtm_stop; $('pGap').value = p.max_spread_pct;
   }
   $('cMtm').textContent = rs(u.mtm.total); $('cImb').textContent = im == null ? '' : fmt(im, 1) + '%';
@@ -570,7 +607,7 @@ async function control(action, confirmMsg) {
 $('bStart').onclick = () => control('start', `Start CE/PE imbalance (PAPER) on ${ROW ? ROW.label : SEL}?\nIt sells ATM/+1/+2 CE and PE on the next tick.`);
 $('bStop').onclick = () => control('stop');
 $('bStopExit').onclick = () => control('stop_exit', `Stop ${ROW ? ROW.label : SEL} and buy back ALL paper positions?`);
-['pLots', 'pBand', 'pNormal', 'pBuf', 'pStep', 'pStop', 'pGap'].forEach(id => $(id).addEventListener('input', () => { paramsDirty = true; $('pMsg').textContent = 'unsaved'; }));
+['pLots', 'pBand', 'pNormal', 'pTrig', 'pBuf', 'pStep', 'pStop', 'pGap'].forEach(id => $(id).addEventListener('input', () => { paramsDirty = true; $('pMsg').textContent = 'unsaved'; }));
 let autoDirty = false;
 async function saveAuto() {
   autoDirty = true;
@@ -582,7 +619,7 @@ async function saveAuto() {
 $('aOn').onchange = saveAuto;
 $('aTime').onchange = saveAuto;
 $('bSave').onclick = async () => {
-  const body = {lots: +$('pLots').value, band: +$('pBand').value, normal_band: +$('pNormal').value,
+  const body = {lots: +$('pLots').value, band: +$('pBand').value, normal_band: +$('pNormal').value, normal_trigger: +$('pTrig').value,
                 atm_buffer_pct: +$('pBuf').value, step: +$('pStep').value, mtm_stop: +$('pStop').value, max_spread_pct: +$('pGap').value};
   const j = await api(`/params/${SEL}`, body);
   paramsDirty = !j.ok;
@@ -603,7 +640,7 @@ async function refresh(full) {
     $('feed').textContent = f.authed ? `feed ok · ${f.subscribed ?? ''} subs` : 'feed down';
     renderUnds(); renderCards();
     await loadHistory(full);
-    if (full) { chainLoop(); renderLower(); }
+    if (full) { chainLoop(); renderLower(); loadPnl(); }
   } catch (e) { $('feed').className = 'pill bad'; $('feed').textContent = 'offline'; }
   finally { busy = false; }
 }
@@ -613,6 +650,7 @@ setInterval(chainLoop, 400);
 setInterval(() => { if (!DAY) renderLower(); }, 2000);
 setInterval(() => { if (!DAY) renderDay(); }, 3000);
 setInterval(loadDays, 60000);
+setInterval(loadPnl, 10000);                               // today's bar follows the live MTM
 const DQ = () => DAY ? `?date=${DAY}` : '';
 loadDays().then(renderDay);
 refresh(true);

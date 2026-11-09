@@ -46,3 +46,17 @@ def test_summary_uses_in_memory_history_for_today():
     rows = [{"t": 1, "mtm": -50.0, "imb": 3.0}, {"t": 2, "mtm": 80.0, "imb": -9.0}]
     s = days.summary("2099-01-01", "GOLD", hist=rows)        # no files for that date
     assert s["mtm_high"] == 80.0 and s["mtm_low"] == -50.0 and s["imb_min"] == -9.0
+
+
+def test_pnl_series_cumulative_and_drawdown(tmp_path, monkeypatch):
+    _write(tmp_path, monkeypatch)                                       # 2026-11-02: -10810
+    b = tmp_path / "books" / "2026-11-03"
+    b.mkdir(parents=True)
+    pos = {"k": {"kind": "PE", "strike": 9000.0, "expiry": "2026-11-17", "lots": 0, "realized": 4000.0}}
+    (b / "CRUDEOIL.json").write_text(json.dumps({"positions": pos}), encoding="utf-8")
+    (b / "CRUDEOIL_trades.jsonl").write_text(json.dumps({"time": "20:00:00.000"}), encoding="utf-8")
+    got = days.pnl_series("CRUDEOIL", today="2026-11-04", today_pnl=9000.0)
+    assert [x["date"] for x in got] == ["2026-11-02", "2026-11-03", "2026-11-04"]
+    assert [x["cum"] for x in got] == [-10810.0, -6810.0, 2190.0]
+    assert [x["dd"] for x in got] == [-10810.0, -6810.0, 0.0]
+    assert days.pnl_series("GOLD") == []                                # never traded -> no bars

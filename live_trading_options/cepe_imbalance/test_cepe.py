@@ -23,7 +23,7 @@ DAY = "2026-11-02"
 
 @pytest.fixture(scope="module")
 def universe():
-    texts = {s: (TD / f"scrip_{s}_sample.csv").read_text(encoding="utf-8") for s in ("nse_fo", "bse_fo", "mcx_fo")}
+    texts = {s: (TD / f"scrip_{s}_sample.csv").read_text(encoding="utf-8") for s in ("nse_fo", "bse_fo", "mcx_fo", "nse_com")}
     return I.build(texts, today=DAY)
 
 
@@ -32,7 +32,7 @@ def tick(key, ltp, bid=None, ask=None):
 
 
 # ── universe ──────────────────────────────────────────────────────────────
-def test_all_seven_loaded(universe):
+def test_all_instruments_loaded(universe):
     assert set(universe.underlyings) == set(C.UNDERLYINGS)
     for u in universe.underlyings.values():
         assert u.chains and u.futures, u.name
@@ -47,11 +47,36 @@ def test_expiry_encodings(universe):
 
 def test_rupee_value_per_point(universe):
     v = {n: u.lot * u.mult for n, u in universe.underlyings.items()}
-    assert v == {"NIFTY": 65, "SENSEX": 20, "CRUDEOIL": 100, "GOLDM": 10, "GOLD": 100, "SILVERM": 5, "SILVER": 30}
+    assert v == {"NIFTY": 65, "SENSEX": 20, "CRUDEOIL": 100, "GOLDM": 10, "GOLD": 100, "SILVERM": 5, "SILVER": 30,
+                 "NSECRUDE": 100}
 
 
 def test_keys_unique_per_segment(universe):
-    assert all(k.split("|")[0] in ("nse_fo", "bse_fo", "mcx_fo") for k in universe.by_key)
+    assert all(k.split("|")[0] in ("nse_fo", "bse_fo", "mcx_fo", "nse_com") for k in universe.by_key)
+
+
+def test_nse_crude_from_nse_com(universe):
+    """9-Nov: NSE crude lives in nse_com (strike x10000, 1980 epoch, FUTENR futures), apart from MCX crude."""
+    u, m = universe.underlyings["NSECRUDE"], universe.underlyings["CRUDEOIL"]
+    assert u.seg == "nse_com" and u.expiries()[0] == "2026-11-10"
+    assert 8550.0 in u.strikes("2026-11-10") and u.strikes("2026-11-10")[1] - u.strikes("2026-11-10")[0] == 50
+    c = u.chains["2026-11-10"][8500.0]["CE"]
+    assert (c.symbol, c.lot, c.mult, c.tick) == ("CRUDEOIL26NOV8500CE", 1, 100.0, 0.1)
+    f = u.future_for("2026-11-10")
+    assert f.symbol == "CRUDEOIL26NOVFUT" and f.key.startswith("nse_com|")
+    assert not set(k for k in universe.by_key if k.startswith("nse_com|")) & {c.key for e in m.chains.values()
+                                                                             for r in e.values() for c in r.values()}
+
+
+def test_master_url_falls_back_to_full_list():
+    class Client:
+        def scrip_master(self, exchange_segment=None):
+            if exchange_segment:
+                return {"Error": "Exchange Segment is not available"}
+            return {"baseFolder": "x", "filesPaths": ["https://h/a/nse_cm-v1.csv", "https://h/a/nse_com.csv",
+                                                      "https://h/a/nse_fo.csv"]}
+    assert I.master_url(Client(), "nse_com") == "https://h/a/nse_com.csv"
+    assert I.master_url(Client(), "nse_cm") == "https://h/a/nse_cm-v1.csv"
 
 
 # ── feed decode ───────────────────────────────────────────────────────────

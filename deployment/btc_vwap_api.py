@@ -33,8 +33,10 @@ STATE = BTC / "data" / "vwap_state"
 RESULTS = BTC / "data" / "vwap_results"
 CHARTS = RESULTS / "charts"
 LOGS = BTC / "logs"
-VERSIONS = ("ist_day", "full_expiry", "ist_live", "ist_cap", "ist_delta")
-LIVE_VERSION = "ist_delta"                    # the only version an ARM can reach
+VERSIONS = ("ist_day", "full_expiry", "ist_live", "ist_cap", "ist_delta", "ist_delta_fs")
+LIVE_VERSION = "ist_delta"                    # default for the control endpoints
+# the live-capable versions; ONE at a time may be live (same Delta account)
+LIVE_VERSIONS = ("ist_delta", "ist_delta_fs")
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
 
@@ -193,8 +195,12 @@ def audit(version: str = Query(None), date: str = Query(None),
 
 
 # ── arm / paper / kill for the live-capable version ──────────────────────
-def _ctl_file():
-    return STATE / f"live_control_{LIVE_VERSION}.json"
+def _ctl_file(v=LIVE_VERSION):
+    return STATE / f"live_control_{v}.json"
+
+
+def _lv(v):
+    return v if v in LIVE_VERSIONS else LIVE_VERSION
 
 
 # Size limits for the dashboard's size/stop boxes (Delta wallet ~$1.2k on 2026-10-10;
@@ -203,24 +209,25 @@ MAX_CONTRACTS = 2000
 MAX_STOP_USD = 500.0
 
 
-def _config_size():
-    """ist_delta's contracts / stop from config/vwap_parameters.json (the default when
-    the dashboard has not set its own)."""
-    v = ((_read(BTC / "config" / "vwap_parameters.json", {}) or {}).get("versions") or {}).get(LIVE_VERSION) or {}
+def _config_size(ver=LIVE_VERSION):
+    """A live version's contracts / stop from config/vwap_parameters.json (the default
+    when the dashboard has not set its own)."""
+    v = ((_read(BTC / "config" / "vwap_parameters.json", {}) or {}).get("versions") or {}).get(ver) or {}
     return {"contracts": v.get("contracts"), "mtm_stop_usd": v.get("mtm_stop_usd")}
 
 
 @router.get("/control")
-def control():
-    d = _read(_ctl_file(), {"mode": "paper", "kill": False}) or {}
-    live = _live(LIVE_VERSION) or {}
-    cfg = _config_size()
+def control(version: str = Query(LIVE_VERSION)):
+    version = _lv(version)
+    d = _read(_ctl_file(version), {"mode": "paper", "kill": False}) or {}
+    live = _live(version) or {}
+    cfg = _config_size(version)
     # what the NEXT session will use; the running cycle keeps what it started with
     size = {"contracts": d.get("contracts") or cfg["contracts"],
             "mtm_stop_usd": d.get("mtm_stop_usd") or cfg["mtm_stop_usd"],
             "config": cfg, "max_contracts": MAX_CONTRACTS, "max_stop_usd": MAX_STOP_USD,
             "current": (live.get("params") or {})}
-    return {"ok": True, "version": LIVE_VERSION, "control": d, "size": size,
+    return {"ok": True, "version": version, "control": d, "size": size,
             "engine_mode": live.get("mode"), "status": live.get("status"),
             "open_legs": [t for t, l in (live.get("legs") or {}).items() if l]}
 
@@ -233,7 +240,18 @@ def set_control(body: dict = Body(...)):
     {"action": "size", "contracts": n, "mtm_stop_usd": x} sets the size and stop for
     the NEXT session (the engine applies it only while no cycle is running)."""
     action = str(body.get("action") or "").lower()
-    d = _read(_ctl_file(), {"mode": "paper", "kill": False}) or {}
+    version = _lv(str(body.get("version") or LIVE_VERSION))
+    d = _read(_ctl_file(version), {"mode": "paper", "kill": False}) or {}
+    if action in ("arm", "adopt"):
+        # one live version at a time: they would trade the same Delta account
+        for other in LIVE_VERSIONS:
+            if other == version:
+                continue
+            oc = _read(_ctl_file(other), {}) or {}
+            ol = _live(other) or {}
+            if oc.get("mode") == "live" or ol.get("mode") == "live":
+                return {"ok": False, "reason": f"{other} is armed/live — switch it to PAPER first "
+                                               f"(only one live version on the Delta account)"}
     # a KILL from an earlier day is already void for the engine; re-dating the file
     # below must not bring it back to life
     if d.get("kill") and str(d.get("updated") or "")[:10] != _now().date().isoformat():
@@ -247,7 +265,7 @@ def set_control(body: dict = Body(...)):
     elif action == "adopt":
         # COPY PAPER -> LIVE: arm, and ask the engine to sell the open PAPER legs live
         # now (one request per press, identified by this timestamp)
-        live = _live(LIVE_VERSION) or {}
+        live = _live(version) or {}
         if not [t for t, l in (live.get("legs") or {}).items() if l]:
             return {"ok": False, "reason": "no open paper position to copy"}
         if live.get("mode") == "live":
@@ -269,8 +287,8 @@ def set_control(body: dict = Body(...)):
     d["updated"] = _now().isoformat(timespec="seconds")
     d["by"] = "dashboard"
     STATE.mkdir(parents=True, exist_ok=True)
-    _ctl_file().write_text(json.dumps(d, indent=2), encoding="utf-8")
-    return {"ok": True, "control": d}
+    _ctl_file(version).write_text(json.dumps(d, indent=2), encoding="utf-8")
+    return {"ok": True, "control": d, "version": version}
 
 
 # ── broker truth: what Delta itself says (read-only) ──────────────────────
@@ -311,12 +329,14 @@ def broker(fresh: int = Query(0)):
         return {"ok": False, "reason": f"{type(e).__name__}: {e}"}
     today = _now().date().isoformat()
     # our order ids, from the book (a Delta fill does not always echo client_order_id)
-    book = _live(LIVE_VERSION) or {}
+    books = [_live(v) or {} for v in LIVE_VERSIONS]
+    book = {"trades": [t for b in books for t in (b.get("trades") or [])],
+            "legs": {f"{t}#{i}": l for i, b in enumerate(books) for t, l in (b.get("legs") or {}).items()}}
     our_ids = set()
     # + every live trade on file: after the cycle ends the live state no longer holds
     # today's trades, and Delta's fills do not echo our client_order_id
     filed = [r for r in _jsonl(RESULTS / "trades.jsonl")
-             if r.get("version") == LIVE_VERSION and r.get("mode") == "live"]
+             if r.get("version") in LIVE_VERSIONS and r.get("mode") == "live"]
     for rec in (book.get("trades") or []) + filed + [l for l in (book.get("legs") or {}).values() if l]:
         for o in rec.get("orders") or []:
             if o.get("id"):
@@ -357,7 +377,7 @@ def broker(fresh: int = Query(0)):
         if not l or l.get("mode") != "live":
             continue
         d_size = next((p["size"] for p in positions if str(p["product_id"]) == str(l.get("product_id"))), 0)
-        recon.append({"leg": t, "symbol": l.get("symbol"), "ours": -int(l.get("qty") or 0),
+        recon.append({"leg": str(t).split("#")[0], "symbol": l.get("symbol"), "ours": -int(l.get("qty") or 0),
                       "delta": d_size, "ok": d_size == -int(l.get("qty") or 0)})
     # Delta's own ledger for today (BTC options only): premium cash in/out, fees, GST.
     # Net today = cashflow + commission (+ the cost to buy back anything still open).
@@ -446,7 +466,7 @@ def live_pnl(fresh: int = Query(0)):
     # our book per day, as a check
     book = {}
     for r in _jsonl(RESULTS / "trades.jsonl"):
-        if r.get("version") == LIVE_VERSION and r.get("mode") == "live":
+        if r.get("version") in LIVE_VERSIONS and r.get("mode") == "live":
             d = str(r.get("cycle") or "")[:10]
             book[d] = book.get(d, 0.0) + (r.get("net_usd") or 0.0)
     out, cum, peak = [], 0.0, 0.0

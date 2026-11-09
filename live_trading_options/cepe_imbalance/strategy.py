@@ -14,11 +14,17 @@ RULES (owner, 3-Nov-2026). "Unit" = `lots` lots (default 1). Strikes on a fixed 
 ENTRY (Start button, in session): SELL CE at ATM, ATM+1, ATM+2 and PE at ATM, ATM-1, ATM-2.
   Pre-check: if those 6 already show |imbalance| > band, apply B to the PLAN first (no sell-then-buy).
 
-HARD RULE — always short at ATM, both CE and PE, checked on EVERY tick:
-  if no short CE (PE) at the current ATM -> buy back the CE (PE) farthest from ATM, sell the ATM one.
+BAND-ONLY (owner 9-Nov, replaces the 3-Nov "always short at ATM on every tick" rule): while
+  |imbalance| <= band NOTHING trades, even if ATM moved, a leg went ITM or a strike is doubled.
+  On a breach, first move that can go through (one wide quote -> try the next), repeated until inside:
+    1. back to normal (clean set inside +-normal_band)   2. re-centre (both sides adjusted)
+    3. ITM back: the heavy side's ITM leg rolled out (= A on it)
+    4. roll light side to ATM: buy its farthest leg, sell the ATM strike (before B doubles a held one)
+    5. A, B, C as below.
+  EARLY NORMAL (owner 9-Nov): between `normal_trigger` (10%) and the band only step 1 may trade, so an
+  ITM / doubled / off-centre book is cleaned while it is cheap. normal_trigger = band turns it off.
   ATM uses a buffer: it only moves once price is `atm_buffer_pct`% of a step past the half-way point,
   so a price sitting between two strikes cannot make it flip back and forth.
-  ITM legs are NOT closed by this rule; they wait for an imbalance breach.
 
 IMBALANCE = (short CE premium - short PE premium) / (sum) x 100, all current shorts,
   premium = LTP kept inside the live bid/ask (a stale last trade can't distort it).
@@ -37,12 +43,11 @@ LIQUIDITY GUARD (owner, 3-Nov): never SELL a strike whose bid-ask gap > max_spre
      ATM: move 1 unit of the light side from ATM to ITM1 (CE: ATM-1 strike, PE: ATM+1), then a 2nd
      unit if still beyond band; 1 unit always stays at ATM. Also used in the pre-entry check.
 
-BACK TO NORMAL — "go normal whenever possible" (owner 3-Nov): every tick, after the ATM hard rule and
-  BEFORE A/B/C, price the clean ATM/+-1/+-2 set around the current ATM; if its imbalance is inside
-  +-normal_band (5%) the book switches to it (only differing strikes trade). So an ITM leg or a B/C
-  doubling stays only while going clean would leave the imbalance outside +-5%.
-RE-CENTRE (owner 3-Nov): if BOTH sides are adjusted (doubled strike or ITM leg on each), they cancel
-  out -> rebuild like entry (clean set + B/C on the light side only) when that plan is inside +-band.
+BACK TO NORMAL (owner 3-Nov, band-only since 9-Nov): on a breach, price the clean ATM/+-1/+-2 set
+  around the current ATM; if its imbalance is inside +-normal_band (5%) switch to it (only differing
+  strikes trade).
+RE-CENTRE (owner 3-Nov, band-only since 9-Nov): if BOTH sides are adjusted (doubled strike or ITM leg
+  on each) -> rebuild like entry (clean set + B/C on the light side only) when that plan is inside +-band.
 
 STOP: MTM <= -mtm_stop (rupees, editable, 0 = off) -> exit everything, no re-entry until Start.
 """
@@ -76,6 +81,7 @@ class CePeImbalance(Strategy):
         "lots": 1,               # lots per strike unit
         "band": 15.0,            # |imbalance| above this -> adjust (single tick)
         "normal_band": 5.0,      # back-to-normal threshold
+        "normal_trigger": 10.0,  # owner 9-Nov: inside the band, beyond this -> "back to normal" only (= band: off)
         "atm_buffer_pct": 20.0,  # ATM moves only this % of a step past the half-way point
         "mtm_stop": 0.0,         # rupees; 0 = off
         "step": 0,               # strike grid; 0 = config default for the underlying
@@ -379,18 +385,27 @@ class CePeImbalance(Strategy):
         with strikes that do have fair quotes, e.g. roll ITM CEs out with A)."""
         step, unit, band = self.step(ctx), self.unit(ctx), float(ctx.params["band"])
         legs = self.legs(ctx)
-        for kind in ("CE", "PE"):                                  # hard rule first
-            ops = self.op_atm(legs, kind, atm, unit)
-            if ops:
-                yield ops, f"ATM rule {kind}"
         im = ctx.book.imbalance()
         imb = im["pct"]
         if imb is None:
             if im.get("missing"):
                 self.blocked(ctx, "waiting for prices of " + ", ".join(im["missing"]), key="missing prices")
             return
-        # GO NORMAL WHENEVER POSSIBLE (owner 3-Nov): if the clean ATM/+-1/+-2 set, priced now, is inside
-        # +-normal_band, switch to it (only the differing strikes trade). Checked every tick, before A/B/C.
+        # BAND-ONLY (owner 9-Nov): inside +-band nothing trades, even if ATM moved, a leg is ITM or a
+        # strike is doubled. On a breach: go normal -> re-centre -> ITM leg back -> light side to ATM -> A/B/C.
+        if abs(imb) <= band:
+            # Optional early clean-up (normal_trigger < band): only "back to normal", nothing else.
+            trig = float(ctx.params.get("normal_trigger") or band)
+            if abs(imb) > trig:
+                ops = self.op_go_normal(legs, atm, step, unit)
+                if ops:
+                    after = self.plan_imbalance(ctx, self.apply_ops(legs, ops))
+                    if after is not None and abs(after) <= float(ctx.params["normal_band"]):
+                        yield ops, f"back to normal early ({imb:+.1f}% -> clean {after:+.1f}%)"
+            return
+        heavy = "CE" if imb > 0 else "PE"
+        light = "PE" if heavy == "CE" else "CE"
+        # 1. GO NORMAL: the clean ATM/+-1/+-2 set, priced now, inside +-normal_band (only differing strikes trade).
         ops = self.op_go_normal(legs, atm, step, unit)
         if ops:
             after = self.plan_imbalance(ctx, self.apply_ops(legs, ops))
@@ -405,11 +420,20 @@ class CePeImbalance(Strategy):
                 after = self.plan_imbalance(ctx, target)
                 if after is not None and abs(after) <= band:
                     yield self.op_to(legs, target), f"re-centre ({after:+.1f}%{', ' + ', '.join(notes) if notes else ''})"
-        if abs(imb) <= band:
-            return
-        heavy = "CE" if imb > 0 else "PE"
         found = False
-        for tag, ops in (("A", self.op_A(legs, heavy, atm, step, unit)),
+        # 3. ITM LEG BACK FIRST (owner 9-Nov): a fresh ITM leg on the heavy side is rolled out (= A on it).
+        a_ops = self.op_A(legs, heavy, atm, step, unit)
+        side = legs[heavy]
+        itm = side and (min(side) < atm if heavy == "CE" else max(side) > atm)
+        if a_ops and itm:
+            found = True
+            yield a_ops, f"ITM back ({heavy} heavy {imb:+.1f}%)"
+        # 4. LIGHT SIDE TO ATM (owner 9-Nov): sell the ATM strike before doubling a held one (B).
+        roll = self.op_atm(legs, light, atm, unit) if legs[light] else None
+        if roll:
+            found = True
+            yield roll, f"roll {light} to ATM ({heavy} heavy {imb:+.1f}%)"
+        for tag, ops in (("A", None if itm else a_ops),
                          ("B", self.op_B(legs, heavy, atm, unit)),
                          ("C", self.op_C(legs, heavy, atm, step, unit))):
             if ops:

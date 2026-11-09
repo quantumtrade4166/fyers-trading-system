@@ -236,6 +236,26 @@ check("net stop counts spread + fees: price ~-70 but net <= -80 -> stop",
       bn.trigger.done and bn.pos is None and "NET stop" in (bn.stop_reason or ""))
 check("net view includes exit fee estimate", abs((bn.realized()) - sum(t["net_usd"] for t in bn.trades)) < 1e-6)
 
+# ── Fri-Sat only version (user 2026-11-09) ────────────────────────────────
+PW = json.loads(json.dumps(PARAMS)); PW["versions"]["ist_live"]["weekdays"] = ["Fri", "Sat"]
+fc.__init__()
+bw = SplitVwapBook("ist_live", PW, Path(tempfile.mkdtemp()), log=lambda m: None)
+setm(bw, 40, 40, D(2026, 10, 19, 9, 30, 1))            # Monday
+check("Fri-Sat: no session on a Monday", not bw.active and "idle" in bw.status)
+setm(bw, 40, 40, D(2026, 10, 22, 12, 0))               # Thursday
+check("Fri-Sat: no session on a Thursday", not bw.active)
+setm(bw, 40, 40, D(2026, 10, 25, 12, 0))               # Sunday
+check("Fri-Sat: no session on a Sunday", not bw.active)
+setm(bw, 40, 40, D(2026, 10, 23, 9, 30, 1))            # Friday
+check("Fri-Sat: session starts on a Friday", bw.active)
+setm(bw, 40, 40, D(2026, 10, 23, 17, 10, 1))           # Friday square-off
+setm(bw, 40, 40, D(2026, 10, 24, 9, 30, 1))            # Saturday
+check("Fri-Sat: session starts on a Saturday", bw.active)
+bn0 = SplitVwapBook("ist_live", PARAMS, Path(tempfile.mkdtemp()), log=lambda m: None)
+fc.__init__()
+setm(bn0, 40, 40, D(2026, 10, 19, 9, 30, 1))
+check("no weekdays set -> trades every day (Monday)", bn0.active)
+
 # ── KILL from the control file ────────────────────────────────────────────
 bk4, tmp4 = new_book()
 setm(bk4, 40, 40, D(2026, 10, 3, 11, 0, 1))
