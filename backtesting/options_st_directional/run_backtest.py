@@ -41,12 +41,16 @@ def main():
                     help="OPTIONAL: stop to cost once premium is this many points in favour")
     ap.add_argument("--cpr-max", type=float, default=None, help="OPTIONAL: skip days with prev-day CPR width above this")
     ap.add_argument("--rsi", action="store_true", help="OPTIONAL: PE only if 5-min RSI>50, CE only if <50")
+    ap.add_argument("--trigger-high-sl", choices=["replace", "both"], default=None,
+                    help="OPTIONAL test: stop at the trigger candle's high (replace / both with option-ST exit)")
+    ap.add_argument("--last-entry", default=None, help="OPTIONAL test: no new entries after HH:MM, e.g. 14:45")
     ap.add_argument("--tag", default=Config.tag)
     ap.add_argument("--no-day-charts", action="store_true")
     a = ap.parse_args()
     cfg = Config(start=a.start, end=a.end, lots=a.lots, capital=a.capital,
                  slippage_points=a.slippage, breakeven_after_points=a.breakeven,
-                 cpr_max_width=a.cpr_max, rsi_filter=a.rsi, tag=a.tag)
+                 cpr_max_width=a.cpr_max, rsi_filter=a.rsi,
+                 trigger_high_sl=a.trigger_high_sl, last_entry_time=a.last_entry, tag=a.tag)
 
     out = RESULTS / cfg.tag
     (out / "days").mkdir(parents=True, exist_ok=True)

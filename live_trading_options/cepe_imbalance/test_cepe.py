@@ -252,3 +252,32 @@ def test_stopped_runner_gets_no_ticks(universe):
     r.strategy = _Rec()
     eng.on_ticks([tick("nse_cm|Nifty 50", 23455)])
     assert r.strategy.ticks == []
+
+
+def test_save_survives_a_locked_file(universe, tmp_path, monkeypatch):
+    """3/6/10-Nov: WinError 5 when a backup / scanner held the book file -> the move crashed half-way.
+    Now: retried, and a lock that never clears is logged, not raised; the fill line is written first."""
+    import os as _os
+    from live_trading_options.cepe_imbalance import book as B
+    monkeypatch.setattr(C, "DATA", tmp_path)
+    monkeypatch.setattr(B.time, "sleep", lambda s: None)
+    m = Market(universe)
+    bk = B.PaperBook("CRUDEOIL", m, date="2026-11-10", persist=True)
+    c = universe.underlyings["CRUDEOIL"].chains[universe.underlyings["CRUDEOIL"].expiries()[0]]
+    c = next(iter(c.values()))["CE"]
+    real, calls = _os.replace, {"n": 0}
+
+    def flaky(a, b):                                           # locked twice, then free
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise PermissionError(5, "Access is denied")
+        real(a, b)
+    monkeypatch.setattr(B.os, "replace", flaky)
+    assert bk.order(c, "SELL", 1, "t", price=100.0)["ok"]
+    assert '"lots": -1' in (tmp_path / "books" / "2026-11-10" / "CRUDEOIL.json").read_text(encoding="utf-8")
+
+    monkeypatch.setattr(B.os, "replace", lambda a, b: (_ for _ in ()).throw(PermissionError(5, "Access is denied")))
+    t = bk.order(c, "SELL", 1, "t", price=101.0)                 # never frees: no exception, fill kept
+    assert t["ok"] and bk.positions[c.key].lots == -2
+    lines = (tmp_path / "books" / "2026-11-10" / "CRUDEOIL_trades.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2

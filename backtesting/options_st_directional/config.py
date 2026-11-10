@@ -41,6 +41,18 @@ class Config:
     # yet (worst case); fill = the sell price, or the minute's open if it gapped past.
     breakeven_after_points: float | None = None
 
+    # OPTIONAL test (off in the baseline, NOT in paper/live): stop at the HIGH of the
+    # 5-min trigger candle (the candle whose close went below the reference).
+    #   None        -> baseline (exit on option close > option ST)
+    #   "replace"   -> trigger-high stop INSTEAD of the option-ST exit (stop or 15:15)
+    #   "both"      -> trigger-high stop AND the option-ST exit, whichever first
+    # 1-min bars, fill = stop price or the minute's open if it gapped past.
+    trigger_high_sl: str | None = None
+
+    # OPTIONAL test (off in the baseline, NOT in paper/live): no new entry when the
+    # fill time would be after this HH:MM (a later signal is dropped).
+    last_entry_time: str | None = None
+
     # OPTIONAL day filter (off in the baseline): skip the whole day when the CPR
     # built from the previous session is wider than this many points (|TC - BC|).
     cpr_max_width: float | None = None

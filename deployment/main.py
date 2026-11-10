@@ -547,6 +547,7 @@ async def api_strangle_pnl_history():
         if sel.get("dte") not in (0, 1):
             continue
         recs.append({"date": date, "index": idx, "dte": sel.get("dte"),
+                     "strategy": "strangle",
                      "pnl": (j.get("pnl") or {}).get("realized_pnl")})
     recs.sort(key=lambda r: (r["date"], r["index"]))
     return {"records": recs}
@@ -821,6 +822,62 @@ async def api_dn_dates():
         if len(parts) == 3:
             out.append({"date": parts[0], "index": parts[1]})
     return {"days": out}
+
+
+@app.get("/api/dn/pnl_history")
+async def api_dn_pnl_history():
+    """Per-(date, index) PAPER realised P&L normalised to 1 lot, for the 0/1-DTE
+    traded days. The paper (shadow) book runs every trade day regardless of arming,
+    so this is the delta-neutral strategy's own untouched benchmark — comparable
+    1-lot to the VWAP strangle. Same shape as /api/strangle/pnl_history, tagged
+    strategy="dn", so the P&L History view can merge and filter both strategies."""
+    if not _DN_DIR.exists():
+        return {"records": []}
+    recs = []
+    for f in sorted(_DN_DIR.glob("*_DN_PAPER.json")):
+        try:
+            j = _json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        idx, date, dte = j.get("index"), j.get("date"), j.get("dte")
+        if idx not in ("NIFTY", "SENSEX") or not date or dte not in (0, 1):
+            continue
+        lots = int(j.get("lots") or 0)
+        realized = (j.get("position") or {}).get("realized")
+        if realized is None or lots <= 0:
+            continue
+        recs.append({"date": date, "index": idx, "dte": dte, "strategy": "dn",
+                     "pnl": round(realized / lots, 2)})       # 1 lot = lot_size qty
+    recs.sort(key=lambda r: (r["date"], r["index"]))
+    return {"records": recs}
+
+
+@app.get("/api/dn/pnl_day")
+async def api_dn_pnl_day(date: str, index: str = "NIFTY"):
+    """One paper day for the drill-down: the intraday MTM path normalised to 1 lot,
+    plus the day's closed-leg history. The DN strategy swaps strikes through the day,
+    so it has no single combined-premium candle series like the strangle — the paper
+    MTM curve is the right intraday picture for it."""
+    j = _dn_read(f"{date}_{index.upper()}_DN_PAPER.json")
+    if not j:
+        return {"error": "no paper snapshot", "date": date, "index": index.upper()}
+    lots = int(j.get("lots") or 1) or 1
+    series = [{"t": p.get("t"), "rupees": round((p.get("rupees") or 0) / lots, 2)}
+              for p in (j.get("mtm_series") or []) if p.get("t")]
+    pos = j.get("position") or {}
+    hist = []
+    for l in (pos.get("history") or []):
+        ep, xp, q = l.get("entry_price"), l.get("exit_price"), l.get("qty") or 0
+        pnl_1lot = (round((ep - xp) * (q / lots), 2)
+                    if (ep is not None and xp is not None and lots) else None)
+        hist.append({"opt_type": l.get("opt_type"), "strike": l.get("strike"),
+                     "entry_time": l.get("entry_time"), "entry_price": ep,
+                     "exit_time": l.get("exit_time"), "exit_price": xp,
+                     "exit_reason": l.get("exit_reason"), "pnl": pnl_1lot})
+    return {"date": date, "index": index.upper(), "dte": j.get("dte"), "lots": lots,
+            "lot_size": j.get("lot_size"), "series": series, "history": hist,
+            "realized_1lot": round((pos.get("realized") or 0) / lots, 2),
+            "done": j.get("done")}
 
 
 @app.get("/api/dn/audit")

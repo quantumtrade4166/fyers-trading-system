@@ -11,6 +11,7 @@
   --ink:#e6edf6; --ink-2:#9fb0c6; --muted:#6b7d96;
   --nifty:#5b9bff; --sensex:#f5a623; --accent:#2fc27f; --neg:#f2706e;
   --vwap:#a78bfa; --up:#2fc27f; --down:#f2706e; --grid:#1c293f;
+  --strangle:#2fc27f; --dn:#a78bfa;
   --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
   --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
 }
@@ -31,6 +32,8 @@ h1{font-size:1.18rem;font-weight:700;letter-spacing:-.01em;margin:0}
 .seg button[aria-pressed="true"]{background:var(--surface-2);color:var(--ink)}
 .seg.idx button[data-idx="NIFTY"][aria-pressed="true"]{box-shadow:inset 0 -3px 0 var(--nifty)}
 .seg.idx button[data-idx="SENSEX"][aria-pressed="true"]{box-shadow:inset 0 -3px 0 var(--sensex)}
+.seg.strat button[data-strat="strangle"][aria-pressed="true"]{box-shadow:inset 0 -3px 0 var(--strangle)}
+.seg.strat button[data-strat="dn"][aria-pressed="true"]{box-shadow:inset 0 -3px 0 var(--dn)}
 .fsel{margin-left:auto;font-size:.76rem;color:var(--ink-2)} .fsel b{color:var(--ink);font-weight:600}
 .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(132px,1fr));gap:9px;margin-bottom:18px}
 .tile{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:11px 13px}
@@ -60,10 +63,16 @@ select{font:500 .82rem var(--sans);color:var(--ink);background:var(--surface);bo
 </head>
 <body>
 <div class="wrap">
-  <header class="top"><h1>VWAP Strangle · P&amp;L History</h1><span class="sub" id="range">loading…</span></header>
-  <p class="note">V2 tick engine, 1 lot per index. Filter by index and DTE — every number and chart below follows the selection.</p>
+  <header class="top"><h1>Options P&amp;L History</h1><span class="sub" id="range">loading…</span></header>
+  <p class="note">Strangle = VWAP V2 tick engine (signal P&amp;L on real option candles). Delta Neutral = its paper (shadow) book. Both at 1 lot per index. Filter by strategy, index and DTE — every number and chart below follows the selection.</p>
 
   <div class="filters">
+    <div class="fgroup"><span class="flab">Strategy</span>
+      <div class="seg strat" id="stratseg">
+        <button data-strat="strangle" aria-pressed="true">Strangle</button>
+        <button data-strat="dn" aria-pressed="true">Delta Neutral</button>
+      </div>
+    </div>
     <div class="fgroup"><span class="flab">Index</span>
       <div class="seg idx" id="idxseg">
         <button data-idx="NIFTY" aria-pressed="true">NIFTY</button>
@@ -87,7 +96,8 @@ select{font:500 .82rem var(--sans);color:var(--ink);background:var(--surface);bo
     <div class="bar">
       <div class="seg" id="curveseg" role="group" aria-label="Series">
         <button data-k="combined" aria-pressed="true">Combined</button>
-        <button data-k="split" aria-pressed="false">By index</button>
+        <button data-k="index" aria-pressed="false">By index</button>
+        <button data-k="strategy" aria-pressed="false">By strategy</button>
       </div>
     </div>
     <div class="legend" id="curvelegend"></div>
@@ -101,21 +111,15 @@ select{font:500 .82rem var(--sans);color:var(--ink);background:var(--surface);bo
   </section>
 
   <section class="card">
-    <h2>Traded-day bars</h2>
-    <p class="cap">Each traded day's combined-premium candles with cumulative VWAP and the entry/exit signals.</p>
+    <h2>Day detail</h2>
+    <p class="cap">Strangle days show the combined-premium candles with cumulative VWAP and entry/exit signals; delta-neutral days show the intraday paper P&amp;L path (1 lot).</p>
     <div class="bar"><label for="daypick" class="sub">Day</label><select id="daypick" aria-label="Pick a traded day"></select></div>
     <div class="dayinfo" id="dayinfo"></div>
-    <div class="legend">
-      <span><i class="swatch" style="background:var(--up)"></i>up candle</span>
-      <span><i class="swatch" style="background:var(--down)"></i>down candle</span>
-      <span><i class="swatch" style="background:var(--vwap)"></i>VWAP</span>
-      <span><i class="swatch" style="background:var(--accent)"></i>▲ entry (sell)</span>
-      <span><i class="swatch" style="background:var(--neg)"></i>▼ exit (cover)</span>
-    </div>
+    <div class="legend" id="daylegend"></div>
     <div class="chart small" id="day"><div class="loading">Pick a day…</div></div>
     <p class="foot" id="dayfoot"></p>
   </section>
-  <p class="foot">Source: V2 chart archives on this VPS, via <span class="num">/api/strangle/pnl_history</span>. Read-only.</p>
+  <p class="foot">Source: this VPS — strangle via <span class="num">/api/strangle/pnl_history</span>, delta-neutral paper via <span class="num">/api/dn/pnl_history</span>. Read-only.</p>
 </div>
 
 <script>
@@ -126,19 +130,21 @@ const money=(x,sign=false)=>{ if(x==null) return "—"; const s=x<0?"−":(sign?
 const cssv=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const r2=x=>Math.round(x*100)/100;
 function intradayTs(date,hhmm){ const [Y,M,D]=date.split("-").map(Number); const [h,m]=hhmm.split(":").map(Number); return Date.UTC(Y,M-1,D,h,m)/1000; }
+const STRAT_LABEL={strangle:"Strangle",dn:"Delta Neutral"};
 
 let DATA=null, VIEW=null, curveChart=null, curveMode="combined", dayChart=null, dailyChart=null, ro1=null, ro2=null, ro3=null;
-const selIdx=new Set(["NIFTY","SENSEX"]), selDte=new Set([0,1]);
+const selStrat=new Set(["strangle","dn"]), selIdx=new Set(["NIFTY","SENSEX"]), selDte=new Set([0,1]);
 
-// DATA.records = [{date,index,dte,pnl}] for every 0/1-DTE traded archive.
+// DATA.records = [{date,index,dte,strategy,pnl}] — one per 0/1-DTE traded day/strategy.
 function derive(){
-  const recs=DATA.records.filter(r=>selIdx.has(r.index)&&selDte.has(r.dte));
+  const recs=DATA.records.filter(r=>selStrat.has(r.strategy)&&selIdx.has(r.index)&&selDte.has(r.dte));
   const bydate={};
-  for(const r of recs){ const b=bydate[r.date]||(bydate[r.date]={t:0,NIFTY:null,SENSEX:null}); const p=r.pnl||0; b.t+=p; b[r.index]=(b[r.index]||0)+p; }
+  for(const r of recs){ const b=bydate[r.date]||(bydate[r.date]={t:0,NIFTY:null,SENSEX:null,strangle:null,dn:null});
+    const p=r.pnl||0; b.t+=p; b[r.index]=(b[r.index]||0)+p; b[r.strategy]=(b[r.strategy]||0)+p; }
   const dates=Object.keys(bydate).sort();
   let cum=0,peak=0,mdd=0; const curve=[];
-  for(const dt of dates){ const v=r2(bydate[dt].t); cum=r2(cum+v); peak=Math.max(peak,cum); mdd=Math.min(mdd,cum-peak);
-    curve.push({date:dt,day_total:v,cumulative:cum,nifty:bydate[dt].NIFTY,sensex:bydate[dt].SENSEX}); }
+  for(const dt of dates){ const b=bydate[dt], v=r2(b.t); cum=r2(cum+v); peak=Math.max(peak,cum); mdd=Math.min(mdd,cum-peak);
+    curve.push({date:dt,day_total:v,cumulative:cum,nifty:b.NIFTY,sensex:b.SENSEX,strangle:b.strangle,dn:b.dn}); }
   const traded=curve.filter(c=>c.day_total!==0), wins=traded.filter(c=>c.day_total>0).length;
   const best=traded.reduce((a,c)=>c.day_total>(a?.day_total??-1e9)?c:a,null);
   const worst=traded.reduce((a,c)=>c.day_total<(a?.day_total??1e9)?c:a,null);
@@ -156,15 +162,38 @@ function chartTheme(){ return {
   crosshair:{mode:LWC.CrosshairMode.Magnet,vertLine:{color:cssv("--muted"),width:1,style:3,labelBackgroundColor:cssv("--ink-2")},horzLine:{color:cssv("--muted"),width:1,style:3,labelBackgroundColor:cssv("--ink-2")}}};
 }
 
+// which dimension (if any) the cumulative curve splits into separate lines
+function splitSpec(){
+  if(curveMode==="index" && selIdx.size>1)
+    return {keys:[...selIdx],field:k=>k.toLowerCase(),color:k=>cssv("--"+k.toLowerCase()),label:k=>k};
+  if(curveMode==="strategy" && selStrat.size>1)
+    return {keys:[...selStrat],field:k=>k,color:k=>cssv("--"+k),label:k=>STRAT_LABEL[k]};
+  return null;
+}
+
+// split rows shared by the curve + daily tooltips (index and/or strategy breakdown)
+function splitRows(d){
+  let h="";
+  if(selIdx.size>1){
+    if(d.nifty!=null) h+=`<div class="r"><span style="color:var(--nifty)">NIFTY</span><span>${money(d.nifty,true)}</span></div>`;
+    if(d.sensex!=null) h+=`<div class="r"><span style="color:var(--sensex)">SENSEX</span><span>${money(d.sensex,true)}</span></div>`;
+  }
+  if(selStrat.size>1){
+    if(d.strangle!=null) h+=`<div class="r"><span style="color:var(--strangle)">Strangle</span><span>${money(d.strangle,true)}</span></div>`;
+    if(d.dn!=null) h+=`<div class="r"><span style="color:var(--dn)">Delta-N</span><span>${money(d.dn,true)}</span></div>`;
+  }
+  return h;
+}
+
 function buildCurve(){
   const el=document.getElementById("curve"); el.innerHTML="";
   if(curveChart){ curveChart.remove(); curveChart=null; }
   curveChart=LWC.createChart(el,{width:el.clientWidth,height:el.clientHeight,...chartTheme(),localization:{priceFormatter:v=>(v<0?"−₹":"₹")+INR0.format(Math.abs(v))}});
-  const curve=VIEW.curve, idxList=[...selIdx];
-  if(curveMode==="split" && idxList.length>1){
-    for(const ix of idxList){ let c=0; const key=ix.toLowerCase();
-      const d=curve.map(p=>{ c=r2(c+(p[key]||0)); return {time:p.date,value:c}; });
-      curveChart.addLineSeries({color:cssv("--"+key),lineWidth:2,priceLineVisible:false}).setData(d); }
+  const curve=VIEW.curve, split=splitSpec();
+  if(split){
+    for(const key of split.keys){ let c=0; const fld=split.field(key);
+      const d=curve.map(p=>{ c=r2(c+(p[fld]||0)); return {time:p.date,value:c}; });
+      curveChart.addLineSeries({color:split.color(key),lineWidth:2,priceLineVisible:false}).setData(d); }
   }else{
     const s=curveChart.addAreaSeries({lineColor:cssv("--accent"),topColor:cssv("--accent")+"33",bottomColor:cssv("--accent")+"05",lineWidth:2,priceLineVisible:false});
     s.setData(curve.map(d=>({time:d.date,value:d.cumulative})));
@@ -178,16 +207,14 @@ function buildCurve(){
     tt.innerHTML=`<div class="d">${d.date}</div>
       <div class="r"><span>Cumulative</span><b>${money(d.cumulative,true)}</b></div>
       <div class="r"><span>Day</span><b class="${d.day_total>=0?'pos':'negc'}">${money(d.day_total,true)}</b></div>
-      ${d.nifty!=null?`<div class="r"><span style="color:var(--nifty)">NIFTY</span><span>${money(d.nifty,true)}</span></div>`:""}
-      ${d.sensex!=null?`<div class="r"><span style="color:var(--sensex)">SENSEX</span><span>${money(d.sensex,true)}</span></div>`:""}`;
+      ${splitRows(d)}`;
     tt.style.display="block";
     const w=tt.offsetWidth,cw=el.clientWidth; let x=p.point.x+16; if(x+w>cw)x=p.point.x-w-16;
     tt.style.left=Math.max(4,x)+"px"; tt.style.top=Math.max(4,p.point.y-10)+"px";
   });
-  const combined=!(curveMode==="split"&&idxList.length>1);
-  document.getElementById("curvelegend").innerHTML = combined
-    ? `<span><i class="swatch" style="background:var(--accent)"></i>Cumulative (selection, 1 lot)</span>`
-    : idxList.map(ix=>`<span><i class="swatch" style="background:var(--${ix.toLowerCase()})"></i>${ix} cumulative</span>`).join("");
+  document.getElementById("curvelegend").innerHTML = split
+    ? split.keys.map(k=>`<span><i class="swatch" style="background:${split.color(k)}"></i>${split.label(k)} cumulative</span>`).join("")
+    : `<span><i class="swatch" style="background:var(--accent)"></i>Cumulative (selection, 1 lot)</span>`;
   if(ro1) ro1.disconnect();
   ro1=new ResizeObserver(()=>curveChart&&curveChart.applyOptions({width:el.clientWidth,height:el.clientHeight})); ro1.observe(el);
 }
@@ -207,8 +234,7 @@ function buildDaily(){
     const d=byDate[p.time]; if(!d||d.day_total===0){ tt.style.display="none"; return; }
     tt.innerHTML=`<div class="d">${d.date}</div>
       <div class="r"><span>Day P&amp;L</span><b class="${d.day_total>=0?'pos':'negc'}">${money(d.day_total,true)}</b></div>
-      ${d.nifty!=null?`<div class="r"><span style="color:var(--nifty)">NIFTY</span><span>${money(d.nifty,true)}</span></div>`:""}
-      ${d.sensex!=null?`<div class="r"><span style="color:var(--sensex)">SENSEX</span><span>${money(d.sensex,true)}</span></div>`:""}`;
+      ${splitRows(d)}`;
     tt.style.display="block";
     const w=tt.offsetWidth,cw=el.clientWidth; let x=p.point.x+16; if(x+w>cw)x=p.point.x-w-16;
     tt.style.left=Math.max(4,x)+"px"; tt.style.top="8px";
@@ -217,9 +243,16 @@ function buildDaily(){
   ro3=new ResizeObserver(()=>dailyChart&&dailyChart.applyOptions({width:el.clientWidth,height:el.clientHeight})); ro3.observe(el);
 }
 
+function dayReset(msg){
+  const el=document.getElementById("day"); el.innerHTML='<div class="loading">'+msg+'</div>';
+  if(dayChart){dayChart.remove();dayChart=null;}
+  document.getElementById("dayinfo").innerHTML=""; document.getElementById("daylegend").innerHTML=""; document.getElementById("dayfoot").textContent="";
+}
+
 async function buildDay(meta){
+  if(!meta){ dayReset("No traded days in this selection."); return; }
+  if(meta.strategy==="dn") return buildDayDN(meta);
   const el=document.getElementById("day");
-  if(!meta){ el.innerHTML='<div class="loading">No traded days in this selection.</div>'; if(dayChart){dayChart.remove();dayChart=null;} document.getElementById("dayinfo").innerHTML=""; document.getElementById("dayfoot").textContent=""; return; }
   el.innerHTML='<div class="loading">Loading '+meta.date+' '+meta.index+'…</div>';
   let j; try{ j=await (await fetch(`/api/strangle/chart?date=${meta.date}&index=${meta.index}&version=V2`)).json(); }
   catch(e){ el.innerHTML='<div class="loading">Could not load day: '+e+'</div>'; return; }
@@ -239,11 +272,50 @@ async function buildDay(meta){
   dayChart.timeScale().fitContent();
   const pnl=(j.pnl||{}).realized_pnl||0, sel=j.selection||{};
   document.getElementById("dayinfo").innerHTML=
-    `<span><b>${j.date}</b></span><span class="tag">${j.index}</span><span class="tag">${sel.dte}-DTE</span>
+    `<span><b>${j.date}</b></span><span class="tag">${j.index}</span><span class="tag">${sel.dte}-DTE</span><span class="tag">Strangle</span>
      <span>CE <b>${j.ce_symbol||"—"}</b></span><span>PE <b>${j.pe_symbol||"—"}</b></span>
      <span>Day P&amp;L <b class="${pnl>=0?'pos':'negc'}">${money(pnl,true)}</b> <span class="sub">(1 lot)</span></span>`;
+  document.getElementById("daylegend").innerHTML=
+    `<span><i class="swatch" style="background:var(--up)"></i>up candle</span>
+     <span><i class="swatch" style="background:var(--down)"></i>down candle</span>
+     <span><i class="swatch" style="background:var(--vwap)"></i>VWAP</span>
+     <span><i class="swatch" style="background:var(--accent)"></i>▲ entry (sell)</span>
+     <span><i class="swatch" style="background:var(--neg)"></i>▼ exit (cover)</span>`;
   const nE=(j.events||[]).filter(e=>e.type==="entry").length, nX=(j.events||[]).filter(e=>e.type==="exit").length;
   document.getElementById("dayfoot").textContent=`${j.candles.length} five-minute bars · ${nE} entr${nE===1?"y":"ies"}, ${nX} exit${nX===1?"":"s"}`;
+  if(ro2) ro2.disconnect();
+  ro2=new ResizeObserver(()=>dayChart&&dayChart.applyOptions({width:el.clientWidth,height:el.clientHeight})); ro2.observe(el);
+}
+
+async function buildDayDN(meta){
+  const el=document.getElementById("day");
+  el.innerHTML='<div class="loading">Loading '+meta.date+' '+meta.index+' (DN paper)…</div>';
+  let j; try{ j=await (await fetch(`/api/dn/pnl_day?date=${meta.date}&index=${meta.index}`)).json(); }
+  catch(e){ el.innerHTML='<div class="loading">Could not load day: '+e+'</div>'; return; }
+  if(!j || j.error || !(j.series||[]).length){ dayReset("No intraday paper P&L for this day."); return; }
+  // dedupe to strictly-ascending unique minute timestamps (last value wins)
+  const seen=new Map();
+  for(const p of j.series){ if(!p.t) continue; seen.set(intradayTs(j.date,p.t.slice(0,5)),p.rupees); }
+  const data=[...seen.entries()].sort((a,b)=>a[0]-b[0]).map(([time,value])=>({time,value}));
+  if(!data.length){ dayReset("No intraday paper P&L for this day."); return; }
+  el.innerHTML="";
+  if(dayChart){ dayChart.remove(); dayChart=null; }
+  const th=chartTheme();
+  dayChart=LWC.createChart(el,{width:el.clientWidth,height:el.clientHeight,...th,timeScale:{...th.timeScale,timeVisible:true,secondsVisible:false},localization:{priceFormatter:v=>(v<0?"−₹":"₹")+INR0.format(Math.abs(v))}});
+  const line=dayChart.addAreaSeries({lineColor:cssv("--dn"),topColor:cssv("--dn")+"33",bottomColor:cssv("--dn")+"05",lineWidth:2,priceLineVisible:false});
+  line.setData(data);
+  const zero=dayChart.addLineSeries({color:cssv("--border"),lineWidth:1,priceLineVisible:false,lastValueVisible:false,crosshairMarkerVisible:false});
+  zero.setData([{time:data[0].time,value:0},{time:data[data.length-1].time,value:0}]);
+  dayChart.timeScale().fitContent();
+  const pnl=j.realized_1lot||0;
+  document.getElementById("dayinfo").innerHTML=
+    `<span><b>${j.date}</b></span><span class="tag">${j.index}</span><span class="tag">${j.dte}-DTE</span><span class="tag">Delta Neutral · paper</span>
+     <span>Day P&amp;L <b class="${pnl>=0?'pos':'negc'}">${money(pnl,true)}</b> <span class="sub">(1 lot)</span></span>`;
+  document.getElementById("daylegend").innerHTML=
+    `<span><i class="swatch" style="background:var(--dn)"></i>intraday paper MTM (1 lot)</span>`;
+  const legs=(j.history||[]).map(l=>`${l.strike}${l.opt_type} ${money(l.pnl,true)}`).join(" · ");
+  document.getElementById("dayfoot").textContent=
+    `${(j.history||[]).length} closed legs${legs?" · "+legs:""}`;
   if(ro2) ro2.disconnect();
   ro2=new ResizeObserver(()=>dayChart&&dayChart.applyOptions({width:el.clientWidth,height:el.clientHeight})); ro2.observe(el);
 }
@@ -256,13 +328,14 @@ function renderStats(){
   document.getElementById("tiles").innerHTML=T.map(([k,v,cls])=>`<div class="tile"><div class="k">${k}</div><div class="v ${cls}">${v}</div></div>`).join("");
   document.getElementById("range").textContent = s.start?`${s.start} → ${s.end} · ${s.days} days`:"no data";
   document.getElementById("curvecap").textContent=`1-lot realised P&L for the current selection. Final ${money(s.final,true)}, peak ${money(s.peak,true)} (max drawdown ${money(s.mdd,true)}).`;
+  const st=[...selStrat].map(k=>STRAT_LABEL[k]).join(" + ")||"none";
   const ix=[...selIdx].join(" + ")||"none", dt=[...selDte].sort().map(d=>d+"-DTE").join(" + ")||"none";
-  document.getElementById("fsel").innerHTML=`Showing <b>${ix}</b> · <b>${dt}</b>`;
+  document.getElementById("fsel").innerHTML=`Showing <b>${st}</b> · <b>${ix}</b> · <b>${dt}</b>`;
 }
 
 function initDays(){
   const sel=document.getElementById("daypick");
-  sel.innerHTML=VIEW.days.map((d,i)=>`<option value="${i}">${d.date} · ${d.index} · ${d.dte}-DTE · ${money(d.pnl,true)}</option>`).join("");
+  sel.innerHTML=VIEW.days.map((d,i)=>`<option value="${i}">${d.date} · ${d.index} · ${d.dte}-DTE · ${STRAT_LABEL[d.strategy]} · ${money(d.pnl,true)}</option>`).join("");
   sel.onchange=()=>buildDay(VIEW.days[+sel.value]);
   buildDay(VIEW.days[0]||null);
 }
@@ -272,20 +345,26 @@ function rebuild(){ if(!DATA) return; VIEW=derive(); renderStats(); buildCurve()
 function toggleChip(seg, set, cast){
   seg.addEventListener("click",e=>{
     const b=e.target.closest("button"); if(!b) return;
-    const val=cast(b.dataset.idx??b.dataset.dte);
+    const val=cast(b.dataset.strat??b.dataset.idx??b.dataset.dte);
     if(set.has(val)){ if(set.size===1) return; set.delete(val); b.setAttribute("aria-pressed","false"); }
     else { set.add(val); b.setAttribute("aria-pressed","true"); }
     rebuild();
   });
 }
+toggleChip(document.getElementById("stratseg"), selStrat, v=>v);
 toggleChip(document.getElementById("idxseg"), selIdx, v=>v);
 toggleChip(document.getElementById("dteseg"), selDte, v=>+v);
 document.getElementById("curveseg").addEventListener("click",e=>{ const b=e.target.closest("button"); if(!b) return; curveMode=b.dataset.k; [...e.currentTarget.children].forEach(x=>x.setAttribute("aria-pressed",x===b)); buildCurve(); });
 window.addEventListener("resize",()=>{ ["curve","dailybars","day"].forEach((id,i)=>{ const c=[curveChart,dailyChart,dayChart][i]; if(c){const e=document.getElementById(id);c.applyOptions({width:e.clientWidth,height:e.clientHeight});} }); });
 
-fetch("/api/strangle/pnl_history").then(r=>r.json()).then(j=>{
-  DATA={records:(j.records||[]).filter(r=>r.dte===0||r.dte===1)};
-  if(!DATA.records.length){ document.getElementById("curve").innerHTML='<div class="loading">No V2 history found yet.</div>'; return; }
+Promise.all([
+  fetch("/api/strangle/pnl_history").then(r=>r.json()).catch(()=>({records:[]})),
+  fetch("/api/dn/pnl_history").then(r=>r.json()).catch(()=>({records:[]})),
+]).then(([a,b])=>{
+  const recs=[...(a.records||[]),...(b.records||[])].filter(r=>r.dte===0||r.dte===1);
+  recs.forEach(r=>{ if(!r.strategy) r.strategy="strangle"; });
+  DATA={records:recs};
+  if(!DATA.records.length){ document.getElementById("curve").innerHTML='<div class="loading">No history found yet.</div>'; return; }
   rebuild();
 }).catch(e=>{ document.getElementById("curve").innerHTML='<div class="loading">Could not load: '+e+'</div>'; });
 </script>

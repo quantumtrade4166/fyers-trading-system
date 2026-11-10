@@ -174,7 +174,12 @@ class DayMachine:
             "exit_signal_ts": None, "exit_ts": None, "exit_price": None,
             "exit_reason": None, "exit_close": None, "exit_st": None,
             "anomalies": "", "contract": s.contract, "be_armed_ts": None,
+            "trigger_high": None,
         }
+        if getattr(self.cfg, "trigger_high_sl", None) and s.signal_candle_ts is not None:
+            tc = self.option_candle(s.contract, s.signal_candle_ts)
+            if tc is not None and "high" in tc:
+                tr["trigger_high"] = float(tc["high"])
         s.status = "executed"
         self.trades.append(tr)
         self.log(fill_ts, "entry_fill", s, tr, price=price, signal_ts=s.signal_ts.time())
@@ -187,33 +192,40 @@ class DayMachine:
             tr["anomalies"] = (tr["anomalies"] + "; " + note).strip("; ")
         self.log(fill_ts, "exit_fill", None, tr, price=price, reason=reason)
 
-    # ---------- optional breakeven stop ----------
+    # ---------- optional stops (1-minute bars) ----------
     def breakeven_check(self, t, T):
-        """Walk the open position's 1-minute bars inside candle t (minutes t..T)."""
-        pos, x = self.position, getattr(self.cfg, "breakeven_after_points", None)
-        if pos is None or not x:
+        """Walk the open position's 1-minute bars inside candle t (minutes t..T).
+        Stop-to-cost (optional) and the trigger-candle-high stop (optional test) are
+        handled minute by minute; once stop-to-cost is armed it replaces the
+        trigger-high stop (it is lower)."""
+        pos = self.position
+        x = getattr(self.cfg, "breakeven_after_points", None)
+        th = getattr(self.cfg, "trigger_high_sl", None)
+        if pos is None or (not x and not th):
             return
         bars = self.provider.minute_bars(self.day, pos["contract"], t, T)
         if bars is None or bars.empty:
             return
         entry = float(pos["entry_price"])
+        trig = pos.get("trigger_high") if th else None
         for r in bars.itertuples():
             m = pd.Timestamp(r.datetime)
             if m < pd.Timestamp(pos["entry_ts"]).floor("min"):
                 continue
-            if pos.get("be_armed_ts") is not None:
-                if float(r.high) >= entry:
-                    px = max(entry, float(r.open))          # gapped past the stop
-                    self.log(m, "breakeven_stop", None, pos, minute=m.time(), stop=entry,
-                             fill=px, armed=pos["be_armed_ts"].time())
-                    self.close_trade(pos, m, px, "breakeven_stop", m)
-                    self.last_closed = m
-                    self.position = None
-                    return
-            elif float(r.low) <= entry - x:
+            armed = pos.get("be_armed_ts") is not None
+            stop, why = (entry, "breakeven_stop") if armed else (trig, "trigger_high_stop")
+            if stop is not None and float(r.high) >= stop:
+                px = max(stop, float(r.open))          # gapped past the stop
+                self.log(m, why, None, pos, minute=m.time(), stop=stop, fill=px)
+                self.close_trade(pos, m, px, why, m)
+                self.last_closed = m
+                self.position = None
+                return
+            if x and not armed and float(r.low) <= entry - x:
                 pos["be_armed_ts"] = m                       # active from the NEXT minute
                 self.log(m, "breakeven_armed", None, pos, minute=m.time(),
                          low=float(r.low), trigger=round(entry - x, 2))
+
 
     # ---------- the clock ----------
     def on_close(self, t) -> bool:
@@ -261,7 +273,7 @@ class DayMachine:
         position = self.position
         # 1. exit check on the position's own option candle t
         exit_sig = None
-        if position is not None:
+        if position is not None and getattr(self.cfg, "trigger_high_sl", None) != "replace":
             c = self.option_candle(position["contract"], t)
             if c is None:
                 position["anomalies"] += f"; exit-check candle {t.time()} missing"
@@ -306,6 +318,11 @@ class DayMachine:
 
         # 5. entry
         s = self.setup
+        cut = getattr(self.cfg, "last_entry_time", None)
+        if (cut and s is not None and s.status == "signalled" and self.position is None
+                and T.strftime("%H:%M") > cut):
+            s.status = "expired_cutoff"                # OPTIONAL test: no entries after cut
+            self.log(T, "signal_after_cutoff", s, cutoff=cut)
         if s is not None and s.status == "signalled":
             if self.position is None:
                 f = prov.fill(self.day, s.contract, T)

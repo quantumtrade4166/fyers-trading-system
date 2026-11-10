@@ -15,6 +15,7 @@ data/books/{date}/{name}_trades.jsonl. A restart on the same day reloads the boo
 """
 import datetime as dt
 import json
+import logging
 import os
 import threading
 import time
@@ -27,6 +28,33 @@ IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
 def today() -> str:
     return dt.datetime.now(IST).date().isoformat()
+
+
+log = logging.getLogger("cepe.book")
+
+
+def _retry(fn, what: str, tries: int = 20, wait: float = 0.05) -> bool:
+    """Run a file write; Windows refuses (WinError 5/32) while another program (backup copy, virus
+    scan) has the file open. 3/6/10-Nov: that crashed a move half-way. Retry ~1 s, then give up quietly."""
+    for i in range(tries):
+        try:
+            fn()
+            return True
+        except PermissionError as e:
+            if i == tries - 1:
+                log.warning("could not %s after %d tries: %s", what, tries, e)
+                return False
+            time.sleep(wait)
+    return False
+
+
+def atomic_write(path, text: str) -> bool:
+    """Write `text` to `path` via a temp file + replace, retrying while the target is locked.
+    Never raises on a lock: the in-memory state is the truth and the next save rewrites the file."""
+    tmp = path.with_suffix(".tmp")
+    if not _retry(lambda: tmp.write_text(text, encoding="utf-8"), f"write {tmp.name}"):
+        return False
+    return _retry(lambda: os.replace(tmp, path), f"replace {path.name}")
 
 
 @dataclass
@@ -77,15 +105,14 @@ class PaperBook:
         if not self.persist:
             return
         d = self._dir()
-        p = d / f"{self.name}.json"
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"name": self.name, "date": self.date, "saved_at": time.time(),
-                                   "positions": {k: asdict(v) for k, v in self.positions.items()}}, indent=1),
-                       encoding="utf-8")
-        os.replace(tmp, p)
-        if trade:
-            with open(d / f"{self.name}_trades.jsonl", "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(trade) + "\n")
+        if trade:                                             # the fill record first: it can't be rebuilt later
+            def append():
+                with open(d / f"{self.name}_trades.jsonl", "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(trade) + "\n")
+            _retry(append, f"append {self.name}_trades.jsonl")
+        atomic_write(d / f"{self.name}.json",
+                     json.dumps({"name": self.name, "date": self.date, "saved_at": time.time(),
+                                 "positions": {k: asdict(v) for k, v in self.positions.items()}}, indent=1))
 
     # ── orders ──────────────────────────────────────────────────────────────
     def fill_price(self, key: str, side: str) -> float | None:

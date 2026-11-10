@@ -33,7 +33,7 @@ INDEX_PATH = DATA_DIR / "NIFTY" / "index_1min.parquet"
 # Exchange holidays AFTER the last index bar on disk. Needed only to count
 # sessions to an expiry that lies beyond the data. 2026-10-20 is confirmed by the
 # 19-Oct (Monday) expiry Breeze returns for that week.
-FUTURE_HOLIDAYS = {"2026-10-20"}
+FUTURE_HOLIDAYS = {"2026-10-20", "2026-11-10", "2026-11-24", "2026-12-25"}
 
 
 class BreezeProvider:

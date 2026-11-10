@@ -17,7 +17,7 @@ import time
 
 from live_trading_options.cepe_imbalance import config as C
 from live_trading_options.cepe_imbalance import strategy as S
-from live_trading_options.cepe_imbalance.book import IST, PaperBook, today
+from live_trading_options.cepe_imbalance.book import IST, PaperBook, atomic_write, today
 
 log = logging.getLogger("cepe.engine")
 
@@ -46,9 +46,7 @@ def save_settings(name, **fields):
         doc.setdefault(name, {}).update(fields)
         p = settings_path()
         p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps(doc, indent=1), encoding="utf-8")
-        tmp.replace(p)
+        atomic_write(p, json.dumps(doc, indent=1))
 
 
 def default_auto(name) -> dict:
@@ -179,12 +177,9 @@ class Runner:
         if not self.persist:
             return
         p = self._state_path()
-        tmp = p.with_suffix(".tmp")
-        tmp.write_text(json.dumps({"running": self.running, "square_off_done": self.square_off_done,
-                                   "strategy": self.strategy_name, "params": self.params,
-                                   "expiry_n": self.expiry_n, "state": self.state}, indent=1, default=str),
-                       encoding="utf-8")
-        tmp.replace(p)
+        atomic_write(p, json.dumps({"running": self.running, "square_off_done": self.square_off_done,
+                                    "strategy": self.strategy_name, "params": self.params,
+                                    "expiry_n": self.expiry_n, "state": self.state}, indent=1, default=str))
 
     def event(self, event, **fields):
         e = {"ts": time.time(), "time": dt.datetime.now(IST).strftime("%H:%M:%S"), "event": event, **fields}
