@@ -29,6 +29,7 @@ Standalone check (safe — logs in, prints, places nothing):
 """
 
 import os
+import time as _time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -119,9 +120,24 @@ def login(verbose: bool = True):
     if not _ok(resp):
         raise RuntimeError(f"totp_validate failed: {resp}")
 
+    # The market-data websocket needs `sid` and `feedUrl`, and they are ONLY in
+    # this validate response — there is no endpoint to fetch them later. Stashing
+    # them on the client means the tick feed reuses THIS session instead of
+    # opening a second Rohit login, which matters because Kotak allows one
+    # session per account and a second login would invalidate the first.
+    d = resp.get("data") or {}
+    feed = str(d.get("feedUrl") or "")
+    client.dm_feed = {
+        "sid": d.get("sid"),
+        "feed_url": ("wss://" + feed.split("://", 1)[1]) if "://" in feed else feed,
+        "ucc": _env("UCC"),
+        "at": _time.time(),
+    }
+
     if verbose:
         print(f"  [dualmom] Kotak login OK (UCC {_env('UCC')[:4]}***, "
-              f"dedicated DualMom account, source IP {pinned})")
+              f"dedicated DualMom account, source IP {pinned}"
+              f"{', feed ready' if client.dm_feed['sid'] else ', NO FEED CREDS'})")
     return client
 
 

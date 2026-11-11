@@ -135,33 +135,56 @@ def session_state() -> dict:
     return dict(_session)
 
 
+_ptf = {"w": None}
+
+
 def _job_profit_target():
-    """Every 2 min in market hours - flatten Kotak Rohit at the P&L target.
+    """Every 1 min - SUPERVISOR for the tick-driven profit target.
 
-    Independent of the monthly gate and of the -35% stop: this is a profit
-    target, armed only by the owner via dualmom_live_state/profit_target.json.
-    Disarmed it is a cheap no-op, so it is safe to leave scheduled.
+    It does not evaluate anything itself. profit_target_feed watches Kotak's own
+    market-data websocket and fires on a tick (measured ~39 ticks/sec over 40
+    names), because a timer cannot see a threshold crossed and gone between
+    looks. This job only starts, stops and babysits that watcher.
 
-    Logged only when something happens. A 'hold' tick every 2 minutes for six
-    hours would bury every real line in the log; the owner reads the P&L on the
-    dashboard, not here.
+    Disarmed it makes no broker call and opens no socket, so it is safe to leave
+    scheduled permanently.
     """
     try:
         from deployment.dualmom_live import profit_target as PT
+        from deployment.dualmom_live import profit_target_feed as PTF
         ctl = PT.control()
-        if not ctl["armed"] or ctl.get("fired"):
-            return                      # no broker call at all while disarmed
-        res = PT.check(_client())
-        if res["action"] == "flatten":
-            _log(f"PROFIT TARGET FIRED: {res['why']} -> {res['filled']}/{res['orders']} "
-                 f"filled, complete={res['complete']}"
-                 + (f", HALTED: {res['halted']}" if res.get("halted") else ""))
-            for line in res.get("log", []):
-                _log(f"  {line}")
-        elif res["action"] == "skip" and res.get("missing"):
-            _log(f"profit target SKIPPED: {res['why']}")
+        want = ctl["armed"] and not ctl.get("fired")
+        w = _ptf["w"]
+
+        if not want:
+            if w:
+                w.stop()
+                _ptf["w"] = None
+                _log("profit target: watcher stopped (disarmed or fired)")
+            return
+
+        if w is None:
+            w = PTF.ProfitTargetFeed(_client(), on_log=_log)
+            if not w.start():
+                return
+            _ptf["w"] = w
+            return
+
+        st = w.status()
+        age = st.get("last_tick_age")
+        # A frozen feed is the dangerous failure: the watcher refuses to fire on
+        # a stale price (correct), which means a silent stall = no protection.
+        # Restart it loudly rather than letting it sit there looking healthy.
+        if age is not None and age > 60 and _market_open_now():
+            _log(f"profit target: feed stale {age:.0f}s - restarting watcher")
+            w.stop()
+            _ptf["w"] = None
+            return
+        if st["priced"] < st["positions"] and _market_open_now():
+            _log(f"profit target: only {st['priced']}/{st['positions']} priced - "
+                 f"cannot fire until every position has a tick")
     except Exception as e:
-        _log(f"profit target FAILED: {_etext(e)}")
+        _log(f"profit target supervisor FAILED: {_etext(e)}")
 
 
 def _job_data_refresh():
@@ -579,8 +602,8 @@ def _build_scheduler() -> BackgroundScheduler:
         max_instances=1)
     # 15:25 - the -35% stop, before the close so orders can still fill.
     s.add_job(_job_profit_target, CronTrigger(
-        day_of_week="mon-fri", hour="9-15", minute="*/2", timezone=IST),
-        id="dm_profit_target", misfire_grace_time=60, coalesce=True,
+        day_of_week="mon-fri", hour="9-15", minute="*", timezone=IST),
+        id="dm_profit_target", misfire_grace_time=30, coalesce=True,
         max_instances=1, replace_existing=True)
     s.add_job(_job_stop_check, CronTrigger(
         day_of_week="mon-fri", hour=15, minute=25, timezone=IST),
