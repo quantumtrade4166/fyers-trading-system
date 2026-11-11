@@ -65,34 +65,65 @@ POSITION_REFRESH = 300.0     # re-read qty/avg from REST this often
 
 
 class _Holder:
-    """kotak_session.SessionHolder shape, backed by an existing DualMom client."""
+    """kotak_session.SessionHolder shape over a DualMom client FACTORY.
+
+    A factory, not a client, and this is the difference between working tomorrow
+    and silently stopping after today.
+
+    Kotak sessions are daily. feed.py handles that correctly: on an auth failure
+    it sets _force_login and calls sessions.get(force=True) expecting a NEW
+    session. An earlier version of this class snapshotted sid/feedUrl at
+    construction and returned them forever, so the feed would have retried
+    against a dead session every morning and only recovered when the supervisor
+    noticed a stale feed 60s later - a daily outage, and exactly the sort of
+    quiet failure the rest of this module is written to avoid.
+
+    So every get() reads the CURRENT client's dm_feed, and force=True asks the
+    shared session for a real reconnect.
+    """
 
     class _S:
         pass
 
-    def __init__(self, client):
+    def __init__(self, get_client):
+        self._get_client = get_client
+        self._check(get_client(False))
+
+    @staticmethod
+    def _check(client):
         f = getattr(client, "dm_feed", None) or {}
         if not f.get("sid") or not f.get("feed_url"):
             raise RuntimeError(
                 "this Kotak client carries no feed credentials - log in through "
                 "kotak_auth_dm.login() (it stashes sid/feedUrl as client.dm_feed)")
+        return f
+
+    def get(self, force: bool = False):
+        client = self._get_client(bool(force))
+        f = self._check(client)
         s = _Holder._S()
         s.client = client
         s.sid = f["sid"]
         s.feed_url = f["feed_url"]
         s.ucc = f.get("ucc")
         s.at = f.get("at") or time.time()
-        self._s = s
-
-    def get(self, force: bool = False):
-        return self._s
+        return s
 
 
 class ProfitTargetFeed:
     """Streams the book and flattens it when combined MTM reaches the target."""
 
     def __init__(self, client, on_log=None, confirm_seconds=CONFIRM_SECONDS):
-        self.client = client
+        """`client` may be a Kotak client OR a factory f(reconnect: bool) -> client.
+
+        Pass the factory in long-running use: REST calls and the feed then both
+        follow the shared session across its daily re-login, instead of pinning
+        a client that stops working overnight.
+        """
+        if callable(client):
+            self._client_factory = client
+        else:
+            self._client_factory = lambda reconnect=False, _c=client: _c
         self.log = on_log or (lambda m: None)
         self.confirm_seconds = float(confirm_seconds)
         self.pos = {}            # symbol -> {qty, avg_price}
@@ -110,6 +141,12 @@ class ProfitTargetFeed:
         self._pos_at = 0.0
 
     # -- setup ---------------------------------------------------------------
+    @property
+    def client(self):
+        """The CURRENT shared Kotak session (re-logged-in daily by _get_client)."""
+        return self._client_factory(False)
+
+
 
     def load_positions(self):
         """qty/avg from broker_positions (nets today's trades), plus pre-resolve."""
@@ -227,7 +264,7 @@ class ProfitTargetFeed:
         if not pos:
             self.log("profit target: nothing held, not starting the feed")
             return False
-        self.feed = F.KotakFeed(_Holder(self.client), self._on_ticks,
+        self.feed = F.KotakFeed(_Holder(self._client_factory), self._on_ticks,
                                 on_status=lambda s: None,
                                 seg_of=lambda t: "nse_cm")
         self.feed.start()

@@ -91,6 +91,16 @@ def _client():
     return _get_client(validate=True)
 
 
+def _client_factory(reconnect: bool = False):
+    """Current shared session; reconnect=True forces a real re-login.
+
+    Handed to long-lived consumers (the profit-target feed) so they follow the
+    session across its daily expiry instead of holding one that dies overnight.
+    """
+    from deployment.dualmom_live_api import _get_client
+    return _get_client(reconnect=reconnect, validate=not reconnect)
+
+
 _session = {"ok": None, "since": None, "error": None, "source_ip": None}
 
 
@@ -164,7 +174,7 @@ def _job_profit_target():
             return
 
         if w is None:
-            w = PTF.ProfitTargetFeed(_client(), on_log=_log)
+            w = PTF.ProfitTargetFeed(_client_factory, on_log=_log)
             if not w.start():
                 return
             _ptf["w"] = w
