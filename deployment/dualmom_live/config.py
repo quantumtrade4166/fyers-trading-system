@@ -17,6 +17,25 @@ Realistic expectation after survivorship (-2.95 pts) and costs: ~29% CAGR.
 ENABLED = True           # nothing places an order while this is False
 DRY_RUN = False          # True = build the order list and log it, never send
 
+# ── STRATEGY OFF, EXIT ONLY (owner's decision 2026-11-11) ───────────────────
+#
+# False = the MONTHLY REBALANCE does not run on this account. The signal is not
+# acted on: no rotation, no re-entry, no exit-to-cash from an OUT month.
+#
+# The profit-target flatten (profit_target_feed) is NOT gated by this and still
+# works. That is the whole point: the owner wants out of the September book at
+# around breakeven and does not want the strategy taking new positions in the
+# meantime.
+#
+# It is a SEPARATE flag from ENABLED on purpose. ENABLED=False would also block
+# the profit target, because its sells go through the same runner.execute().
+#
+# Flip back to True only together with a deliberate decision to resume the
+# strategy, and only once the price data is current (it stopped at 2026-09-01
+# after the VPS rebuild) - a rebalance off ten-week-old prices would buy the
+# wrong basket.
+STRATEGY_ENABLED = False
+
 # ── strategy (FINAL — do not change without re-running dualmom_final.py) ─────
 TOP_N            = 40
 LOOKBACK_DAYS    = 252

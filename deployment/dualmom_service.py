@@ -220,6 +220,15 @@ def _job_monthly_rebalance():
         from deployment.dualmom_live import runner as RUN
         from deployment.dualmom_live import signal_engine as S
 
+        from deployment.dualmom_live import config as C
+        if not getattr(C, "STRATEGY_ENABLED", True):
+            # Exit-only mode. The owner wants out of the existing book via the
+            # profit target and does NOT want the strategy opening or rotating
+            # positions. Logged once a day, at the time it would have traded, so
+            # "why did nothing happen on the 1st?" has an answer in the log.
+            _log("monthly rebalance SKIPPED: STRATEGY_ENABLED is False "
+                 "(exit-only mode - the profit target is unaffected)")
+            return
         today = datetime.now(IST).date()
         state = G.load_state()
         if state.get("last_done_month") == G.month_key(today):
