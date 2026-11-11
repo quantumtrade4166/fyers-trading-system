@@ -255,6 +255,23 @@ def test_lots_param(universe):
     invariants(g)
 
 
+def test_lots_change_mid_day_keeps_book_size(universe):
+    """11-Nov SENSEX: lots 1 -> 10 with a 1-lot book open. Adjustments must stay 1 lot (never buy 10 of a
+    1-lot short); the new size only applies to the next fresh entry."""
+    g = Rig(universe, 9400)
+    g.eng.start(N)
+    g.eng.set_params(N, {"lots": 10})
+    for f in list(range(9400, 10001, 25)) + list(range(10000, 8999, -25)):
+        g.move(f)
+        invariants(g)
+        lg = g.legs()
+        assert sum(lg["CE"].values()) == sum(lg["PE"].values()) == 3, lg        # still the 1-lot book
+        assert all(p.lots <= 0 for p in g.r.book.positions.values())         # never net long
+    g.eng.stop(N, exit_positions=True)
+    g.eng.start(N)
+    assert g.legs()["CE"] == {g.r.state["atm"] + i * 200: 10 for i in range(3)}
+
+
 def test_session_end_exits(universe):
     import datetime as dt
     from live_trading_options.cepe_imbalance.book import IST

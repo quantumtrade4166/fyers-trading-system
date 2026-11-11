@@ -104,9 +104,17 @@ class CePeImbalance(Strategy):
     def step(ctx) -> float:
         return float(ctx.params.get("step") or C.STRIKE_STEP[ctx.name])
 
-    @staticmethod
-    def unit(ctx) -> int:
-        return max(1, int(ctx.params.get("lots") or 1))
+    @classmethod
+    def unit(cls, ctx) -> int:
+        """Lots per strike. An open book keeps the size it was entered with: 11-Nov SENSEX was changed
+        1 -> 10 lots mid-day and the next A would have bought 10 of a 1-lot short (net long 9).
+        The `lots` setting applies to the next fresh entry."""
+        want = max(1, int(ctx.params.get("lots") or 1))
+        legs = cls.legs(ctx)
+        ce, pe = sum(legs["CE"].values()), sum(legs["PE"].values())
+        if ce and ce == pe and ce % 3 == 0:
+            return ce // 3
+        return want
 
     def current_atm(self, ctx):
         """Grid ATM with hysteresis. Stored in ctx.state['atm']."""
