@@ -85,6 +85,34 @@ def _extract_oid(resp):
     return _dig(resp, "nOrdNo", "orderId", "order_id", "ordNo", "nordno", "Ordno")
 
 
+def _etxt(e) -> str:
+    """Describe an exception without trusting its own __str__.
+
+    neo_api_client's ApiException formats its dict body with %s against a
+    non-string and raises TypeError from inside str(). So `f"{e}"` in an except
+    block can blow up and REPLACE the real error with a TypeError - which is
+    exactly what happened on 2026-11-11: a ReadTimeout while resolving HONASA
+    surfaced as "HONASA (TypeError)", and in runner.execute() an unresolvable
+    SELL halts the entire exit. A transient timeout on one name must not be able
+    to cancel a 40-position flatten, and must never be mislabelled.
+    """
+    try:
+        return str(e)
+    except Exception:
+        pass
+    for attr in ("reason", "body", "status", "message"):
+        try:
+            v = getattr(e, attr, None)
+            if v:
+                return f"{type(e).__name__}({attr}={v!r})"
+        except Exception:
+            continue
+    try:
+        return repr(e)
+    except Exception:
+        return f"<unprintable {type(e).__name__}>"
+
+
 def _err(resp):
     """Kotak returns error DICTS instead of raising. Returns a message or None."""
     if not isinstance(resp, dict):
@@ -189,12 +217,12 @@ def _resolve_uncached(client, symbol: str, retries: int = 3) -> dict:
         except Exception as e:                     # transient ConnectionError seen live
             last = e
             if attempt == retries:
-                raise RuntimeError(f"search_scrip {symbol}: {type(e).__name__}: {e}")
+                raise RuntimeError(f"search_scrip {symbol}: {type(e).__name__}: {_etxt(e)}")
             time.sleep(1.5 * attempt)
     if isinstance(rows, dict):
         e = _err(rows)
         if e:
-            raise RuntimeError(f"search_scrip {symbol}: {e}")
+            raise RuntimeError(f"search_scrip {symbol}: {_etxt(e)}")
         rows = rows.get("data") or []
 
     want = symbol.strip().upper()
@@ -315,6 +343,38 @@ def last_price(client, symbol: str) -> float:
     return got[symbol]
 
 
+#: Series suffixes Kotak puts on displaySymbol. Order matters only for the
+#: fallback scan; the row's own `series` field is preferred when present.
+_SERIES_SUFFIXES = ("EQ", "BE", "BZ", "SM", "ST", "IL", "GB")
+
+
+def _strip_series(sym: str, series=None) -> str:
+    """'HFCL-BE' -> 'HFCL'.  'BAJAJ-AUTO-EQ' -> 'BAJAJ-AUTO'.
+
+    Kotak's displaySymbol carries the SERIES suffix, and resolve() expects the
+    BARE name (it matches pSymbolName). The old code did `.replace("-EQ", "")`,
+    which silently left every non-EQ holding mis-keyed.
+
+    That is not cosmetic. On 2026-10-01 HFCL had just moved EQ -> BE, holdings()
+    returned the symbol as 'HFCL-BE', resolve() found no scrip called that, and
+    runner.execute() hit its "cannot resolve a HELD position" brake and refused
+    to place ANY order — so a full exit-to-cash on 40 positions sent nothing at
+    all. The brake was right; the symbol handed to it was wrong.
+
+    Prefers the row's own series field, because that is authoritative for THIS
+    holding. Falls back to a known-suffix scan when the field is absent, and
+    leaves a symbol with no series suffix alone.
+    """
+    sym = (sym or "").strip().upper()
+    s = str(series or "").strip().upper()
+    if s and sym.endswith("-" + s):
+        return sym[: -(len(s) + 1)]
+    for suf in _SERIES_SUFFIXES:
+        if sym.endswith("-" + suf):
+            return sym[: -(len(suf) + 1)]
+    return sym
+
+
 def holdings(client) -> dict:
     """{symbol: {'qty': int, 'avg_price': float}} for the whole demat account.
 
@@ -331,12 +391,12 @@ def holdings(client) -> dict:
     # by definition. Treat every flavour of "nothing there" as an empty book.
     if e and not any(t in e.lower() for t in
                      ("no data", "no holdings", "not found", "no record")):
-        raise RuntimeError(f"holdings: {e}")
+        raise RuntimeError(f"holdings: {_etxt(e)}")
     rows = resp.get("data") if isinstance(resp, dict) else resp
     out = {}
     for r in rows or []:
         sym = str(_dig(r, "displaySymbol", "symbol", "trdSym", "instrumentName") or "").strip().upper()
-        sym = sym.replace("-EQ", "")
+        sym = _strip_series(sym, _dig(r, "series", "pGroup"))
         qty = int(_num(_dig(r, "quantity", "holdingCost", "sellableQuantity", "qty")))
         if not sym or qty <= 0:
             continue
@@ -441,7 +501,7 @@ def place_limit(client, trading_symbol: str, side: str, qty: int, price: float,
             tag=tag,
         )
     except Exception as ex:                       # client-side validation errors
-        return {"status": "REJECTED", "reason": f"{type(ex).__name__}: {ex}",
+        return {"status": "REJECTED", "reason": f"{type(ex).__name__}: {_etxt(ex)}",
                 "order_id": None, "margin": False, "raw": None, "tag": tag}
 
     msg = _err(resp)
@@ -491,7 +551,7 @@ def cancel(client, order_id: str) -> dict:
     try:
         return client.cancel_order(order_id=str(order_id))
     except Exception as ex:
-        return {"error": f"{type(ex).__name__}: {ex}"}
+        return {"error": f"{type(ex).__name__}: {_etxt(ex)}"}
 
 
 def strategy_orders(client, tag: str = "dm") -> list:

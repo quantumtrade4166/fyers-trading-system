@@ -135,6 +135,35 @@ def session_state() -> dict:
     return dict(_session)
 
 
+def _job_profit_target():
+    """Every 2 min in market hours - flatten Kotak Rohit at the P&L target.
+
+    Independent of the monthly gate and of the -35% stop: this is a profit
+    target, armed only by the owner via dualmom_live_state/profit_target.json.
+    Disarmed it is a cheap no-op, so it is safe to leave scheduled.
+
+    Logged only when something happens. A 'hold' tick every 2 minutes for six
+    hours would bury every real line in the log; the owner reads the P&L on the
+    dashboard, not here.
+    """
+    try:
+        from deployment.dualmom_live import profit_target as PT
+        ctl = PT.control()
+        if not ctl["armed"] or ctl.get("fired"):
+            return                      # no broker call at all while disarmed
+        res = PT.check(_client())
+        if res["action"] == "flatten":
+            _log(f"PROFIT TARGET FIRED: {res['why']} -> {res['filled']}/{res['orders']} "
+                 f"filled, complete={res['complete']}"
+                 + (f", HALTED: {res['halted']}" if res.get("halted") else ""))
+            for line in res.get("log", []):
+                _log(f"  {line}")
+        elif res["action"] == "skip" and res.get("missing"):
+            _log(f"profit target SKIPPED: {res['why']}")
+    except Exception as e:
+        _log(f"profit target FAILED: {_etext(e)}")
+
+
 def _job_data_refresh():
     """16:10 daily — bring the Nifty 500 parquets up to today's close.
 
@@ -549,6 +578,10 @@ def _build_scheduler() -> BackgroundScheduler:
         id="dm_monthly_rebalance", misfire_grace_time=7200, coalesce=True,
         max_instances=1)
     # 15:25 - the -35% stop, before the close so orders can still fill.
+    s.add_job(_job_profit_target, CronTrigger(
+        day_of_week="mon-fri", hour="9-15", minute="*/2", timezone=IST),
+        id="dm_profit_target", misfire_grace_time=60, coalesce=True,
+        max_instances=1, replace_existing=True)
     s.add_job(_job_stop_check, CronTrigger(
         day_of_week="mon-fri", hour=15, minute=25, timezone=IST),
         id="dm_stop_check", misfire_grace_time=240, coalesce=True, max_instances=1)
