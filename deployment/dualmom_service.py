@@ -494,6 +494,11 @@ def _job_kite_rebalance():
         from deployment.dualmom_live import data_refresh as D
         from deployment.dualmom_live import month_gate as G
         from deployment.dualmom_live import signal_engine as S
+        from deployment.dualmom_kite import config as KC
+        if not getattr(KC, "STRATEGY_ENABLED", True):
+            _log("KITE monthly rebalance SKIPPED: STRATEGY_ENABLED is False "
+                 "(exit-only mode)")
+            return
         if not _kite_deployed():
             return                          # the first entry is a supervised deploy
         today = datetime.now(IST).date()
@@ -537,6 +542,9 @@ def _job_kite_rebalance():
 def _job_kite_pending_circuit():
     """09:25 - buy names deferred because they were at their upper circuit."""
     try:
+        from deployment.dualmom_kite import config as KC
+        if not getattr(KC, "STRATEGY_ENABLED", True):
+            return                      # exit-only: never BUY on this account
         from deployment.dualmom_kite import engine as KE
         if not KE.load_pending_circuit():
             return

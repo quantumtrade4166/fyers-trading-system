@@ -27,6 +27,21 @@ SESSION
 ENABLED = True           # armed 2026-09-21 for the Rs 6L deployment (user request)
 DRY_RUN = False
 
+# ── STRATEGY OFF, EXIT ONLY (owner's decision 2026-11-11) ───────────────────
+#
+# False = the monthly rebalance and the deferred-circuit buys do not run on this
+# account. The signal is not acted on: no rotation, no re-entry.
+#
+# A manual/profit-target exit still works - it goes through engine.execute(),
+# which checks ENABLED, not this. Separate flags on purpose: ENABLED=False would
+# also block the exit.
+#
+# This account additionally cannot SELL at all until DDPI is active on the
+# Zerodha account (every sell on 2026-10-01 was rejected "shares need to be
+# authorised at CDSL"), so leaving the rebalance armed would have meant 37
+# rejected orders a month for nothing.
+STRATEGY_ENABLED = False
+
 # ── account ──────────────────────────────────────────────────────────────────
 CLIENT_ACCOUNT = "Kite Main"
 BROKER         = "zerodha"
