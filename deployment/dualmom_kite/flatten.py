@@ -86,13 +86,35 @@ broker = {k: v for k, v in KK.broker_equity_qty(kite).items() if v.get("qty", 0)
 hands_off = sorted(set(broker) - set(own))
 ghost = sorted(set(own) - set(broker))
 
+# PLEDGED holdings have quantity=0 and collateral_quantity>0, so the qty>0 filter
+# above drops them entirely. They are still real holdings, so reporting "others
+# in account: 0" would be a lie by omission - on 2026-11-11 this account held 46
+# rows: DualMom's 37 plus 9 pledged (BALKRISIND, DEEPAKNTR, IEX, IONEXCHANG,
+# PIIND, RAINBOW, RHIM, SAREGAMA, VENUSPIPES) backing the strangle's margin.
+# They cannot be sold without unpledging and must never be in an order here.
+pledged = []
+try:
+    for r in kite.holdings() or []:
+        c = int(r.get("collateral_quantity") or 0)
+        if c > 0 and int(r.get("quantity") or 0) + int(r.get("t1_quantity") or 0) == 0:
+            pledged.append((KK.base_symbol(str(r.get("tradingsymbol") or "")), c,
+                            r.get("collateral_type"), r.get("average_price") or 0))
+except Exception as e:
+    print(f"    (could not read pledged holdings: {type(e).__name__})")
+
 print(f"\n=== BOUNDARY ===")
-print(f"    DualMom's own book : {len(own)} positions  <- these and only these")
-print(f"    others in account  : {len(hands_off)}")
+print(f"    DualMom's own book  : {len(own)} positions  <- these and only these")
+print(f"    other sellable      : {len(hands_off)}")
+print(f"    pledged (unsellable): {len(pledged)}")
 if hands_off:
-    print(f"\n    --- HANDS OFF (in the account, NOT DualMom's, never ordered) ---")
+    print(f"\n    --- HANDS OFF (sellable, in the account, NOT DualMom's) ---")
     for s in hands_off:
         print(f"      {s:<14} qty={broker[s]['qty']:>6}  avg={broker[s].get('broker_avg') or 0:>10,.2f}")
+if pledged:
+    print(f"\n    --- PLEDGED, NEVER ORDERED (collateral for margin) ---")
+    for s, c, t, av in sorted(pledged):
+        print(f"      {s:<14} pledged={c:>6}  avg={av:>10,.2f}  type={t}")
+    print(f"      Selling these would remove margin backing another strategy.")
 if ghost:
     print(f"\n    !! ledger says we hold these but the broker does not: {ghost}")
     print(f"       a SELL for them would be rejected; investigate before --yes")
