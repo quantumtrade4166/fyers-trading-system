@@ -664,7 +664,8 @@ async def lifespan(app: FastAPI):
         if _acquire_lock(PORT_DUALMOM):
             _sched = _build_scheduler()
             _sched.start()
-            _log("PRIMARY - scheduler started (09:20 monthly rebalance / 15:25 stop / 16:10 data refresh / 60s heartbeat)")
+            _log("PRIMARY - scheduler started (15:15 monthly rebalance / 15:25 stop / "
+         "16:10 data refresh / profit target 1-min supervisor / 60s heartbeat)")
         else:
             _log("another DualMom service already holds the lock — scheduler DISABLED "
                  "(this instance serves the API only)")
