@@ -1,7 +1,7 @@
 """EXIT DUALMOM'S KITE BOOK - and nothing else in that account.
 
-    python _kite_flatten.py              DRY RUN: boundary + sell list + P&L
-    python _kite_flatten.py --yes        send the sell orders
+    python -m deployment.dualmom_kite.flatten          DRY RUN: boundary + list
+    python -m deployment.dualmom_kite.flatten --yes    send the sell orders
 
 THE ACCOUNT IS SHARED. Positions come from DualMom's OWN LEDGER
 (dualmom_kite/ledger.own_book, built from fills tagged `dmk`), never from the
@@ -26,7 +26,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.stdout.reconfigure(encoding="utf-8")
-ROOT = Path(r"C:\trading\fyers_data_pipeline")
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 for line in (ROOT / "deployment" / ".env").read_text(encoding="utf-8", errors="replace").splitlines():
     s = line.strip()
