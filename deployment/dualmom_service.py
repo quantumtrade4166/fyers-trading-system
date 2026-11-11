@@ -41,6 +41,44 @@ load_dotenv(ROOT / "deployment" / ".env")
 
 import pytz
 import uvicorn
+# ── warm the cycle-prone third-party imports on the MAIN thread ─────────────
+#
+# 2026-11-11: after a restart the scheduler fired several jobs in the same
+# second and two of them imported `requests` for the FIRST time concurrently.
+# requests has internal import cycles (requests -> sessions -> auth ->
+# requests), so the second thread saw a half-built module:
+#
+#   ImportError: cannot import name 'HTTPBasicAuth' from partially initialized
+#   module 'requests.auth' (most likely due to a circular import)
+#
+# and from then on EVERY Kotak call in the process failed with
+#
+#   AttributeError: module 'requests.sessions' has no attribute 'Session'
+#
+# i.e. one unlucky import ordering silently disabled the whole service: no
+# ledger capture, no session, no profit target. Importing these here - before
+# any worker thread exists - makes the race impossible. Keep this above the
+# scheduler import and never move it into a job.
+import requests            # noqa: F401,E402
+import requests.adapters   # noqa: F401,E402
+import requests.auth       # noqa: F401,E402
+import requests.sessions   # noqa: F401,E402
+import urllib3             # noqa: F401,E402
+
+try:
+    import websocket       # noqa: F401,E402  (the Kotak market-data feed)
+except Exception:          # feed is optional; the rest of the service still runs
+    pass
+
+# The broker SDKs sit on top of requests and are imported by several jobs, so
+# warm them here too rather than letting two worker threads race on them.
+for _m in ("neo_api_client", "kiteconnect"):
+    try:
+        __import__(_m)
+    except Exception:
+        pass
+_dualmom_warm_imports = True
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from apscheduler.triggers.interval import IntervalTrigger
