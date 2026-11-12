@@ -511,3 +511,32 @@ def test_rsi_call_needs_rsi_below_50():
     assert not run_day(DAY, f, Config(rsi_filter=True))["trades"]
     f.rsi_default = 41.0
     assert len(run_day(DAY, f, Config(rsi_filter=True))["trades"]) == 1
+
+
+# ---------- CPR: previous-session rules (13-Nov-2026 review) ----------
+
+def _session(day, start="09:15", minutes=375, base=24000.0, hi=24100.0, lo=23900.0, last=None):
+    ts = pd.date_range(f"{day} {start}", periods=minutes, freq="1min")
+    df = pd.DataFrame({"datetime": ts, "open": base, "high": base, "low": base, "close": base})
+    df.loc[10, "high"], df.loc[20, "low"] = hi, lo
+    if last is not None:
+        df.loc[df.index[-1], ["open", "high", "low", "close"]] = last
+    return df
+
+
+def test_cpr_close_is_inside_the_days_range_on_auction_days():
+    from backtesting.options_st_directional.candles import session_hlc
+    # auction day: range to 15:15 tops at 24100, official close prints 24180 at 15:29
+    h, l, c = session_hlc(_session("2026-11-06", last=24180.0))
+    assert c == 24180.0 and h == 24180.0 and l == 23900.0
+    h, l, c = session_hlc(_session("2026-11-06", last=23850.0))
+    assert l == 23850.0 and h == 24100.0
+
+
+def test_cpr_skips_muhurat_and_short_sessions():
+    from backtesting.options_st_directional.candles import is_regular_session
+    assert is_regular_session(_session("2026-11-06"))
+    assert not is_regular_session(_session("2026-11-08", start="18:00", minutes=60))   # Sunday Muhurat
+    assert not is_regular_session(_session("2025-10-21"))                              # listed special day
+    assert not is_regular_session(_session("2026-11-05", start="13:45", minutes=60))   # short session
+    assert not is_regular_session(pd.DataFrame())

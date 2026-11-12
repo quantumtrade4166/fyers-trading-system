@@ -64,10 +64,33 @@ def clean_index_closing_auction(one_min: pd.DataFrame, start: str = CLOSING_AUCT
 
 # ---------- filters shared by the backtest and the live paper engine ----------
 
+# Special sessions (Diwali Muhurat hour etc.) are NOT a "previous session" for the
+# CPR: an hour of trading has no meaningful range. 13-Nov-2026 review: live took the
+# 8-Nov-2026 Muhurat hour as yesterday (width 48 -> traded) while the backtest, which
+# has no data for it, used 6-Nov (width 241 -> skipped). Both now skip such sessions.
+# Add each year's Muhurat date here; the minute-count / weekend tests are the backstop.
+SPECIAL_SESSIONS = {"2024-11-01", "2025-10-21", "2026-11-08"}
+MIN_SESSION_MINUTES = 300          # a regular session has ~375 one-minute bars
+
+
+def is_regular_session(one_min_day: pd.DataFrame) -> bool:
+    """True for a normal 09:15-15:30 weekday session (usable as the CPR's previous day)."""
+    if one_min_day is None or one_min_day.empty:
+        return False
+    ts = pd.to_datetime(one_min_day["datetime"])
+    day = ts.iloc[0]
+    if day.strftime("%Y-%m-%d") in SPECIAL_SESSIONS or day.weekday() >= 5:
+        return False
+    hm = ts.dt.strftime("%H:%M")
+    return int(((hm >= "09:15") & (hm <= "15:29")).sum()) >= MIN_SESSION_MINUTES
+
+
 def session_hlc(one_min_day: pd.DataFrame):
     """(High, Low, Close) of one index session from its 1-minute bars.
-    On closing-auction days (>= CLOSING_AUCTION_FROM) High/Low come from the
-    continuous session (< 15:15); Close is the last bar = the official close."""
+    On closing-auction days (>= CLOSING_AUCTION_FROM) the junk 15:15-15:29 bars are
+    ignored for High/Low; Close is the last bar = the official close. The close is
+    always inside the day's range (as on any daily chart), so High/Low are widened
+    to include it -- the auction can settle beyond the 15:15 range."""
     df = one_min_day.sort_values("datetime")
     if df.empty:
         return None
@@ -76,7 +99,8 @@ def session_hlc(one_min_day: pd.DataFrame):
     sess = df[hm < "15:15"] if day >= CLOSING_AUCTION_FROM else df[hm <= "15:29"]
     if sess.empty:
         return None
-    return float(sess["high"].max()), float(sess["low"].min()), float(df["close"].iloc[-1])
+    c = float(df["close"].iloc[-1])
+    return max(float(sess["high"].max()), c), min(float(sess["low"].min()), c), c
 
 
 def cpr_width(h: float, l: float, c: float) -> float:

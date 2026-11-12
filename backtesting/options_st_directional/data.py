@@ -24,7 +24,8 @@ import numpy as np
 import pandas as pd
 
 from backtesting.options_st_directional.candles import (  # noqa: F401
-    to_5min, supertrend, clean_index_closing_auction, add_rsi, session_hlc, cpr_width)
+    to_5min, supertrend, clean_index_closing_auction, add_rsi, session_hlc, cpr_width,
+    is_regular_session, SPECIAL_SESSIONS)
 from backtesting.options_credit_spread.expiry_calendar import ExpiryCalendar
 from options.breeze.config import DATA_DIR
 
@@ -65,7 +66,9 @@ class BreezeProvider:
 
     # ---------- calendar ----------
     def days_in_range(self, start: str, end: str) -> list:
-        return [d for d in self.trading_days if start <= d <= end and d <= self.last_data_day]
+        # special sessions (Muhurat hour) are not strategy days
+        return [d for d in self.trading_days if start <= d <= end and d <= self.last_data_day
+                and d not in SPECIAL_SESSIONS]
 
     def prev_day(self, day: str, k: int = 1):
         i = self.trading_days.index(day)
@@ -73,12 +76,18 @@ class BreezeProvider:
 
     # ---------- CPR of the previous session ----------
     def prev_cpr_width(self, day: str):
-        prev = self.prev_day(day)
-        if prev is None:
-            return None
-        bars = self.spot1_raw[self.spot1_raw["datetime"].dt.strftime("%Y-%m-%d") == prev]
-        hlc = session_hlc(bars)
-        return cpr_width(*hlc) if hlc else None
+        """CPR width of the last REGULAR session before `day` (Muhurat hours and
+        other short/special sessions are stepped over)."""
+        for k in range(1, 6):
+            prev = self.prev_day(day, k)
+            if prev is None:
+                return None
+            bars = self.spot1_raw[self.spot1_raw["datetime"].dt.strftime("%Y-%m-%d") == prev]
+            if not is_regular_session(bars):
+                continue
+            hlc = session_hlc(bars)
+            return cpr_width(*hlc) if hlc else None
+        return None
 
     # ---------- spot ----------
     def spot_candles(self, day: str) -> pd.DataFrame:

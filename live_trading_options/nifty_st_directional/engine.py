@@ -57,7 +57,8 @@ sys.path.insert(0, str(REPO))
 from backtesting.options_st_directional.engine import DayMachine          # noqa: E402
 from backtesting.options_st_directional.config import Config              # noqa: E402
 from backtesting.options_st_directional.candles import (  # noqa: E402
-    to_5min, supertrend, clean_index_closing_auction, session_hlc, cpr_width)
+    to_5min, supertrend, clean_index_closing_auction, session_hlc, cpr_width,
+    is_regular_session)
 from backtesting.options_pivot_intraday.costs import statutory_costs      # noqa: E402
 
 PARAMS = json.loads((ROOT / "config" / "parameters.json").read_text(encoding="utf-8"))
@@ -290,11 +291,15 @@ class LiveProvider:
         with e.lock:
             hist = dict(e.spot_book.hist)
         days = sorted({m.strftime("%Y-%m-%d") for m in hist if m.strftime("%Y-%m-%d") < day})
-        if not days:
+        prev = df = None
+        for cand in reversed(days):          # last REGULAR session: step over a Muhurat hour
+            rows = [(m, *b) for m, b in hist.items() if m.strftime("%Y-%m-%d") == cand]
+            cdf = pd.DataFrame(rows, columns=["datetime", "open", "high", "low", "close"])
+            if is_regular_session(cdf):
+                prev, df = cand, cdf
+                break
+        if prev is None:
             return None
-        prev = days[-1]
-        rows = [(m, *b) for m, b in hist.items() if m.strftime("%Y-%m-%d") == prev]
-        df = pd.DataFrame(rows, columns=["datetime", "open", "high", "low", "close"])
         hlc = session_hlc(df)
         if not hlc:
             return None
