@@ -223,6 +223,70 @@ def test_restart_rebuilds_open_short_from_own_orders():
     assert ke.orders[-1]["side"] == "BUY" and ke.orders[-1]["qty"] == 130 and live2.pos is None
 
 
+class FakeClient:
+    def __init__(self, shorts=None, fail=False):
+        self.shorts, self.fail = shorts or {}, fail
+
+    def positions(self):
+        if self.fail:
+            raise RuntimeError("positions down")
+        return {"data": [{"trdSym": s, "flSellQty": str(q), "flBuyQty": "0"} for s, q in self.shorts.items()]}
+
+
+def _restart(eng, ke, client):
+    eng2 = FakeEngine(eng.now)
+    eng2.machine = eng.machine
+    live2 = LK.KotakDLive(eng2, ke=ke, login=lambda: client, sleep=lambda s: None)
+    live2.wait_first = live2.wait_retry = live2.confirm_s = 0.05
+    live2.reconcile()
+    return eng2, live2
+
+
+def test_restart_without_tags_keeps_t1_and_open_t2():
+    """13-Nov: Kotak returns no tags. T1 closed, T2 open -> after restart T2 is still
+    ours (and gets bought back when paper exits), T1's loss is still in the book."""
+    eng, ke, live = make()
+    LK.write_control(armed=True, lots=2)
+    open_paper(eng, tid="T1")
+    live.sync()
+    close_paper(eng)
+    live.sync()
+    open_paper(eng, tid="T2", price=150.0)
+    live.sync()
+    t2_sym = live.pos["symbol"]
+    ke.strategy_fills = lambda client, tag_prefix: []         # tags not returned
+    eng2, live2 = _restart(eng, ke, FakeClient({t2_sym: 130}))
+    assert live2.pos["qty"] == 130 and live2.pos["trade_id"] == "T2"
+    assert len(live2.fills) == 3 and live2.halted is None and live2.last_error is None
+    close_paper(eng2)
+    live2.sync()
+    assert ke.orders[-1]["side"] == "BUY" and ke.orders[-1]["qty"] == 130 and live2.pos is None
+
+
+def test_restart_caps_at_broker_short_when_closed_manually():
+    """Owner closed the short in the Kotak app before the restart: never buy back again."""
+    eng, ke, live = make()
+    LK.write_control(armed=True, lots=2)
+    open_paper(eng)
+    live.sync()
+    sym = live.pos["symbol"]
+    n = len(ke.orders)
+    eng2, live2 = _restart(eng, ke, FakeClient({sym: 0}))
+    assert live2.pos is None and live2.halted and "RESTART MISMATCH" in live2.last_error
+    close_paper(eng2)
+    live2.sync()
+    assert len(ke.orders) == n                                 # no order sent
+
+
+def test_restart_positions_unreadable_trusts_own_book():
+    eng, ke, live = make()
+    LK.write_control(armed=True, lots=1)
+    open_paper(eng)
+    live.sync()
+    eng2, live2 = _restart(eng, ke, FakeClient(fail=True))
+    assert live2.pos["qty"] == 65 and live2.halted is None
+
+
 def test_safety_squareoff_after_1516():
     eng, ke, live = make()
     LK.write_control(armed=True, lots=1)

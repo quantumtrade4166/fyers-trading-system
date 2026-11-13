@@ -22,8 +22,10 @@ Never naked / never stuck:
     Kotak confirms it, and the dashboard shows it as an alarm
   * margin rejection on an entry -> no position, entries halted for the day
   * 15:16 safety square-off of anything still open
-  * restart: the open quantity is rebuilt from today's COMPLETE Kotak orders carrying
-    our tag prefix (own book, never positions(), which can include manual trades)
+  * restart: the open quantity is rebuilt from our OWN saved fills (book file), each
+    re-confirmed by order number with Kotak — Kotak's order book does not return tags
+    (13-Nov: the tag-only rebuild lost a live short). positions() only CAPS the result
+    (it can include manual trades); any mismatch halts entries and raises an alarm
 
 Account: Kotak D (env KOTAK_*_D, kotak_auth.login(d=True)) — owner: "call it Kotak D".
 Order tag prefix: "stdk" (distinct from every strangle mirror).
@@ -368,7 +370,18 @@ class KotakDLive:
 
     # ---------- restart recovery ----------
     def reconcile(self):
-        """Rebuild the open quantity from today's COMPLETE orders carrying our tag."""
+        """Rebuild today's own book after a restart.
+
+        13-Nov: Kotak's order book does NOT return order tags, so the old tag-only rebuild
+        found nothing, called Kotak D flat, dropped T1's fills and left T2's short PE
+        unmanaged (no buy-back, no 15:16 square-off). Now:
+          1. our own saved fills (book file) are the source, each order re-confirmed by
+             order number with Kotak (filled qty + avg price);
+          2. tagged orders are still added if Kotak ever returns tags;
+          3. the open short is checked against broker positions: we never hold (and so
+             never buy back) more than the account is really short;
+          4. any mismatch -> ERROR event, last_error, and NO new entries today."""
+        saved_pos, saved_fills = None, []
         try:
             prev = json.loads(self.book_file.read_text(encoding="utf-8"))
             self.mirrored = set(prev.get("mirrored", []))
@@ -377,41 +390,128 @@ class KotakDLive:
             self.halted = prev.get("halted")
             self.unsettled = prev.get("unsettled") or {}
             saved_pos = prev.get("pos")
+            saved_fills = list(prev.get("fills") or [])
         except Exception:
-            saved_pos = None
-        if not (self.ctrl["armed"] or saved_pos or self.mirrored):
+            pass
+        if not (self.ctrl["armed"] or saved_pos or self.mirrored or saved_fills):
             return                                   # never traded today: no login needed
         c = self.ensure_client()
         if c is None:
+            # no session: keep what we saved rather than pretending to be flat
+            self.fills, self.pos = saved_fills, saved_pos
+            self.realized = realized_fifo(self.fills)
+            self.last_error = f"restart: no Kotak D session, using saved book ({self.login_error})"
+            self.event("ERROR", self.last_error)
+            self._persist()
             return
+
+        problems = []
+        # 1. saved fills, re-confirmed by order number
+        fills, seen = [], set()
+        for f in saved_fills:
+            oid = str(f.get("order_id") or "")
+            if oid and oid in seen:
+                fills.append(f)                      # several records of one order: keep as saved
+                continue
+            seen.add(oid)
+            st = None
+            if oid:
+                try:
+                    st = self._timed(CALL_TIMEOUT_S * 2, self.ke.order_status, c, oid)
+                except Exception:
+                    st = None
+            if st and st.get("status") is not None:
+                got = int(st.get("filled_qty") or 0)
+                if got <= 0:
+                    problems.append(f"saved fill {oid} shows no fill at Kotak ({st.get('status')})")
+                    continue
+                avg = st.get("avg_price")
+                f = dict(f, qty=got, price=float(avg) if avg not in (None, "", 0, "0") else f.get("price"))
+            fills.append(f)                          # unreadable -> trust our own record
+        # 2. tagged orders we did not save (only if Kotak ever returns tags)
         try:
-            fills = self.ke.strategy_fills(c, tag_prefix=TAG)
+            for t in self.ke.strategy_fills(c, tag_prefix=TAG) or []:
+                if str(t.get("order_id")) in seen:
+                    continue
+                fills.append({"time": str(t.get("fill_time") or "")[-8:], "side": t.get("side"),
+                              "symbol": t.get("trading_symbol"), "qty": int(t.get("qty") or 0),
+                              "price": t.get("avg_price"), "order_id": t.get("order_id"),
+                              "attempt": "rebuilt"})
         except Exception as ex:
-            self.event("ERROR", f"reconcile: cannot read Kotak order book: {ex}")
-            return
-        net, cost = {}, {}
+            if not saved_fills:
+                self.event("ERROR", f"reconcile: cannot read Kotak order book: {ex}")
+        self.fills = fills
+        self.realized = realized_fifo(fills)
+
+        net, cost, tid_of = {}, {}, {}
         for f in fills:
-            sym, q, px = f["trading_symbol"], int(f["qty"] or 0), float(f["avg_price"] or 0)
-            side = str(f["side"]).upper()[:1]
-            sgn = -1 if side == "S" else 1
-            net[sym] = net.get(sym, 0) + sgn * q
-            if side == "S":
+            sym, q = f.get("symbol") or f.get("trading_symbol"), int(f.get("qty") or 0)
+            px = float(f.get("price") or f.get("avg_price") or 0)
+            sell = str(f.get("side")).upper().startswith("S")
+            net[sym] = net.get(sym, 0) + (-q if sell else q)
+            if sell:
                 cost.setdefault(sym, [0, 0.0])
                 cost[sym][0] += q
                 cost[sym][1] += q * px
-        self.fills = fills
-        self.realized = realized_fifo(fills)
-        open_syms = [s for s, q in net.items() if q < 0]
-        if open_syms:
-            sym = open_syms[0]
-            q = -net[sym]
+                if f.get("trade_id"):
+                    tid_of[sym] = f["trade_id"]
+        opens = {s: -q for s, q in net.items() if q < 0}
+
+        # 3. never hold more than the account is really short
+        broker = self._broker_shorts(c)
+        if broker is not None:
+            for s in list(opens):
+                real = broker.get(s, 0)
+                if real < opens[s]:
+                    problems.append(f"{s}: own book short {opens[s]} but broker short {real} "
+                                    f"(closed outside the engine?) — holding {real}")
+                    opens[s] = real
+                    if real <= 0:
+                        del opens[s]
+            for s, real in broker.items():
+                if real > 0 and s not in opens and s in net:
+                    problems.append(f"{s}: broker still short {real} but own book is flat — NOT managed, "
+                                    f"close it in the Kotak app")
+
+        if len(opens) > 1:
+            problems.append("more than one open short: " + ", ".join(f"{s} {q}" for s, q in opens.items()))
+        if opens:
+            keep = (saved_pos or {}).get("symbol")
+            sym = keep if keep in opens else next(iter(opens))
+            q = opens[sym]
             avg = cost[sym][1] / cost[sym][0] if cost.get(sym) and cost[sym][0] else None
-            base = saved_pos or {}
-            self.pos = {**base, "symbol": sym, "qty": q, "avg": avg}
-            self.event("RESUME", f"Kotak D open short rebuilt from own orders: {sym} qty {q} avg {avg}")
+            base = saved_pos if (saved_pos and saved_pos.get("symbol") == sym) else {
+                "symbol": sym, "seg": "nse_fo", "trade_id": tid_of.get(sym)}
+            self.pos = {**base, "qty": q, "avg": avg}
+            self.event("RESUME", f"Kotak D open short rebuilt from own book: {sym} qty {q} avg {avg} "
+                                 f"(trade {self.pos.get('trade_id')})")
         else:
             self.pos = None
+            self.event("RESUME", f"Kotak D rebuilt flat from own book ({len(fills)} fill(s))")
+        if problems:
+            self.halted = self.halted or "restart mismatch — check Kotak D"
+            self.last_error = "RESTART MISMATCH: " + " | ".join(problems)
+            self.event("ERROR", self.last_error)
         self._persist()
+
+    def _broker_shorts(self, c):
+        """{trading symbol: qty short} from Kotak positions, or None if unreadable.
+        Only used to CAP what we think we hold (positions can include manual trades)."""
+        try:
+            rows = (self._timed(CALL_TIMEOUT_S * 2, c.positions) or {}).get("data") or []
+        except Exception:
+            return None
+        out = {}
+        for r in rows:
+            try:
+                sym = r.get("trdSym") or r.get("tradingSymbol") or r.get("trading_symbol")
+                sell = int(float(r.get("flSellQty") or 0)) + int(float(r.get("cfSellQty") or 0))
+                buy = int(float(r.get("flBuyQty") or 0)) + int(float(r.get("cfBuyQty") or 0))
+                if sym:
+                    out[sym] = out.get(sym, 0) + (sell - buy)
+            except Exception:
+                continue
+        return out
 
     # ---------- the hook: called after every machine change ----------
     def sync(self):
