@@ -75,16 +75,17 @@ def chain(name: str, n: int = 10, expiry_n: int = 0, grid: int = 1):
     if not nm:
         return _bad("unknown underlying", 404)
     r = E.runners[nm]
-    e = E.market.expiry(nm, expiry_n)
+    u = r.und                                             # NIFTY_ST shows NIFTY's chain + its own lots
+    e = E.market.expiry(u, expiry_n)
     n = max(1, min(n, 30))
-    step = float(r.params.get("step") or C.STRIKE_STEP.get(nm) or 0)
+    step = float(r.params.get("step") or C.STRIKE_STEP.get(u) or 0)
     rows = []
     if e:
-        listed = E.u.underlyings[nm].strikes(e)
+        listed = E.u.underlyings[u].strikes(e)
         gap = min((b - a for a, b in zip(listed, listed[1:])), default=step) or step
         ratio = max(1, int(round(step / gap))) if grid and step else 1
-        center = r.state.get("atm") or E.market.atm(nm, e)
-        rows = E.market.chain_rows(nm, e, n * ratio)
+        center = r.state.get("atm") or E.market.atm(u, e)
+        rows = E.market.chain_rows(u, e, n * ratio)
         if ratio > 1:
             rows = [x for x in rows if abs(x["strike"] / step - round(x["strike"] / step)) < 1e-9]
         held = {}
@@ -95,8 +96,8 @@ def chain(name: str, n: int = 10, expiry_n: int = 0, grid: int = 1):
             x["atm"] = center is not None and x["strike"] == center
             for kind in ("CE", "PE"):
                 x[kind]["held"] = held.get((x["strike"], kind), 0)
-    return {"name": nm, "expiry": e, "expiries": E.u.underlyings[nm].expiries()[:4], "step": step,
-            "ref": E.market.ref_price(nm, e), "atm": r.state.get("atm") or E.market.atm(nm, e), "rows": rows}
+    return {"name": nm, "expiry": e, "expiries": E.u.underlyings[u].expiries()[:4], "step": step,
+            "ref": E.market.ref_price(u, e), "atm": r.state.get("atm") or E.market.atm(u, e), "rows": rows}
 
 
 def _is_today(nm, date):
@@ -143,12 +144,17 @@ def history(name: str, date: str = "", since: float = 0, max_points: int = 0):
     if not nm:
         return _bad("unknown underlying", 404)
     date = date or E.runners[nm].date
-    rows = list(E.hist.get(nm, [])) if date == E.runners[nm].date else days.history(date, nm)
-    if since:
-        rows = [x for x in rows if x.get("t", 0) > since]
-    if max_points > 0:
-        rows = days.downsample(rows, max_points)
-    return {"name": nm, "date": date, "rows": rows}
+    if date != E.runners[nm].date and not since and 0 < max_points <= days.DS_POINTS:
+        s = days.hist_stats(date, nm)                     # past day: cached chart copy, no full parse
+        rows = days.downsample(s["ds"], max_points) if s else []
+    else:
+        rows = list(E.hist.get(nm, [])) if date == E.runners[nm].date else days.history(date, nm)
+        if since:
+            rows = [x for x in rows if x.get("t", 0) > since]
+        if max_points > 0:
+            rows = days.downsample(rows, max_points)
+    # plain json.dumps: FastAPI's generic encoder took ~4 s for 8000 rows (13-Nov)
+    return JSONResponse({"name": nm, "date": date, "rows": rows})
 
 
 @app.get("/days")
@@ -278,6 +284,9 @@ def main():
     E.refresh_subscriptions()                             # spots + futures first; windows once ATM is known
     feed.start()
     E.run_timer()
+    import threading                                      # past-day digests, so the day table is instant
+    threading.Thread(target=days.warm, args=(list(E.runners), next(iter(E.runners.values())).date),
+                     daemon=True, name="CepeDaysWarm").start()
 
     def daily_exit():                                     # 08:45 IST next day -> exit 3; the task starts a
         import os, time as _t                             # fresh engine (new Kotak login + contract list)

@@ -44,13 +44,16 @@ def main():
     ap.add_argument("--trigger-high-sl", choices=["replace", "both"], default=None,
                     help="OPTIONAL test: stop at the trigger candle's high (replace / both with option-ST exit)")
     ap.add_argument("--last-entry", default=None, help="OPTIONAL test: no new entries after HH:MM, e.g. 14:45")
+    ap.add_argument("--target", type=float, default=None, help="OPTIONAL test: book profit at this many points")
+    ap.add_argument("--hard-sl", type=float, default=None, help="OPTIONAL test: fixed stop this many points above the sell price")
     ap.add_argument("--tag", default=Config.tag)
     ap.add_argument("--no-day-charts", action="store_true")
     a = ap.parse_args()
     cfg = Config(start=a.start, end=a.end, lots=a.lots, capital=a.capital,
                  slippage_points=a.slippage, breakeven_after_points=a.breakeven,
                  cpr_max_width=a.cpr_max, rsi_filter=a.rsi,
-                 trigger_high_sl=a.trigger_high_sl, last_entry_time=a.last_entry, tag=a.tag)
+                 trigger_high_sl=a.trigger_high_sl, last_entry_time=a.last_entry,
+                 target_points=a.target, hard_sl_points=a.hard_sl, tag=a.tag)
 
     out = RESULTS / cfg.tag
     (out / "days").mkdir(parents=True, exist_ok=True)

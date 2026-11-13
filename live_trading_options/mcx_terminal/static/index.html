@@ -9,7 +9,7 @@
 <script>/* theme before first paint (no dark flash on a light page) */
 try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}
 </script>
-<link rel="stylesheet" href="/static/app.css?v=20261105y">
+<link rel="stylesheet" href="/static/app.css?v=20261112n">
 </head>
 <body>
 <header class="top">
@@ -30,6 +30,7 @@ try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") documen
     <span class="pill mono" id="ping" title="Screen ↔ engine round trip">— ms</span>
     <span class="clock mono" id="clock">--:--:--</span>
     <button class="gear rpbtn" id="btn-replays" title="Replays: download a day as a double-click file" hidden>⏵ Replays</button>
+    <button class="gear rpbtn newsbtn" id="btn-news" title="News that moves MCX: crude, gold, silver, gas, war, Trump's posts, US data" hidden>NEWS<span class="nbadge" id="news-n" hidden></span></button>
     <button class="gear rpbtn" id="btn-logs" title="Logs: every order, fill and button press, append-only">☰ Logs</button>
     <button class="gear" id="gear" title="Settings">⚙</button>
     <button class="gear" id="theme-btn" title="Light / dark theme">☀</button>
@@ -59,6 +60,9 @@ try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") documen
   <div class="seg small" id="view" title="Chain · Straddle (same strike) · Strangle (CE above, PE below ATM)">
     <button data-v="chain">Chain</button><button data-v="straddle">Straddle</button><button data-v="strangle">Strangle</button>
   </div>
+  <div class="seg small" id="oi-win" title="OI change measured from: Today = yesterday's close · 15m = 15 minutes ago">
+    <span class="seg-l">OI Δ</span><button data-w="day">Today</button><button data-w="m15">15m</button>
+  </div>
   <div class="hedge">
     <button class="tg" id="tg-hedge" title="Every SELL also BUYS a hedge further out of the money (bought first)">Hedges</button>
     <select id="hedge-d" title="Hedge distance in strikes"></select>
@@ -72,14 +76,14 @@ try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") documen
 <main class="chainwrap" id="chainwrap">
   <table class="chain" id="chain">
     <thead>
-      <tr class="side"><th colspan="5" class="ce">CALLS</th><th class="kh"></th><th colspan="5" class="pe">PUTS</th></tr>
+      <tr class="side"><th colspan="6" class="ce">CALLS</th><th class="kh"></th><th colspan="6" class="pe">PUTS</th></tr>
       <tr>
-        <th>Bid</th><th>Ask</th><th class="act"></th><th class="ltph">LTP</th><th class="posh" title="Your current call position on this strike, in lots (+ long, − short)">Pos</th>
+        <th class="oih" title="Open interest in lots. Bar = OI change (green added, red cut); the longest bar is the biggest change on screen">OI</th><th>Bid</th><th>Ask</th><th class="act"></th><th class="ltph">LTP</th><th class="posh" title="Your current call position on this strike, in lots (+ long, − short)">Pos</th>
         <th class="kh">Strike</th>
-        <th class="posh" title="Your current put position on this strike, in lots (+ long, − short)">Pos</th><th class="ltph">LTP</th><th class="act"></th><th>Bid</th><th>Ask</th>
+        <th class="posh" title="Your current put position on this strike, in lots (+ long, − short)">Pos</th><th class="ltph">LTP</th><th class="act"></th><th>Bid</th><th>Ask</th><th class="oih" title="Open interest in lots. Bar = OI change (green added, red cut); the longest bar is the biggest change on screen">OI</th>
       </tr>
     </thead>
-    <tbody id="rows"><tr><td colspan="11" class="empty">Loading chain…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="13" class="empty">Loading chain…</td></tr></tbody>
   </table>
   <table class="chain combo" id="combo" hidden>
     <thead><tr>
@@ -313,7 +317,18 @@ try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") documen
   </div>
 </div>
 
+<!-- news drawer (does not block the chain) -->
+<aside class="newsdrawer" id="news" hidden>
+  <div class="p-head"><b>News</b>
+    <span class="nf" id="news-f"></span>
+    <button class="nbeep" id="news-beep" title="Beep when a big headline arrives">Beep</button>
+    <button class="x" id="news-x">✕</button></div>
+  <div class="nev" id="news-ev"></div>
+  <div class="nlist" id="news-list"><div class="empty">Waiting for headlines…</div></div>
+  <div class="nfoot" id="news-st"></div>
+</aside>
+
 <div class="toasts" id="toasts"></div>
-<script src="/static/app.js?v=20261105h"></script>
+<script src="/static/app.js?v=20261112n"></script>
 </body>
 </html>

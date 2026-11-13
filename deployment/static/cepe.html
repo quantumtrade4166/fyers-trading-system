@@ -70,6 +70,16 @@
   .chead { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 6px; gap: 8px; }
   .chead .tools { display: flex; gap: 6px; align-items: center; }
   .zb { padding: 1px 8px; font-size: 13px; line-height: 18px; }
+  /* ATM chart: timeframe toggle + Supertrend inputs */
+  .sttools { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin: -2px 0 6px; font-size: 11px; color: #94a3b8; }
+  .sttools label { display: flex; gap: 4px; align-items: center; }
+  .sttools input[type=number] { width: 52px; padding: 1px 4px; font: inherit; }
+  .seg { display: inline-flex; border: 1px solid #334155; border-radius: 6px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; padding: 1px 9px; font-size: 11px; line-height: 18px; background: transparent; color: #94a3b8; }
+  .seg button.on { background: #1e3a5f; color: #e2e8f0; }
+  .vtog button { padding: 3px 12px; font-size: 12px; font-weight: 600; }
+  .vtog button.on[data-v="st"] { background: #4c1d95; color: #ede9fe; }
+  .cards #stCard .big.red { color: var(--neg, #f43f5e); } .cards #stCard .big.green { color: var(--pos, #22c55e); }
   /* zoomed chart: the card fills the window */
   .card.zoom { position: fixed; inset: 12px; z-index: 60; box-shadow: 0 0 0 9999px rgba(3,7,18,.82); display: flex; flex-direction: column; }
   .card.zoom .chart { flex: 1; height: auto; }
@@ -141,6 +151,7 @@
 <div class="top">
   <span class="name">CE/PE Imbalance</span>
   <span class="pill paper">Paper</span>
+  <span class="seg vtog" id="varTog" title="Normal = the strategy as is · Supertrend = same rules, only while Supertrend on 1-min ATM CE+PE is red"><button data-v="normal">Normal</button><button data-v="st">Supertrend</button></span>
   <span class="mut">Kotak tick feed · fills at live bid/ask</span>
   <div class="right">
     <span id="feed" class="pill">feed …</span>
@@ -159,6 +170,7 @@
     <div class="card"><div class="lbl">MTM</div><div class="big num" id="mtm">–</div><div class="sub num" id="mtmSub"></div></div>
     <div class="card"><div class="lbl">Status</div><div class="big" id="phase">–</div><div class="sub" id="phaseSub"></div></div>
     <div class="card"><div class="lbl">Expiry · session</div><div class="big num" id="exp">–</div><div class="sub num" id="sess"></div></div>
+    <div class="card" id="stCard" style="display:none"><div class="lbl">Supertrend · 1-min ATM CE+PE</div><div class="big num" id="stTrend">–</div><div class="sub num" id="stSub"></div></div>
   </div>
 
   <div class="card">
@@ -184,6 +196,8 @@
       <label><span class="lbl">Strike step</span><input type="number" id="pStep" min="0" step="1"></label>
       <label><span class="lbl">MTM stop ₹ (0=off)</span><input type="number" id="pStop" min="0" step="500"></label>
       <label title="Never sell a strike whose bid-ask gap is wider than this % of its price (exits never wait)"><span class="lbl">Max quote gap %</span><input type="number" id="pGap" min="0.5" step="0.5"></label>
+      <label class="stOnly" title="Supertrend ATR period (1-min ATM CE+PE candles) used for entries / exits"><span class="lbl">ST period</span><input type="number" id="pStPer" min="1" step="1"></label>
+      <label class="stOnly" title="Supertrend multiplier used for entries / exits"><span class="lbl">ST ×</span><input type="number" id="pStMul" min="0.1" step="0.1"></label>
       <button id="bSave">Save settings</button>
       <span class="mut" id="pMsg"></span>
     </div>
@@ -208,7 +222,13 @@
   <div class="charts">
     <div class="card"><div class="chead"><span class="lbl">MTM ₹ <span id="chDay1"></span></span><span class="tools"><span class="num mut" id="cMtm"></span><button class="zb" data-zoom="0" title="Zoom (Esc closes)">⤢</button></span></div><div class="chart" id="chMtm"></div></div>
     <div class="card"><div class="chead"><span class="lbl">CE/PE imbalance % <span id="chDay2"></span></span><span class="tools"><span class="num mut" id="cImb"></span><button class="zb" data-fit="1" title="Show the whole day">Fit</button><button class="zb" data-zoom="1" title="Zoom (Esc closes)">⤢ Zoom</button></span></div><div class="chart" id="chImb"></div></div>
-    <div class="card"><div class="chead"><span class="lbl">ATM premium <span id="chDay3"></span></span><span class="tools"><span class="num mut" id="cAtm"></span><button class="zb" data-zoom="2" title="Zoom (Esc closes)">⤢</button></span></div><div class="chart" id="chAtm"></div></div>
+    <div class="card"><div class="chead"><span class="lbl">ATM premium <span id="chDay3"></span></span><span class="tools"><span class="num mut" id="cAtm"></span><button class="zb" data-zoom="2" title="Zoom (Esc closes)">⤢</button></span></div>
+      <div class="sttools"><span class="seg" id="atmTf"><button data-tf="0" class="on">Tick</button><button data-tf="60">1m</button><button data-tf="180">3m</button><button data-tf="300">5m</button></span>
+        <label title="Supertrend on CE+PE">ST <input type="checkbox" id="stOn" checked></label>
+        <label>ATR <input type="number" id="stPer" min="1" max="200" step="1" value="10"></label>
+        <label>× <input type="number" id="stMul" min="0.1" max="20" step="0.1" value="3"></label>
+        <span class="num mut" id="stNow"></span></div>
+      <div class="chart" id="chAtm"></div></div>
     <div class="card wide" id="spCard"><div class="chead"><span class="lbl">Quote gap % (bid–ask, of price) <span id="chDay4"></span></span><span class="tools"><span class="num mut" id="cSp"></span><button class="zb" data-fit="3" title="Show the whole day">Fit</button><button class="zb" data-zoom="3" title="Zoom (Esc closes)">⤢</button></span></div><div class="chart" id="chSp"></div></div>
   </div>
 
@@ -245,6 +265,10 @@
 const API = '/api/cepe';
 const IST = 19800;
 let SEL = localGet('cepe_sel') || 'CRUDEOIL';
+// Normal / Supertrend variant: the variant books are "{NAME}_ST" (same API, own book)
+const isST = n => /_ST$/.test(n || ''), baseOf = n => (n || '').replace(/_ST$/, '');
+let VAR = isST(SEL) ? 'st' : 'normal';
+const bookOf = und => VAR === 'st' ? und + '_ST' : und;
 let STATE = null, ROW = null, lowerTab = 'pos', lastT = 0, histName = null;
 let paramsDirty = false;
 
@@ -280,8 +304,90 @@ const sMtm = chM.addBaselineSeries({baseValue: {type: 'price', price: 0}, lineWi
 const sImb = chI.addLineSeries({color: '#e2e8f0', lineWidth: 2});
 // ATM premium: ATM CE, ATM PE and their total (straddle); markers where the ATM strike changed
 const sStr = chA.addLineSeries({color: '#e2e8f0', lineWidth: 2, title: 'CE+PE'});
-const sAce = chA.addLineSeries({color: '#f472b6', lineWidth: 2, title: 'CE'});
-const sApe = chA.addLineSeries({color: '#60a5fa', lineWidth: 2, title: 'PE'});
+// (separate ATM CE / PE lines removed 13-Nov on owner's request: cluttered the Supertrend view;
+//  their latest prices stay in the header text)
+// CE+PE as candles in 1m/3m/5m mode (built from the 0.5 s samples); Supertrend on CE+PE in every mode
+const sStrC = chA.addCandlestickSeries({upColor: '#22c55e', downColor: '#f43f5e', borderVisible: false,
+  wickUpColor: '#22c55e', wickDownColor: '#f43f5e', title: 'CE+PE', visible: false});
+// Supertrend = one line series per same-direction run. One red + one green series joined the dots across
+// the other colour's stretch (slanted lines; same fix as stdir.html 16-Oct): whitespace doesn't break a line here.
+const stOpt = {lineWidth: 2, priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false};
+const stPool = [];
+function setStRuns(st) {
+  const runs = [];
+  for (const x of st) {
+    const r = runs[runs.length - 1];
+    if (r && r.up === x.up) r.pts.push({time: x.time, value: x.value});
+    else runs.push({up: x.up, pts: [{time: x.time, value: x.value}]});
+  }
+  while (stPool.length < runs.length) stPool.push(chA.addLineSeries({...stOpt}));
+  stPool.forEach((s, k) => {
+    const r = runs[k];
+    if (!r) { s.setData([]); return; }
+    s.applyOptions({color: r.up ? '#22c55e' : '#f43f5e'});
+    s.setData(r.pts);
+  });
+}
+const ST = {tf: +(localGet('cepe_atm_tf') || 0), per: +(localGet('cepe_st_per') || 10),
+            mul: +(localGet('cepe_st_mul') || 3), on: localGet('cepe_st_on') !== '0', n: 0};
+
+// Bars of `sec` seconds from [{time, value}] points (sec 0 = every point is its own bar).
+function toBars(pts, sec) {
+  if (!sec) return pts.map(p => ({time: p.time, open: p.value, high: p.value, low: p.value, close: p.value}));
+  const out = [];
+  for (const p of pts) {
+    const t = p.time - (p.time % sec), b = out[out.length - 1];
+    if (b && b.time === t) { b.high = Math.max(b.high, p.value); b.low = Math.min(b.low, p.value); b.close = p.value; }
+    else out.push({time: t, open: p.value, high: p.value, low: p.value, close: p.value});
+  }
+  return out;
+}
+// Supertrend (Wilder ATR, same as TradingView): [{time, value, up}] from the bar `per` onward.
+function supertrend(bars, per, mul) {
+  const out = [];
+  let atr = null, fu = 0, fl = 0, up = false, trs = [];          // TradingView starts in a down trend
+  for (let i = 0; i < bars.length; i++) {
+    const b = bars[i], pc = i ? bars[i - 1].close : b.close;
+    const tr = Math.max(b.high - b.low, Math.abs(b.high - pc), Math.abs(b.low - pc));
+    if (atr == null) { trs.push(tr); if (trs.length < per) continue; atr = trs.reduce((a, x) => a + x, 0) / per; }
+    else atr = (atr * (per - 1) + tr) / per;
+    const mid = (b.high + b.low) / 2, bu = mid + mul * atr, bl = mid - mul * atr;
+    if (!out.length) { fu = bu; fl = bl; }
+    else {
+      fu = (bu < fu || pc > fu) ? bu : fu;
+      fl = (bl > fl || pc < fl) ? bl : fl;
+      if (up && b.close < fl) up = false; else if (!up && b.close > fu) up = true;
+    }
+    out.push({time: b.time, value: Math.round((up ? fl : fu) * 100) / 100, up});
+  }
+  return out;
+}
+function drawAtm() {
+  const tf = ST.tf;
+  const bars = toBars(series.s, tf);
+  sStr.applyOptions({visible: !tf}); sStrC.applyOptions({visible: !!tf});
+  sStr.setData(tf ? [] : series.s); sStrC.setData(tf ? bars : []);
+  const marks = tf ? series.marks.map(m => ({...m, time: m.time - (m.time % tf)}))
+                       .filter((m, i, a) => !i || a[i - 1].time < m.time) : series.marks;
+  (tf ? sStrC : sStr).setMarkers(marks); (tf ? sStr : sStrC).setMarkers([]);
+  ST.n = bars.length;
+  // Supertrend book on Tick / 1m: draw the ENGINE's line (what the strategy trades on, with its warm-up).
+  // Its value at a moment is the Supertrend of the last CLOSED minute, so on 1m it belongs to the candle before.
+  const engine = isST(SEL) && series.est.length && (!tf || tf === 60);
+  let st;
+  if (!ST.on) st = [];
+  else if (engine && !tf) st = series.est;
+  else if (engine) {
+    const by = new Map();
+    for (const p of series.est) by.set(p.time - (p.time % 60) - 60, p);
+    st = [...by.entries()].sort((a, b) => a[0] - b[0]).map(([time, p]) => ({time, value: p.value, up: p.up}));
+  } else st = supertrend(bars, Math.max(1, ST.per | 0), Math.max(0.1, ST.mul));
+  setStRuns(st);
+  const last = st[st.length - 1];
+  $('stNow').textContent = !ST.on ? '' : last ? `ST ${fmt(last.value)} · ${last.up ? 'UP (green)' : 'DOWN (red)'}` + (engine ? ' · strategy line' : '')
+    : `ST needs ${ST.per} bars`;
+  $('stNow').style.color = last ? (last.up ? '#22c55e' : '#f43f5e') : '';
+}
 // Quote gap of the 6 strategy strikes around the current ATM; dashed line = max quote gap % (sell limit)
 const SP = [['ATM CE', '#f472b6', 2], ['CE+1', '#f9a8d4', 1], ['CE+2', '#fbcfe8', 1],
             ['ATM PE', '#60a5fa', 2], ['PE−1', '#93c5fd', 1], ['PE−2', '#bfdbfe', 1]];
@@ -304,7 +410,7 @@ function setBandLines(band, normal) {
     [band, '#f43f5e', 'band'], [-band, '#f43f5e', 'band'], [normal, '#22c55e', 'normal'], [-normal, '#22c55e', 'normal'], [0, '#475569', '']
   ].map(([p, c, t]) => sImb.createPriceLine({price: p, color: c, lineWidth: 1, lineStyle: 2, axisLabelVisible: !!t, title: t}));
 }
-const series = {m: [], i: [], c: [], p: [], s: [], marks: [], sp: [[], [], [], [], [], []]};
+const series = {m: [], i: [], c: [], p: [], s: [], est: [], marks: [], sp: [[], [], [], [], [], []]};
 let lastSp = null;
 let lastAtm = null, lastPrem = null;
 function pushRows(rows) {
@@ -312,6 +418,11 @@ function pushRows(rows) {
     const t = Math.floor(x.t) + IST;
     const put = (arr, v) => { if (v == null) return; if (arr.length && arr[arr.length - 1].time === t) arr[arr.length - 1].value = v; else if (!arr.length || arr[arr.length - 1].time < t) arr.push({time: t, value: v}); };
     put(series.m, x.mtm); put(series.i, x.imb);
+    if (x.st != null) {                                    // Supertrend book: the engine's own ST line
+      const a = series.est, last = a[a.length - 1];
+      if (last && last.time === t) { last.value = x.st; last.up = !x.st_red; }
+      else if (!last || last.time < t) a.push({time: t, value: x.st, up: !x.st_red});
+    }
     if (x.sp && x.sp.length === 6) { x.sp.forEach((v, j) => put(series.sp[j], v)); lastSp = x.sp; }
     if (x.ace != null && x.ape != null) {
       put(series.c, x.ace); put(series.p, x.ape); put(series.s, Math.round((x.ace + x.ape) * 100) / 100);
@@ -327,7 +438,7 @@ function pushRows(rows) {
 }
 function drawSeries() {
   sMtm.setData(series.m); sImb.setData(series.i);
-  sAce.setData(series.c); sApe.setData(series.p); sStr.setData(series.s); sStr.setMarkers(series.marks);
+  drawAtm();
   sSp.forEach((s, j) => s.setData(series.sp[j]));
   $('cSp').textContent = lastSp ? SP.map(([t], j) => `${t} ${lastSp[j] == null ? '–' : lastSp[j].toFixed(1) + '%'}`).join(' · ')
     : (DAY ? 'not recorded this day' : 'waiting…');
@@ -339,7 +450,7 @@ async function loadHistory(full) {
   const key = SEL + '|' + (DAY || 'live');
   const fresh = full || histName !== key;
   if (fresh) {
-    histName = key; lastT = 0; series.m = []; series.i = []; series.c = []; series.p = []; series.s = []; series.marks = [];
+    histName = key; lastT = 0; series.m = []; series.i = []; series.c = []; series.p = []; series.s = []; series.marks = []; series.est = [];
     series.sp = [[], [], [], [], [], []]; lastAtm = null; lastPrem = null; lastSp = null;
     drawSeries();
   } else if (DAY) return;
@@ -387,7 +498,7 @@ async function loadPnl() {
 const CH = [chM, chI, chA, chS];
 // Whole loaded day in view (fitContent kept stale scroll offsets when switching days).
 function fitChart(i) {
-  const n = i === 0 ? series.m.length : i === 1 ? series.i.length : i === 2 ? series.s.length : series.sp[0].length;
+  const n = i === 0 ? series.m.length : i === 1 ? series.i.length : i === 2 ? ST.n : series.sp[0].length;
   if (n > 1) CH[i].timeScale().setVisibleLogicalRange({from: 0, to: n - 1});
 }
 function unzoom() {
@@ -404,6 +515,16 @@ document.querySelectorAll('[data-zoom]').forEach(b => b.onclick = () => {
 });
 document.querySelectorAll('[data-fit]').forEach(b => b.onclick = () => fitChart(+b.dataset.fit));
 document.addEventListener('keydown', e => { if (e.key === 'Escape') unzoom(); });
+
+// ATM chart: timeframe toggle + Supertrend inputs (remembered in this browser)
+function atmTfButtons() { document.querySelectorAll('#atmTf button').forEach(b => b.classList.toggle('on', +b.dataset.tf === ST.tf)); }
+document.querySelectorAll('#atmTf button').forEach(b => b.onclick = () => {
+  ST.tf = +b.dataset.tf; localSet('cepe_atm_tf', ST.tf); atmTfButtons(); drawAtm(); fitChart(2);
+});
+$('stPer').value = ST.per; $('stMul').value = ST.mul; $('stOn').checked = ST.on; atmTfButtons();
+$('stPer').oninput = () => { const v = +$('stPer').value; if (v >= 1) { ST.per = v; localSet('cepe_st_per', v); drawAtm(); } };
+$('stMul').oninput = () => { const v = +$('stMul').value; if (v > 0) { ST.mul = v; localSet('cepe_st_mul', v); drawAtm(); } };
+$('stOn').onchange = () => { ST.on = $('stOn').checked; localSet('cepe_st_on', ST.on ? '1' : '0'); drawAtm(); };
 
 // ── trading day ─────────────────────────────────────────────────────────
 let DAY = '', TODAY = '';
@@ -423,20 +544,23 @@ $('daySel').onchange = () => {
   DAY = v === TODAY ? '' : v;
   $('dayViewing').style.display = DAY ? '' : 'none';
   ['chDay1', 'chDay2', 'chDay3', 'chDay4'].forEach(id => $(id).textContent = DAY ? '· ' + DAY : '');
-  renderDay(); loadHistory(true); renderLower();
+  $('lowerR').innerHTML = '<div class="mut" style="padding:14px;text-align:center">loading…</div>';
+  renderDay(); renderLower(); loadHistory(true);
 };
 async function renderDay() {
   const d = DAY || TODAY; if (!d) return;
   const j = await api(`/day/${d}`);
   if (!j.rows || (DAY || TODAY) !== d) return;
-  $('dayTot').textContent = rs(j.total); $('dayTot').className = 'daytot num ' + cls(j.total);
-  $('dayRows').innerHTML = j.rows.map(r => {
+  const rows = j.rows.filter(r => isST(r.name) === (VAR === 'st'));
+  const tot = rows.reduce((a, r) => a + (r.traded ? r.pnl : 0), 0);
+  $('dayTot').textContent = rs(tot); $('dayTot').className = 'daytot num ' + cls(tot);
+  $('dayRows').innerHTML = rows.map(r => {
     const st = r.running != null ? (r.running ? (r.phase === 'in' ? '<span class="pos">running</span>' : '<span class="warn">waiting</span>')
                                               : (r.traded ? 'stopped' : '<span class="mut">idle</span>'))
                                  : (r.traded ? 'squared off' : '<span class="mut">no trade</span>');
     const imb = r.imb_min == null ? '–' : `${fmt(r.imb_min, 1)}% … ${fmt(r.imb_max, 1)}%`;
     return `<tr data-n="${esc(r.name)}" class="${r.name === SEL ? 'on' : ''}">
-      <td style="font-weight:600">${esc(r.label)}</td>
+      <td style="font-weight:600">${esc(r.label.replace(' · Supertrend', ''))}</td>
       <td class="num ${cls(r.pnl)}" style="font-weight:700">${r.traded ? rs(r.pnl) : '–'}</td>
       <td>${st}</td><td class="num">${r.fills || ''}</td><td class="num">${r.atm_rule || ''}</td>
       <td class="num">${r.a || ''}</td><td class="num">${r.b || ''}</td>
@@ -446,26 +570,46 @@ async function renderDay() {
   }).join('');
   document.querySelectorAll('#dayRows tr').forEach(tr => tr.onclick = () => selectUnd(tr.dataset.n));
 }
-function selectUnd(n) { SEL = n; localSet('cepe_sel', SEL); paramsDirty = false; refresh(true); renderDay(); }
+function selectUnd(n) {
+  SEL = n; localSet('cepe_sel', SEL); paramsDirty = false;
+  $('lowerR').innerHTML = '<div class="mut" style="padding:14px;text-align:center">loading…</div>';
+  refresh(true); renderDay();
+}
 
 // ── rendering ───────────────────────────────────────────────────────────
 function renderUnds() {
-  $('unds').innerHTML = STATE.underlyings.map(u => {
-    const ph = u.phase, dc = ph === 'in' ? 'in' : ph === 'wait_entry' ? 'wait' : ph === 'stopped' ? 'stop' : '';
+  $('unds').innerHTML = STATE.underlyings.filter(u => isST(u.name) === (VAR === 'st')).map(u => {
+    const ph = u.phase, dc = ph === 'in' ? 'in' : (ph === 'wait_entry' || ph === 'flat') ? 'wait' : ph === 'stopped' ? 'stop' : '';
     const m = u.mtm.total, has = u.open_positions || u.trades;
+    const tr = u.st && u.st.trend ? ` <span style="color:${u.st.trend === 'red' ? '#f43f5e' : '#22c55e'}">●</span>` : '';
     return `<div class="und ${u.name === SEL ? 'on' : ''}" data-n="${esc(u.name)}">
-      <div class="n"><span class="dot ${u.running ? dc : ''}"></span>${esc(u.label)}</div>
+      <div class="n"><span class="dot ${u.running ? dc : ''}"></span>${esc(u.label.replace(' · Supertrend', ''))}${tr}</div>
       <div class="num ${cls(m)}">${has ? rs(m) : '<span class="mut">idle</span>'}</div>
       <div class="num mut">${u.imbalance.pct == null ? '' : 'imb ' + fmt(u.imbalance.pct, 1) + '%'}</div></div>`;
   }).join('');
   document.querySelectorAll('.und').forEach(el => el.onclick = () => selectUnd(el.dataset.n));
 }
 
-const PHASE = {in: 'In trade', wait_entry: 'Waiting to enter', stopped: 'Stopped (MTM SL)', done: 'Squared off'};
+const PHASE = {in: 'In trade', wait_entry: 'Waiting to enter', stopped: 'Stopped (MTM SL)', done: 'Squared off',
+               flat: 'Flat · waits for red'};
+function renderStCard(u) {
+  const on = isST(u.name);
+  $('stCard').style.display = on ? '' : 'none';
+  document.querySelectorAll('.stOnly').forEach(el => el.style.display = on ? '' : 'none');
+  if (!on) return;
+  const s = u.st || {};
+  const t = $('stTrend');
+  t.textContent = !s.ready ? (s.warm_source === 'pending' ? 'warming up…' : 'waiting for candles') : s.trend === 'red' ? 'RED · in' : 'GREEN · flat';
+  t.className = 'big num ' + (!s.ready ? 'mut' : s.trend === 'red' ? 'red' : 'green');
+  const open = s.start_red && !s.flipped_today && !u.open_positions && !u.trades
+    ? ` · red since open: enters below first-candle low ${fmt(s.first_low)}` : '';
+  $('stSub').textContent = `ST ${fmt(s.st)} · CE+PE ${fmt(s.px)} · ATM ${s.atm ? k0(s.atm) : '–'}${open} · ` +
+    `${s.bars_today ?? 0} candles today · warm-up ${s.warm_source || '–'}`;
+}
 function renderCards() {
   const u = ROW; if (!u) return;
   const p = u.params || {};
-  $('refLbl').textContent = (u.name === 'NIFTY' || u.name === 'SENSEX') ? 'Spot' : 'Future';
+  $('refLbl').textContent = (baseOf(u.name) === 'NIFTY' || baseOf(u.name) === 'SENSEX') ? 'Spot' : 'Future';
   $('ref').textContent = fmt(u.ref, 2);
   $('refSub').textContent = u.ref_age == null ? 'no tick yet' : `tick ${u.ref_age}s ago` + (u.synthetic ? ` · options-implied ${fmt(u.synthetic, 1)}` : '');
   $('atm').textContent = u.strat_atm ? k0(u.strat_atm) : (u.atm ? k0(u.atm) : '–');
@@ -480,6 +624,7 @@ function renderCards() {
   $('mtmSub').textContent = `realised ${rs(u.mtm.realized)} · open ${rs(u.mtm.unrealized)}` + (+p.mtm_stop ? ` · SL −₹${k0(p.mtm_stop)}` : '');
   $('phase').textContent = u.running ? (PHASE[u.phase] || 'Running') : (PHASE[u.phase] && u.phase !== 'in' ? PHASE[u.phase] : 'Stopped');
   $('phase').className = 'big ' + (u.running ? (u.phase === 'in' ? 'pos' : 'warn') : 'mut');
+  renderStCard(u);
   $('phaseSub').textContent = `${u.open_positions} open legs · ${u.trades} fills` + (u.errors ? ` · ${u.errors} errors` : '');
   $('exp').textContent = u.expiry || '–';
   const s = u.session;
@@ -493,6 +638,7 @@ function renderCards() {
   if (!paramsDirty) {
     $('pLots').value = p.lots; $('pBand').value = p.band; $('pNormal').value = p.normal_band; $('pTrig').value = p.normal_trigger;
     $('pBuf').value = p.atm_buffer_pct; $('pStep').value = p.step || u.step; $('pStop').value = p.mtm_stop; $('pGap').value = p.max_spread_pct;
+    if (p.st_period != null) { $('pStPer').value = p.st_period; $('pStMul').value = p.st_mult; }
   }
   $('cMtm').textContent = rs(u.mtm.total); $('cImb').textContent = im == null ? '' : fmt(im, 1) + '%';
   setBandLinesOnce(band, +p.normal_band || 5);
@@ -562,8 +708,11 @@ async function chainLoop() {
 }
 
 async function renderLower() {
+  // a slow answer for the previous instrument / day / tab must not overwrite the current one
+  const want = SEL + '|' + DAY + '|' + lowerTab, stale = () => want !== SEL + '|' + DAY + '|' + lowerTab;
   if (lowerTab === 'pos') {
     const j = await api(`/positions/${SEL}${DQ()}`);
+    if (stale()) return;
     const rows = (j.positions || []);
     $('lowerR').innerHTML = `<table><thead><tr><th style="text-align:left">Contract</th><th>Lots</th><th>Avg</th><th>LTP</th><th>Open P&amp;L</th><th>Booked</th></tr></thead><tbody>` +
       (rows.map(p => `<tr><td style="text-align:left;color:${p.kind === 'CE' ? 'var(--ce)' : 'var(--pe)'}">${esc(k0(p.strike))} ${esc(p.kind)}</td>
@@ -572,6 +721,7 @@ async function renderLower() {
        || '<tr><td colspan="6" class="mut" style="text-align:center">no positions</td></tr>') + '</tbody></table>';
   } else if (lowerTab === 'adj') {
     const j = await api(`/events/${SEL}${DQ()}`);
+    if (stale()) return;
     const ev = (j.events || []).filter(e => e.event !== 'params' || true).slice().reverse();
     $('lowerR').innerHTML = `<table class="ev"><thead><tr><th style="text-align:left">Time</th><th style="text-align:left">What</th><th style="text-align:left">Detail</th></tr></thead><tbody>` +
       (ev.map(e => {
@@ -583,6 +733,7 @@ async function renderLower() {
       }).join('') || '<tr><td colspan="3" class="mut">nothing yet</td></tr>') + '</tbody></table>';
   } else {
     const j = await api(`/trades/${SEL}${DQ()}`);
+    if (stale()) return;
     const tr = (j.trades || []).slice().reverse();
     $('lowerR').innerHTML = `<table><thead><tr><th style="text-align:left">Time</th><th style="text-align:left">Contract</th><th>Side</th><th>Lots</th><th>Price</th><th>Bid/Ask</th><th style="text-align:left">Why</th></tr></thead><tbody>` +
       (tr.map(t => `<tr><td class="num mut" style="text-align:left">${esc(t.time)}</td><td style="text-align:left">${esc(k0(t.strike))} ${esc(t.kind)}</td>
@@ -604,10 +755,12 @@ async function control(action, confirmMsg) {
   $('ctlMsg').innerHTML = j.ok ? `<span class="pos">${esc(action)} ok</span>` : `<span class="err">${esc(j.error || 'failed')}</span>`;
   refresh();
 }
-$('bStart').onclick = () => control('start', `Start CE/PE imbalance (PAPER) on ${ROW ? ROW.label : SEL}?\nIt sells ATM/+1/+2 CE and PE on the next tick.`);
+$('bStart').onclick = () => control('start', isST(SEL)
+  ? `Start the SUPERTREND version (PAPER) on ${ROW ? ROW.label : SEL}?\nIt sells ATM/+1/+2 CE and PE when Supertrend on 1-min ATM CE+PE is red (opening rule: below the first candle's low) and buys everything back when it turns green.`
+  : `Start CE/PE imbalance (PAPER) on ${ROW ? ROW.label : SEL}?\nIt sells ATM/+1/+2 CE and PE on the next tick.`);
 $('bStop').onclick = () => control('stop');
 $('bStopExit').onclick = () => control('stop_exit', `Stop ${ROW ? ROW.label : SEL} and buy back ALL paper positions?`);
-['pLots', 'pBand', 'pNormal', 'pTrig', 'pBuf', 'pStep', 'pStop', 'pGap'].forEach(id => $(id).addEventListener('input', () => { paramsDirty = true; $('pMsg').textContent = 'unsaved'; }));
+['pLots', 'pBand', 'pNormal', 'pTrig', 'pBuf', 'pStep', 'pStop', 'pGap', 'pStPer', 'pStMul'].forEach(id => $(id).addEventListener('input', () => { paramsDirty = true; $('pMsg').textContent = 'unsaved'; }));
 let autoDirty = false;
 async function saveAuto() {
   autoDirty = true;
@@ -621,6 +774,7 @@ $('aTime').onchange = saveAuto;
 $('bSave').onclick = async () => {
   const body = {lots: +$('pLots').value, band: +$('pBand').value, normal_band: +$('pNormal').value, normal_trigger: +$('pTrig').value,
                 atm_buffer_pct: +$('pBuf').value, step: +$('pStep').value, mtm_stop: +$('pStop').value, max_spread_pct: +$('pGap').value};
+  if (isST(SEL)) { body.st_period = +$('pStPer').value; body.st_mult = +$('pStMul').value; }
   const j = await api(`/params/${SEL}`, body);
   paramsDirty = !j.ok;
   $('pMsg').innerHTML = j.ok ? '<span class="pos">saved</span>' : `<span class="err">${esc(j.error)}</span>`;
@@ -634,13 +788,16 @@ async function refresh(full) {
   try {
     const s = await api('/state');
     if (!s.underlyings) { $('feed').className = 'pill bad'; $('feed').textContent = s.error ? 'engine offline' : 'no data'; $('blocked').textContent = s.error || ''; return; }
-    STATE = s; ROW = s.underlyings.find(u => u.name === SEL) || s.underlyings[0]; SEL = ROW.name;
+    STATE = s;
+    ROW = s.underlyings.find(u => u.name === SEL) || s.underlyings.find(u => u.name === bookOf(baseOf(SEL)))
+          || s.underlyings.find(u => isST(u.name) === (VAR === 'st')) || s.underlyings[0];
+    SEL = ROW.name;
     const f = s.feed || {};
     $('feed').className = 'pill ' + (f.authed ? 'ok' : 'bad');
     $('feed').textContent = f.authed ? `feed ok · ${f.subscribed ?? ''} subs` : 'feed down';
     renderUnds(); renderCards();
+    if (full) { chainLoop(); renderLower(); loadPnl(); }   // tables first: never wait behind the chart load
     await loadHistory(full);
-    if (full) { chainLoop(); renderLower(); loadPnl(); }
   } catch (e) { $('feed').className = 'pill bad'; $('feed').textContent = 'offline'; }
   finally { busy = false; }
 }
@@ -652,6 +809,13 @@ setInterval(() => { if (!DAY) renderDay(); }, 3000);
 setInterval(loadDays, 60000);
 setInterval(loadPnl, 10000);                               // today's bar follows the live MTM
 const DQ = () => DAY ? `?date=${DAY}` : '';
+// Normal / Supertrend switch: same instrument, the other book
+function varButtons() { document.querySelectorAll('#varTog button').forEach(b => b.classList.toggle('on', b.dataset.v === VAR)); }
+document.querySelectorAll('#varTog button').forEach(b => b.onclick = () => {
+  if (VAR === b.dataset.v) return;
+  VAR = b.dataset.v; varButtons(); selectUnd(bookOf(baseOf(SEL)));
+});
+varButtons();
 loadDays().then(renderDay);
 refresh(true);
 </script>

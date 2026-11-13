@@ -201,7 +201,9 @@ class DayMachine:
         pos = self.position
         x = getattr(self.cfg, "breakeven_after_points", None)
         th = getattr(self.cfg, "trigger_high_sl", None)
-        if pos is None or (not x and not th):
+        tgt = getattr(self.cfg, "target_points", None)        # OPTIONAL test
+        hsl = getattr(self.cfg, "hard_sl_points", None)       # OPTIONAL test
+        if pos is None or (not x and not th and not tgt and not hsl):
             return
         bars = self.provider.minute_bars(self.day, pos["contract"], t, T)
         if bars is None or bars.empty:
@@ -214,6 +216,17 @@ class DayMachine:
                 continue
             armed = pos.get("be_armed_ts") is not None
             stop, why = (entry, "breakeven_stop") if armed else (trig, "trigger_high_stop")
+            if hsl and not armed and (stop is None or entry + hsl < stop):
+                stop, why = entry + hsl, "hard_sl"
+            # a minute that touches both stop and target counts as the stop (worst case)
+            if tgt and float(r.low) <= entry - tgt and not (
+                    stop is not None and float(r.high) >= stop):
+                px = entry - tgt                       # resting limit: no better-than-limit fill assumed
+                self.log(m, "target_hit", None, pos, minute=m.time(), target=px)
+                self.close_trade(pos, m, px, "target", m)
+                self.last_closed = m
+                self.position = None
+                return
             if stop is not None and float(r.high) >= stop:
                 px = max(stop, float(r.open))          # gapped past the stop
                 self.log(m, why, None, pos, minute=m.time(), stop=stop, fill=px)

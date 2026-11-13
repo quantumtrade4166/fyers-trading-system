@@ -47,6 +47,8 @@ from live_trading_options.mcx_terminal.sched import ExitTimers
 from live_trading_options.mcx_terminal.risk import RiskGuard
 from live_trading_options.mcx_terminal.settings import GAP_CHOICES, Settings
 from live_trading_options.mcx_terminal.mtm import AtmHistory, MtmHistory, SAMPLE_S
+from live_trading_options.mcx_terminal import oi as OI
+from live_trading_options.mcx_terminal.news import NewsDesk
 from live_trading_options.mcx_terminal.recorder import DayRecorder, now_ms, REPLAY_DIR
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
@@ -118,6 +120,8 @@ class Engine:
         day = dt.datetime.now(IST).date().isoformat()
         self.mtms = {"PAPER": MtmHistory(), "LIVE": MtmHistory(path=C.DATA / f"mtm_live_{day}.json")}
         self.atm_hist = AtmHistory()
+        self.oi = OI.OiBook(C.DATA, C.HOURS.get("open", "09:00"))   # OI baselines for the chain meters
+        self._oi_at = 0.0                          # last OI-baseline broadcast
         self.book_tokens: set[int] = set()         # tokens with an open position / open order
         self.rec: DayRecorder | None = None        # day recorder for the replay files (always on)
         self.chain_defs: dict = {}                 # (name, expiry) -> chain definition sent to screens
@@ -253,9 +257,26 @@ class Engine:
                 "msg": ("LIVE ARMED - orders now go to Kotak P" if mode == "LIVE"
                         else "PAPER - new orders are paper again" + (f" ({n} live position(s) still open)" if n else ""))}
 
+    # ── news (read-only headlines for the NEWS button) ──────────────────────
+    news = None
+
+    def _news_new(self, items, events):
+        """News thread -> every screen: only what is new (+ the calendar when it was re-read)."""
+        msg = {"t": "news", "items": items, "status": dict(self.news.status) if self.news else {}}
+        if events is not None:
+            msg["events"] = events
+
+        def push():
+            for c in list(self.clients):
+                c.send_nowait(msg)
+        if self.loop:
+            self.loop.call_soon_threadsafe(push)
+
     # ── startup ─────────────────────────────────────────────────────────────
     def start(self, loop):
         self.loop = loop
+        if C.NEWS:
+            self.news = NewsDesk(C.DATA / "news.json", on_new=self._news_new).start()
         try:
             s = self.sessions.get()
             self.universe = I.load(s.client)
@@ -406,6 +427,7 @@ class Engine:
     def _housekeeping(self):
         """Every 0.5 s: re-price / push waiting paper orders. Every SAMPLE_S s: one MTM-curve point."""
         last_mtm = 0.0
+        last_oi = 0.0
         born = dt.datetime.now(IST)
         restart_at = next_restart(born)
         built_today = False
@@ -443,6 +465,11 @@ class Engine:
                             for pt in h.pts[n_before:]:
                                 self.rec.event("mtm", pt)
                     self.atm_hist.sample(self.atm_straddles(), now)
+                if now - last_oi >= OI.SAMPLE_S:
+                    last_oi = now
+                    with self._plock:
+                        snap = {k: v[7] for k, v in self.last.items() if v[7] is not None}
+                    self.oi.sample(snap, now)
             except Exception:
                 log.exception("housekeeping")
             time.sleep(0.5)
@@ -637,6 +664,11 @@ class Engine:
                 self.rec.event("atm", msg)
                 for c in list(self.clients):
                     c.send_nowait(msg)
+        if now_s - self._oi_at >= 30.0 and self.clients:
+            self._oi_at = now_s
+            for c in list(self.clients):
+                if c.base:
+                    c.send_nowait({"t": "oib", "b": self.oi.bases(c.base, now_s)})
         with self._plock:
             batch = {k: list(v) for k, v in self.pending.items()}   # copies: the feed thread keeps mutating
             self.pending = {}
@@ -703,7 +735,7 @@ class Engine:
                 "qty_lots_max": C.MAX_QTY_LOTS_CHOICE, "buffer_pct": C.MKT_BUFFER_PCT,
                 "settings": self.settings.get(), "gap_choices": GAP_CHOICES,
                 "desk": C.DESK, "desk_label": C.DESK_LABEL, "desk_urls": C.DESK_URLS, "hours": C.HOURS,
-                "own_book": C.OWN_BOOK}
+                "own_book": C.OWN_BOOK, "news": bool(C.NEWS)}
 
     def chain(self, name, expiry) -> dict:
         p = self.universe.products[name]
@@ -717,11 +749,13 @@ class Engine:
                 for k, legs in p.chains[expiry].items()]
         snap = [self.last[t] for t in toks + ([und.token] if und else []) if t in self.last]
         d = {"t": "chain", "name": name, "expiry": expiry, "lot": p.lot, "tick": p.opt_tick,
-             "fut": {"token": und.token, "symbol": und.symbol} if und else None, "rows": rows}
+             "fut": {"token": und.token, "symbol": und.symbol} if und else None, "rows": rows,
+             # OI in lots on screen: the MCX feed sends lots, NSE/BSE units
+             "oi_div": 1 if next(iter(p.chains[expiry].values()))["CE"].seg == "mcx_fo" else p.lot}
         if (name, expiry) not in self.chain_defs:
             self.chain_defs[(name, expiry)] = d
             self.rec.event("chain", d)
-        return {**d, "snap": snap}
+        return {**d, "snap": snap, "oib": self.oi.bases(toks)}
 
 
 class Client:
@@ -938,6 +972,8 @@ async def ws_endpoint(ws: WebSocket):
         c.send_nowait({"t": "risk", **ENGINE.risk.state()})
         c.send_nowait({"t": "timers", "items": ENGINE.timers.view() if ENGINE.timers else []})
         c.send_nowait({"t": "atm", "v": ENGINE.atm_straddles()})
+        if ENGINE.news:
+            c.send_nowait(ENGINE.news.snapshot())
         all_futs = {f.token for p in ENGINE.universe.products.values() for f in p.futures[:3]} |                    {p.spot.token for p in ENGINE.universe.products.values() if p.spot}      # NSE: index spot too
         while True:
             msg = json.loads(await ws.receive_text())

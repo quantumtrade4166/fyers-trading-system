@@ -127,6 +127,23 @@ select {
 .chain tr.atm td.k::after { content: " ATM"; font-size: 9px; letter-spacing: .1em; vertical-align: 1px; }
 .empty { text-align: center !important; color: var(--muted); padding: 40px !important; }
 
+/* OI column: OI in lots + change, with a meter bar behind (anchored at the outer edge of the chain) */
+.chain th.oih { text-align: center; }
+.chain td.oi { position: relative; min-width: 104px; color: var(--muted); }
+.chain td.oi .oiv, .chain td.oi .oic { position: relative; z-index: 1; }
+.chain td.oi .oiv { color: var(--text); }
+.chain td.oi .oic { display: inline-block; min-width: 44px; margin-left: 6px; font-size: 11px; color: var(--dim); }
+.chain td.oi .oic.up { color: var(--up); }
+.chain td.oi .oic.dn { color: var(--down); }
+.chain td.oi .oib { position: absolute; top: 3px; bottom: 3px; width: 0; border-radius: 2px; opacity: .22;
+                    transition: width .4s ease; pointer-events: none; }
+.chain td.oi-ce .oib { left: 2px; }
+.chain td.oi-pe .oib { right: 2px; }
+.chain td.oi-pe { text-align: left; }
+.chain td.oi .oib.up { background: var(--up); }
+.chain td.oi .oib.dn { background: var(--down); }
+#oi-win .seg-l { padding: 3px 7px; font-size: 11px; color: var(--muted); border-right: 1px solid var(--line); align-self: center; }
+
 /* tick flash: two identical keyframes so a second tick in a row restarts the animation */
 @keyframes fu1 { from { background: var(--up-flash); } to { background: transparent; } }
 @keyframes fu2 { from { background: var(--up-flash); } to { background: transparent; } }
@@ -742,3 +759,45 @@ button.pf.on { color: var(--accent); }
 :root[data-theme="light"] .toast { box-shadow: 0 4px 14px rgba(20, 30, 50, .16); outline: 1px solid var(--line); }
 :root[data-theme="light"] .modal { background: rgba(20, 28, 40, .35); }
 #btn-replays[hidden] { display: none !important; }
+
+/* ── NEWS button + drawer ── */
+.newsbtn { position: relative; letter-spacing: .06em; }
+.nbadge { display: inline-block; margin-left: 6px; min-width: 16px; padding: 0 4px; border-radius: 8px;
+          background: var(--accent); color: #0a0c0f; font: 700 10px/16px var(--sans); text-align: center; }
+.nbadge.big { background: var(--down); color: #fff; }
+.newsdrawer { position: fixed; top: 52px; right: 12px; width: min(480px, calc(100vw - 24px)); max-height: calc(100vh - 72px);
+              display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line);
+              border-radius: 10px; box-shadow: 0 12px 40px rgba(0, 0, 0, .45); z-index: 19; padding: 10px 12px; }
+.newsdrawer[hidden] { display: none; }
+.newsdrawer .p-head { flex-wrap: wrap; gap: 8px; }
+.nf { display: inline-flex; flex-wrap: wrap; gap: 4px; }
+.nf button, .nbeep { background: transparent; border: 1px solid var(--line); color: var(--muted); border-radius: 5px;
+                     padding: 2px 7px; font: 600 10.5px var(--sans); cursor: pointer; }
+.nf button.on, .nbeep.on { background: var(--accent); color: #0a0c0f; border-color: var(--accent); }
+.nev { font-size: 11.5px; margin-bottom: 6px; }
+.nev-h { color: var(--muted); font: 600 10.5px var(--sans); letter-spacing: .06em; text-transform: uppercase; margin: 2px 0 4px; }
+.nev-r { display: grid; grid-template-columns: 92px 1fr auto auto; gap: 8px; align-items: baseline; padding: 3px 0;
+         border-bottom: 1px solid var(--line-soft); }
+.nev-r.past { opacity: .55; }
+.nev-r .cd { color: var(--accent); font-weight: 600; white-space: nowrap; }
+.nev-r .dim { color: var(--dim); white-space: nowrap; }
+.nlist { overflow: auto; flex: 1; min-height: 120px; }
+.nit { display: block; padding: 7px 8px; border-bottom: 1px solid var(--line-soft); color: var(--text); text-decoration: none;
+       border-left: 3px solid transparent; }
+.nit:hover { background: rgba(255, 255, 255, .03); }
+.nit.big { border-left-color: var(--down); }
+.nit.big .nt { font-weight: 700; }
+.nit.new { background: rgba(255, 200, 80, .05); }
+.nmeta { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; font-size: 10.5px; color: var(--muted); margin-bottom: 2px; }
+.nsrc { margin-left: auto; color: var(--dim); }
+.nt { font-size: 12.5px; line-height: 1.35; }
+.ntag { padding: 0 5px; border-radius: 3px; font: 700 9.5px/15px var(--sans); letter-spacing: .04em; background: var(--panel-2); color: var(--muted); }
+.ntag.trump { background: #e8892b; color: #111; }
+.ntag.t-crude { color: #e8a33b; }
+.ntag.t-gold { color: #e6c34a; }
+.ntag.t-silver { color: #b8c3cf; }
+.ntag.t-gas { color: #59b6e8; }
+.ntag.t-war { color: var(--down); }
+.ntag.t-macro { color: #9b8cf2; }
+.ntag.t-trade { color: #4fc9b0; }
+.nfoot { color: var(--dim); font-size: 10.5px; margin-top: 6px; }

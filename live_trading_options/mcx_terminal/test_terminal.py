@@ -822,6 +822,90 @@ def test_big_chains_subscribe_only_shown_strikes():
         S.SUB_ALL_MAX, S.SUB_GAPS = old
 
 
+def test_oi_baselines():
+    """OI meters (12-Nov-2026): day base = previous day's last OI, else first seen today (flagged when after
+    the open); 15-min base = the sample ~15 min ago; survives a restart through the day file."""
+    import datetime as dt
+    from live_trading_options.mcx_terminal import oi as OI
+    d = Path(_tf.mkdtemp())
+    (d / "oi_2026-11-11.json").write_text('{"1": [500, 640, "00:05"]}', encoding="utf-8")
+    ist = dt.timezone(dt.timedelta(hours=5, minutes=30))
+    t0 = dt.datetime(2026, 11, 12, 0, 6, tzinfo=ist).timestamp()
+    b = OI.OiBook(d, "09:00", day="2026-11-12")
+    b.sample({1: 640, 2: 100}, t0)                          # before the open
+    t1 = dt.datetime(2026, 11, 12, 14, 0, tzinfo=ist).timestamp()
+    for i in range(20):                                     # one sample a minute, 14:00-14:19
+        b.sample({1: 700 + i, 2: 100 + i, 3: 50 + i}, t1 + 60 * i)
+    now = t1 + 60 * 19
+    check("day base = yesterday's last", b.base(1, now)[:2] == [640, None], b.base(1, now))
+    check("no yesterday -> first seen before the open, not flagged", b.base(2, now)[:2] == [100, None], b.base(2, now))
+    check("first seen after the open is flagged", b.base(3, now)[:2] == [50, "14:00"], b.base(3, now))
+    check("15-min base = sample at 14:04", b.base(1, now)[2] == 704, b.base(1, now))
+    check("bases skip unknown", set(b.bases([1, 2, 3, 99], now)) == {"1", "2", "3"})
+    b2 = OI.OiBook(d, "09:00", day="2026-11-12")            # restart: day bases kept, 15-min history fresh
+    check("restart keeps first-seen", b2.base(3, now)[:2] == [50, "14:00"] and b2.base(1, now)[0] == 640)
+    b3 = OI.OiBook(d, "09:00", day="2026-11-13")
+    check("next day: base = today's last", b3.base(3, now)[0] == 69 and b3.base(1, now)[0] == 719, b3.prev)
+
+
+def test_news_desk():
+    """NEWS button (12-Nov-2026): Google / Trump RSS parsed + filtered to market news, calendar to USD high
+    impact + energy, duplicates dropped, a dead source only goes quiet. No network: fake fetch."""
+    import email.utils as eu
+    import time as _t
+    from live_trading_options.mcx_terminal import news as NW
+    now = _t.time()
+    pub = eu.formatdate(now - 600)
+    old = eu.formatdate(now - 3 * 86400)
+    g = f"""<?xml version="1.0"?><rss><channel>
+      <item><title>Crude Oil Tanker Hit Near UAE, All Seafarers Safe - DD India</title><link>https://n/1</link>
+        <pubDate>{pub}</pubDate><source url="x">DD India</source></item>
+      <item><title>What to order at this restaurant - Wash Post</title><link>https://n/2</link><pubDate>{pub}</pubDate>
+        <source url="x">Wash Post</source></item>
+      <item><title>Gold slides 1.6% as dollar hits 19-month high - Mint</title><link>https://n/3</link><pubDate>{pub}</pubDate>
+        <source url="x">Mint</source></item>
+      <item><title>Old crude story from three days ago - X</title><link>https://n/4</link><pubDate>{old}</pubDate></item>
+    </channel></rss>""".encode()
+    tr = f"""<?xml version="1.0"?><rss><channel>
+      <item><title>[No Title] - Post from Nov 12</title><description><![CDATA[<p>Oil prices are DROPPING LIKE A ROCK!</p>]]></description>
+        <link>https://t/1</link><pubDate>{pub}</pubDate></item>
+      <item><title>[No Title]</title><description>The INVASION of our Country is taking place again</description>
+        <link>https://t/2</link><pubDate>{pub}</pubDate></item>
+    </channel></rss>""".encode()
+    cal = b'[{"title":"CPI m/m","country":"USD","date":"2026-11-10T08:30:00-05:00","impact":"High","forecast":"0.3%","previous":"0.6%"},' \
+          b'{"title":"Crude Oil Inventories","country":"USD","date":"2026-11-12T11:00:00-05:00","impact":"Low","forecast":"","previous":""},' \
+          b'{"title":"German Trade Balance","country":"EUR","date":"2026-11-09T02:00:00-05:00","impact":"Low"}]'
+
+    def fetch(url):
+        if "trumpstruth" in url:
+            return tr
+        if "faireconomy" in url:
+            return cal
+        if "oilprice" in url:
+            raise OSError("down")
+        return g
+    got = []
+    d = NW.NewsDesk(Path(_tf.mkdtemp()) / "news.json", on_new=lambda items, ev: got.append((items, ev)), fetch=fetch)
+    new = d.poll_once(now)
+    titles = {i["title"] for i in new}
+    check("market news kept, restaurant + 3-day-old dropped",
+          titles == {"Crude Oil Tanker Hit Near UAE, All Seafarers Safe", "Gold slides 1.6% as dollar hits 19-month high",
+                     "Oil prices are DROPPING LIKE A ROCK!"}, titles)
+    tk = next(i for i in new if i["title"].startswith("Crude"))
+    check("tanker hit = CRUDE + WAR, big, outlet as source", tk["big"] and {"CRUDE", "WAR"} <= set(tk["tags"])
+          and tk["src"] == "DD India", tk)
+    tp = next(i for i in new if i["kind"] == "trump")
+    check("Trump oil post: text from the post body, big", tp["big"] and "CRUDE" in tp["tags"], tp)
+    check("Trump immigration post filtered out", not any("INVASION" in i["title"] for i in new))
+    check("calendar: USD high + energy only", [e["title"] for e in d.events] == ["CPI m/m", "Crude Oil Inventories"], d.events)
+    check("dead source reported, others fine", d.status["oilprice.com"].startswith("error")
+          and d.status["Calendar"].startswith("ok"), d.status)
+    check("screens told once", len(got) == 1 and len(got[0][0]) == 3 and got[0][1] is not None)
+    d._next.clear()
+    check("second poll: no duplicates", d.poll_once(now + 1) == [] and len(d.items) == 3)
+    d2 = NW.NewsDesk(d.path, fetch=fetch)
+    check("survives a restart", len(d2.items) == 3 and len(d2.events) == 2 and d2.snapshot()["full"])
+
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:
         fn()

@@ -55,8 +55,10 @@ function connect() {
     const m = JSON.parse(ev.data);
     switch (m.t) {
       case "d": onTicks(m.u); break;
-      case "meta": onMeta(m); break;
+      case "meta": onMeta(m); $("btn-news").hidden = !m.news; break;
       case "chain": onChain(m); break;
+      case "oib": Object.assign(S.oib, m.b || {}); queueOI(); break;
+      case "news": onNews(m); break;
       case "status": onStatus(m); break;
       case "book": onBook(m); break;
       case "atm": onAtm(m.v || {}); break;
@@ -210,7 +212,7 @@ function pick(name, keepExpiry) {
 }
 
 function requestChain() {
-  $("rows").innerHTML = `<tr><td colspan="11" class="empty">Loading chain…</td></tr>`;
+  $("rows").innerHTML = `<tr><td colspan="13" class="empty">Loading chain…</td></tr>`;
   S.cells.clear(); S.rowsByStrike.clear(); S.atm = null;
   send({ op: "chain", name: S.cur.name, expiry: S.cur.expiry });
 }
@@ -268,6 +270,7 @@ function onChain(m) {
   S.cur.expiry = m.expiry;
   S.futTok = m.fut ? m.fut.token : null;
   m.snap.forEach((t) => S.T.set(t[TOK], t));
+  S.oib = m.oib || {};
   m.rows.forEach((r) => {
     S.sym.set(r.ce, { symbol: r.cs, lot: m.lot, k: r.k, side: "ce", name: m.name, ex: m.expiry });
     S.sym.set(r.pe, { symbol: r.ps, lot: m.lot, k: r.k, side: "pe", name: m.name, ex: m.expiry });
@@ -303,15 +306,15 @@ function layout() {
   for (const r of vis) {
     const tr = document.createElement("tr");
     tr.innerHTML =
-      `<td class="ba"></td><td class="ba"></td>` +
+      `<td class="oi oi-ce">${OICELL}</td><td class="ba"></td><td class="ba"></td>` +
       `<td class="act" data-tok="${r.ce}">${BS}</td><td class="ltp"></td><td class="pos"></td>` +
       `<td class="k">${fp(r.k, r.k % 1 ? 1 : 0)}</td>` +
       `<td class="pos"></td><td class="ltp"></td><td class="act" data-tok="${r.pe}">${BS}</td>` +
-      `<td class="ba"></td><td class="ba"></td>`;
+      `<td class="ba"></td><td class="ba"></td><td class="oi oi-pe">${OICELL}</td>`;
     const td = tr.children;
-    S.cells.set(r.ce, { bid: td[0], ask: td[1], ltp: td[3], pos: td[4] });
-    S.cells.set(r.pe, { pos: td[6], ltp: td[7], bid: td[9], ask: td[10] });
-    td[3].dataset.tok = r.ce; td[7].dataset.tok = r.pe;
+    S.cells.set(r.ce, { oi: oiParts(td[0]), bid: td[1], ask: td[2], ltp: td[4], pos: td[5] });
+    S.cells.set(r.pe, { pos: td[7], ltp: td[8], bid: td[10], ask: td[11], oi: oiParts(td[12]) });
+    td[4].dataset.tok = r.ce; td[8].dataset.tok = r.pe;
     S.rowsByStrike.set(r.k, tr);
     tb.appendChild(tr);
   }
@@ -319,6 +322,7 @@ function layout() {
   body.innerHTML = "";
   body.appendChild(tb);
   for (const r of vis) { paint(r.ce, false); paint(r.pe, false); }
+  paintOI();
   shade();
   paintCursor();
   markPositions();
@@ -342,8 +346,8 @@ function shade() {
     tr.classList.toggle("atm", k === S.atm);
     const c = tr.children;
     const ceItm = px != null && k < px, peItm = px != null && k > px;
-    for (let i = 0; i < 5; i++) c[i].classList.toggle("itm", ceItm);
-    for (let i = 6; i < 11; i++) c[i].classList.toggle("itm", peItm);
+    for (let i = 0; i < 6; i++) c[i].classList.toggle("itm", ceItm);
+    for (let i = 7; i < 13; i++) c[i].classList.toggle("itm", peItm);
   }
 }
 
@@ -365,6 +369,55 @@ function paint(tok, flash, prevLtp) {
   }
 }
 function set(el, txt) { if (el.textContent !== txt) el.textContent = txt; }
+
+// ── OI column + change meter ────────────────────────────────────────────────
+// OI in lots (chain.oi_div: MCX feed = lots, NSE/BSE = units). Change = live OI - baseline from the engine
+// (S.oib[tok] = [yesterday's close, "HH:MM" if only first-seen-today, OI 15 min ago]). The bar is the change
+// against the biggest change among the strikes on screen: green = OI added, red = OI cut.
+const OICELL = `<i class="oib"></i><span class="oiv"></span><span class="oic"></span>`;
+function oiParts(td) { return { td, bar: td.children[0], v: td.children[1], c: td.children[2] }; }
+function fk(v) {
+  const a = Math.abs(v);
+  if (a >= 1e7) return (v / 1e7).toFixed(2) + "Cr";
+  if (a >= 1e5) return (v / 1e5).toFixed(2) + "L";
+  if (a >= 1e4) return (v / 1e3).toFixed(1) + "k";
+  return Math.round(v).toLocaleString("en-IN");
+}
+S.oiWin = LS.get("oiWin", "day");
+S.oib = {};
+function paintOI() {
+  S.oiQueued = false;
+  if (!S.chain || !S.visRows) return;
+  const div = S.chain.oi_div || 1, m15 = S.oiWin === "m15";
+  const cells = [];
+  let mx = 0;
+  for (const r of S.visRows) for (const tok of [r.ce, r.pe]) {
+    const c = S.cells.get(tok);
+    if (!c || !c.oi) continue;
+    const t = S.T.get(tok), oi = t ? t[OI] : null, b = S.oib[tok];
+    const base = b ? (m15 ? b[2] : b[0]) : null;
+    const ch = oi != null && base != null ? oi - base : null;
+    if (ch) mx = Math.max(mx, Math.abs(ch));
+    cells.push([c.oi, oi, ch, !m15 && b ? b[1] : null]);
+  }
+  for (const [o, oi, ch, since] of cells) {
+    set(o.v, oi == null ? "" : fk(oi / div));
+    set(o.c, ch == null ? "" : (since ? "~" : "") + (ch > 0 ? "+" : ch < 0 ? "−" : "") + (ch ? fk(Math.abs(ch) / div) : "0"));
+    const dir = ch > 0 ? "up" : ch < 0 ? "dn" : "";
+    o.c.className = "oic " + dir;
+    o.bar.className = "oib " + dir;
+    o.bar.style.width = (ch && mx ? Math.max(4, Math.abs(ch) / mx * 100) : 0).toFixed(1) + "%";
+    o.td.title = ch == null ? "OI change: no baseline yet" :
+      m15 ? "OI change in the last 15 minutes" :
+      since ? `OI change since ${since} (first seen today; from tomorrow it is vs yesterday's close)` : "OI change vs yesterday's close";
+  }
+}
+function queueOI() { if (!S.oiQueued) { S.oiQueued = true; requestAnimationFrame(paintOI); } }
+function paintOiWin() { document.querySelectorAll("#oi-win button").forEach((b) => b.classList.toggle("on", b.dataset.w === S.oiWin)); }
+document.querySelectorAll("#oi-win button").forEach((b) => (b.onclick = () => {
+  S.oiWin = b.dataset.w; LS.set("oiWin", S.oiWin); paintOiWin(); paintOI();
+}));
+paintOiWin();
 
 // ── keyboard ────────────────────────────────────────────────────────────────
 function cursorToken() {
@@ -549,13 +602,16 @@ function onTicks(list) {
   if (!list.length) return;
   S.recv += list.length;
   S.lastTickAt = Date.now();
-  let futMoved = false, posMoved = false;
+  let futMoved = false, posMoved = false, oiMoved = false;
   for (const t of list) {
     const tok = t[TOK];
     const prev = S.T.get(tok);
     const prevLtp = prev ? prev[LTP] : null;
     S.T.set(tok, t);
-    if (S.cells.has(tok)) paint(tok, true, prevLtp);
+    if (S.cells.has(tok)) {
+      paint(tok, true, prevLtp);
+      if (!prev || prev[OI] !== t[OI]) oiMoved = true;
+    }
     if (tok === S.futTok) futMoved = true;
     if (S.posTok && S.posTok.has(tok)) posMoved = true;
     paintTicker(tok);
@@ -568,6 +624,7 @@ function onTicks(list) {
     }
   }
   if (posMoved) { paintPnl(); paintRiskSum(); S.gpDirty = true; }
+  if (oiMoved) queueOI();
   if (S.view !== "chain") paintCombo(list);
   if (S.ticket) ticketPaint();
 }
@@ -1909,3 +1966,92 @@ document.addEventListener("change", (e) => {
 }, true);
 
 connect();
+
+// ── NEWS ────────────────────────────────────────────────────────────────────
+// Headlines from the engine's news thread (news.py: Google News / oilprice / Trump's posts / calendar).
+// Badge = headlines newer than the last time the drawer was open (red when one is big). Read-only.
+S.news = { items: [], events: [], status: {}, f: LS.get("newsF", "ALL"), seen: LS.get("newsSeen", 0),
+           beep: LS.get("newsBeep", false), seenOpen: 0 };
+const NEWS_F = ["ALL", "CRUDE", "GOLD", "SILVER", "GAS", "WAR", "TRUMP"];
+const istHM = (ts) => new Date(ts * 1000).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
+const istDay = (ts) => new Date(ts * 1000).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+function newsWhen(ts) {
+  if (istDay(ts) === istDay(Date.now() / 1000)) return istHM(ts);
+  return new Date(ts * 1000).toLocaleDateString("en-GB", { timeZone: "Asia/Kolkata", day: "2-digit", month: "short" }) + " " + istHM(ts);
+}
+function onNews(m) {
+  const N = S.news;
+  if (m.full) N.items = m.items || [];
+  else {
+    const have = new Set(N.items.map((i) => i.id));
+    const fresh = (m.items || []).filter((i) => !have.has(i.id));
+    N.items = fresh.concat(N.items).sort((a, b) => b.ts - a.ts).slice(0, 300);
+    if (N.beep && fresh.some((i) => i.big)) newsBeep();
+  }
+  if (m.events) N.events = m.events;
+  if (m.status) N.status = m.status;
+  paintNewsBadge();
+  if (!$("news").hidden) { paintNews(); markNewsSeen(); }
+}
+function paintNewsBadge() {
+  const N = S.news, un = N.items.filter((i) => i.ts > N.seen);
+  const b = $("news-n");
+  b.hidden = !un.length;
+  b.textContent = un.length > 99 ? "99+" : String(un.length);
+  b.classList.toggle("big", un.some((i) => i.big));
+}
+function markNewsSeen() {
+  const top = S.news.items.reduce((a, i) => Math.max(a, i.ts), 0);
+  if (top > S.news.seen) { S.news.seen = top; LS.set("newsSeen", top); }
+  paintNewsBadge();
+}
+function newsCountdown(ts) {
+  const d = ts - Date.now() / 1000;
+  if (d < 0) return d > -7200 ? "just out" : "";
+  const h = Math.floor(d / 3600), mi = Math.floor((d % 3600) / 60);
+  return h >= 24 ? `in ${Math.floor(h / 24)}d ${h % 24}h` : h ? `in ${h}h ${mi}m` : `in ${mi}m`;
+}
+function paintNews() {
+  const N = S.news;
+  $("news-f").innerHTML = NEWS_F.map((f) =>
+    `<button class="${f === N.f ? "on" : ""}" data-f="${f}">${f === "ALL" ? "All" : f === "TRUMP" ? "Trump" : f}</button>`).join("");
+  const now = Date.now() / 1000;
+  const ev = N.events.filter((e) => e.ts > now - 7200 && e.ts < now + 7 * 86400).slice(0, 6);
+  $("news-ev").innerHTML = ev.length ? `<div class="nev-h">Coming up (IST)</div>` + ev.map((e) => `<div class="nev-r${e.ts < now ? " past" : ""}">
+      <span class="mono">${esc(newsWhen(e.ts))}</span><b>${esc(e.country)} ${esc(e.title)}</b>
+      <span class="dim">${e.forecast ? "f " + esc(e.forecast) : ""}${e.previous ? " · p " + esc(e.previous) : ""}</span>
+      <span class="cd">${newsCountdown(e.ts)}</span></div>`).join("") : "";
+  const pick = N.items.filter((i) => N.f === "ALL" || (N.f === "TRUMP" ? i.kind === "trump" : i.tags.includes(N.f))).slice(0, 150);
+  $("news-list").innerHTML = pick.length ? pick.map((i) => `<a class="nit${i.big ? " big" : ""}${i.ts > N.seenOpen ? " new" : ""}" href="${esc(i.url)}" target="_blank" rel="noopener noreferrer">
+      <div class="nmeta"><span class="mono">${esc(newsWhen(i.ts))}</span>${i.kind === "trump" ? `<span class="ntag trump">TRUMP</span>` : ""}
+        ${i.tags.map((t) => `<span class="ntag t-${t.toLowerCase()}">${t}</span>`).join("")}<span class="nsrc">${esc(i.src)}</span></div>
+      <div class="nt">${esc(i.title)}</div></a>`).join("")
+    : `<div class="empty">No headlines${N.f !== "ALL" ? " for " + N.f : ""} in the last 48 h.</div>`;
+  $("news-st").textContent = "Sources: " + (Object.entries(N.status).map(([k, v]) => `${k} ${v}`).join(" · ") || "starting…") +
+    " · free feeds lag the market by ~1-5 min";
+  $("news-beep").classList.toggle("on", N.beep);
+}
+$("btn-news").onclick = () => {
+  const d = $("news");
+  d.hidden = !d.hidden;
+  if (!d.hidden) { S.news.seenOpen = S.news.seen; paintNews(); markNewsSeen(); }
+};
+$("news-x").onclick = () => { $("news").hidden = true; };
+$("news-f").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-f]");
+  if (b) { S.news.f = b.dataset.f; LS.set("newsF", S.news.f); paintNews(); }
+});
+$("news-beep").onclick = () => {
+  S.news.beep = !S.news.beep; LS.set("newsBeep", S.news.beep); paintNews();
+  if (S.news.beep) newsBeep();
+};
+function newsBeep() {
+  try {
+    const a = S.news.ac || (S.news.ac = new (window.AudioContext || window.webkitAudioContext)());
+    const o = a.createOscillator(), g = a.createGain();
+    o.frequency.value = 880; g.gain.value = 0.08;
+    o.connect(g); g.connect(a.destination);
+    o.start(); o.stop(a.currentTime + 0.18);
+  } catch { /* no audio */ }
+}
+setInterval(() => { if (!$("news").hidden && S.news.events.length) paintNews(); }, 30000);   // countdowns

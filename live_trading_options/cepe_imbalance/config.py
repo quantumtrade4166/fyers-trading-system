@@ -71,3 +71,27 @@ HISTORY_EVERY_S = 0.5
 # A manual Start or Stop that day ends auto-start for that day.
 AUTO_START_DEFAULT = True
 AUTO_START_TIME = {"index": "09:20", "commodity": "09:05"}
+
+# Supertrend VARIANT (owner 13-Nov-2026): a second paper book per instrument, named "{NAME}_ST", that
+# trades the same rules but only while Supertrend on the 1-min ATM CE+PE candles is red (see st_signal.py).
+# It is armed just after the market's first 1-min candle closes, so the opening low-break rule can act.
+VARIANT_SUFFIX = "_ST"
+ST_AUTO_START_TIME = {"index": "09:16", "commodity": "09:01"}
+ST_WARMUP_MIN = 150          # minutes of the previous session replayed to warm Supertrend up
+QUOTES_FLUSH_WAIT_S = 3      # the quote recorder writes every 2 s
+
+
+def und_of(name: str) -> str:
+    """Book name -> underlying ("NIFTY_ST" -> "NIFTY")."""
+    return name[:-len(VARIANT_SUFFIX)] if name.endswith(VARIANT_SUFFIX) else name
+
+
+def is_variant(name: str) -> bool:
+    return name.endswith(VARIANT_SUFFIX)
+
+
+def label_of(name: str) -> str:
+    return UNDERLYINGS[und_of(name)]["label"] + (" · Supertrend" if is_variant(name) else "")
+
+
+ALL_BOOKS = ORDER + tuple(n + VARIANT_SUFFIX for n in ORDER)

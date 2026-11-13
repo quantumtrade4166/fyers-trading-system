@@ -60,3 +60,28 @@ def test_pnl_series_cumulative_and_drawdown(tmp_path, monkeypatch):
     assert [x["cum"] for x in got] == [-10810.0, -6810.0, 2190.0]
     assert [x["dd"] for x in got] == [-10810.0, -6810.0, 0.0]
     assert days.pnl_series("GOLD") == []                                # never traded -> no bars
+
+
+def test_past_day_digest_is_cached_and_rebuilt_on_change(tmp_path, monkeypatch):
+    """13-Nov: past days must not re-parse the full history per request (proxy timed out after a restart)."""
+    _write(tmp_path, monkeypatch)
+    s = days.hist_stats("2026-11-02", "CRUDEOIL")
+    cp = tmp_path / "history" / "2026-11-02" / "CRUDEOIL.stats.json"
+    assert cp.exists() and s["mtm_high"] == 9999.0 and s["mtm_low"] == 0.0 and s["last_mtm"] == 9999.0
+    assert len(s["ds"]) <= days.DS_POINTS + 2 and s["ds"][-1]["mtm"] == 9999.0
+    days._cache.clear()                                               # fresh process: read from disk
+    real = days.jsonl
+
+    def no_history(p):
+        assert "history" not in str(p), "full history parse"
+        return real(p)
+    monkeypatch.setattr(days, "jsonl", no_history)
+    assert days.hist_stats("2026-11-02", "CRUDEOIL")["mtm_high"] == 9999.0
+    s2 = days.summary("2026-11-02", "CRUDEOIL")                     # past day table uses the digest
+    assert s2["mtm_high"] == 9999.0 and s2["imb_min"] == -3
+    monkeypatch.undo()
+    monkeypatch.setattr(C, "DATA", tmp_path)
+    with open(tmp_path / "history" / "2026-11-02" / "CRUDEOIL.jsonl", "a", encoding="utf-8") as fh:
+        fh.write('\n{"t": 99999, "mtm": 123456.0, "imb": 1}\n')       # history changed -> digest rebuilt
+    days._cache.clear()
+    assert days.hist_stats("2026-11-02", "CRUDEOIL")["mtm_high"] == 123456.0

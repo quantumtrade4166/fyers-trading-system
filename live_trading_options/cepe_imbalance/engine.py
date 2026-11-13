@@ -16,8 +16,10 @@ import threading
 import time
 
 from live_trading_options.cepe_imbalance import config as C
+from live_trading_options.cepe_imbalance import st_signal as STS
 from live_trading_options.cepe_imbalance import strategy as S
 from live_trading_options.cepe_imbalance.book import IST, PaperBook, atomic_write, today
+from live_trading_options.cepe_imbalance.quotes import QuoteRecorder
 
 log = logging.getLogger("cepe.engine")
 
@@ -50,7 +52,9 @@ def save_settings(name, **fields):
 
 
 def default_auto(name) -> dict:
-    return {"auto_start": C.AUTO_START_DEFAULT, "auto_time": C.AUTO_START_TIME[C.UNDERLYINGS[name]["kind"]]}
+    kind = C.UNDERLYINGS[C.und_of(name)]["kind"]
+    times = C.ST_AUTO_START_TIME if C.is_variant(name) else C.AUTO_START_TIME
+    return {"auto_start": C.AUTO_START_DEFAULT, "auto_time": times[kind]}
 
 
 # ── session hours ───────────────────────────────────────────────────────────
@@ -66,7 +70,7 @@ def us_dst(day: dt.date) -> bool:
 
 
 def session(name: str, day: dt.date) -> tuple:
-    kind = C.UNDERLYINGS[name]["kind"]
+    kind = C.UNDERLYINGS[C.und_of(name)]["kind"]
     if kind == "index":
         o, c = C.NSE_HOURS
     else:
@@ -80,9 +84,10 @@ def session(name: str, day: dt.date) -> tuple:
 class Context:
     def __init__(self, runner):
         self._r = runner
-        self.name = runner.name
+        self.name = runner.und              # the UNDERLYING (market data, strike step); the book is runner.name
         self.book = runner.book
         self.market = runner.market
+        self.signal = None                  # Supertrend variant: fn(period, mult) -> st_signal state dict
 
     @property
     def params(self):
@@ -133,8 +138,10 @@ class Context:
 
 
 class Runner:
-    def __init__(self, name, market, strategy_name=S.DEFAULT, date=None, persist=True):
-        self.name = name
+    def __init__(self, name, market, strategy_name=None, date=None, persist=True):
+        self.name = name                    # book name: "NIFTY" or the Supertrend variant "NIFTY_ST"
+        self.und = C.und_of(name)
+        strategy_name = strategy_name or ("cepe_st" if C.is_variant(name) else S.DEFAULT)
         self.market = market
         self.persist = persist
         self.date = date or today()
@@ -207,15 +214,87 @@ class Engine:
         self.feed = feed
         self.persist = persist
         self.lock = threading.RLock()
-        self.runners = {n: Runner(n, market, persist=persist) for n in C.ORDER if n in universe.underlyings}
-        self.routes: dict[str, set] = {}          # feed key -> {underlying names}
+        # books: one normal + one Supertrend variant ("NIFTY_ST") per underlying
+        self.runners = {}
+        for n in C.ALL_BOOKS:
+            if C.und_of(n) in universe.underlyings:
+                self.runners[n] = self._attach(Runner(n, market, persist=persist))
+        self.unds = [n for n in C.ORDER if n in universe.underlyings]
+        self.signals = {u: STS.StSignal(u) for u in self.unds}
+        self.routes: dict[str, set] = {}          # feed key -> {book names}
         self._stop = threading.Event()
         self._last_sample = 0.0
+        self._last_st = 0.0
         self._last_subs = 0.0
         self.started_at = time.time()
         self.hist: dict[str, list] = {n: [] for n in self.runners}   # today's MTM/imbalance samples
+        self.quotes = QuoteRecorder(universe) if persist else None    # every tick, for exact replays
         if persist:
             self._load_hist(today())
+
+    def _attach(self, r):
+        """Give a Supertrend variant book its signal (the underlying's shared StSignal)."""
+        if C.is_variant(r.name):
+            r.ctx.signal = lambda per, mul, u=r.und: self.signals[u].state(per, mul)
+        return r
+
+    # ── Supertrend signal (variant books) ───────────────────────────────────
+    def st_params(self, und):
+        r = self.runners.get(und + C.VARIANT_SUFFIX)
+        p = r.params if r else {}
+        step = float(p.get("step") or C.STRIKE_STEP.get(und) or 0)
+        return step, float(p.get("atm_buffer_pct", 20.0)), (r.expiry_n if r else 0)
+
+    def st_sample(self, now: dt.datetime):
+        t = time.time()
+        for u in self.unds:
+            step, buf, en = self.st_params(u)
+            e = self.market.expiry(u, en)
+            sig = self.signals[u]
+            day = now.date().isoformat()
+            if sig.day != day or sig.expiry != e:            # new day / expiry: fresh candles + warm-up
+                sig.reset(day, e)
+                if e:
+                    self.start_warmup(u, day, e, step, buf)
+            o, close, _sq = session(u, now.date())
+            if e:
+                sig.sample(t, self.market, step, buf, o.timestamp(), close.timestamp())
+
+    def start_warmup(self, und, day, expiry, step, buf):
+        """Queue a warm-up; ONE worker runs them one after another (each is a 10-40 s replay process)."""
+        if not hasattr(self, "_warm_q"):
+            import queue
+            self._warm_q = queue.Queue()
+
+            def worker():
+                while True:
+                    fn = self._warm_q.get()
+                    try:
+                        fn()
+                    except Exception:
+                        log.exception("warm-up worker")
+            threading.Thread(target=worker, daemon=True, name="StWarmup").start()
+        sig = self.signals[und]
+
+        def job():
+            try:
+                if self.persist:
+                    time.sleep(C.QUOTES_FLUSH_WAIT_S)          # let the quote recorder write the last ticks
+                    w, tb, src, wd = STS.warm_up_subprocess(und, day, expiry, step, buf)
+                else:
+                    w, tb, src, wd = [], [], "none", None
+                if sig.day == day and sig.expiry == expiry:
+                    sig.install_warmup(w, tb, src, wd)
+                    log.info("%s Supertrend warm-up: %d bars from %s, %d bars of today replayed",
+                             und, len(w), src, len(tb))
+            except Exception:
+                log.exception("%s Supertrend warm-up failed (today only)", und)
+                if sig.day == day and sig.expiry == expiry:
+                    sig.install_warmup([], [], "none (error)", None)
+        if self.persist:
+            self._warm_q.put(job)
+        else:
+            job()                                            # tests / demo: no files, instant
 
     def _load_hist(self, date):
         for n in self.runners:
@@ -225,30 +304,32 @@ class Engine:
 
     # ── subscriptions ───────────────────────────────────────────────────────
     def wanted_keys(self, name) -> list:
-        und = self.u.underlyings[name]
+        """name = book name; market data is the underlying's (NIFTY_ST watches NIFTY)."""
+        u = C.und_of(name)
+        und = self.u.underlyings[u]
         keys = [und.spot_key] if und.spot_key else []
         keys += [f.key for f in und.futures[:3]]
         for n in range(C.EXPIRIES_LIVE):
-            e = self.market.expiry(name, n)
+            e = self.market.expiry(u, n)
             if not e:
                 continue
-            if self.market.ref_price(name, e) <= 0:
+            if self.market.ref_price(u, e) <= 0:
                 continue                           # ATM unknown yet: subscribe the reference first
-            for s in self.market.window(name, e):
+            for s in self.market.window(u, e):
                 for kind in ("CE", "PE"):
-                    c = self.market.contract(name, e, s, kind)
+                    c = self.market.contract(u, e, s, kind)
                     if c:
                         keys.append(c.key)
         r = self.runners.get(name)
-        e = self.market.expiry(name, r.expiry_n if r else 0)       # strategy grid around ATM
-        atm = self.market.atm(name, e) if e else None
+        e = self.market.expiry(u, r.expiry_n if r else 0)          # strategy grid around ATM
+        atm = self.market.atm(u, e) if e else None
         if atm is not None:
-            step = float((r.params.get("step") if r else 0) or C.STRIKE_STEP.get(name) or 0)
+            step = float((r.params.get("step") if r else 0) or C.STRIKE_STEP.get(u) or 0)
             if step > 0:
                 base = round(atm / step) * step
                 for i in range(-C.GRID_EACH_SIDE, C.GRID_EACH_SIDE + 1):
                     for kind in ("CE", "PE"):
-                        c = self.market.contract(name, e, base + i * step, kind)
+                        c = self.market.contract(u, e, base + i * step, kind)
                         if c:
                             keys.append(c.key)
         # open positions are always watched
@@ -270,9 +351,16 @@ class Engine:
     def on_ticks(self, ticks):
         keys = self.market.apply(ticks)
         touched: dict[str, list] = {}
+        rec = self.quotes
         for k in keys:
-            for n in self.routes.get(k, ()):
+            names = self.routes.get(k, ())
+            for n in names:
                 touched.setdefault(n, []).append(k)
+            if rec and names:                                   # once per UNDERLYING, not per book
+                q = self.market.quote(k)
+                if q:
+                    for u in {C.und_of(n) for n in names}:
+                        rec.add(u, k, q, q.recv_ts or None)
         if not touched:
             return
         with self.lock:
@@ -353,7 +441,7 @@ class Engine:
                 if h.exists():
                     shutil.move(str(h), str(arch / f"{name}_history.jsonl"))
                     moved.append(h.name)
-            nr = Runner(name, self.market, r.strategy_name, date=r.date, persist=self.persist)
+            nr = self._attach(Runner(name, self.market, r.strategy_name, date=r.date, persist=self.persist))
             nr.state["auto_done"] = True                     # reset = owner's action; no auto re-trigger
             self.runners[name] = nr
             self.hist[name] = []
@@ -379,10 +467,10 @@ class Engine:
     def manual_order(self, name, strike, kind, side, lots, expiry_n=None):
         with self.lock:
             r = self.runners[name]
-            e = self.market.expiry(name, r.expiry_n if expiry_n is None else int(expiry_n))
-            c = self.market.contract(name, e, float(strike), kind.upper())
+            e = self.market.expiry(r.und, r.expiry_n if expiry_n is None else int(expiry_n))
+            c = self.market.contract(r.und, e, float(strike), kind.upper())
             if not c:
-                return {"ok": False, "error": f"no contract {name} {e} {strike} {kind}"}
+                return {"ok": False, "error": f"no contract {r.und} {e} {strike} {kind}"}
             if self.feed:
                 self.feed.want([c.key])
             self.routes.setdefault(c.key, set()).add(name)
@@ -411,6 +499,12 @@ class Engine:
                     r.save_state()
                 elif now >= o:
                     r.call(r.strategy.on_timer)
+        if time.time() - self._last_st >= STS.SAMPLE_S:
+            self._last_st = time.time()
+            try:
+                self.st_sample(now)
+            except Exception:
+                log.exception("Supertrend sample")
         if time.time() - self._last_sample >= C.HISTORY_EVERY_S:
             self._last_sample = time.time()
             self.sample(now)
@@ -424,16 +518,23 @@ class Engine:
             if not (r.running or has_book):
                 continue
             m, im = r.book.mtm(), r.book.imbalance()
-            e = self.market.expiry(n, r.expiry_n)
-            atm = r.state.get("atm") or self.market.atm(n, e)
+            u = r.und
+            e = self.market.expiry(u, r.expiry_n)
+            atm = r.state.get("atm") or self.market.atm(u, e)
             row = {"t": round(time.time(), 2), "mtm": m["total"], "imb": im["pct"],
-                   "ce": im["ce_value"], "pe": im["pe_value"], "ref": self.market.ref_price(n, e), "atm": atm}
+                   "ce": im["ce_value"], "pe": im["pe_value"], "ref": self.market.ref_price(u, e), "atm": atm}
+            if C.is_variant(n):                              # Supertrend variant: its signal ATM + ST line
+                s = r.state.get("st") or {}
+                atm = s.get("atm") or atm
+                row["atm"] = atm
+                if s.get("st") is not None:
+                    row["st"], row["st_red"] = s["st"], s.get("trend") == "red"
             if atm and e:                                    # ATM premium chart: ATM CE / PE price
                 for kind, f in (("CE", "ace"), ("PE", "ape")):
-                    c = self.market.contract(n, e, atm, kind)
+                    c = self.market.contract(u, e, atm, kind)
                     px = self.market.mark(c.key) if c else 0.0
                     row[f] = px if px > 0 else None
-            sp = self.spreads(n, r, e, atm)                    # bid-ask gap % of the 6 strategy strikes
+            sp = self.spreads(u, r, e, atm)                    # bid-ask gap % of the 6 strategy strikes
             if sp:
                 row["sp"] = sp
             self.hist.setdefault(n, []).append(row)
@@ -465,7 +566,7 @@ class Engine:
             for n, r in list(self.runners.items()):
                 if any(p.lots for p in r.book.positions.values()):
                     r.event("rollover_with_open_positions_dropped")
-                self.runners[n] = Runner(n, self.market, r.strategy_name, date=date, persist=self.persist)
+                self.runners[n] = self._attach(Runner(n, self.market, r.strategy_name, date=date, persist=self.persist))
                 self.hist[n] = []
         log.info("day rollover -> %s", date)
 
@@ -480,27 +581,32 @@ class Engine:
 
     def stop_all(self):
         self._stop.set()
+        if self.quotes:
+            self.quotes.stop()
 
     # ── read model for the API ──────────────────────────────────────────────
     def summary(self) -> dict:
         now = dt.datetime.now(IST)
         out = []
         for n, r in self.runners.items():
+            u = r.und
             o, close, sq = session(n, now.date())
-            e = self.market.expiry(n, r.expiry_n)
-            rk = self.market.ref_key(n, e)
+            e = self.market.expiry(u, r.expiry_n)
+            rk = self.market.ref_key(u, e)
             rq = self.market.quote(rk) if rk else None
-            out.append({"name": n, "label": C.UNDERLYINGS[n]["label"], "kind": C.UNDERLYINGS[n]["kind"], "running": r.running,
-                        "strategy": r.strategy_name, "expiry": e, "lot": self.u.underlyings[n].lot,
+            out.append({"name": n, "und": u, "variant": "st" if C.is_variant(n) else "normal",
+                        "label": C.label_of(n), "kind": C.UNDERLYINGS[u]["kind"], "running": r.running,
+                        "strategy": r.strategy_name, "expiry": e, "lot": self.u.underlyings[u].lot,
+                        "st": r.state.get("st") if C.is_variant(n) else None,
                         "ref": rq.ltp if rq else None, "ref_age": round(time.time() - rq.recv_ts, 1) if rq else None,
-                        "atm": self.market.atm(n, e), "synthetic": self.market.synthetic(n, e), "mtm": r.book.mtm(), "imbalance": r.book.imbalance(),
+                        "atm": self.market.atm(u, e), "synthetic": self.market.synthetic(u, e), "mtm": r.book.mtm(), "imbalance": r.book.imbalance(),
                         "open_positions": sum(1 for p in r.book.positions.values() if p.lots),
                         "trades": len(r.book.trades), "errors": r.errors, "last_error": r.last_error,
                         "session": {"open": o.strftime("%H:%M"), "close": close.strftime("%H:%M"),
                                     "square_off": sq.strftime("%H:%M"), "in_session": o <= now < close},
                         "square_off_done": r.square_off_done, "phase": r.state.get("phase"),
                         "strat_atm": r.state.get("atm"), "blocked": r.state.get("blocked"),
-                        "params": r.params, "step": float(r.params.get("step") or C.STRIKE_STEP.get(n) or 0),
+                        "params": r.params, "step": float(r.params.get("step") or C.STRIKE_STEP.get(u) or 0),
                         "auto_start": r.auto.get("auto_start"), "auto_time": r.auto.get("auto_time"),
                         "auto_done": bool(r.state.get("auto_done"))})
         return {"now": now.isoformat(timespec="seconds"), "underlyings": out,

@@ -73,6 +73,8 @@ globals().update(_DESKS[DESK])
 if os.getenv("TERMINAL_PORT"):             # preview / test copies only: never set on the real engines
     PORT = int(os.getenv("TERMINAL_PORT"))
 DESK_LABEL = f"{DESK} Desk"
+# NEWS button (news.py: public headlines, read-only) - MCX desk only (owner, 12-Nov-2026)
+NEWS = os.getenv("TERMINAL_NEWS", "1" if DESK == "MCX" else "0") == "1"
 # the other desk, for the switch at the top of the screen
 DESK_URLS = {"MCX": os.getenv("MCX_DESK_URL", "https://mcx.trading.contact"),
              "NSE": os.getenv("NSE_DESK_URL", "https://nse.trading.contact")}

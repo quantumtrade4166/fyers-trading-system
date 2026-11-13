@@ -49,6 +49,14 @@ class Config:
     # 1-min bars, fill = stop price or the minute's open if it gapped past.
     trigger_high_sl: str | None = None
 
+    # OPTIONAL tests (off in the baseline, NOT in paper/live), 1-minute bars:
+    #   target_points  -> book profit once the premium is this many points below the
+    #                     sell price (fill = exactly that level)
+    #   hard_sl_points -> fixed stop this many points ABOVE the sell price
+    # A minute that touches both counts as the stop.
+    target_points: float | None = None
+    hard_sl_points: float | None = None
+
     # OPTIONAL test (off in the baseline, NOT in paper/live): no new entry when the
     # fill time would be after this HH:MM (a later signal is dropped).
     last_entry_time: str | None = None

@@ -516,5 +516,76 @@ class CePeImbalance(Strategy):
         ctx.state["phase"] = "done"
 
 
-REGISTRY = {"cepe": CePeImbalance, "idle": Idle}
+class CePeSupertrend(CePeImbalance):
+    """Supertrend VARIANT (owner 13-Nov-2026): the same CE/PE imbalance book, but only while Supertrend
+    on the 1-minute ATM CE+PE candles is RED (premium falling). Signal: st_signal.StSignal via ctx.signal().
+      * candle closes green while in  -> buy back everything, flat (no adjustments while flat)
+      * flat and the last closed candle is red -> fresh entry (normal entry rules), then normal adjustments
+      * opening rule: Supertrend already red at the open (after the previous-session warm-up) and no green
+        candle yet today -> enter only once CE+PE trades below the LOW of the market's first 1-min candle
+    A manual Start while red enters at once (same as a red close). MTM stop / session end as normal."""
+    params = {**CePeImbalance.params, "st_period": 10, "st_mult": 3.0}
+
+    def signal(self, ctx) -> dict:
+        fn = getattr(ctx, "signal", None)
+        s = fn(int(ctx.params.get("st_period") or 10), float(ctx.params.get("st_mult") or 3.0)) if fn else None
+        s = s or {"ready": False}
+        ctx.state["st"] = {k: s.get(k) for k in ("ready", "trend", "st", "px", "start_red", "flipped_today",
+                                                  "first_low", "warm_source", "bars_today", "atm", "expiry")}
+        return s
+
+    def on_start(self, ctx):
+        has = any(p.lots for p in ctx.book.positions.values())
+        ctx.state["phase"] = "in" if has else "flat"
+        ctx.state["blocked"] = None
+        ctx.log("phase", phase=ctx.state["phase"])
+        self.evaluate(ctx)
+
+    def _evaluate(self, ctx):
+        ph = ctx.state.get("phase")
+        if ph in ("stopped", "done", None) or not ctx.in_session():
+            return
+        stop = float(ctx.params.get("mtm_stop") or 0)
+        if stop > 0 and ctx.book.mtm()["total"] <= -stop:              # also counts booked losses while flat
+            out = ctx.book.exit_all("MTM stop loss")
+            ctx.state["phase"] = "stopped"
+            ctx.log("stop_loss", mtm=ctx.book.mtm()["total"], exits=len(out))
+            ctx.save()
+            return
+        s = self.signal(ctx)
+        has = any(p.lots for p in ctx.book.positions.values())
+        if has:
+            if s.get("ready") and s.get("trend") == "green":
+                out = ctx.book.exit_all("Supertrend green")
+                ctx.state["phase"] = "flat"
+                ctx.state["blocked"] = ctx.state["blocked_key"] = None
+                ctx.log("adjust", action=f"exit: Supertrend green (CE+PE {s.get('px')} > ST {s.get('st')})",
+                        imb_before=None, imb_after=None, atm=ctx.state.get("atm"),
+                        fills=[f"{t.get('side')} {t.get('lots')} {t.get('symbol')} @{t.get('price')}" for t in out])
+                ctx.save()
+                return
+            ctx.state["phase"] = "in"
+            return super()._evaluate(ctx)
+        ctx.state["phase"] = "flat"
+        if not s.get("ready") or s.get("trend") != "red":
+            return
+        if s.get("start_red") and not s.get("flipped_today"):
+            low, px = s.get("first_low"), s.get("px")
+            if low is None or px is None or not px < low:
+                return self.blocked(ctx, f"red since the open: waiting for CE+PE below the first candle's low "
+                                         f"{low if low is not None else '–'} (now {px if px is not None else '–'})",
+                                    key="st opening low")
+            why = f"opening low break (CE+PE {px} < {low})"
+        else:
+            why = f"Supertrend red (CE+PE {s.get('px')} < ST {s.get('st')})"
+        ctx.state["phase"] = "wait_entry"
+        n = len(ctx.book.trades)
+        super()._evaluate(ctx)                                           # normal entry rules
+        if ctx.state.get("phase") == "in" and len(ctx.book.trades) > n:
+            ctx.log("st_entry", why=why)
+        elif ctx.state.get("phase") == "wait_entry":
+            ctx.state["phase"] = "flat"                                  # entry held (wide quote...): retry
+
+
+REGISTRY = {"cepe": CePeImbalance, "cepe_st": CePeSupertrend, "idle": Idle}
 DEFAULT = "cepe"
