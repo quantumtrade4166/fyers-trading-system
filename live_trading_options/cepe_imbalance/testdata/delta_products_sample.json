@@ -1,0 +1,6203 @@
+[
+{
+"id": 164071,
+"symbol": "C-BTC-65800-161126",
+"contract_type": "call_options",
+"strike_price": "65800",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164070,
+"symbol": "P-BTC-65800-161126",
+"contract_type": "put_options",
+"strike_price": "65800",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164069,
+"symbol": "C-BTC-65800-151126",
+"contract_type": "call_options",
+"strike_price": "65800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164068,
+"symbol": "P-BTC-65800-151126",
+"contract_type": "put_options",
+"strike_price": "65800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164067,
+"symbol": "C-BTC-65400-141126",
+"contract_type": "call_options",
+"strike_price": "65400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164066,
+"symbol": "P-BTC-65400-141126",
+"contract_type": "put_options",
+"strike_price": "65400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164064,
+"symbol": "C-BTC-64000-161126",
+"contract_type": "call_options",
+"strike_price": "64000",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164063,
+"symbol": "P-BTC-64000-161126",
+"contract_type": "put_options",
+"strike_price": "64000",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164062,
+"symbol": "C-BTC-64800-151126",
+"contract_type": "call_options",
+"strike_price": "64800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164061,
+"symbol": "C-BTC-65200-141126",
+"contract_type": "call_options",
+"strike_price": "65200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164060,
+"symbol": "P-BTC-65200-141126",
+"contract_type": "put_options",
+"strike_price": "65200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164059,
+"symbol": "C-BTC-62000-201126",
+"contract_type": "call_options",
+"strike_price": "62000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164058,
+"symbol": "C-BTC-61000-271126",
+"contract_type": "call_options",
+"strike_price": "61000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164055,
+"symbol": "C-BTC-60000-041226",
+"contract_type": "call_options",
+"strike_price": "60000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164054,
+"symbol": "C-BTC-64500-201126",
+"contract_type": "call_options",
+"strike_price": "64500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164053,
+"symbol": "P-BTC-64500-201126",
+"contract_type": "put_options",
+"strike_price": "64500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164052,
+"symbol": "C-BTC-65500-271126",
+"contract_type": "call_options",
+"strike_price": "65500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164051,
+"symbol": "P-BTC-65500-271126",
+"contract_type": "put_options",
+"strike_price": "65500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164043,
+"symbol": "C-BTC-66200-161126",
+"contract_type": "call_options",
+"strike_price": "66200",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164042,
+"symbol": "P-BTC-64400-161126",
+"contract_type": "put_options",
+"strike_price": "64400",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164041,
+"symbol": "P-BTC-66200-161126",
+"contract_type": "put_options",
+"strike_price": "66200",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164040,
+"symbol": "C-BTC-66200-151126",
+"contract_type": "call_options",
+"strike_price": "66200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164039,
+"symbol": "P-BTC-66200-151126",
+"contract_type": "put_options",
+"strike_price": "66200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164038,
+"symbol": "C-BTC-65800-141126",
+"contract_type": "call_options",
+"strike_price": "65800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164037,
+"symbol": "P-BTC-65800-141126",
+"contract_type": "put_options",
+"strike_price": "65800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164033,
+"symbol": "C-BTC-64400-161126",
+"contract_type": "call_options",
+"strike_price": "64400",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164032,
+"symbol": "C-BTC-64800-161126",
+"contract_type": "call_options",
+"strike_price": "64800",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164031,
+"symbol": "P-BTC-64800-161126",
+"contract_type": "put_options",
+"strike_price": "64800",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164030,
+"symbol": "C-BTC-65200-151126",
+"contract_type": "call_options",
+"strike_price": "65200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164029,
+"symbol": "C-BTC-65600-151126",
+"contract_type": "call_options",
+"strike_price": "65600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164028,
+"symbol": "P-BTC-65200-151126",
+"contract_type": "put_options",
+"strike_price": "65200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164027,
+"symbol": "P-BTC-65600-151126",
+"contract_type": "put_options",
+"strike_price": "65600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164026,
+"symbol": "C-BTC-65600-141126",
+"contract_type": "call_options",
+"strike_price": "65600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164025,
+"symbol": "P-BTC-65600-141126",
+"contract_type": "put_options",
+"strike_price": "65600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164024,
+"symbol": "C-BTC-66500-041226",
+"contract_type": "call_options",
+"strike_price": "66500",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164023,
+"symbol": "P-BTC-61000-041226",
+"contract_type": "put_options",
+"strike_price": "61000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164022,
+"symbol": "P-BTC-66500-041226",
+"contract_type": "put_options",
+"strike_price": "66500",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164021,
+"symbol": "P-BTC-63000-201126",
+"contract_type": "put_options",
+"strike_price": "63000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164020,
+"symbol": "P-BTC-57000-290127",
+"contract_type": "put_options",
+"strike_price": "57000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164019,
+"symbol": "C-BTC-58000-251226",
+"contract_type": "call_options",
+"strike_price": "58000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164018,
+"symbol": "P-BTC-59000-251226",
+"contract_type": "put_options",
+"strike_price": "59000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164017,
+"symbol": "P-BTC-62000-271126",
+"contract_type": "put_options",
+"strike_price": "62000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164016,
+"symbol": "C-BTC-66600-161126",
+"contract_type": "call_options",
+"strike_price": "66600",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164015,
+"symbol": "P-BTC-66600-161126",
+"contract_type": "put_options",
+"strike_price": "66600",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164014,
+"symbol": "C-BTC-66600-151126",
+"contract_type": "call_options",
+"strike_price": "66600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164013,
+"symbol": "P-BTC-66600-151126",
+"contract_type": "put_options",
+"strike_price": "66600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164012,
+"symbol": "C-BTC-66200-141126",
+"contract_type": "call_options",
+"strike_price": "66200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164011,
+"symbol": "P-BTC-66200-141126",
+"contract_type": "put_options",
+"strike_price": "66200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164008,
+"symbol": "C-BTC-67000-161126",
+"contract_type": "call_options",
+"strike_price": "67000",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164007,
+"symbol": "P-BTC-67000-161126",
+"contract_type": "put_options",
+"strike_price": "67000",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164006,
+"symbol": "C-BTC-67000-151126",
+"contract_type": "call_options",
+"strike_price": "67000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164005,
+"symbol": "P-BTC-67000-151126",
+"contract_type": "put_options",
+"strike_price": "67000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164004,
+"symbol": "C-BTC-66600-141126",
+"contract_type": "call_options",
+"strike_price": "66600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164003,
+"symbol": "P-BTC-66600-141126",
+"contract_type": "put_options",
+"strike_price": "66600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164002,
+"symbol": "C-BTC-65500-201126",
+"contract_type": "call_options",
+"strike_price": "65500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164001,
+"symbol": "P-BTC-65500-201126",
+"contract_type": "put_options",
+"strike_price": "65500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 164000,
+"symbol": "C-BTC-66500-271126",
+"contract_type": "call_options",
+"strike_price": "66500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163999,
+"symbol": "P-BTC-66500-271126",
+"contract_type": "put_options",
+"strike_price": "66500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163992,
+"symbol": "C-BTC-65200-161126",
+"contract_type": "call_options",
+"strike_price": "65200",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163991,
+"symbol": "P-BTC-65200-161126",
+"contract_type": "put_options",
+"strike_price": "65200",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163990,
+"symbol": "P-BTC-65600-161126",
+"contract_type": "put_options",
+"strike_price": "65600",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163989,
+"symbol": "C-BTC-61000-041226",
+"contract_type": "call_options",
+"strike_price": "61000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163988,
+"symbol": "C-BTC-63000-201126",
+"contract_type": "call_options",
+"strike_price": "63000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163987,
+"symbol": "C-BTC-56000-290127",
+"contract_type": "call_options",
+"strike_price": "56000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163986,
+"symbol": "C-BTC-62000-271126",
+"contract_type": "call_options",
+"strike_price": "62000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163985,
+"symbol": "C-BTC-65600-161126",
+"contract_type": "call_options",
+"strike_price": "65600",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163983,
+"symbol": "C-BTC-67400-161126",
+"contract_type": "call_options",
+"strike_price": "67400",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163982,
+"symbol": "P-BTC-67400-161126",
+"contract_type": "put_options",
+"strike_price": "67400",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163981,
+"symbol": "C-BTC-67000-141126",
+"contract_type": "call_options",
+"strike_price": "67000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163980,
+"symbol": "P-BTC-67000-141126",
+"contract_type": "put_options",
+"strike_price": "67000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163956,
+"symbol": "C-BTC-67500-041226",
+"contract_type": "call_options",
+"strike_price": "67500",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163955,
+"symbol": "P-BTC-67500-041226",
+"contract_type": "put_options",
+"strike_price": "67500",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163953,
+"symbol": "C-BTC-66000-161126",
+"contract_type": "call_options",
+"strike_price": "66000",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163952,
+"symbol": "P-BTC-66000-161126",
+"contract_type": "put_options",
+"strike_price": "66000",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163951,
+"symbol": "P-BTC-62000-041226",
+"contract_type": "put_options",
+"strike_price": "62000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163950,
+"symbol": "C-BTC-59000-251226",
+"contract_type": "call_options",
+"strike_price": "59000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163949,
+"symbol": "P-BTC-60000-251226",
+"contract_type": "put_options",
+"strike_price": "60000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163944,
+"symbol": "C-BTC-67800-161126",
+"contract_type": "call_options",
+"strike_price": "67800",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163943,
+"symbol": "P-BTC-67800-161126",
+"contract_type": "put_options",
+"strike_price": "67800",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163938,
+"symbol": "P-BTC-66400-161126",
+"contract_type": "put_options",
+"strike_price": "66400",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163937,
+"symbol": "C-BTC-68000-041226",
+"contract_type": "call_options",
+"strike_price": "68000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163936,
+"symbol": "P-BTC-68000-041226",
+"contract_type": "put_options",
+"strike_price": "68000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163935,
+"symbol": "C-BTC-66500-201126",
+"contract_type": "call_options",
+"strike_price": "66500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163934,
+"symbol": "P-BTC-66500-201126",
+"contract_type": "put_options",
+"strike_price": "66500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163931,
+"symbol": "C-BTC-66400-161126",
+"contract_type": "call_options",
+"strike_price": "66400",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163930,
+"symbol": "C-BTC-62000-041226",
+"contract_type": "call_options",
+"strike_price": "62000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163929,
+"symbol": "C-BTC-68200-161126",
+"contract_type": "call_options",
+"strike_price": "68200",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163928,
+"symbol": "P-BTC-68200-161126",
+"contract_type": "put_options",
+"strike_price": "68200",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163927,
+"symbol": "C-BTC-70600-161126",
+"contract_type": "call_options",
+"strike_price": "70600",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163926,
+"symbol": "P-BTC-70600-161126",
+"contract_type": "put_options",
+"strike_price": "70600",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163922,
+"symbol": "C-BTC-72000-161126",
+"contract_type": "call_options",
+"strike_price": "72000",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163921,
+"symbol": "P-BTC-72000-161126",
+"contract_type": "put_options",
+"strike_price": "72000",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163920,
+"symbol": "P-BTC-66800-161126",
+"contract_type": "put_options",
+"strike_price": "66800",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163919,
+"symbol": "P-BTC-63000-041226",
+"contract_type": "put_options",
+"strike_price": "63000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163915,
+"symbol": "C-BTC-71600-161126",
+"contract_type": "call_options",
+"strike_price": "71600",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163914,
+"symbol": "C-BTC-66800-161126",
+"contract_type": "call_options",
+"strike_price": "66800",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163913,
+"symbol": "P-BTC-71600-161126",
+"contract_type": "put_options",
+"strike_price": "71600",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163912,
+"symbol": "C-BTC-76000-041226",
+"contract_type": "call_options",
+"strike_price": "76000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163911,
+"symbol": "C-BTC-75000-041226",
+"contract_type": "call_options",
+"strike_price": "75000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163910,
+"symbol": "C-BTC-74000-041226",
+"contract_type": "call_options",
+"strike_price": "74000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163909,
+"symbol": "C-BTC-63000-041226",
+"contract_type": "call_options",
+"strike_price": "63000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163908,
+"symbol": "C-BTC-64000-041226",
+"contract_type": "call_options",
+"strike_price": "64000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163907,
+"symbol": "P-BTC-64000-041226",
+"contract_type": "put_options",
+"strike_price": "64000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163906,
+"symbol": "P-BTC-75000-041226",
+"contract_type": "put_options",
+"strike_price": "75000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163905,
+"symbol": "P-BTC-74000-041226",
+"contract_type": "put_options",
+"strike_price": "74000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163897,
+"symbol": "C-BTC-71200-161126",
+"contract_type": "call_options",
+"strike_price": "71200",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163896,
+"symbol": "C-BTC-70800-161126",
+"contract_type": "call_options",
+"strike_price": "70800",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163895,
+"symbol": "C-BTC-70400-161126",
+"contract_type": "call_options",
+"strike_price": "70400",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163894,
+"symbol": "C-BTC-67200-161126",
+"contract_type": "call_options",
+"strike_price": "67200",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163893,
+"symbol": "C-BTC-67600-161126",
+"contract_type": "call_options",
+"strike_price": "67600",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163892,
+"symbol": "C-BTC-68000-161126",
+"contract_type": "call_options",
+"strike_price": "68000",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163891,
+"symbol": "P-BTC-67200-161126",
+"contract_type": "put_options",
+"strike_price": "67200",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163890,
+"symbol": "P-BTC-67600-161126",
+"contract_type": "put_options",
+"strike_price": "67600",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163889,
+"symbol": "P-BTC-68000-161126",
+"contract_type": "put_options",
+"strike_price": "68000",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163888,
+"symbol": "P-BTC-71200-161126",
+"contract_type": "put_options",
+"strike_price": "71200",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163887,
+"symbol": "P-BTC-70800-161126",
+"contract_type": "put_options",
+"strike_price": "70800",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163886,
+"symbol": "P-BTC-70400-161126",
+"contract_type": "put_options",
+"strike_price": "70400",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163885,
+"symbol": "C-BTC-73000-041226",
+"contract_type": "call_options",
+"strike_price": "73000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163884,
+"symbol": "C-BTC-72000-041226",
+"contract_type": "call_options",
+"strike_price": "72000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163883,
+"symbol": "C-BTC-71000-041226",
+"contract_type": "call_options",
+"strike_price": "71000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163882,
+"symbol": "C-BTC-65000-041226",
+"contract_type": "call_options",
+"strike_price": "65000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163881,
+"symbol": "C-BTC-66000-041226",
+"contract_type": "call_options",
+"strike_price": "66000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163880,
+"symbol": "C-BTC-67000-041226",
+"contract_type": "call_options",
+"strike_price": "67000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163879,
+"symbol": "P-BTC-65000-041226",
+"contract_type": "put_options",
+"strike_price": "65000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163878,
+"symbol": "P-BTC-66000-041226",
+"contract_type": "put_options",
+"strike_price": "66000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163877,
+"symbol": "P-BTC-67000-041226",
+"contract_type": "put_options",
+"strike_price": "67000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163876,
+"symbol": "P-BTC-73000-041226",
+"contract_type": "put_options",
+"strike_price": "73000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163875,
+"symbol": "P-BTC-72000-041226",
+"contract_type": "put_options",
+"strike_price": "72000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163874,
+"symbol": "P-BTC-71000-041226",
+"contract_type": "put_options",
+"strike_price": "71000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163831,
+"symbol": "C-BTC-68400-161126",
+"contract_type": "call_options",
+"strike_price": "68400",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163830,
+"symbol": "C-BTC-68600-161126",
+"contract_type": "call_options",
+"strike_price": "68600",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163829,
+"symbol": "C-BTC-68800-161126",
+"contract_type": "call_options",
+"strike_price": "68800",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163828,
+"symbol": "C-BTC-69000-161126",
+"contract_type": "call_options",
+"strike_price": "69000",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163827,
+"symbol": "C-BTC-69200-161126",
+"contract_type": "call_options",
+"strike_price": "69200",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163826,
+"symbol": "C-BTC-69400-161126",
+"contract_type": "call_options",
+"strike_price": "69400",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163825,
+"symbol": "C-BTC-69600-161126",
+"contract_type": "call_options",
+"strike_price": "69600",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163824,
+"symbol": "C-BTC-69800-161126",
+"contract_type": "call_options",
+"strike_price": "69800",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163823,
+"symbol": "C-BTC-70000-161126",
+"contract_type": "call_options",
+"strike_price": "70000",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163822,
+"symbol": "C-BTC-70200-161126",
+"contract_type": "call_options",
+"strike_price": "70200",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163821,
+"symbol": "P-BTC-68400-161126",
+"contract_type": "put_options",
+"strike_price": "68400",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163820,
+"symbol": "P-BTC-68600-161126",
+"contract_type": "put_options",
+"strike_price": "68600",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163819,
+"symbol": "P-BTC-68800-161126",
+"contract_type": "put_options",
+"strike_price": "68800",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163818,
+"symbol": "P-BTC-69000-161126",
+"contract_type": "put_options",
+"strike_price": "69000",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163817,
+"symbol": "P-BTC-69200-161126",
+"contract_type": "put_options",
+"strike_price": "69200",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163816,
+"symbol": "P-BTC-69400-161126",
+"contract_type": "put_options",
+"strike_price": "69400",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163815,
+"symbol": "P-BTC-69600-161126",
+"contract_type": "put_options",
+"strike_price": "69600",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163814,
+"symbol": "P-BTC-69800-161126",
+"contract_type": "put_options",
+"strike_price": "69800",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163813,
+"symbol": "P-BTC-70000-161126",
+"contract_type": "put_options",
+"strike_price": "70000",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163812,
+"symbol": "P-BTC-70200-161126",
+"contract_type": "put_options",
+"strike_price": "70200",
+"settlement_time": "2026-11-16T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163811,
+"symbol": "C-BTC-68500-041226",
+"contract_type": "call_options",
+"strike_price": "68500",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163810,
+"symbol": "C-BTC-69000-041226",
+"contract_type": "call_options",
+"strike_price": "69000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163809,
+"symbol": "C-BTC-69500-041226",
+"contract_type": "call_options",
+"strike_price": "69500",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163808,
+"symbol": "C-BTC-70000-041226",
+"contract_type": "call_options",
+"strike_price": "70000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163807,
+"symbol": "C-BTC-70500-041226",
+"contract_type": "call_options",
+"strike_price": "70500",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163806,
+"symbol": "P-BTC-68500-041226",
+"contract_type": "put_options",
+"strike_price": "68500",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163805,
+"symbol": "P-BTC-69000-041226",
+"contract_type": "put_options",
+"strike_price": "69000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163804,
+"symbol": "P-BTC-69500-041226",
+"contract_type": "put_options",
+"strike_price": "69500",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163803,
+"symbol": "P-BTC-70000-041226",
+"contract_type": "put_options",
+"strike_price": "70000",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163802,
+"symbol": "P-BTC-70500-041226",
+"contract_type": "put_options",
+"strike_price": "70500",
+"settlement_time": "2026-12-04T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163799,
+"symbol": "C-BTC-67400-151126",
+"contract_type": "call_options",
+"strike_price": "67400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163798,
+"symbol": "P-BTC-67400-151126",
+"contract_type": "put_options",
+"strike_price": "67400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163797,
+"symbol": "C-BTC-67400-141126",
+"contract_type": "call_options",
+"strike_price": "67400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163796,
+"symbol": "P-BTC-67400-141126",
+"contract_type": "put_options",
+"strike_price": "67400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163792,
+"symbol": "C-BTC-67500-201126",
+"contract_type": "call_options",
+"strike_price": "67500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163791,
+"symbol": "P-BTC-67500-201126",
+"contract_type": "put_options",
+"strike_price": "67500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163790,
+"symbol": "P-BTC-66000-151126",
+"contract_type": "put_options",
+"strike_price": "66000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163789,
+"symbol": "C-BTC-66000-141126",
+"contract_type": "call_options",
+"strike_price": "66000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163788,
+"symbol": "P-BTC-66000-141126",
+"contract_type": "put_options",
+"strike_price": "66000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163787,
+"symbol": "P-BTC-64000-201126",
+"contract_type": "put_options",
+"strike_price": "64000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163784,
+"symbol": "P-BTC-58000-290127",
+"contract_type": "put_options",
+"strike_price": "58000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163783,
+"symbol": "P-BTC-63000-271126",
+"contract_type": "put_options",
+"strike_price": "63000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163774,
+"symbol": "C-BTC-66000-151126",
+"contract_type": "call_options",
+"strike_price": "66000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163772,
+"symbol": "C-BTC-67800-151126",
+"contract_type": "call_options",
+"strike_price": "67800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163771,
+"symbol": "P-BTC-67800-151126",
+"contract_type": "put_options",
+"strike_price": "67800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163770,
+"symbol": "C-BTC-67800-141126",
+"contract_type": "call_options",
+"strike_price": "67800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163769,
+"symbol": "P-BTC-67800-141126",
+"contract_type": "put_options",
+"strike_price": "67800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163763,
+"symbol": "P-BTC-66400-151126",
+"contract_type": "put_options",
+"strike_price": "66400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163762,
+"symbol": "C-BTC-66400-141126",
+"contract_type": "call_options",
+"strike_price": "66400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163761,
+"symbol": "P-BTC-66400-141126",
+"contract_type": "put_options",
+"strike_price": "66400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163760,
+"symbol": "C-BTC-64000-201126",
+"contract_type": "call_options",
+"strike_price": "64000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163758,
+"symbol": "C-BTC-66400-151126",
+"contract_type": "call_options",
+"strike_price": "66400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163753,
+"symbol": "C-BTC-67500-271126",
+"contract_type": "call_options",
+"strike_price": "67500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163752,
+"symbol": "P-BTC-67500-271126",
+"contract_type": "put_options",
+"strike_price": "67500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163744,
+"symbol": "C-BTC-68200-151126",
+"contract_type": "call_options",
+"strike_price": "68200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163743,
+"symbol": "P-BTC-68200-151126",
+"contract_type": "put_options",
+"strike_price": "68200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163742,
+"symbol": "C-BTC-68200-141126",
+"contract_type": "call_options",
+"strike_price": "68200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163741,
+"symbol": "P-BTC-68200-141126",
+"contract_type": "put_options",
+"strike_price": "68200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163738,
+"symbol": "C-BTC-57000-290127",
+"contract_type": "call_options",
+"strike_price": "57000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163737,
+"symbol": "C-BTC-63000-271126",
+"contract_type": "call_options",
+"strike_price": "63000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163729,
+"symbol": "P-BTC-66800-141126",
+"contract_type": "put_options",
+"strike_price": "66800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163724,
+"symbol": "C-BTC-66800-151126",
+"contract_type": "call_options",
+"strike_price": "66800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163723,
+"symbol": "C-BTC-68600-151126",
+"contract_type": "call_options",
+"strike_price": "68600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163722,
+"symbol": "P-BTC-66800-151126",
+"contract_type": "put_options",
+"strike_price": "66800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163721,
+"symbol": "P-BTC-68600-151126",
+"contract_type": "put_options",
+"strike_price": "68600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163720,
+"symbol": "C-BTC-66800-141126",
+"contract_type": "call_options",
+"strike_price": "66800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163719,
+"symbol": "C-BTC-68600-141126",
+"contract_type": "call_options",
+"strike_price": "68600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163718,
+"symbol": "P-BTC-68600-141126",
+"contract_type": "put_options",
+"strike_price": "68600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163715,
+"symbol": "C-BTC-68500-201126",
+"contract_type": "call_options",
+"strike_price": "68500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163714,
+"symbol": "P-BTC-68500-201126",
+"contract_type": "put_options",
+"strike_price": "68500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163712,
+"symbol": "P-BTC-59000-290127",
+"contract_type": "put_options",
+"strike_price": "59000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163711,
+"symbol": "C-BTC-60000-251226",
+"contract_type": "call_options",
+"strike_price": "60000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163710,
+"symbol": "P-BTC-61000-251226",
+"contract_type": "put_options",
+"strike_price": "61000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163702,
+"symbol": "C-BTC-67200-151126",
+"contract_type": "call_options",
+"strike_price": "67200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163701,
+"symbol": "C-BTC-69000-151126",
+"contract_type": "call_options",
+"strike_price": "69000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163700,
+"symbol": "P-BTC-67200-151126",
+"contract_type": "put_options",
+"strike_price": "67200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163699,
+"symbol": "P-BTC-69000-151126",
+"contract_type": "put_options",
+"strike_price": "69000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163698,
+"symbol": "C-BTC-67200-141126",
+"contract_type": "call_options",
+"strike_price": "67200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163697,
+"symbol": "C-BTC-69000-141126",
+"contract_type": "call_options",
+"strike_price": "69000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163696,
+"symbol": "P-BTC-67200-141126",
+"contract_type": "put_options",
+"strike_price": "67200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163695,
+"symbol": "P-BTC-69000-141126",
+"contract_type": "put_options",
+"strike_price": "69000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163692,
+"symbol": "P-BTC-65000-201126",
+"contract_type": "put_options",
+"strike_price": "65000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163689,
+"symbol": "C-BTC-68500-271126",
+"contract_type": "call_options",
+"strike_price": "68500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163688,
+"symbol": "P-BTC-64000-271126",
+"contract_type": "put_options",
+"strike_price": "64000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163687,
+"symbol": "P-BTC-68500-271126",
+"contract_type": "put_options",
+"strike_price": "68500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163684,
+"symbol": "C-BTC-65000-201126",
+"contract_type": "call_options",
+"strike_price": "65000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163681,
+"symbol": "C-BTC-67600-151126",
+"contract_type": "call_options",
+"strike_price": "67600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163680,
+"symbol": "P-BTC-67600-151126",
+"contract_type": "put_options",
+"strike_price": "67600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163679,
+"symbol": "C-BTC-67600-141126",
+"contract_type": "call_options",
+"strike_price": "67600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163678,
+"symbol": "P-BTC-67600-141126",
+"contract_type": "put_options",
+"strike_price": "67600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163676,
+"symbol": "C-BTC-58000-290127",
+"contract_type": "call_options",
+"strike_price": "58000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163673,
+"symbol": "P-BTC-68000-151126",
+"contract_type": "put_options",
+"strike_price": "68000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163672,
+"symbol": "C-BTC-68000-141126",
+"contract_type": "call_options",
+"strike_price": "68000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163671,
+"symbol": "P-BTC-68000-141126",
+"contract_type": "put_options",
+"strike_price": "68000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163669,
+"symbol": "P-BTC-62000-251226",
+"contract_type": "put_options",
+"strike_price": "62000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163667,
+"symbol": "C-BTC-69400-151126",
+"contract_type": "call_options",
+"strike_price": "69400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163666,
+"symbol": "P-BTC-69400-151126",
+"contract_type": "put_options",
+"strike_price": "69400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163665,
+"symbol": "C-BTC-69400-141126",
+"contract_type": "call_options",
+"strike_price": "69400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163664,
+"symbol": "P-BTC-69400-141126",
+"contract_type": "put_options",
+"strike_price": "69400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163660,
+"symbol": "C-BTC-68000-151126",
+"contract_type": "call_options",
+"strike_price": "68000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163659,
+"symbol": "C-BTC-69500-201126",
+"contract_type": "call_options",
+"strike_price": "69500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163658,
+"symbol": "P-BTC-66000-201126",
+"contract_type": "put_options",
+"strike_price": "66000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163657,
+"symbol": "P-BTC-69500-201126",
+"contract_type": "put_options",
+"strike_price": "69500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163654,
+"symbol": "P-BTC-60000-290127",
+"contract_type": "put_options",
+"strike_price": "60000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163653,
+"symbol": "C-BTC-61000-251226",
+"contract_type": "call_options",
+"strike_price": "61000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163651,
+"symbol": "C-BTC-68400-141126",
+"contract_type": "call_options",
+"strike_price": "68400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163650,
+"symbol": "P-BTC-68400-141126",
+"contract_type": "put_options",
+"strike_price": "68400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163649,
+"symbol": "P-BTC-68400-151126",
+"contract_type": "put_options",
+"strike_price": "68400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163648,
+"symbol": "C-BTC-68400-151126",
+"contract_type": "call_options",
+"strike_price": "68400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163647,
+"symbol": "C-BTC-69800-151126",
+"contract_type": "call_options",
+"strike_price": "69800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163646,
+"symbol": "P-BTC-69800-151126",
+"contract_type": "put_options",
+"strike_price": "69800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163645,
+"symbol": "C-BTC-69800-141126",
+"contract_type": "call_options",
+"strike_price": "69800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163644,
+"symbol": "P-BTC-69800-141126",
+"contract_type": "put_options",
+"strike_price": "69800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163641,
+"symbol": "C-BTC-66000-201126",
+"contract_type": "call_options",
+"strike_price": "66000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163633,
+"symbol": "C-BTC-69500-271126",
+"contract_type": "call_options",
+"strike_price": "69500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163632,
+"symbol": "P-BTC-69500-271126",
+"contract_type": "put_options",
+"strike_price": "69500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163630,
+"symbol": "P-BTC-68800-141126",
+"contract_type": "put_options",
+"strike_price": "68800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163629,
+"symbol": "P-BTC-68800-151126",
+"contract_type": "put_options",
+"strike_price": "68800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163628,
+"symbol": "C-BTC-68800-141126",
+"contract_type": "call_options",
+"strike_price": "68800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163627,
+"symbol": "C-BTC-70200-151126",
+"contract_type": "call_options",
+"strike_price": "70200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163626,
+"symbol": "P-BTC-70200-151126",
+"contract_type": "put_options",
+"strike_price": "70200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163625,
+"symbol": "C-BTC-70200-141126",
+"contract_type": "call_options",
+"strike_price": "70200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163624,
+"symbol": "P-BTC-70200-141126",
+"contract_type": "put_options",
+"strike_price": "70200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163620,
+"symbol": "C-BTC-68800-151126",
+"contract_type": "call_options",
+"strike_price": "68800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163619,
+"symbol": "C-BTC-59000-290127",
+"contract_type": "call_options",
+"strike_price": "59000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163618,
+"symbol": "P-BTC-63000-251226",
+"contract_type": "put_options",
+"strike_price": "63000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163617,
+"symbol": "P-BTC-61000-290127",
+"contract_type": "put_options",
+"strike_price": "61000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163582,
+"symbol": "C-BTC-70500-201126",
+"contract_type": "call_options",
+"strike_price": "70500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163581,
+"symbol": "P-BTC-70500-201126",
+"contract_type": "put_options",
+"strike_price": "70500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163577,
+"symbol": "C-BTC-62000-251226",
+"contract_type": "call_options",
+"strike_price": "62000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163571,
+"symbol": "C-BTC-70600-151126",
+"contract_type": "call_options",
+"strike_price": "70600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163570,
+"symbol": "P-BTC-70600-151126",
+"contract_type": "put_options",
+"strike_price": "70600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163569,
+"symbol": "C-BTC-70600-141126",
+"contract_type": "call_options",
+"strike_price": "70600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163568,
+"symbol": "P-BTC-70600-141126",
+"contract_type": "put_options",
+"strike_price": "70600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163559,
+"symbol": "P-BTC-69200-141126",
+"contract_type": "put_options",
+"strike_price": "69200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163558,
+"symbol": "P-BTC-67000-201126",
+"contract_type": "put_options",
+"strike_price": "67000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163556,
+"symbol": "C-BTC-69200-151126",
+"contract_type": "call_options",
+"strike_price": "69200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163555,
+"symbol": "C-BTC-71000-151126",
+"contract_type": "call_options",
+"strike_price": "71000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163554,
+"symbol": "P-BTC-69200-151126",
+"contract_type": "put_options",
+"strike_price": "69200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163553,
+"symbol": "P-BTC-71000-151126",
+"contract_type": "put_options",
+"strike_price": "71000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163552,
+"symbol": "C-BTC-69200-141126",
+"contract_type": "call_options",
+"strike_price": "69200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163551,
+"symbol": "C-BTC-71000-141126",
+"contract_type": "call_options",
+"strike_price": "71000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163550,
+"symbol": "P-BTC-71000-141126",
+"contract_type": "put_options",
+"strike_price": "71000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163547,
+"symbol": "C-BTC-70500-271126",
+"contract_type": "call_options",
+"strike_price": "70500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163546,
+"symbol": "P-BTC-70500-271126",
+"contract_type": "put_options",
+"strike_price": "70500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163544,
+"symbol": "C-BTC-67000-201126",
+"contract_type": "call_options",
+"strike_price": "67000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163533,
+"symbol": "C-BTC-69600-151126",
+"contract_type": "call_options",
+"strike_price": "69600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163532,
+"symbol": "C-BTC-71400-151126",
+"contract_type": "call_options",
+"strike_price": "71400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163531,
+"symbol": "P-BTC-69600-151126",
+"contract_type": "put_options",
+"strike_price": "69600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163530,
+"symbol": "P-BTC-71400-151126",
+"contract_type": "put_options",
+"strike_price": "71400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163529,
+"symbol": "C-BTC-69600-141126",
+"contract_type": "call_options",
+"strike_price": "69600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163528,
+"symbol": "C-BTC-71400-141126",
+"contract_type": "call_options",
+"strike_price": "71400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163527,
+"symbol": "P-BTC-69600-141126",
+"contract_type": "put_options",
+"strike_price": "69600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163526,
+"symbol": "P-BTC-71400-141126",
+"contract_type": "put_options",
+"strike_price": "71400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163525,
+"symbol": "C-BTC-60000-290127",
+"contract_type": "call_options",
+"strike_price": "60000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163520,
+"symbol": "P-BTC-62000-290127",
+"contract_type": "put_options",
+"strike_price": "62000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163519,
+"symbol": "P-BTC-64000-251226",
+"contract_type": "put_options",
+"strike_price": "64000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163516,
+"symbol": "C-BTC-71500-201126",
+"contract_type": "call_options",
+"strike_price": "71500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163515,
+"symbol": "P-BTC-71500-201126",
+"contract_type": "put_options",
+"strike_price": "71500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163514,
+"symbol": "P-BTC-70000-151126",
+"contract_type": "put_options",
+"strike_price": "70000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163513,
+"symbol": "C-BTC-70000-141126",
+"contract_type": "call_options",
+"strike_price": "70000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163512,
+"symbol": "P-BTC-70000-141126",
+"contract_type": "put_options",
+"strike_price": "70000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163511,
+"symbol": "C-BTC-70000-151126",
+"contract_type": "call_options",
+"strike_price": "70000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163493,
+"symbol": "C-BTC-71800-151126",
+"contract_type": "call_options",
+"strike_price": "71800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163492,
+"symbol": "P-BTC-71800-151126",
+"contract_type": "put_options",
+"strike_price": "71800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163491,
+"symbol": "C-BTC-71800-141126",
+"contract_type": "call_options",
+"strike_price": "71800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163490,
+"symbol": "P-BTC-71800-141126",
+"contract_type": "put_options",
+"strike_price": "71800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163482,
+"symbol": "C-BTC-70400-151126",
+"contract_type": "call_options",
+"strike_price": "70400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163481,
+"symbol": "P-BTC-70400-151126",
+"contract_type": "put_options",
+"strike_price": "70400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163480,
+"symbol": "C-BTC-70400-141126",
+"contract_type": "call_options",
+"strike_price": "70400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163479,
+"symbol": "P-BTC-70400-141126",
+"contract_type": "put_options",
+"strike_price": "70400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163478,
+"symbol": "C-BTC-63000-251226",
+"contract_type": "call_options",
+"strike_price": "63000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163476,
+"symbol": "C-BTC-75200-151126",
+"contract_type": "call_options",
+"strike_price": "75200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163475,
+"symbol": "C-BTC-74800-151126",
+"contract_type": "call_options",
+"strike_price": "74800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163474,
+"symbol": "C-BTC-74400-151126",
+"contract_type": "call_options",
+"strike_price": "74400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163473,
+"symbol": "C-BTC-74000-151126",
+"contract_type": "call_options",
+"strike_price": "74000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163472,
+"symbol": "C-BTC-70800-151126",
+"contract_type": "call_options",
+"strike_price": "70800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163471,
+"symbol": "C-BTC-71200-151126",
+"contract_type": "call_options",
+"strike_price": "71200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163470,
+"symbol": "C-BTC-71600-151126",
+"contract_type": "call_options",
+"strike_price": "71600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163469,
+"symbol": "P-BTC-70800-151126",
+"contract_type": "put_options",
+"strike_price": "70800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163468,
+"symbol": "P-BTC-71200-151126",
+"contract_type": "put_options",
+"strike_price": "71200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163467,
+"symbol": "P-BTC-71600-151126",
+"contract_type": "put_options",
+"strike_price": "71600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163466,
+"symbol": "P-BTC-74800-151126",
+"contract_type": "put_options",
+"strike_price": "74800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163465,
+"symbol": "P-BTC-74400-151126",
+"contract_type": "put_options",
+"strike_price": "74400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163464,
+"symbol": "P-BTC-74000-151126",
+"contract_type": "put_options",
+"strike_price": "74000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163435,
+"symbol": "C-BTC-72000-151126",
+"contract_type": "call_options",
+"strike_price": "72000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163434,
+"symbol": "C-BTC-72200-151126",
+"contract_type": "call_options",
+"strike_price": "72200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163433,
+"symbol": "C-BTC-72400-151126",
+"contract_type": "call_options",
+"strike_price": "72400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163432,
+"symbol": "C-BTC-72600-151126",
+"contract_type": "call_options",
+"strike_price": "72600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163431,
+"symbol": "C-BTC-72800-151126",
+"contract_type": "call_options",
+"strike_price": "72800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163430,
+"symbol": "C-BTC-73000-151126",
+"contract_type": "call_options",
+"strike_price": "73000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163429,
+"symbol": "C-BTC-73200-151126",
+"contract_type": "call_options",
+"strike_price": "73200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163428,
+"symbol": "C-BTC-73400-151126",
+"contract_type": "call_options",
+"strike_price": "73400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163427,
+"symbol": "C-BTC-73600-151126",
+"contract_type": "call_options",
+"strike_price": "73600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163426,
+"symbol": "C-BTC-73800-151126",
+"contract_type": "call_options",
+"strike_price": "73800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163425,
+"symbol": "P-BTC-72000-151126",
+"contract_type": "put_options",
+"strike_price": "72000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163424,
+"symbol": "P-BTC-72200-151126",
+"contract_type": "put_options",
+"strike_price": "72200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163423,
+"symbol": "P-BTC-72400-151126",
+"contract_type": "put_options",
+"strike_price": "72400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163422,
+"symbol": "P-BTC-72600-151126",
+"contract_type": "put_options",
+"strike_price": "72600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163421,
+"symbol": "P-BTC-72800-151126",
+"contract_type": "put_options",
+"strike_price": "72800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163420,
+"symbol": "P-BTC-73000-151126",
+"contract_type": "put_options",
+"strike_price": "73000",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163419,
+"symbol": "P-BTC-73200-151126",
+"contract_type": "put_options",
+"strike_price": "73200",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163418,
+"symbol": "P-BTC-73400-151126",
+"contract_type": "put_options",
+"strike_price": "73400",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163417,
+"symbol": "P-BTC-73600-151126",
+"contract_type": "put_options",
+"strike_price": "73600",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163416,
+"symbol": "P-BTC-73800-151126",
+"contract_type": "put_options",
+"strike_price": "73800",
+"settlement_time": "2026-11-15T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163410,
+"symbol": "C-BTC-72200-141126",
+"contract_type": "call_options",
+"strike_price": "72200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163409,
+"symbol": "P-BTC-72200-141126",
+"contract_type": "put_options",
+"strike_price": "72200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163405,
+"symbol": "P-BTC-70800-141126",
+"contract_type": "put_options",
+"strike_price": "70800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163368,
+"symbol": "C-BTC-75400-141126",
+"contract_type": "call_options",
+"strike_price": "75400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163367,
+"symbol": "P-BTC-75400-141126",
+"contract_type": "put_options",
+"strike_price": "75400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163361,
+"symbol": "C-BTC-76800-141126",
+"contract_type": "call_options",
+"strike_price": "76800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163360,
+"symbol": "P-BTC-76800-141126",
+"contract_type": "put_options",
+"strike_price": "76800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163347,
+"symbol": "C-BTC-72600-141126",
+"contract_type": "call_options",
+"strike_price": "72600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163346,
+"symbol": "P-BTC-72600-141126",
+"contract_type": "put_options",
+"strike_price": "72600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163344,
+"symbol": "C-BTC-70800-141126",
+"contract_type": "call_options",
+"strike_price": "70800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163343,
+"symbol": "P-BTC-71200-141126",
+"contract_type": "put_options",
+"strike_price": "71200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163341,
+"symbol": "C-BTC-71200-141126",
+"contract_type": "call_options",
+"strike_price": "71200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163340,
+"symbol": "P-BTC-76400-141126",
+"contract_type": "put_options",
+"strike_price": "76400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163338,
+"symbol": "C-BTC-76400-141126",
+"contract_type": "call_options",
+"strike_price": "76400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163337,
+"symbol": "C-BTC-71600-141126",
+"contract_type": "call_options",
+"strike_price": "71600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163336,
+"symbol": "C-BTC-73000-141126",
+"contract_type": "call_options",
+"strike_price": "73000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163335,
+"symbol": "P-BTC-71600-141126",
+"contract_type": "put_options",
+"strike_price": "71600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163334,
+"symbol": "P-BTC-73000-141126",
+"contract_type": "put_options",
+"strike_price": "73000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163333,
+"symbol": "C-BTC-76000-141126",
+"contract_type": "call_options",
+"strike_price": "76000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163332,
+"symbol": "C-BTC-75600-141126",
+"contract_type": "call_options",
+"strike_price": "75600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163331,
+"symbol": "C-BTC-75200-141126",
+"contract_type": "call_options",
+"strike_price": "75200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163330,
+"symbol": "C-BTC-72000-141126",
+"contract_type": "call_options",
+"strike_price": "72000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163329,
+"symbol": "C-BTC-72400-141126",
+"contract_type": "call_options",
+"strike_price": "72400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163328,
+"symbol": "C-BTC-72800-141126",
+"contract_type": "call_options",
+"strike_price": "72800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163327,
+"symbol": "P-BTC-72000-141126",
+"contract_type": "put_options",
+"strike_price": "72000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163326,
+"symbol": "P-BTC-72400-141126",
+"contract_type": "put_options",
+"strike_price": "72400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163325,
+"symbol": "P-BTC-72800-141126",
+"contract_type": "put_options",
+"strike_price": "72800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163324,
+"symbol": "P-BTC-76000-141126",
+"contract_type": "put_options",
+"strike_price": "76000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163323,
+"symbol": "P-BTC-75600-141126",
+"contract_type": "put_options",
+"strike_price": "75600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163322,
+"symbol": "P-BTC-75200-141126",
+"contract_type": "put_options",
+"strike_price": "75200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163291,
+"symbol": "C-BTC-73200-141126",
+"contract_type": "call_options",
+"strike_price": "73200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163290,
+"symbol": "C-BTC-73400-141126",
+"contract_type": "call_options",
+"strike_price": "73400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163289,
+"symbol": "C-BTC-73600-141126",
+"contract_type": "call_options",
+"strike_price": "73600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163288,
+"symbol": "C-BTC-73800-141126",
+"contract_type": "call_options",
+"strike_price": "73800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163287,
+"symbol": "C-BTC-74000-141126",
+"contract_type": "call_options",
+"strike_price": "74000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163286,
+"symbol": "C-BTC-74200-141126",
+"contract_type": "call_options",
+"strike_price": "74200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163285,
+"symbol": "C-BTC-74400-141126",
+"contract_type": "call_options",
+"strike_price": "74400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163284,
+"symbol": "C-BTC-74600-141126",
+"contract_type": "call_options",
+"strike_price": "74600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163283,
+"symbol": "C-BTC-74800-141126",
+"contract_type": "call_options",
+"strike_price": "74800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163282,
+"symbol": "C-BTC-75000-141126",
+"contract_type": "call_options",
+"strike_price": "75000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163281,
+"symbol": "P-BTC-73200-141126",
+"contract_type": "put_options",
+"strike_price": "73200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163280,
+"symbol": "P-BTC-73400-141126",
+"contract_type": "put_options",
+"strike_price": "73400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163279,
+"symbol": "P-BTC-73600-141126",
+"contract_type": "put_options",
+"strike_price": "73600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163278,
+"symbol": "P-BTC-73800-141126",
+"contract_type": "put_options",
+"strike_price": "73800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163277,
+"symbol": "P-BTC-74000-141126",
+"contract_type": "put_options",
+"strike_price": "74000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163276,
+"symbol": "P-BTC-74200-141126",
+"contract_type": "put_options",
+"strike_price": "74200",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163275,
+"symbol": "P-BTC-74400-141126",
+"contract_type": "put_options",
+"strike_price": "74400",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163274,
+"symbol": "P-BTC-74600-141126",
+"contract_type": "put_options",
+"strike_price": "74600",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163273,
+"symbol": "P-BTC-74800-141126",
+"contract_type": "put_options",
+"strike_price": "74800",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163272,
+"symbol": "P-BTC-75000-141126",
+"contract_type": "put_options",
+"strike_price": "75000",
+"settlement_time": "2026-11-14T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163257,
+"symbol": "C-BTC-71500-271126",
+"contract_type": "call_options",
+"strike_price": "71500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163256,
+"symbol": "P-BTC-71500-271126",
+"contract_type": "put_options",
+"strike_price": "71500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163243,
+"symbol": "P-BTC-68000-201126",
+"contract_type": "put_options",
+"strike_price": "68000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163201,
+"symbol": "C-BTC-72500-201126",
+"contract_type": "call_options",
+"strike_price": "72500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163200,
+"symbol": "P-BTC-72500-201126",
+"contract_type": "put_options",
+"strike_price": "72500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 163165,
+"symbol": "C-BTC-61000-290127",
+"contract_type": "call_options",
+"strike_price": "61000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162937,
+"symbol": "P-BTC-65000-251226",
+"contract_type": "put_options",
+"strike_price": "65000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162936,
+"symbol": "C-BTC-72500-271126",
+"contract_type": "call_options",
+"strike_price": "72500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162935,
+"symbol": "P-BTC-72500-271126",
+"contract_type": "put_options",
+"strike_price": "72500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162879,
+"symbol": "C-BTC-73500-201126",
+"contract_type": "call_options",
+"strike_price": "73500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162878,
+"symbol": "P-BTC-73500-201126",
+"contract_type": "put_options",
+"strike_price": "73500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162843,
+"symbol": "C-BTC-73500-271126",
+"contract_type": "call_options",
+"strike_price": "73500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162842,
+"symbol": "P-BTC-73500-271126",
+"contract_type": "put_options",
+"strike_price": "73500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162800,
+"symbol": "C-BTC-68000-201126",
+"contract_type": "call_options",
+"strike_price": "68000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162799,
+"symbol": "P-BTC-63000-290127",
+"contract_type": "put_options",
+"strike_price": "63000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162798,
+"symbol": "C-BTC-64000-251226",
+"contract_type": "call_options",
+"strike_price": "64000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162527,
+"symbol": "C-BTC-74500-271126",
+"contract_type": "call_options",
+"strike_price": "74500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162526,
+"symbol": "P-BTC-74500-271126",
+"contract_type": "put_options",
+"strike_price": "74500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162445,
+"symbol": "C-BTC-75500-271126",
+"contract_type": "call_options",
+"strike_price": "75500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162444,
+"symbol": "C-BTC-76500-271126",
+"contract_type": "call_options",
+"strike_price": "76500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162443,
+"symbol": "C-BTC-77500-271126",
+"contract_type": "call_options",
+"strike_price": "77500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162442,
+"symbol": "P-BTC-75500-271126",
+"contract_type": "put_options",
+"strike_price": "75500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162441,
+"symbol": "P-BTC-76500-271126",
+"contract_type": "put_options",
+"strike_price": "76500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162440,
+"symbol": "P-BTC-77500-271126",
+"contract_type": "put_options",
+"strike_price": "77500",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162438,
+"symbol": "C-BTC-74500-201126",
+"contract_type": "call_options",
+"strike_price": "74500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162437,
+"symbol": "P-BTC-74500-201126",
+"contract_type": "put_options",
+"strike_price": "74500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162412,
+"symbol": "P-BTC-69000-201126",
+"contract_type": "put_options",
+"strike_price": "69000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162410,
+"symbol": "C-BTC-62000-290127",
+"contract_type": "call_options",
+"strike_price": "62000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162409,
+"symbol": "P-BTC-64000-290127",
+"contract_type": "put_options",
+"strike_price": "64000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162408,
+"symbol": "P-BTC-66000-251226",
+"contract_type": "put_options",
+"strike_price": "66000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162339,
+"symbol": "C-BTC-65000-251226",
+"contract_type": "call_options",
+"strike_price": "65000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162093,
+"symbol": "C-BTC-81500-201126",
+"contract_type": "call_options",
+"strike_price": "81500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162092,
+"symbol": "P-BTC-81500-201126",
+"contract_type": "put_options",
+"strike_price": "81500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162083,
+"symbol": "P-BTC-93000-290127",
+"contract_type": "put_options",
+"strike_price": "93000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162071,
+"symbol": "C-BTC-87000-201126",
+"contract_type": "call_options",
+"strike_price": "87000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162068,
+"symbol": "C-BTC-97000-290127",
+"contract_type": "call_options",
+"strike_price": "97000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162039,
+"symbol": "P-BTC-86000-201126",
+"contract_type": "put_options",
+"strike_price": "86000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162036,
+"symbol": "P-BTC-92000-290127",
+"contract_type": "put_options",
+"strike_price": "92000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162032,
+"symbol": "C-BTC-80500-201126",
+"contract_type": "call_options",
+"strike_price": "80500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162031,
+"symbol": "P-BTC-80500-201126",
+"contract_type": "put_options",
+"strike_price": "80500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162012,
+"symbol": "C-BTC-86000-201126",
+"contract_type": "call_options",
+"strike_price": "86000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162011,
+"symbol": "C-BTC-96000-290127",
+"contract_type": "call_options",
+"strike_price": "96000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162004,
+"symbol": "P-BTC-85000-201126",
+"contract_type": "put_options",
+"strike_price": "85000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 162003,
+"symbol": "P-BTC-91000-290127",
+"contract_type": "put_options",
+"strike_price": "91000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161835,
+"symbol": "C-BTC-75500-201126",
+"contract_type": "call_options",
+"strike_price": "75500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161834,
+"symbol": "P-BTC-75500-201126",
+"contract_type": "put_options",
+"strike_price": "75500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161824,
+"symbol": "C-BTC-63000-290127",
+"contract_type": "call_options",
+"strike_price": "63000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161823,
+"symbol": "P-BTC-65000-290127",
+"contract_type": "put_options",
+"strike_price": "65000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161515,
+"symbol": "C-BTC-95000-290127",
+"contract_type": "call_options",
+"strike_price": "95000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161475,
+"symbol": "P-BTC-90000-290127",
+"contract_type": "put_options",
+"strike_price": "90000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161367,
+"symbol": "C-BTC-79500-201126",
+"contract_type": "call_options",
+"strike_price": "79500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161366,
+"symbol": "P-BTC-79500-201126",
+"contract_type": "put_options",
+"strike_price": "79500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161355,
+"symbol": "C-BTC-94000-290127",
+"contract_type": "call_options",
+"strike_price": "94000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161331,
+"symbol": "C-BTC-93000-290127",
+"contract_type": "call_options",
+"strike_price": "93000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161330,
+"symbol": "C-BTC-92000-290127",
+"contract_type": "call_options",
+"strike_price": "92000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161329,
+"symbol": "C-BTC-91000-290127",
+"contract_type": "call_options",
+"strike_price": "91000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161328,
+"symbol": "C-BTC-90000-290127",
+"contract_type": "call_options",
+"strike_price": "90000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161327,
+"symbol": "C-BTC-64000-290127",
+"contract_type": "call_options",
+"strike_price": "64000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161326,
+"symbol": "C-BTC-89000-290127",
+"contract_type": "call_options",
+"strike_price": "89000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161325,
+"symbol": "C-BTC-88000-290127",
+"contract_type": "call_options",
+"strike_price": "88000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161324,
+"symbol": "C-BTC-87000-290127",
+"contract_type": "call_options",
+"strike_price": "87000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161323,
+"symbol": "C-BTC-65000-290127",
+"contract_type": "call_options",
+"strike_price": "65000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161322,
+"symbol": "C-BTC-66000-290127",
+"contract_type": "call_options",
+"strike_price": "66000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161321,
+"symbol": "C-BTC-67000-290127",
+"contract_type": "call_options",
+"strike_price": "67000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161320,
+"symbol": "P-BTC-66000-290127",
+"contract_type": "put_options",
+"strike_price": "66000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161319,
+"symbol": "P-BTC-67000-290127",
+"contract_type": "put_options",
+"strike_price": "67000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161318,
+"symbol": "P-BTC-89000-290127",
+"contract_type": "put_options",
+"strike_price": "89000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161317,
+"symbol": "P-BTC-88000-290127",
+"contract_type": "put_options",
+"strike_price": "88000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161316,
+"symbol": "P-BTC-87000-290127",
+"contract_type": "put_options",
+"strike_price": "87000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161313,
+"symbol": "C-BTC-86000-290127",
+"contract_type": "call_options",
+"strike_price": "86000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161312,
+"symbol": "C-BTC-85000-290127",
+"contract_type": "call_options",
+"strike_price": "85000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161311,
+"symbol": "C-BTC-84000-290127",
+"contract_type": "call_options",
+"strike_price": "84000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161310,
+"symbol": "C-BTC-68000-290127",
+"contract_type": "call_options",
+"strike_price": "68000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161309,
+"symbol": "C-BTC-69000-290127",
+"contract_type": "call_options",
+"strike_price": "69000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161308,
+"symbol": "C-BTC-70000-290127",
+"contract_type": "call_options",
+"strike_price": "70000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161307,
+"symbol": "P-BTC-68000-290127",
+"contract_type": "put_options",
+"strike_price": "68000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161306,
+"symbol": "P-BTC-69000-290127",
+"contract_type": "put_options",
+"strike_price": "69000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161305,
+"symbol": "P-BTC-70000-290127",
+"contract_type": "put_options",
+"strike_price": "70000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161304,
+"symbol": "P-BTC-86000-290127",
+"contract_type": "put_options",
+"strike_price": "86000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161303,
+"symbol": "P-BTC-85000-290127",
+"contract_type": "put_options",
+"strike_price": "85000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161302,
+"symbol": "P-BTC-84000-290127",
+"contract_type": "put_options",
+"strike_price": "84000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161291,
+"symbol": "C-BTC-83000-290127",
+"contract_type": "call_options",
+"strike_price": "83000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161290,
+"symbol": "C-BTC-82000-290127",
+"contract_type": "call_options",
+"strike_price": "82000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161289,
+"symbol": "C-BTC-81000-290127",
+"contract_type": "call_options",
+"strike_price": "81000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161288,
+"symbol": "C-BTC-71000-290127",
+"contract_type": "call_options",
+"strike_price": "71000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161287,
+"symbol": "C-BTC-72000-290127",
+"contract_type": "call_options",
+"strike_price": "72000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161286,
+"symbol": "C-BTC-73000-290127",
+"contract_type": "call_options",
+"strike_price": "73000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161285,
+"symbol": "P-BTC-71000-290127",
+"contract_type": "put_options",
+"strike_price": "71000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161284,
+"symbol": "P-BTC-72000-290127",
+"contract_type": "put_options",
+"strike_price": "72000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161283,
+"symbol": "P-BTC-73000-290127",
+"contract_type": "put_options",
+"strike_price": "73000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161282,
+"symbol": "P-BTC-83000-290127",
+"contract_type": "put_options",
+"strike_price": "83000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161281,
+"symbol": "P-BTC-82000-290127",
+"contract_type": "put_options",
+"strike_price": "82000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161280,
+"symbol": "P-BTC-81000-290127",
+"contract_type": "put_options",
+"strike_price": "81000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161210,
+"symbol": "C-BTC-69000-201126",
+"contract_type": "call_options",
+"strike_price": "69000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161158,
+"symbol": "C-BTC-76000-201126",
+"contract_type": "call_options",
+"strike_price": "76000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161157,
+"symbol": "P-BTC-76000-201126",
+"contract_type": "put_options",
+"strike_price": "76000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161154,
+"symbol": "C-BTC-74000-290127",
+"contract_type": "call_options",
+"strike_price": "74000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161153,
+"symbol": "P-BTC-74000-290127",
+"contract_type": "put_options",
+"strike_price": "74000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161139,
+"symbol": "P-BTC-70000-201126",
+"contract_type": "put_options",
+"strike_price": "70000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161120,
+"symbol": "C-BTC-70000-201126",
+"contract_type": "call_options",
+"strike_price": "70000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161119,
+"symbol": "C-BTC-71000-201126",
+"contract_type": "call_options",
+"strike_price": "71000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161118,
+"symbol": "C-BTC-72000-201126",
+"contract_type": "call_options",
+"strike_price": "72000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161117,
+"symbol": "P-BTC-71000-201126",
+"contract_type": "put_options",
+"strike_price": "71000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161116,
+"symbol": "P-BTC-72000-201126",
+"contract_type": "put_options",
+"strike_price": "72000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161114,
+"symbol": "C-BTC-85000-201126",
+"contract_type": "call_options",
+"strike_price": "85000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161113,
+"symbol": "C-BTC-84000-201126",
+"contract_type": "call_options",
+"strike_price": "84000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161112,
+"symbol": "C-BTC-83000-201126",
+"contract_type": "call_options",
+"strike_price": "83000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161111,
+"symbol": "C-BTC-73000-201126",
+"contract_type": "call_options",
+"strike_price": "73000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161110,
+"symbol": "C-BTC-74000-201126",
+"contract_type": "call_options",
+"strike_price": "74000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161109,
+"symbol": "C-BTC-75000-201126",
+"contract_type": "call_options",
+"strike_price": "75000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161108,
+"symbol": "P-BTC-73000-201126",
+"contract_type": "put_options",
+"strike_price": "73000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161107,
+"symbol": "P-BTC-74000-201126",
+"contract_type": "put_options",
+"strike_price": "74000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161106,
+"symbol": "P-BTC-75000-201126",
+"contract_type": "put_options",
+"strike_price": "75000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161105,
+"symbol": "P-BTC-84000-201126",
+"contract_type": "put_options",
+"strike_price": "84000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161104,
+"symbol": "P-BTC-83000-201126",
+"contract_type": "put_options",
+"strike_price": "83000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161082,
+"symbol": "C-BTC-82000-201126",
+"contract_type": "call_options",
+"strike_price": "82000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161081,
+"symbol": "C-BTC-81000-201126",
+"contract_type": "call_options",
+"strike_price": "81000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161080,
+"symbol": "C-BTC-80000-201126",
+"contract_type": "call_options",
+"strike_price": "80000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161079,
+"symbol": "C-BTC-76500-201126",
+"contract_type": "call_options",
+"strike_price": "76500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161078,
+"symbol": "P-BTC-82000-201126",
+"contract_type": "put_options",
+"strike_price": "82000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161077,
+"symbol": "P-BTC-81000-201126",
+"contract_type": "put_options",
+"strike_price": "81000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161076,
+"symbol": "P-BTC-80000-201126",
+"contract_type": "put_options",
+"strike_price": "80000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161075,
+"symbol": "P-BTC-76500-201126",
+"contract_type": "put_options",
+"strike_price": "76500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 161000,
+"symbol": "C-BTC-77000-201126",
+"contract_type": "call_options",
+"strike_price": "77000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160999,
+"symbol": "C-BTC-77500-201126",
+"contract_type": "call_options",
+"strike_price": "77500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160998,
+"symbol": "C-BTC-78000-201126",
+"contract_type": "call_options",
+"strike_price": "78000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160997,
+"symbol": "C-BTC-78500-201126",
+"contract_type": "call_options",
+"strike_price": "78500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160996,
+"symbol": "C-BTC-79000-201126",
+"contract_type": "call_options",
+"strike_price": "79000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160995,
+"symbol": "P-BTC-77000-201126",
+"contract_type": "put_options",
+"strike_price": "77000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160994,
+"symbol": "P-BTC-77500-201126",
+"contract_type": "put_options",
+"strike_price": "77500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160993,
+"symbol": "P-BTC-78000-201126",
+"contract_type": "put_options",
+"strike_price": "78000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160992,
+"symbol": "P-BTC-78500-201126",
+"contract_type": "put_options",
+"strike_price": "78500",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160991,
+"symbol": "P-BTC-79000-201126",
+"contract_type": "put_options",
+"strike_price": "79000",
+"settlement_time": "2026-11-20T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160988,
+"symbol": "C-BTC-75000-290127",
+"contract_type": "call_options",
+"strike_price": "75000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160987,
+"symbol": "C-BTC-76000-290127",
+"contract_type": "call_options",
+"strike_price": "76000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160986,
+"symbol": "C-BTC-77000-290127",
+"contract_type": "call_options",
+"strike_price": "77000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160985,
+"symbol": "C-BTC-78000-290127",
+"contract_type": "call_options",
+"strike_price": "78000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160984,
+"symbol": "C-BTC-79000-290127",
+"contract_type": "call_options",
+"strike_price": "79000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160983,
+"symbol": "C-BTC-80000-290127",
+"contract_type": "call_options",
+"strike_price": "80000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160982,
+"symbol": "P-BTC-75000-290127",
+"contract_type": "put_options",
+"strike_price": "75000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160981,
+"symbol": "P-BTC-76000-290127",
+"contract_type": "put_options",
+"strike_price": "76000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160980,
+"symbol": "P-BTC-77000-290127",
+"contract_type": "put_options",
+"strike_price": "77000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160979,
+"symbol": "P-BTC-78000-290127",
+"contract_type": "put_options",
+"strike_price": "78000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160978,
+"symbol": "P-BTC-79000-290127",
+"contract_type": "put_options",
+"strike_price": "79000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160977,
+"symbol": "P-BTC-80000-290127",
+"contract_type": "put_options",
+"strike_price": "80000",
+"settlement_time": "2027-01-29T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160911,
+"symbol": "P-BTC-67000-251226",
+"contract_type": "put_options",
+"strike_price": "67000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160905,
+"symbol": "C-BTC-66000-251226",
+"contract_type": "call_options",
+"strike_price": "66000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160875,
+"symbol": "P-BTC-68000-251226",
+"contract_type": "put_options",
+"strike_price": "68000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160851,
+"symbol": "C-BTC-67000-251226",
+"contract_type": "call_options",
+"strike_price": "67000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 160829,
+"symbol": "P-BTC-69000-251226",
+"contract_type": "put_options",
+"strike_price": "69000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 157427,
+"symbol": "C-BTC-68000-251226",
+"contract_type": "call_options",
+"strike_price": "68000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155639,
+"symbol": "C-BTC-69000-251226",
+"contract_type": "call_options",
+"strike_price": "69000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155256,
+"symbol": "C-BTC-108000-251226",
+"contract_type": "call_options",
+"strike_price": "108000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155255,
+"symbol": "P-BTC-108000-251226",
+"contract_type": "put_options",
+"strike_price": "108000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155252,
+"symbol": "C-BTC-107000-251226",
+"contract_type": "call_options",
+"strike_price": "107000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155251,
+"symbol": "C-BTC-106000-251226",
+"contract_type": "call_options",
+"strike_price": "106000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155250,
+"symbol": "P-BTC-107000-251226",
+"contract_type": "put_options",
+"strike_price": "107000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155249,
+"symbol": "P-BTC-106000-251226",
+"contract_type": "put_options",
+"strike_price": "106000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155245,
+"symbol": "C-BTC-105000-251226",
+"contract_type": "call_options",
+"strike_price": "105000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155244,
+"symbol": "C-BTC-104000-251226",
+"contract_type": "call_options",
+"strike_price": "104000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155243,
+"symbol": "C-BTC-103000-251226",
+"contract_type": "call_options",
+"strike_price": "103000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155242,
+"symbol": "P-BTC-105000-251226",
+"contract_type": "put_options",
+"strike_price": "105000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155241,
+"symbol": "P-BTC-104000-251226",
+"contract_type": "put_options",
+"strike_price": "104000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155240,
+"symbol": "P-BTC-103000-251226",
+"contract_type": "put_options",
+"strike_price": "103000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155234,
+"symbol": "C-BTC-102000-251226",
+"contract_type": "call_options",
+"strike_price": "102000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155233,
+"symbol": "C-BTC-101000-251226",
+"contract_type": "call_options",
+"strike_price": "101000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155232,
+"symbol": "C-BTC-100000-251226",
+"contract_type": "call_options",
+"strike_price": "100000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155231,
+"symbol": "P-BTC-102000-251226",
+"contract_type": "put_options",
+"strike_price": "102000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155230,
+"symbol": "P-BTC-101000-251226",
+"contract_type": "put_options",
+"strike_price": "101000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155229,
+"symbol": "P-BTC-100000-251226",
+"contract_type": "put_options",
+"strike_price": "100000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155223,
+"symbol": "C-BTC-99000-251226",
+"contract_type": "call_options",
+"strike_price": "99000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155222,
+"symbol": "C-BTC-98000-251226",
+"contract_type": "call_options",
+"strike_price": "98000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155221,
+"symbol": "C-BTC-97000-251226",
+"contract_type": "call_options",
+"strike_price": "97000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155220,
+"symbol": "C-BTC-70000-251226",
+"contract_type": "call_options",
+"strike_price": "70000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155219,
+"symbol": "C-BTC-71000-251226",
+"contract_type": "call_options",
+"strike_price": "71000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155218,
+"symbol": "C-BTC-72000-251226",
+"contract_type": "call_options",
+"strike_price": "72000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155217,
+"symbol": "P-BTC-70000-251226",
+"contract_type": "put_options",
+"strike_price": "70000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155216,
+"symbol": "P-BTC-71000-251226",
+"contract_type": "put_options",
+"strike_price": "71000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155215,
+"symbol": "P-BTC-72000-251226",
+"contract_type": "put_options",
+"strike_price": "72000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155214,
+"symbol": "P-BTC-99000-251226",
+"contract_type": "put_options",
+"strike_price": "99000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155213,
+"symbol": "P-BTC-98000-251226",
+"contract_type": "put_options",
+"strike_price": "98000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155212,
+"symbol": "P-BTC-97000-251226",
+"contract_type": "put_options",
+"strike_price": "97000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155209,
+"symbol": "C-BTC-96000-251226",
+"contract_type": "call_options",
+"strike_price": "96000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155208,
+"symbol": "C-BTC-95000-251226",
+"contract_type": "call_options",
+"strike_price": "95000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155207,
+"symbol": "C-BTC-94000-251226",
+"contract_type": "call_options",
+"strike_price": "94000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155206,
+"symbol": "C-BTC-73000-251226",
+"contract_type": "call_options",
+"strike_price": "73000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155205,
+"symbol": "C-BTC-74000-251226",
+"contract_type": "call_options",
+"strike_price": "74000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155204,
+"symbol": "C-BTC-75000-251226",
+"contract_type": "call_options",
+"strike_price": "75000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155203,
+"symbol": "P-BTC-73000-251226",
+"contract_type": "put_options",
+"strike_price": "73000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155202,
+"symbol": "P-BTC-74000-251226",
+"contract_type": "put_options",
+"strike_price": "74000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155201,
+"symbol": "P-BTC-75000-251226",
+"contract_type": "put_options",
+"strike_price": "75000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155200,
+"symbol": "P-BTC-96000-251226",
+"contract_type": "put_options",
+"strike_price": "96000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155199,
+"symbol": "P-BTC-95000-251226",
+"contract_type": "put_options",
+"strike_price": "95000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155198,
+"symbol": "P-BTC-94000-251226",
+"contract_type": "put_options",
+"strike_price": "94000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155178,
+"symbol": "C-BTC-93000-251226",
+"contract_type": "call_options",
+"strike_price": "93000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155177,
+"symbol": "C-BTC-92000-251226",
+"contract_type": "call_options",
+"strike_price": "92000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155176,
+"symbol": "C-BTC-91000-251226",
+"contract_type": "call_options",
+"strike_price": "91000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155175,
+"symbol": "C-BTC-76000-251226",
+"contract_type": "call_options",
+"strike_price": "76000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155174,
+"symbol": "C-BTC-77000-251226",
+"contract_type": "call_options",
+"strike_price": "77000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155173,
+"symbol": "C-BTC-78000-251226",
+"contract_type": "call_options",
+"strike_price": "78000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155172,
+"symbol": "P-BTC-76000-251226",
+"contract_type": "put_options",
+"strike_price": "76000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155171,
+"symbol": "P-BTC-77000-251226",
+"contract_type": "put_options",
+"strike_price": "77000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155170,
+"symbol": "P-BTC-78000-251226",
+"contract_type": "put_options",
+"strike_price": "78000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155169,
+"symbol": "P-BTC-93000-251226",
+"contract_type": "put_options",
+"strike_price": "93000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155168,
+"symbol": "P-BTC-92000-251226",
+"contract_type": "put_options",
+"strike_price": "92000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155167,
+"symbol": "P-BTC-91000-251226",
+"contract_type": "put_options",
+"strike_price": "91000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155033,
+"symbol": "C-BTC-90000-251226",
+"contract_type": "call_options",
+"strike_price": "90000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155032,
+"symbol": "C-BTC-89000-251226",
+"contract_type": "call_options",
+"strike_price": "89000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155031,
+"symbol": "C-BTC-88000-251226",
+"contract_type": "call_options",
+"strike_price": "88000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155030,
+"symbol": "C-BTC-79000-251226",
+"contract_type": "call_options",
+"strike_price": "79000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155029,
+"symbol": "C-BTC-80000-251226",
+"contract_type": "call_options",
+"strike_price": "80000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155028,
+"symbol": "C-BTC-81000-251226",
+"contract_type": "call_options",
+"strike_price": "81000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155027,
+"symbol": "C-BTC-82000-251226",
+"contract_type": "call_options",
+"strike_price": "82000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155026,
+"symbol": "C-BTC-83000-251226",
+"contract_type": "call_options",
+"strike_price": "83000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155025,
+"symbol": "C-BTC-84000-251226",
+"contract_type": "call_options",
+"strike_price": "84000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155024,
+"symbol": "C-BTC-85000-251226",
+"contract_type": "call_options",
+"strike_price": "85000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155023,
+"symbol": "C-BTC-86000-251226",
+"contract_type": "call_options",
+"strike_price": "86000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155022,
+"symbol": "C-BTC-87000-251226",
+"contract_type": "call_options",
+"strike_price": "87000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155021,
+"symbol": "P-BTC-79000-251226",
+"contract_type": "put_options",
+"strike_price": "79000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155020,
+"symbol": "P-BTC-80000-251226",
+"contract_type": "put_options",
+"strike_price": "80000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155019,
+"symbol": "P-BTC-81000-251226",
+"contract_type": "put_options",
+"strike_price": "81000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155018,
+"symbol": "P-BTC-90000-251226",
+"contract_type": "put_options",
+"strike_price": "90000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155017,
+"symbol": "P-BTC-89000-251226",
+"contract_type": "put_options",
+"strike_price": "89000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155016,
+"symbol": "P-BTC-88000-251226",
+"contract_type": "put_options",
+"strike_price": "88000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155015,
+"symbol": "P-BTC-82000-251226",
+"contract_type": "put_options",
+"strike_price": "82000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155014,
+"symbol": "P-BTC-83000-251226",
+"contract_type": "put_options",
+"strike_price": "83000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155013,
+"symbol": "P-BTC-84000-251226",
+"contract_type": "put_options",
+"strike_price": "84000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155012,
+"symbol": "P-BTC-85000-251226",
+"contract_type": "put_options",
+"strike_price": "85000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155011,
+"symbol": "P-BTC-86000-251226",
+"contract_type": "put_options",
+"strike_price": "86000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 155010,
+"symbol": "P-BTC-87000-251226",
+"contract_type": "put_options",
+"strike_price": "87000",
+"settlement_time": "2026-12-25T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 154492,
+"symbol": "C-BTC-103000-271126",
+"contract_type": "call_options",
+"strike_price": "103000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 154491,
+"symbol": "P-BTC-99000-271126",
+"contract_type": "put_options",
+"strike_price": "99000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 154422,
+"symbol": "C-BTC-102000-271126",
+"contract_type": "call_options",
+"strike_price": "102000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 154416,
+"symbol": "P-BTC-98000-271126",
+"contract_type": "put_options",
+"strike_price": "98000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 153148,
+"symbol": "P-BTC-65000-271126",
+"contract_type": "put_options",
+"strike_price": "65000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 151159,
+"symbol": "C-BTC-101000-271126",
+"contract_type": "call_options",
+"strike_price": "101000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 151139,
+"symbol": "C-BTC-100000-271126",
+"contract_type": "call_options",
+"strike_price": "100000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 151077,
+"symbol": "C-BTC-99000-271126",
+"contract_type": "call_options",
+"strike_price": "99000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 150058,
+"symbol": "C-BTC-64000-271126",
+"contract_type": "call_options",
+"strike_price": "64000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149996,
+"symbol": "C-BTC-65000-271126",
+"contract_type": "call_options",
+"strike_price": "65000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149966,
+"symbol": "C-BTC-98000-271126",
+"contract_type": "call_options",
+"strike_price": "98000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149964,
+"symbol": "C-BTC-97000-271126",
+"contract_type": "call_options",
+"strike_price": "97000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149963,
+"symbol": "C-BTC-96000-271126",
+"contract_type": "call_options",
+"strike_price": "96000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149962,
+"symbol": "C-BTC-95000-271126",
+"contract_type": "call_options",
+"strike_price": "95000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149961,
+"symbol": "P-BTC-97000-271126",
+"contract_type": "put_options",
+"strike_price": "97000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149960,
+"symbol": "P-BTC-96000-271126",
+"contract_type": "put_options",
+"strike_price": "96000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149959,
+"symbol": "P-BTC-95000-271126",
+"contract_type": "put_options",
+"strike_price": "95000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149955,
+"symbol": "C-BTC-94000-271126",
+"contract_type": "call_options",
+"strike_price": "94000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149954,
+"symbol": "C-BTC-93000-271126",
+"contract_type": "call_options",
+"strike_price": "93000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149953,
+"symbol": "C-BTC-92000-271126",
+"contract_type": "call_options",
+"strike_price": "92000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149952,
+"symbol": "C-BTC-66000-271126",
+"contract_type": "call_options",
+"strike_price": "66000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149951,
+"symbol": "C-BTC-67000-271126",
+"contract_type": "call_options",
+"strike_price": "67000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149950,
+"symbol": "P-BTC-66000-271126",
+"contract_type": "put_options",
+"strike_price": "66000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149949,
+"symbol": "P-BTC-67000-271126",
+"contract_type": "put_options",
+"strike_price": "67000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149948,
+"symbol": "P-BTC-94000-271126",
+"contract_type": "put_options",
+"strike_price": "94000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149947,
+"symbol": "P-BTC-93000-271126",
+"contract_type": "put_options",
+"strike_price": "93000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149946,
+"symbol": "P-BTC-92000-271126",
+"contract_type": "put_options",
+"strike_price": "92000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149942,
+"symbol": "C-BTC-91000-271126",
+"contract_type": "call_options",
+"strike_price": "91000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149941,
+"symbol": "C-BTC-90000-271126",
+"contract_type": "call_options",
+"strike_price": "90000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149940,
+"symbol": "C-BTC-89000-271126",
+"contract_type": "call_options",
+"strike_price": "89000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149939,
+"symbol": "C-BTC-68000-271126",
+"contract_type": "call_options",
+"strike_price": "68000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149938,
+"symbol": "C-BTC-69000-271126",
+"contract_type": "call_options",
+"strike_price": "69000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149937,
+"symbol": "C-BTC-70000-271126",
+"contract_type": "call_options",
+"strike_price": "70000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149936,
+"symbol": "P-BTC-68000-271126",
+"contract_type": "put_options",
+"strike_price": "68000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149935,
+"symbol": "P-BTC-69000-271126",
+"contract_type": "put_options",
+"strike_price": "69000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149934,
+"symbol": "P-BTC-70000-271126",
+"contract_type": "put_options",
+"strike_price": "70000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149933,
+"symbol": "P-BTC-91000-271126",
+"contract_type": "put_options",
+"strike_price": "91000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149932,
+"symbol": "P-BTC-90000-271126",
+"contract_type": "put_options",
+"strike_price": "90000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149931,
+"symbol": "P-BTC-89000-271126",
+"contract_type": "put_options",
+"strike_price": "89000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149907,
+"symbol": "C-BTC-88000-271126",
+"contract_type": "call_options",
+"strike_price": "88000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149906,
+"symbol": "C-BTC-87000-271126",
+"contract_type": "call_options",
+"strike_price": "87000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149905,
+"symbol": "C-BTC-86000-271126",
+"contract_type": "call_options",
+"strike_price": "86000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149904,
+"symbol": "C-BTC-71000-271126",
+"contract_type": "call_options",
+"strike_price": "71000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149903,
+"symbol": "C-BTC-72000-271126",
+"contract_type": "call_options",
+"strike_price": "72000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149902,
+"symbol": "C-BTC-73000-271126",
+"contract_type": "call_options",
+"strike_price": "73000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149901,
+"symbol": "P-BTC-71000-271126",
+"contract_type": "put_options",
+"strike_price": "71000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149900,
+"symbol": "P-BTC-72000-271126",
+"contract_type": "put_options",
+"strike_price": "72000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149899,
+"symbol": "P-BTC-73000-271126",
+"contract_type": "put_options",
+"strike_price": "73000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149898,
+"symbol": "P-BTC-88000-271126",
+"contract_type": "put_options",
+"strike_price": "88000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149897,
+"symbol": "P-BTC-87000-271126",
+"contract_type": "put_options",
+"strike_price": "87000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149896,
+"symbol": "P-BTC-86000-271126",
+"contract_type": "put_options",
+"strike_price": "86000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149767,
+"symbol": "C-BTC-85000-271126",
+"contract_type": "call_options",
+"strike_price": "85000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149766,
+"symbol": "C-BTC-84000-271126",
+"contract_type": "call_options",
+"strike_price": "84000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149765,
+"symbol": "C-BTC-83000-271126",
+"contract_type": "call_options",
+"strike_price": "83000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149764,
+"symbol": "C-BTC-74000-271126",
+"contract_type": "call_options",
+"strike_price": "74000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149763,
+"symbol": "C-BTC-75000-271126",
+"contract_type": "call_options",
+"strike_price": "75000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149762,
+"symbol": "C-BTC-76000-271126",
+"contract_type": "call_options",
+"strike_price": "76000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149761,
+"symbol": "C-BTC-77000-271126",
+"contract_type": "call_options",
+"strike_price": "77000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149760,
+"symbol": "C-BTC-78000-271126",
+"contract_type": "call_options",
+"strike_price": "78000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149759,
+"symbol": "C-BTC-79000-271126",
+"contract_type": "call_options",
+"strike_price": "79000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149758,
+"symbol": "C-BTC-80000-271126",
+"contract_type": "call_options",
+"strike_price": "80000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149757,
+"symbol": "C-BTC-81000-271126",
+"contract_type": "call_options",
+"strike_price": "81000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149756,
+"symbol": "C-BTC-82000-271126",
+"contract_type": "call_options",
+"strike_price": "82000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149755,
+"symbol": "P-BTC-74000-271126",
+"contract_type": "put_options",
+"strike_price": "74000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149754,
+"symbol": "P-BTC-75000-271126",
+"contract_type": "put_options",
+"strike_price": "75000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149753,
+"symbol": "P-BTC-76000-271126",
+"contract_type": "put_options",
+"strike_price": "76000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149752,
+"symbol": "P-BTC-85000-271126",
+"contract_type": "put_options",
+"strike_price": "85000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149751,
+"symbol": "P-BTC-84000-271126",
+"contract_type": "put_options",
+"strike_price": "84000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149750,
+"symbol": "P-BTC-83000-271126",
+"contract_type": "put_options",
+"strike_price": "83000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149749,
+"symbol": "P-BTC-77000-271126",
+"contract_type": "put_options",
+"strike_price": "77000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149748,
+"symbol": "P-BTC-78000-271126",
+"contract_type": "put_options",
+"strike_price": "78000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149747,
+"symbol": "P-BTC-79000-271126",
+"contract_type": "put_options",
+"strike_price": "79000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149746,
+"symbol": "P-BTC-80000-271126",
+"contract_type": "put_options",
+"strike_price": "80000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149745,
+"symbol": "P-BTC-81000-271126",
+"contract_type": "put_options",
+"strike_price": "81000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+},
+{
+"id": 149744,
+"symbol": "P-BTC-82000-271126",
+"contract_type": "put_options",
+"strike_price": "82000",
+"settlement_time": "2026-11-27T12:00:00Z",
+"contract_value": "0.001",
+"tick_size": "0.1"
+}
+]

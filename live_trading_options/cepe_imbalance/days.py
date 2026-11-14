@@ -115,6 +115,9 @@ def warm(names, today: str):
             continue
         for n in names:
             try:
+                if C.is_variant(n):
+                    from live_trading_options.cepe_imbalance import st_sim
+                    st_sim.sim_digest(d, n)                # no-op when the variant really ran that day
                 hist_stats(d, n)
             except Exception:
                 pass

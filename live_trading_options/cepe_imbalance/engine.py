@@ -52,9 +52,9 @@ def save_settings(name, **fields):
 
 
 def default_auto(name) -> dict:
-    kind = C.UNDERLYINGS[C.und_of(name)]["kind"]
+    u = C.und_of(name)
     times = C.ST_AUTO_START_TIME if C.is_variant(name) else C.AUTO_START_TIME
-    return {"auto_start": C.AUTO_START_DEFAULT, "auto_time": times[kind]}
+    return {"auto_start": C.AUTO_START_DEFAULT, "auto_time": times.get(u) or times[C.kind_of(name)]}
 
 
 # ── session hours ───────────────────────────────────────────────────────────
@@ -70,14 +70,40 @@ def us_dst(day: dt.date) -> bool:
 
 
 def session(name: str, day: dt.date) -> tuple:
-    kind = C.UNDERLYINGS[C.und_of(name)]["kind"]
+    """(open, close, square-off) of the TRADING DAY `day`. BTC full expiry opens the evening before."""
+    kind = C.kind_of(name)
+    t = lambda d, s: dt.datetime.combine(d, dt.time.fromisoformat(s), IST)
+    if kind == "crypto":
+        cs = C.CRYPTO_SESSION[C.und_of(name)]
+        close = t(day, cs["close"])
+        opened = t(day - dt.timedelta(days=1) if cs["overnight"] else day, cs["open"])
+        return opened, close, close - dt.timedelta(minutes=C.SQUARE_OFF_BEFORE_MIN[kind])
     if kind == "index":
         o, c = C.NSE_HOURS
     else:
         o, c = C.MCX_HOURS_US_DST if us_dst(day) else C.MCX_HOURS_US_STD
-    t = lambda s: dt.datetime.combine(day, dt.time.fromisoformat(s), IST)
-    close = t(c)
-    return t(o), close, close - dt.timedelta(minutes=C.SQUARE_OFF_BEFORE_MIN[kind])
+    close = t(day, c)
+    return t(day, o), close, close - dt.timedelta(minutes=C.SQUARE_OFF_BEFORE_MIN[kind])
+
+
+def trading_day(name: str, now: dt.datetime | None = None) -> dt.date:
+    """Calendar date for everything but BTC full expiry, whose day D runs 17:30 (D-1) -> 17:30 D: from
+    17:30 its book, files and P&L belong to TOMORROW (the expiry it trades)."""
+    now = now or dt.datetime.now(IST)
+    if C.kind_of(name) == "crypto":
+        cs = C.CRYPTO_SESSION[C.und_of(name)]
+        if cs["overnight"] and now.strftime("%H:%M") >= cs["close"]:
+            return now.date() + dt.timedelta(days=1)
+    return now.date()
+
+
+def book_date(name: str, now: dt.datetime | None = None) -> str:
+    return trading_day(name, now).isoformat()
+
+
+def every_day(name: str) -> bool:
+    """Crypto trades 7 days a week (owner 14-Nov: BTC auto-starts on weekends too)."""
+    return C.kind_of(name) == "crypto"
 
 
 # ── per-underlying context given to the strategy ────────────────────────────
@@ -133,7 +159,7 @@ class Context:
     def in_session(self, now=None):
         """Open <= now < square-off time."""
         now = now or self.now
-        o, _close, sq = session(self.name, now.date())
+        o, _close, sq = session(self.name, trading_day(self.name, now))
         return o <= now < sq
 
 
@@ -144,7 +170,7 @@ class Runner:
         strategy_name = strategy_name or ("cepe_st" if C.is_variant(name) else S.DEFAULT)
         self.market = market
         self.persist = persist
-        self.date = date or today()
+        self.date = date or book_date(name)
         self.book = PaperBook(name, market, self.date, persist=persist)
         self.strategy_name = strategy_name
         self.strategy = S.REGISTRY[strategy_name]()
@@ -230,7 +256,7 @@ class Engine:
         self.hist: dict[str, list] = {n: [] for n in self.runners}   # today's MTM/imbalance samples
         self.quotes = QuoteRecorder(universe) if persist else None    # every tick, for exact replays
         if persist:
-            self._load_hist(today())
+            self._load_hist()
 
     def _attach(self, r):
         """Give a Supertrend variant book its signal (the underlying's shared StSignal)."""
@@ -251,12 +277,16 @@ class Engine:
             step, buf, en = self.st_params(u)
             e = self.market.expiry(u, en)
             sig = self.signals[u]
-            day = now.date().isoformat()
+            td = trading_day(u, now)
+            day = td.isoformat()
+            o, close, _sq = session(u, td)
             if sig.day != day or sig.expiry != e:            # new day / expiry: fresh candles + warm-up
                 sig.reset(day, e)
-                if e:
-                    self.start_warmup(u, day, e, step, buf)
-            o, close, _sq = session(u, now.date())
+                sig.warm_queued = False
+            # crypto (24/7): warm up AT the open on the minutes just before it, not hours early at midnight
+            if e and not getattr(sig, "warm_queued", False) and                     (C.kind_of(u) != "crypto" or o <= now < close):
+                sig.warm_queued = True
+                self.start_warmup(u, day, e, step, buf)
             if e:
                 sig.sample(t, self.market, step, buf, o.timestamp(), close.timestamp())
 
@@ -296,9 +326,9 @@ class Engine:
         else:
             job()                                            # tests / demo: no files, instant
 
-    def _load_hist(self, date):
-        for n in self.runners:
-            p = C.DATA / "history" / date / f"{n}.jsonl"
+    def _load_hist(self):
+        for n, r in self.runners.items():
+            p = C.DATA / "history" / r.date / f"{n}.jsonl"
             rows = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
             self.hist[n] = [json.loads(x) for x in rows if x.strip()]
 
@@ -349,18 +379,21 @@ class Engine:
 
     # ── feed callback ───────────────────────────────────────────────────────
     def on_ticks(self, ticks):
-        keys = self.market.apply(ticks)
+        # ticks = one batch from the feed worker (many frames when busy); every tick is recorded as it is
+        # applied, then each touched book is evaluated ONCE for the whole batch.
+        rec, routes, und_of = self.quotes, self.routes, C.und_of
+
+        def snap(k, q):
+            names = routes.get(k)
+            if names:                                           # once per UNDERLYING, not per book
+                for u in {und_of(n) for n in names}:
+                    rec.add(u, k, q, q.recv_ts or None)
+
+        keys = self.market.apply(ticks, on_quote=snap if rec else None)
         touched: dict[str, list] = {}
-        rec = self.quotes
-        for k in keys:
-            names = self.routes.get(k, ())
-            for n in names:
+        for k in dict.fromkeys(keys):
+            for n in routes.get(k, ()):
                 touched.setdefault(n, []).append(k)
-            if rec and names:                                   # once per UNDERLYING, not per book
-                q = self.market.quote(k)
-                if q:
-                    for u in {C.und_of(n) for n in names}:
-                        rec.add(u, k, q, q.recv_ts or None)
         if not touched:
             return
         with self.lock:
@@ -456,10 +489,12 @@ class Engine:
         """Start once a day at auto_time (Mon-Fri, inside the session, before square-off)."""
         if r.running or r.square_off_done or not r.auto.get("auto_start") or r.state.get("auto_done"):
             return
-        if now.weekday() >= 5:
+        if now.weekday() >= 5 and not every_day(n):
             return
-        o, _close, sq = session(n, now.date())
-        at = dt.datetime.combine(now.date(), dt.time.fromisoformat(r.auto.get("auto_time") or "09:05"), IST)
+        o, _close, sq = session(n, trading_day(n, now))
+        at = dt.datetime.combine(o.date(), dt.time.fromisoformat(r.auto.get("auto_time") or "09:05"), IST)
+        if at < o:                                       # BTC full expiry: an auto time after midnight
+            at += dt.timedelta(days=1)
         if max(o, at) <= now < sq:
             self.start(n, how="auto")
             r.save_state()
@@ -481,8 +516,9 @@ class Engine:
     # ── timer ───────────────────────────────────────────────────────────────
     def tick_timer(self, now: dt.datetime | None = None):
         now = now or dt.datetime.now(IST)
-        if now.date().isoformat() != next(iter(self.runners.values())).date:
-            self.rollover(now.date().isoformat())
+        for n, r in list(self.runners.items()):          # per book: BTC full expiry rolls at 17:30, not midnight
+            if r.date != book_date(n, now):
+                self.rollover(book_date(n, now), only=n)
         if time.time() - self._last_subs >= 5:
             self._last_subs = time.time()
             self.refresh_subscriptions()
@@ -491,7 +527,7 @@ class Engine:
                 self.maybe_auto_start(n, r, now)
                 if not r.running or r.square_off_done:
                     continue
-                o, close, sq = session(n, now.date())
+                o, close, sq = session(n, trading_day(n, now))
                 if now >= sq:
                     r.square_off_done = True
                     r.event("session_end_square_off")
@@ -510,10 +546,10 @@ class Engine:
             self.sample(now)
 
     def sample(self, now):
-        d = C.DATA / "history" / now.date().isoformat()
-        if self.persist:
-            d.mkdir(parents=True, exist_ok=True)
         for n, r in self.runners.items():
+            d = C.DATA / "history" / r.date
+            if self.persist:
+                d.mkdir(parents=True, exist_ok=True)
             has_book = any(p.lots or p.realized for p in r.book.positions.values())
             if not (r.running or has_book):
                 continue
@@ -560,15 +596,17 @@ class Engine:
                     out.append(None)
         return out
 
-    def rollover(self, date):
-        """New day: fresh paper books (no carry), runners stopped."""
+    def rollover(self, date, only=None):
+        """New day: fresh paper books (no carry), runners stopped. only = one book (its own trading day)."""
         with self.lock:
             for n, r in list(self.runners.items()):
+                if only and n != only:
+                    continue
                 if any(p.lots for p in r.book.positions.values()):
                     r.event("rollover_with_open_positions_dropped")
                 self.runners[n] = self._attach(Runner(n, self.market, r.strategy_name, date=date, persist=self.persist))
                 self.hist[n] = []
-        log.info("day rollover -> %s", date)
+        log.info("day rollover -> %s%s", date, f" ({only})" if only else "")
 
     def run_timer(self):
         def loop():
@@ -590,12 +628,13 @@ class Engine:
         out = []
         for n, r in self.runners.items():
             u = r.und
-            o, close, sq = session(n, now.date())
+            o, close, sq = session(n, trading_day(n, now))
             e = self.market.expiry(u, r.expiry_n)
             rk = self.market.ref_key(u, e)
             rq = self.market.quote(rk) if rk else None
             out.append({"name": n, "und": u, "variant": "st" if C.is_variant(n) else "normal",
-                        "label": C.label_of(n), "kind": C.UNDERLYINGS[u]["kind"], "running": r.running,
+                        "label": C.label_of(n), "kind": C.UNDERLYINGS[u]["kind"], "ccy": C.ccy_of(n),
+                        "date": r.date, "running": r.running,
                         "strategy": r.strategy_name, "expiry": e, "lot": self.u.underlyings[u].lot,
                         "st": r.state.get("st") if C.is_variant(n) else None,
                         "ref": rq.ltp if rq else None, "ref_age": round(time.time() - rq.recv_ts, 1) if rq else None,

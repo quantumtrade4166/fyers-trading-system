@@ -85,3 +85,31 @@ def test_past_day_digest_is_cached_and_rebuilt_on_change(tmp_path, monkeypatch):
         fh.write('\n{"t": 99999, "mtm": 123456.0, "imb": 1}\n')       # history changed -> digest rebuilt
     days._cache.clear()
     assert days.hist_stats("2026-11-02", "CRUDEOIL")["mtm_high"] == 123456.0
+
+
+def test_st_sim_follows_normal_mtm_only_while_red(tmp_path, monkeypatch):
+    """Variant did not run: simulated MTM = normal MTM moves while Supertrend is red, flat while green."""
+    import datetime as dt
+    from live_trading_options.cepe_imbalance import st_sim
+    from live_trading_options.cepe_imbalance.engine import session
+    monkeypatch.setattr(C, "DATA", tmp_path)
+    day = "2026-11-10"
+    o = session("NIFTY", dt.date.fromisoformat(day))[0].timestamp()
+    rows, m = [], 0.0
+    for i in range(60 * 60):                           # one hour, a sample per second
+        t = o + i
+        mins = i // 60
+        px = 300 - mins * 2 if mins < 30 else 240 + (mins - 30) * 6   # falls (red) then rallies (green)
+        m += -1.0 if mins >= 30 else 1.0               # short book: gains while falling, loses in the rally
+        rows.append({"t": t, "mtm": m, "imb": 0, "atm": 25000, "ace": px / 2, "ape": px / 2})
+    h = tmp_path / "history" / day
+    h.mkdir(parents=True)
+    (h / "NIFTY.jsonl").write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    r = st_sim.simulate(day, "NIFTY")
+    assert r and r["warm_day"] is None
+    assert any(x["in"] for x in r["rows"]) and not r["rows"][-1]["in"]   # entered on red, out on green
+    assert r["pnl"] > m                                # skipped (most of) the rally's loss
+    d = st_sim.sim_digest(day, "NIFTY_ST")
+    assert d["pnl"] == r["pnl"] and (h / "NIFTY_ST.sim.json").exists()
+    (h / "NIFTY_ST.jsonl").write_text("", encoding="utf-8")
+    assert st_sim.sim_digest(day, "NIFTY_ST") is None  # the real variant ran: never simulated

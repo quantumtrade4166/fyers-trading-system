@@ -152,7 +152,7 @@
   <span class="name">CE/PE Imbalance</span>
   <span class="pill paper">Paper</span>
   <span class="seg vtog" id="varTog" title="Normal = the strategy as is · Supertrend = same rules, only while Supertrend on 1-min ATM CE+PE is red"><button data-v="normal">Normal</button><button data-v="st">Supertrend</button></span>
-  <span class="mut">Kotak tick feed · fills at live bid/ask</span>
+  <span class="mut">Kotak tick feed (BTC: Delta) · fills at live bid/ask</span>
   <div class="right">
     <span id="feed" class="pill">feed …</span>
     <span id="clock" class="num mut"></span>
@@ -194,7 +194,7 @@
       <label title="Between this and the band, only &quot;back to normal&quot; may trade (early clean-up). Set equal to the band to turn off."><span class="lbl">Go-normal at ±%</span><input type="number" id="pTrig" min="0" step="0.5"></label>
       <label><span class="lbl">ATM buffer %</span><input type="number" id="pBuf" min="0" max="50" step="5"></label>
       <label><span class="lbl">Strike step</span><input type="number" id="pStep" min="0" step="1"></label>
-      <label><span class="lbl">MTM stop ₹ (0=off)</span><input type="number" id="pStop" min="0" step="500"></label>
+      <label><span class="lbl">MTM stop <span class="cur">₹</span> (0=off)</span><input type="number" id="pStop" min="0" step="500"></label>
       <label title="Never sell a strike whose bid-ask gap is wider than this % of its price (exits never wait)"><span class="lbl">Max quote gap %</span><input type="number" id="pGap" min="0.5" step="0.5"></label>
       <label class="stOnly" title="Supertrend ATR period (1-min ATM CE+PE candles) used for entries / exits"><span class="lbl">ST period</span><input type="number" id="pStPer" min="1" step="1"></label>
       <label class="stOnly" title="Supertrend multiplier used for entries / exits"><span class="lbl">ST ×</span><input type="number" id="pStMul" min="0.1" step="0.1"></label>
@@ -220,7 +220,8 @@
   </div>
 
   <div class="charts">
-    <div class="card"><div class="chead"><span class="lbl">MTM ₹ <span id="chDay1"></span></span><span class="tools"><span class="num mut" id="cMtm"></span><button class="zb" data-zoom="0" title="Zoom (Esc closes)">⤢</button></span></div><div class="chart" id="chMtm"></div></div>
+    <div class="card"><div class="chead"><span class="lbl">MTM <span class="cur">₹</span> <span id="chDay1"></span> <span id="simTag" style="color:#f59e0b"
+        title="The Supertrend version did not run this day. MTM = the normal book's MTM while the Supertrend was red, flat while green. Not included: re-centred strikes on re-entry, spreads/costs of each exit and re-entry, quote-width waits."></span></span><span class="tools"><span class="num mut" id="cMtm"></span><button class="zb" data-zoom="0" title="Zoom (Esc closes)">⤢</button></span></div><div class="chart" id="chMtm"></div></div>
     <div class="card"><div class="chead"><span class="lbl">CE/PE imbalance % <span id="chDay2"></span></span><span class="tools"><span class="num mut" id="cImb"></span><button class="zb" data-fit="1" title="Show the whole day">Fit</button><button class="zb" data-zoom="1" title="Zoom (Esc closes)">⤢ Zoom</button></span></div><div class="chart" id="chImb"></div></div>
     <div class="card"><div class="chead"><span class="lbl">ATM premium <span id="chDay3"></span></span><span class="tools"><span class="num mut" id="cAtm"></span><button class="zb" data-zoom="2" title="Zoom (Esc closes)">⤢</button></span></div>
       <div class="sttools"><span class="seg" id="atmTf"><button data-tf="0" class="on">Tick</button><button data-tf="60">1m</button><button data-tf="180">3m</button><button data-tf="300">5m</button></span>
@@ -255,9 +256,9 @@
   </div>
 
   <div class="charts" id="pnlCharts">
-    <div class="card"><div class="chead"><span class="lbl">Daily P&amp;L ₹ <span class="mut" id="pnlName"></span></span><span class="num mut" id="pDay"></span></div><div class="chart" id="chPd"></div></div>
-    <div class="card"><div class="chead"><span class="lbl">Cumulative P&amp;L ₹</span><span class="num mut" id="pCum"></span></div><div class="chart" id="chPc"></div></div>
-    <div class="card"><div class="chead"><span class="lbl">Drawdown ₹</span><span class="num mut" id="pDd"></span></div><div class="chart" id="chPdd"></div></div>
+    <div class="card"><div class="chead"><span class="lbl">Daily P&amp;L <span class="cur">₹</span> <span class="mut" id="pnlName"></span></span><span class="num mut" id="pDay"></span></div><div class="chart" id="chPd"></div></div>
+    <div class="card"><div class="chead"><span class="lbl">Cumulative P&amp;L <span class="cur">₹</span></span><span class="num mut" id="pCum"></span></div><div class="chart" id="chPc"></div></div>
+    <div class="card"><div class="chead"><span class="lbl">Drawdown <span class="cur">₹</span></span><span class="num mut" id="pDd"></span></div><div class="chart" id="chPdd"></div></div>
   </div>
 </div>
 
@@ -277,7 +278,15 @@ function localSet(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmt = (v, d = 2) => v == null || isNaN(v) ? '–' : Number(v).toLocaleString('en-IN', {minimumFractionDigits: d, maximumFractionDigits: d});
-const rs = v => v == null ? '–' : (v < 0 ? '−₹' : '₹') + Math.abs(v).toLocaleString('en-IN', {maximumFractionDigits: 0});
+// money: ₹ for NSE/MCX books, $ for the BTC (Delta) books. CUR follows the selected book; tables pass a row's ccy.
+let CUR = 'INR';
+const sym = c => (c || CUR) === 'USD' ? '$' : '₹';
+const rs = (v, c) => v == null ? '–' : (v < 0 ? '−' : '') + sym(c) +
+  Math.abs(v).toLocaleString('en-IN', {maximumFractionDigits: (c || CUR) === 'USD' ? 2 : 0});
+function setCur(c) {
+  CUR = c || 'INR';
+  document.querySelectorAll('.cur').forEach(el => { if (el.textContent !== sym()) el.textContent = sym(); });
+}
 const cls = v => v > 0 ? 'pos' : v < 0 ? 'neg' : '';
 const k0 = v => Number(v).toLocaleString('en-IN', {maximumFractionDigits: 2});
 
@@ -342,6 +351,16 @@ function toBars(pts, sec) {
   }
   return out;
 }
+// OHLC bars -> bars of `sec` seconds
+function regroup(src, sec) {
+  const out = [];
+  for (const x of src) {
+    const t = x.time - (x.time % sec), b = out[out.length - 1];
+    if (b && b.time === t) { b.high = Math.max(b.high, x.high); b.low = Math.min(b.low, x.low); b.close = x.close; }
+    else out.push({time: t, open: x.open, high: x.high, low: x.low, close: x.close});
+  }
+  return out;
+}
 // Supertrend (Wilder ATR, same as TradingView): [{time, value, up}] from the bar `per` onward.
 function supertrend(bars, per, mul) {
   const out = [];
@@ -381,10 +400,24 @@ function drawAtm() {
     const by = new Map();
     for (const p of series.est) by.set(p.time - (p.time % 60) - 60, p);
     st = [...by.entries()].sort((a, b) => a[0] - b[0]).map(([time, p]) => ({time, value: p.value, up: p.up}));
-  } else st = supertrend(bars, Math.max(1, ST.per | 0), Math.max(0.1, ST.mul));
+  } else {
+    // 14-Nov: same recipe as the strategy so the two charts agree — CLOSED candles only (the forming one made
+    // the line flicker green at 18:30 on 13-Nov), Tick view uses 1-min candles, seeded with the previous
+    // session's candles of the same expiry (engine /stwarm) instead of starting cold at the open.
+    const sec = tf || 60;
+    let cb = tf ? bars : toBars(series.s, 60);
+    if (!DAY && cb.length) cb = cb.slice(0, -1);
+    const first = cb.length ? cb[0].time : Infinity;
+    const all = (DAY ? [] : regroup(series.warm, sec)).filter(b => b.time < first).concat(cb);
+    st = supertrend(all, Math.max(1, ST.per | 0), Math.max(0.1, ST.mul)).filter(p => p.time >= first);
+    if (!tf) st = st.map(p => ({...p, time: p.time + 60}));      // known when the minute closes
+  }
   setStRuns(st);
   const last = st[st.length - 1];
-  $('stNow').textContent = !ST.on ? '' : last ? `ST ${fmt(last.value)} · ${last.up ? 'UP (green)' : 'DOWN (red)'}` + (engine ? ' · strategy line' : '')
+  const odd = (ST.per | 0) !== 10 || +ST.mul !== 3 ? ` · chart uses ${ST.per}/${ST.mul}, strategy 10/3` : '';
+  const how = engine ? ' · strategy line' : (' · closed ' + (tf ? tf / 60 : 1) + 'm candles' +
+              (DAY ? '' : series.warm.length ? ' · warmed on prev day' : ' · no prev-day warm-up yet'));
+  $('stNow').textContent = !ST.on ? '' : last ? `ST ${fmt(last.value)} · ${last.up ? 'UP (green)' : 'DOWN (red)'}` + how + odd
     : `ST needs ${ST.per} bars`;
   $('stNow').style.color = last ? (last.up ? '#22c55e' : '#f43f5e') : '';
 }
@@ -410,7 +443,18 @@ function setBandLines(band, normal) {
     [band, '#f43f5e', 'band'], [-band, '#f43f5e', 'band'], [normal, '#22c55e', 'normal'], [-normal, '#22c55e', 'normal'], [0, '#475569', '']
   ].map(([p, c, t]) => sImb.createPriceLine({price: p, color: c, lineWidth: 1, lineStyle: 2, axisLabelVisible: !!t, title: t}));
 }
-const series = {m: [], i: [], c: [], p: [], s: [], est: [], marks: [], sp: [[], [], [], [], [], []]};
+const series = {m: [], i: [], c: [], p: [], s: [], est: [], warm: [], marks: [], sp: [[], [], [], [], [], []]};
+let warmKey = '', warmAt = 0;
+async function loadWarm(key) {                 // previous-session candles for the chart's Supertrend (today only)
+  if (DAY || (warmKey === key && (series.warm.length || Date.now() - warmAt < 30000))) return;
+  warmKey = key; warmAt = Date.now();
+  try {
+    const j = await api(`/stwarm/${SEL}`);
+    if (histName !== key || !j || !j.bars) return;
+    series.warm = j.bars.map(b => ({time: b.t + IST, open: b.o, high: b.h, low: b.l, close: b.c}));
+    if (series.warm.length) drawAtm();
+  } catch (e) { /* engine without the endpoint: chart just starts cold */ }
+}
 let lastSp = null;
 let lastAtm = null, lastPrem = null;
 function pushRows(rows) {
@@ -451,12 +495,15 @@ async function loadHistory(full) {
   const fresh = full || histName !== key;
   if (fresh) {
     histName = key; lastT = 0; series.m = []; series.i = []; series.c = []; series.p = []; series.s = []; series.marks = []; series.est = [];
+    series.warm = [];
     series.sp = [[], [], [], [], [], []]; lastAtm = null; lastPrem = null; lastSp = null;
     drawSeries();
   } else if (DAY) return;
   const q = DAY ? `date=${DAY}&max_points=8000` : (lastT ? `since=${lastT}` : 'max_points=8000');
   const j = await api(`/history/${SEL}?${q}`);
   if (histName !== key) return;                             // instrument / day changed while loading
+  loadWarm(key);
+  $('simTag').textContent = j.sim ? `· SIMULATED from normal book: ${rs(j.sim.pnl)} (no costs) ⓘ` : '';
   if (j.rows && j.rows.length) {
     const first = !series.m.length;
     pushRows(j.rows); drawSeries();
@@ -549,11 +596,14 @@ $('daySel').onchange = () => {
 };
 async function renderDay() {
   const d = DAY || TODAY; if (!d) return;
-  const j = await api(`/day/${d}`);
+  const j = await api(`/day/${DAY || 'live'}`);             // live: each book's own day (BTC full expiry rolls at 17:30)
   if (!j.rows || (DAY || TODAY) !== d) return;
   const rows = j.rows.filter(r => isST(r.name) === (VAR === 'st'));
-  const tot = rows.reduce((a, r) => a + (r.traded ? r.pnl : 0), 0);
-  $('dayTot').textContent = rs(tot); $('dayTot').className = 'daytot num ' + cls(tot);
+  const tot = rows.reduce((a, r) => a + (r.traded && r.ccy !== 'USD' ? r.pnl : 0), 0);
+  const usd = rows.filter(r => r.ccy === 'USD' && r.traded), totU = usd.reduce((a, r) => a + r.pnl, 0);
+  $('dayTot').innerHTML = `<span class="${cls(tot)}">${rs(tot, 'INR')}</span>` +
+    (usd.length ? ` <span class="mut">·</span> <span class="${cls(totU)}">${rs(totU, 'USD')}</span>` : '');
+  $('dayTot').className = 'daytot num';
   $('dayRows').innerHTML = rows.map(r => {
     const st = r.running != null ? (r.running ? (r.phase === 'in' ? '<span class="pos">running</span>' : '<span class="warn">waiting</span>')
                                               : (r.traded ? 'stopped' : '<span class="mut">idle</span>'))
@@ -561,11 +611,11 @@ async function renderDay() {
     const imb = r.imb_min == null ? '–' : `${fmt(r.imb_min, 1)}% … ${fmt(r.imb_max, 1)}%`;
     return `<tr data-n="${esc(r.name)}" class="${r.name === SEL ? 'on' : ''}">
       <td style="font-weight:600">${esc(r.label.replace(' · Supertrend', ''))}</td>
-      <td class="num ${cls(r.pnl)}" style="font-weight:700">${r.traded ? rs(r.pnl) : '–'}</td>
+      <td class="num ${cls(r.pnl)}" style="font-weight:700">${r.traded ? rs(r.pnl, r.ccy) : '–'}</td>
       <td>${st}</td><td class="num">${r.fills || ''}</td><td class="num">${r.atm_rule || ''}</td>
       <td class="num">${r.a || ''}</td><td class="num">${r.b || ''}</td>
-      <td class="num ${cls(r.mtm_high)}">${r.mtm_high == null ? '–' : rs(r.mtm_high)}</td>
-      <td class="num ${cls(r.mtm_low)}">${r.mtm_low == null ? '–' : rs(r.mtm_low)}</td>
+      <td class="num ${cls(r.mtm_high)}">${r.mtm_high == null ? '–' : rs(r.mtm_high, r.ccy)}</td>
+      <td class="num ${cls(r.mtm_low)}">${r.mtm_low == null ? '–' : rs(r.mtm_low, r.ccy)}</td>
       <td class="num mut">${imb}</td><td class="num mut">${r.first ? r.first + ' – ' + r.last : ''}</td></tr>`;
   }).join('');
   document.querySelectorAll('#dayRows tr').forEach(tr => tr.onclick = () => selectUnd(tr.dataset.n));
@@ -584,7 +634,7 @@ function renderUnds() {
     const tr = u.st && u.st.trend ? ` <span style="color:${u.st.trend === 'red' ? '#f43f5e' : '#22c55e'}">●</span>` : '';
     return `<div class="und ${u.name === SEL ? 'on' : ''}" data-n="${esc(u.name)}">
       <div class="n"><span class="dot ${u.running ? dc : ''}"></span>${esc(u.label.replace(' · Supertrend', ''))}${tr}</div>
-      <div class="num ${cls(m)}">${has ? rs(m) : '<span class="mut">idle</span>'}</div>
+      <div class="num ${cls(m)}">${has ? rs(m, u.ccy) : '<span class="mut">idle</span>'}</div>
       <div class="num mut">${u.imbalance.pct == null ? '' : 'imb ' + fmt(u.imbalance.pct, 1) + '%'}</div></div>`;
   }).join('');
   document.querySelectorAll('.und').forEach(el => el.onclick = () => selectUnd(el.dataset.n));
@@ -609,7 +659,7 @@ function renderStCard(u) {
 function renderCards() {
   const u = ROW; if (!u) return;
   const p = u.params || {};
-  $('refLbl').textContent = (baseOf(u.name) === 'NIFTY' || baseOf(u.name) === 'SENSEX') ? 'Spot' : 'Future';
+  $('refLbl').textContent = (baseOf(u.name) === 'NIFTY' || baseOf(u.name) === 'SENSEX') ? 'Spot' : u.kind === 'crypto' ? 'BTC index' : 'Future';
   $('ref').textContent = fmt(u.ref, 2);
   $('refSub').textContent = u.ref_age == null ? 'no tick yet' : `tick ${u.ref_age}s ago` + (u.synthetic ? ` · options-implied ${fmt(u.synthetic, 1)}` : '');
   $('atm').textContent = u.strat_atm ? k0(u.strat_atm) : (u.atm ? k0(u.atm) : '–');
@@ -621,7 +671,7 @@ function renderCards() {
   const b = $('imbBand'); b.style.left = (50 - band / 2) + '%'; b.style.width = band + '%';
   const mk = $('imbMk'); if (im == null) mk.style.display = 'none'; else { mk.style.display = ''; mk.style.left = `calc(${Math.max(0, Math.min(100, 50 + im / 2))}% - 1px)`; }
   $('mtm').textContent = rs(u.mtm.total); $('mtm').className = 'big num ' + cls(u.mtm.total);
-  $('mtmSub').textContent = `realised ${rs(u.mtm.realized)} · open ${rs(u.mtm.unrealized)}` + (+p.mtm_stop ? ` · SL −₹${k0(p.mtm_stop)}` : '');
+  $('mtmSub').textContent = `realised ${rs(u.mtm.realized)} · open ${rs(u.mtm.unrealized)}` + (+p.mtm_stop ? ` · SL −${sym()}${k0(p.mtm_stop)}` : '');
   $('phase').textContent = u.running ? (PHASE[u.phase] || 'Running') : (PHASE[u.phase] && u.phase !== 'in' ? PHASE[u.phase] : 'Stopped');
   $('phase').className = 'big ' + (u.running ? (u.phase === 'in' ? 'pos' : 'warn') : 'mut');
   renderStCard(u);
@@ -643,7 +693,7 @@ function renderCards() {
   $('cMtm').textContent = rs(u.mtm.total); $('cImb').textContent = im == null ? '' : fmt(im, 1) + '%';
   setBandLinesOnce(band, +p.normal_band || 5);
   const gap = +p.max_spread_pct || 3;                       // spread chart: commodities only, limit line = max quote gap
-  $('spCard').style.display = u.kind === 'commodity' ? '' : 'none';
+  $('spCard').style.display = u.kind === 'commodity' || u.kind === 'crypto' ? '' : 'none';
   if (gap !== lastGap) { lastGap = gap; setSpLimit(gap); }
 }
 let lastBand = null, lastGap = null;
@@ -655,7 +705,7 @@ const setT = (el, t) => { if (el.textContent !== t) el.textContent = t; };
 function renderChain(j) {
   const rows = j.rows || [];
   const ref = j.ref || 0;
-  $('chainSub').textContent = j.expiry ? `${j.expiry} · step ${k0(j.step)} · ${ROW && (ROW.name === 'NIFTY' || ROW.name === 'SENSEX') ? 'spot' : 'future'} ${fmt(ref, 2)}` : '';
+  $('chainSub').textContent = j.expiry ? `${j.expiry} · step ${k0(j.step)} · ${ROW && (ROW.name === 'NIFTY' || ROW.name === 'SENSEX') ? 'spot' : ROW && ROW.kind === 'crypto' ? 'BTC index' : 'future'} ${fmt(ref, 2)}` : '';
   const key = SEL + '|' + j.expiry + '|' + rows.map(r => r.strike).join(',');
   if (key !== OC.key) {
     OC.key = key; OC.cells.clear(); OC.last.clear();
@@ -792,9 +842,16 @@ async function refresh(full) {
     ROW = s.underlyings.find(u => u.name === SEL) || s.underlyings.find(u => u.name === bookOf(baseOf(SEL)))
           || s.underlyings.find(u => isST(u.name) === (VAR === 'st')) || s.underlyings[0];
     SEL = ROW.name;
+    setCur(ROW.ccy);
     const f = s.feed || {};
-    $('feed').className = 'pill ' + (f.authed ? 'ok' : 'bad');
-    $('feed').textContent = f.authed ? `feed ok · ${f.subscribed ?? ''} subs` : 'feed down';
+    if (ROW.kind === 'crypto') {                              // BTC books run on the public Delta feed
+      const d = f.delta || {};
+      $('feed').className = 'pill ' + (d.connected ? 'ok' : 'bad');
+      $('feed').textContent = d.connected ? `Delta feed ok · ${d.subscribed ?? ''} subs` : 'Delta feed down';
+    } else {
+      $('feed').className = 'pill ' + (f.authed ? 'ok' : 'bad');
+      $('feed').textContent = f.authed ? `feed ok · ${f.subscribed ?? ''} subs` : 'feed down';
+    }
     renderUnds(); renderCards();
     if (full) { chainLoop(); renderLower(); loadPnl(); }   // tables first: never wait behind the chart load
     await loadHistory(full);

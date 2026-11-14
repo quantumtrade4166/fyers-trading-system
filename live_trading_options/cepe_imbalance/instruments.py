@@ -61,9 +61,14 @@ class Underlying:
     mult: float = 1.0
     futures: list = field(default_factory=list)                  # [Contract] by expiry
     chains: dict = field(default_factory=dict)                   # expiry -> {strike: {"CE": c, "PE": c}}
+    settle: str | None = None                                    # crypto: IST settle time; expiry drops at it
 
     def expiries(self) -> list:
-        return sorted(self.chains)
+        if not self.settle:
+            return sorted(self.chains)
+        now = dt.datetime.now(IST)                               # BTC dailies settle 17:30 IST every day
+        today, hhmm = now.date().isoformat(), now.strftime("%H:%M")
+        return sorted(e for e in self.chains if e > today or (e == today and hhmm < self.settle))
 
     def strikes(self, expiry: str) -> list:
         return sorted(self.chains.get(expiry, {}))
@@ -186,7 +191,7 @@ def load(client) -> Universe:
     today = dt.datetime.now(IST).date().isoformat()
     C.DATA.mkdir(parents=True, exist_ok=True)
     texts = {}
-    for seg in sorted({s["seg"] for s in C.UNDERLYINGS.values()}):
+    for seg in C.KOTAK_SEGS:                                      # Delta (crypto) comes from crypto.attach
         cache = C.DATA / f"scrip_{seg}_{today}.csv"
         if cache.exists() and cache.stat().st_size > 100_000:
             texts[seg] = cache.read_text(encoding="utf-8")

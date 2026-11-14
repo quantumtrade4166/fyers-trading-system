@@ -49,8 +49,9 @@ class Market:
         self.lock = threading.RLock()
 
     # ── ticks ───────────────────────────────────────────────────────────────
-    def apply(self, ticks: list) -> list:
-        """Store ticks; returns the keys that changed."""
+    def apply(self, ticks: list, on_quote=None) -> list:
+        """Store ticks; returns the keys that changed. on_quote(key, quote) is called after EACH tick (the
+        quote recorder snapshots every tick there, even when a batch carries many ticks of one contract)."""
         keys = []
         with self.lock:
             for t in ticks:
@@ -66,6 +67,8 @@ class Market:
                     q.oi = t.oi
                 q.exch_ts, q.recv_ts = t.exch_ts, t.recv_ts
                 keys.append(t.key)
+                if on_quote is not None:
+                    on_quote(t.key, q)
         return keys
 
     def quote(self, key: str) -> Quote | None:

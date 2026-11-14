@@ -35,7 +35,7 @@ from fastapi import Body, FastAPI
 from fastapi.responses import JSONResponse
 
 from live_trading_options.cepe_imbalance import config as C
-from live_trading_options.cepe_imbalance import days, instruments
+from live_trading_options.cepe_imbalance import crypto, days, instruments, st_sim
 from live_trading_options.cepe_imbalance.book import IST
 from live_trading_options.cepe_imbalance.engine import Engine
 from live_trading_options.cepe_imbalance.feed import MultiFeed
@@ -60,7 +60,8 @@ def health():
     if not E:
         return {"ok": False, "error": "starting"}
     f = E.feed.status() if E.feed else {}
-    return {"ok": bool(f.get("authed")), "feed": f, "universe_date": E.u.file_date}
+    return {"ok": bool(f.get("authed")), "feed": f, "delta_ok": bool((f.get("delta") or {}).get("connected")),
+            "universe_date": E.u.file_date}
 
 
 @app.get("/state")
@@ -138,12 +139,33 @@ def events(name: str, date: str = ""):
     return {"name": nm, "events": rows[-500:]}
 
 
+@app.get("/stwarm/{name}")
+def st_warm(name: str):
+    """Previous-session closed 1-min ATM CE+PE candles (same expiry) the Supertrend signal warmed up on.
+    14-Nov: the normal book's chart seeds its own Supertrend with these, so its line matches the strategy's."""
+    nm = _name(name)
+    if not nm:
+        return _bad("unknown underlying", 404)
+    s = E.signals.get(C.und_of(nm))
+    if not s:
+        return {"name": nm, "bars": [], "source": "none"}
+    with s.lock:
+        bars, src, wd = list(s.warm), s.warm_source, s.warm_day
+    return JSONResponse({"name": nm, "date": E.runners[nm].date, "bars": bars, "source": src, "warm_day": wd})
+
+
 @app.get("/history/{name}")
 def history(name: str, date: str = "", since: float = 0, max_points: int = 0):
     nm = _name(name)
     if not nm:
         return _bad("unknown underlying", 404)
     date = date or E.runners[nm].date
+    if date != E.runners[nm].date and C.is_variant(nm):
+        sd = st_sim.sim_digest(date, nm)                  # variant did not run that day: simulated from normal
+        if sd:
+            rows = days.downsample(sd["ds"], max_points) if max_points > 0 else sd["ds"]
+            return JSONResponse({"name": nm, "date": date, "rows": rows,
+                                 "sim": {"pnl": sd["pnl"], "warm_day": sd["warm_day"]}})
     if date != E.runners[nm].date and not since and 0 < max_points <= days.DS_POINTS:
         s = days.hist_stats(date, nm)                     # past day: cached chart copy, no full parse
         rows = days.downsample(s["ds"], max_points) if s else []
@@ -160,21 +182,29 @@ def history(name: str, date: str = "", since: float = 0, max_points: int = 0):
 @app.get("/days")
 def day_list():
     today = next(iter(E.runners.values())).date
-    return {"today": today, "days": sorted(set(days.list_days()) | {today}, reverse=True)}
+    live = {r.date for r in E.runners.values()}           # BTC full expiry is already on tomorrow after 17:30
+    return {"today": today, "days": sorted(set(days.list_days()) | live, reverse=True)}
 
 
 @app.get("/day/{date}")
 def day(date: str):
-    """EOD P&L table for every instrument on one day (today = live numbers)."""
+    """EOD P&L table for every instrument on one day (today = live numbers).
+    date "live" = every book's CURRENT day (BTC full expiry is on tomorrow's book from 17:30)."""
     rows = []
+    want = date
     for nm, r in E.runners.items():
+        date = r.date if want == "live" else want
         s = days.summary(date, nm, hist=list(E.hist.get(nm, [])) if date == r.date else None)
+        s["date"] = date
         if date == r.date:                                 # today: live MTM, not the last file sample
             m = r.book.mtm()
             s.update(pnl=m["total"], realized=m["realized"], open_lots=sum(abs(p.lots) for p in r.book.positions.values()),
                      fills=len(r.book.trades), traded=bool(r.book.trades), running=r.running, phase=r.state.get("phase"))
+        s["ccy"] = C.ccy_of(nm)
         rows.append(s)
-    return {"date": date, "rows": rows, "total": round(sum(x["pnl"] for x in rows), 2)}
+    # rupees and dollars are never added together: BTC books (USD) have their own total
+    return {"date": want, "rows": rows, "total": round(sum(x["pnl"] for x in rows if x["ccy"] == "INR"), 2),
+            "total_usd": round(sum(x["pnl"] for x in rows if x["ccy"] == "USD"), 2)}
 
 
 @app.get("/pnl/{name}")
@@ -186,7 +216,7 @@ def pnl(name: str):
     r = E.runners[nm]
     live = r.book.mtm()["total"] if r.book.trades else None
     rows = days.pnl_series(nm, today=r.date, today_pnl=live)
-    return {"name": nm, "today": r.date, "rows": rows}
+    return {"name": nm, "today": r.date, "ccy": C.ccy_of(nm), "rows": rows}
 
 
 @app.post("/control/{name}")
@@ -276,10 +306,11 @@ def main():
     sessions = kotak_session.SessionHolder()
     sess = sessions.get()
     u = instruments.load(sess.client)
+    crypto.load_into(u)                                   # BTC options from Delta (public, no key)
     market = Market(u)
     global E
     E = Engine(u, market)
-    feed = MultiFeed(sessions, E.on_ticks)
+    feed = crypto.CompositeFeed(MultiFeed(sessions, E.on_ticks), crypto.DeltaFeed(E.on_ticks))
     E.feed = feed
     E.refresh_subscriptions()                             # spots + futures first; windows once ATM is known
     feed.start()

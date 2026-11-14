@@ -13,6 +13,7 @@ Verified on the VPS 2026-11-02 (probe_kotak_universe.py):
 
 Tick tuple out:  Tick(key, ltp, bid, ask, bid_qty, ask_qty, volume, oi, exch_ts, recv_ts)
 """
+import collections
 import json
 import logging
 import struct
@@ -109,9 +110,17 @@ class MultiFeed:
         self._lock = threading.Lock()
         self._stop = threading.Event()
         self._force_login = False
+        self._frames = collections.deque()         # (recv_ts, raw frame) from the socket thread
+        self._has_frames = threading.Event()
+        self.batches = 0
+        self.backlog_max = 0.0                     # worst wait of a frame before processing (s)
+        self.slowest = 0.0                         # slowest on_ticks batch (s)
+        self.work_s = 0.0
+        self._lag_logged = 0.0
 
     # ── public ──────────────────────────────────────────────────────────────
     def start(self):
+        threading.Thread(target=self._work, daemon=True, name="CepeTicks").start()
         threading.Thread(target=self._run, daemon=True, name="CepeFeed").start()
 
     def stop(self):
@@ -142,7 +151,9 @@ class MultiFeed:
     def status(self) -> dict:
         return {"connected": self.connected, "authed": self.authed, "subscribed": len(self.sent),
                 "wanted": len(self.wanted), "ticks": self.ticks, "last_tick_at": self.last_tick_at,
-                "connects": self.connects, "error": self.last_error}
+                "connects": self.connects, "error": self.last_error,
+                "queued": len(self._frames), "batches": self.batches, "backlog_max_s": round(self.backlog_max, 2),
+                "slowest_batch_s": round(self.slowest, 3), "work_s": round(self.work_s, 1)}
 
     # ── internals ───────────────────────────────────────────────────────────
     def _send(self, keys):
@@ -188,18 +199,51 @@ class MultiFeed:
                 break
             backoff = min(backoff * 2, 10.0)
 
+    # 13-Nov-2026: the socket thread used to run decode + on_ticks (market update, quote recording and the
+    # strategy evaluation of all 16 books, under the engine lock) for EVERY frame. In busy bursts (19:00 IST
+    # US data) it fell behind, Kotak's pong waited in the backlog past ping_timeout and the socket was
+    # dropped: 127 reconnects on 13-Nov, each a 15-60 s hole. Now the socket thread only stamps and queues
+    # the raw frame; a worker decodes everything waiting and hands it to on_ticks as ONE batch (tick order
+    # kept, every tick still applied and recorded; each book is evaluated once per batch, not per frame).
+    def _queue_frame(self, msg):
+        self._frames.append((time.time(), msg))
+        self._has_frames.set()
+
+    def _work(self):
+        while not self._stop.is_set():
+            self._has_frames.wait(1.0)
+            self._has_frames.clear()
+            while self._frames:
+                batch = []
+                lag = 0.0
+                while self._frames:
+                    ts, raw = self._frames.popleft()
+                    lag = max(lag, time.time() - ts)
+                    batch.extend(decode(raw, self.div, self.index_names, ts))
+                self.backlog_max = max(self.backlog_max, lag)
+                self.batches += 1
+                if not batch:
+                    continue
+                self.ticks += len(batch)
+                self.last_tick_at = time.time()
+                t0 = time.perf_counter()
+                try:
+                    self.on_ticks(batch)
+                except Exception:
+                    log.exception("on_ticks failed")
+                dt_ = time.perf_counter() - t0
+                self.work_s += dt_
+                if dt_ > self.slowest:
+                    self.slowest = dt_
+                if lag > 2.0 and time.time() - self._lag_logged > 30:
+                    self._lag_logged = time.time()
+                    log.warning("tick processing behind by %.1f s (batch of %d ticks took %.2f s)", lag, len(batch), dt_)
+
     def _on_message(self, ws, msg):
         if isinstance(msg, (bytes, bytearray)) and msg[:1] == b"{":
             msg = msg.decode("utf-8", "replace")
         if isinstance(msg, (bytes, bytearray)):
-            ticks = decode(msg, self.div, self.index_names)
-            if ticks:
-                self.ticks += len(ticks)
-                self.last_tick_at = time.time()
-                try:
-                    self.on_ticks(ticks)
-                except Exception:
-                    log.exception("on_ticks failed")          # never kill the socket thread
+            self._queue_frame(msg)
             return
         try:
             j = json.loads(msg)

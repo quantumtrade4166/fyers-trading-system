@@ -2,7 +2,7 @@
 cepe_imbalance/config.py — settings for the CE/PE imbalance PAPER engine.
 ==========================================================================
 
-Seven underlyings on ONE Kotak P market-feed connection (NSE F&O, BSE F&O, MCX):
+Kotak underlyings on ONE Kotak P market-feed connection (NSE F&O, BSE F&O, MCX) + BTC on the public Delta feed:
   NIFTY, SENSEX (index options, ATM from index SPOT) and CRUDEOIL, GOLDM, GOLD, SILVERM, SILVER
   (options on futures, ATM from the option's underlying FUTURE).
 
@@ -33,7 +33,7 @@ MCX_HOURS_US_STD = ("09:00", "23:55")
 MCX_HOURS_US_DST = ("09:00", "23:30")
 
 # Square-off this many minutes before the session close (strategy.on_session_end).
-SQUARE_OFF_BEFORE_MIN = {"index": 15, "commodity": 10}
+SQUARE_OFF_BEFORE_MIN = {"index": 15, "commodity": 10, "crypto": 10}
 
 # name -> how to find it.
 #   seg        Kotak exchange segment of the options
@@ -50,8 +50,32 @@ UNDERLYINGS = {
     "SILVER":   {"seg": "mcx_fo", "scrip": "SILVER",   "spot": None,              "kind": "commodity", "label": "Silver"},
     # NSE commodity segment (owner 9-Nov): WTI crude, 100 bbl a lot, monthly options, same hours as MCX.
     "NSECRUDE": {"seg": "nse_com", "scrip": "CRUDEOIL", "spot": None,             "kind": "commodity", "label": "NSE Crude"},
+    # Delta Exchange India BTC daily options (owner 14-Nov-2026), PAPER, priced in USD, public Delta feed
+    # (crypto.py). Two versions on the same contracts: the Indian day (09:00 -> 17:20 IST on today's
+    # expiry) and the full expiry (17:30 -> 17:20 next day on the daily that lists at 17:30).
+    "BTC":      {"seg": "delta",   "scrip": "BTC",      "spot": "delta|.DEXBTUSD", "kind": "crypto",   "label": "BTC (IST 09:00)"},
+    "BTCFULL":  {"seg": "delta",   "scrip": "BTC",      "spot": "delta|.DEXBTUSD", "kind": "crypto",   "label": "BTC (full expiry)"},
 }
 ORDER = tuple(UNDERLYINGS)
+KOTAK_SEGS = tuple(sorted({s["seg"] for s in UNDERLYINGS.values() if s["seg"] != "delta"}))
+
+# ── crypto (Delta Exchange India) ──────────────────────────────────────────
+# Daily BTC options settle 17:30 IST (12:00 UTC); the next daily lists at that moment. Crypto trades every
+# day, so these books auto-start on weekends too. P&L is in USD (shown as $, never added to the rupee total).
+# session: open / close IST; "overnight" = opens the evening BEFORE its trading day (the full-expiry cycle).
+CRYPTO_SESSION = {"BTC": {"open": "09:00", "close": "17:30", "overnight": False},
+                  "BTCFULL": {"open": "17:30", "close": "17:30", "overnight": True}}
+CRYPTO_SETTLE = "17:30"
+DELTA_LOT = 1000             # contracts per paper lot (owner 14-Nov): 1000 x 0.001 BTC = 1 BTC, $1 per $1 premium
+DELTA_SPOT = ".DEXBTUSD"
+
+
+def kind_of(name: str) -> str:
+    return UNDERLYINGS[und_of(name)]["kind"]
+
+
+def ccy_of(name: str) -> str:
+    return "USD" if kind_of(name) == "crypto" else "INR"
 
 # Option chain kept live per underlying: this many strikes each side of ATM, on these expiries
 # (0 = nearest, 1 = next). Re-centred as ATM moves; old strikes stay subscribed (cheap).
@@ -60,7 +84,7 @@ EXPIRIES_LIVE = 2
 
 # Strategy strike grid (owner, 3-Nov-2026). Kotak lists CRUDEOIL every 50; we trade every 200.
 STRIKE_STEP = {"NIFTY": 50, "SENSEX": 100, "CRUDEOIL": 200, "GOLDM": 500, "GOLD": 500,
-               "SILVERM": 1000, "SILVER": 1000, "NSECRUDE": 200}
+               "SILVERM": 1000, "SILVER": 1000, "NSECRUDE": 200, "BTC": 200, "BTCFULL": 200}
 GRID_EACH_SIDE = 12          # grid strikes kept subscribed each side of ATM (prices ready before a roll)
 
 # MTM / imbalance history sampling (seconds) -> data/history/{date}/{name}.jsonl
@@ -70,13 +94,13 @@ HISTORY_EVERY_S = 0.5
 # inside its session. Toggle / time per instrument on the screen (saved in data/settings.json).
 # A manual Start or Stop that day ends auto-start for that day.
 AUTO_START_DEFAULT = True
-AUTO_START_TIME = {"index": "09:20", "commodity": "09:05"}
+AUTO_START_TIME = {"index": "09:20", "commodity": "09:05", "BTC": "09:00", "BTCFULL": "17:31"}
 
 # Supertrend VARIANT (owner 13-Nov-2026): a second paper book per instrument, named "{NAME}_ST", that
 # trades the same rules but only while Supertrend on the 1-min ATM CE+PE candles is red (see st_signal.py).
 # It is armed just after the market's first 1-min candle closes, so the opening low-break rule can act.
 VARIANT_SUFFIX = "_ST"
-ST_AUTO_START_TIME = {"index": "09:16", "commodity": "09:01"}
+ST_AUTO_START_TIME = {"index": "09:16", "commodity": "09:01", "BTC": "09:01", "BTCFULL": "17:31"}
 ST_WARMUP_MIN = 150          # minutes of the previous session replayed to warm Supertrend up
 QUOTES_FLUSH_WAIT_S = 3      # the quote recorder writes every 2 s
 

@@ -23,8 +23,12 @@ DAY = "2026-11-02"
 
 @pytest.fixture(scope="module")
 def universe():
+    import json
+    from live_trading_options.cepe_imbalance import crypto
     texts = {s: (TD / f"scrip_{s}_sample.csv").read_text(encoding="utf-8") for s in ("nse_fo", "bse_fo", "mcx_fo", "nse_com")}
-    return I.build(texts, today=DAY)
+    u = I.build(texts, today=DAY)
+    crypto.attach(u, json.loads((TD / "delta_products_sample.json").read_text(encoding="utf-8")), keep_settled=True)
+    return u
 
 
 def tick(key, ltp, bid=None, ask=None):
@@ -35,7 +39,7 @@ def tick(key, ltp, bid=None, ask=None):
 def test_all_instruments_loaded(universe):
     assert set(universe.underlyings) == set(C.UNDERLYINGS)
     for u in universe.underlyings.values():
-        assert u.chains and u.futures, u.name
+        assert u.chains and (u.futures or u.seg == "delta"), u.name      # BTC: options on the spot index
 
 
 def test_expiry_encodings(universe):
@@ -48,11 +52,11 @@ def test_expiry_encodings(universe):
 def test_rupee_value_per_point(universe):
     v = {n: u.lot * u.mult for n, u in universe.underlyings.items()}
     assert v == {"NIFTY": 65, "SENSEX": 20, "CRUDEOIL": 100, "GOLDM": 10, "GOLD": 100, "SILVERM": 5, "SILVER": 30,
-                 "NSECRUDE": 100}
+                 "NSECRUDE": 100, "BTC": 1.0, "BTCFULL": 1.0}             # BTC: USD, 1000 x 0.001
 
 
 def test_keys_unique_per_segment(universe):
-    assert all(k.split("|")[0] in ("nse_fo", "bse_fo", "mcx_fo", "nse_com") for k in universe.by_key)
+    assert all(k.split("|")[0] in ("nse_fo", "bse_fo", "mcx_fo", "nse_com", "delta") for k in universe.by_key)
 
 
 def test_nse_crude_from_nse_com(universe):
@@ -281,3 +285,45 @@ def test_save_survives_a_locked_file(universe, tmp_path, monkeypatch):
     assert t["ok"] and bk.positions[c.key].lots == -2
     lines = (tmp_path / "books" / "2026-11-10" / "CRUDEOIL_trades.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
+
+
+def test_feed_socket_thread_only_queues_and_worker_batches():
+    """13-Nov: on_ticks must NOT run on the socket thread (a slow batch delayed Kotak's pong -> 127 drops).
+    Frames queued while the worker is busy arrive as ONE batch, in order, nothing lost."""
+    import threading, time
+    from live_trading_options.cepe_imbalance.feed import MultiFeed
+    names = {("nse_cm", "nifty 50"): "nse_cm|Nifty 50", ("bse_cm", "sensex"): "bse_cm|SENSEX"}
+    got, threads, gate = [], [], threading.Event()
+
+    def on_ticks(ts):
+        threads.append(threading.current_thread().name)
+        got.append([(t.key, t.ltp) for t in ts])
+        gate.wait(2)                                     # first batch is slow: the rest must queue up
+    f = MultiFeed(None, on_ticks)
+    f.div, f.index_names = {"nse_cm": 100, "bse_cm": 100}, names
+    threading.Thread(target=f._work, daemon=True).start()
+    t0 = time.perf_counter()
+    f._on_message(None, NIFTY_IDX)
+    time.sleep(0.2)
+    for _ in range(3):
+        f._on_message(None, NIFTY_IDX + SENSEX_IDX)
+    assert time.perf_counter() - t0 < 0.5                # the socket side never waited on the slow batch
+    gate.set()
+    for _ in range(100):
+        if sum(len(b) for b in got) == 7:
+            break
+        time.sleep(0.02)
+    f._stop.set()
+    assert got[0] == [("nse_cm|Nifty 50", 23454.90)]
+    assert len(got) == 2 and len(got[1]) == 6            # three frames -> one batch, order kept
+    assert got[1][0] == ("nse_cm|Nifty 50", 23454.90) and got[1][1] == ("bse_cm|SENSEX", 75721.45)
+    assert "CepeFeed" not in threads and f.status()["batches"] >= 2
+
+
+def test_market_apply_reports_every_tick_state(universe):
+    """The quote recorder snapshots each tick as it is applied, not only the batch's final state."""
+    m = Market(universe)
+    seen = []
+    m.apply([tick("nse_cm|Nifty 50", 100.0), tick("nse_cm|Nifty 50", 101.0), tick("nse_cm|Nifty 50", 102.0)],
+            on_quote=lambda k, q: seen.append(q.ltp))
+    assert seen == [100.0, 101.0, 102.0]

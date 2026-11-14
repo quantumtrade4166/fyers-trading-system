@@ -110,6 +110,17 @@ class Sampler:
         return round(a + b, 2) if a > 0 and b > 0 else None
 
 
+def _days_between(t_from, t_to, date=None) -> list:
+    """Calendar (IST) dates a [t_from, t_to] window touches — a BTC full-expiry session crosses midnight."""
+    d0 = dt.datetime.fromtimestamp(t_from, IST).date()
+    d1 = dt.datetime.fromtimestamp(t_to, IST).date()
+    out = []
+    while d0 <= d1:
+        out.append(d0.isoformat())
+        d0 += dt.timedelta(days=1)
+    return out or [date]
+
+
 def replay_bars(universe, und, date, expiry, step, buf, t_from, t_to, root=None):
     """Recorded quotes of `date` -> closed 1-minute candles of the ATM CE+PE of `expiry`, between t_from
     and t_to (epoch s). Every recorded tick is applied (so prices are current), samples every 0.5 s."""
@@ -120,7 +131,8 @@ def replay_bars(universe, und, date, expiry, step, buf, t_from, t_to, root=None)
 
     def keep(key, meta):                     # only this expiry's options + the reference price
         return key == ref_key or (meta is not None and meta[1] in ("CE", "PE") and meta[2] == expiry)
-    rows = (r for _meta, r in Q.iter_window(date, und, t_from - PRE_S, t_to, keep, folder=root))
+    rows = (r for d in _days_between(t_from - PRE_S, t_to, date)
+            for _meta, r in Q.iter_window(d, und, t_from - PRE_S, t_to, keep, folder=root))
     s = Sampler(und, expiry)
     cd = Candles()
     nxt = t_from - (t_from % SAMPLE_S)
@@ -240,7 +252,16 @@ def warm_up(universe, und, today, expiry, step, buf, session_fn, now_ts=None, ro
     """-> (warm_bars, today_bars, source, warm_day)."""
     now_ts = now_ts or time.time()
     warm, src, wd = [], "none", None
-    pd = previous_quote_day(und, today, root)
+    if C.UNDERLYINGS[und]["kind"] == "crypto":
+        # 24/7 market: warm up on the last ST_WARMUP_MIN minutes right BEFORE this session's open, same
+        # expiry (the engine records the next expiries' chain all the time).
+        o, _close, _sq = session_fn(und, dt.date.fromisoformat(today))
+        t_to = min(o.timestamp(), now_ts)
+        warm = replay_bars(universe, und, today, expiry, step, buf, t_to - C.ST_WARMUP_MIN * 60, t_to, root)
+        src, wd = ("replay before open" if warm else "none"), (today if warm else None)
+        pd = None
+    else:
+        pd = previous_quote_day(und, today, root)
     if pd:
         o, close, _sq = session_fn(und, dt.date.fromisoformat(pd))
         t_to = close.timestamp()
@@ -258,12 +279,15 @@ def warm_up(universe, und, today, expiry, step, buf, session_fn, now_ts=None, ro
 def universe_from_cache(day: str):
     """Today's universe from the scrip masters the engine already cached (no broker login)."""
     from live_trading_options.cepe_imbalance import instruments as I
+    from live_trading_options.cepe_imbalance import crypto
     texts = {}
-    for seg in sorted({s["seg"] for s in C.UNDERLYINGS.values()}):
+    for seg in C.KOTAK_SEGS:
         p = C.DATA / f"scrip_{seg}_{day}.csv"
         if p.exists():
             texts[seg] = p.read_text(encoding="utf-8")
-    return I.build(texts, today=day)
+    u = I.build(texts, today=day)
+    crypto.attach(u, crypto.cached_products(), keep_settled=True)   # BTC: the engine's own products cache
+    return u
 
 
 def warm_up_subprocess(und, day, expiry, step, buf, timeout=600):
