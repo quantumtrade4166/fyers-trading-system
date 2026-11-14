@@ -157,6 +157,24 @@ def test_paper_usd():
     check("over the cap refused", not b.place(ce.token, "S", C.MAX_LOTS_PER_ORDER + 1, kind="MKT").get("ok"))
 
 
+def test_imbalance_delta_names():
+    """14-Nov: the CE/PE imbalance read calls/puts from names ending in CE/PE -> Delta's C-BTC-… / P-BTC-…
+    shorts counted as nothing (strip 0, chart empty)."""
+    from live_trading_options.mcx_terminal import mtm as M
+    check("kind from Delta call name", M.opt_kind({"symbol": "C-BTC-65800-151126"}) == "CE")
+    check("kind from Delta put name", M.opt_kind({"symbol": "P-BTC-65800-151126"}) == "PE")
+    check("kind from Kotak name", M.opt_kind({"symbol": "CRUDEOIL17NOV269300PE"}) == "PE")
+    check("own kind wins", M.opt_kind({"symbol": "X", "kind": "CE"}) == "CE")
+    pos = [{"token": 1, "symbol": "C-BTC-65800-151126", "name": "BTC", "net": -1000, "avg": 500.0, "realized": 0.0, "mult": 0.001},
+           {"token": 2, "symbol": "P-BTC-65800-151126", "name": "BTC", "net": -1000, "avg": 500.0, "realized": 0.0, "mult": 0.001}]
+    px = {1: 600.0, 2: 400.0}
+    h = M.MtmHistory(path=TMP / "mtm_imb_test.json")
+    row = h._row(pos, px.get, 1.0)
+    flat = json.dumps(row)
+    # short CE 600 x 1000 x 0.001 = 600, short PE 400 -> (600 - 400) / 1000 = +20 %
+    check("imbalance +20 % on Delta shorts", "20.0" in flat, flat)
+
+
 def test_no_live():
     u = universe()
     lb = NoLiveBook(u, lambda t: {})

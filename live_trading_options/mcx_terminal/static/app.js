@@ -1398,6 +1398,17 @@ $("rk-set").onclick = () => send({ op: "risk_set", stop: $("rk-stop").value, tar
                                    trail: $("rk-trail").value, req: ++S.req });
 $("rk-clear").onclick = () => send({ op: "risk_clear", req: ++S.req });
 
+// call or put: the row's own kind, else from the name (Kotak ...9300CE, Delta C-BTC-65800-151126)
+function optKind(p) {
+  if (p.kind === "CE" || p.kind === "PE") return p.kind;
+  const s = String(p.symbol || "");
+  if (/CE$/.test(s)) return "CE";
+  if (/PE$/.test(s)) return "PE";
+  if (/^C-/.test(s)) return "CE";
+  if (/^P-/.test(s)) return "PE";
+  return "";
+}
+
 // short-premium summary: what is collected on short CE vs short PE right now
 function paintRiskSum() {
   let ce = 0, pe = 0, nce = 0, npe = 0, legs = 0;
@@ -1406,8 +1417,8 @@ function paintRiskSum() {
     legs++;
     const t = S.T.get(p.token);
     const ltp = t ? t[LTP] : p.avg;
-    if (p.net < 0 && /CE$/.test(p.symbol)) { ce += ltp * -p.net * p.mult; nce += -p.net / p.lot; }
-    if (p.net < 0 && /PE$/.test(p.symbol)) { pe += ltp * -p.net * p.mult; npe += -p.net / p.lot; }
+    if (p.net < 0 && optKind(p) === "CE") { ce += ltp * -p.net * p.mult; nce += -p.net / p.lot; }
+    if (p.net < 0 && optKind(p) === "PE") { pe += ltp * -p.net * p.mult; npe += -p.net / p.lot; }
   }
   const tot = ce + pe;
   const imb = tot ? ((ce - pe) / tot) * 100 : null;
@@ -1733,8 +1744,8 @@ function liveNow() {
     const r = posPnl(p);
     tot += r.total;
     if (p.net < 0 && r.ltp != null) {
-      if (/CE$/.test(p.symbol)) ce += r.ltp * -p.net * p.mult;
-      else if (/PE$/.test(p.symbol)) pe += r.ltp * -p.net * p.mult;
+      if (optKind(p) === "CE") ce += r.ltp * -p.net * p.mult;
+      else if (optKind(p) === "PE") pe += r.ltp * -p.net * p.mult;
     }
   }
   return { tot, ce, pe, imb: ce + pe > 0 ? ((ce - pe) / (ce + pe)) * 100 : null };

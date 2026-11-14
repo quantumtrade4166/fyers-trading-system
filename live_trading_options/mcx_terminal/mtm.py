@@ -20,6 +20,20 @@ import time
 from live_trading_options.mcx_terminal import config as C
 
 log = logging.getLogger("mcx.mtm")
+
+def opt_kind(p) -> str:
+    """"CE" / "PE" / "" for a position row. Its own kind when it has one, else from the symbol:
+    Kotak names end in CE / PE (CRUDEOIL17NOV269300CE), Delta's start with C- / P- (C-BTC-65800-151126)."""
+    k = p.get("kind")
+    if k in ("CE", "PE"):
+        return k
+    s = str(p.get("symbol", ""))
+    if s.endswith(("CE", "PE")):
+        return s[-2:]
+    if s.startswith(("C-", "P-")):
+        return "CE" if s[0] == "C" else "PE"
+    return ""
+
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 SAMPLE_S = 5
 
@@ -61,9 +75,10 @@ class MtmHistory:
                 l = ltp_of(p["token"])
                 if l is not None:
                     v += (l - p["avg"]) * p["net"] * p["mult"]
-                    if p["net"] < 0 and str(p.get("symbol", "")).endswith("CE"):
+                    k = opt_kind(p)
+                    if p["net"] < 0 and k == "CE":
                         ce += l * -p["net"] * p["mult"]
-                    elif p["net"] < 0 and str(p.get("symbol", "")).endswith("PE"):
+                    elif p["net"] < 0 and k == "PE":
                         pe += l * -p["net"] * p["mult"]
             per[p["name"]] = per.get(p["name"], 0.0) + v
         imb = round((ce - pe) / (ce + pe) * 100, 2) if ce + pe > 0 else None
