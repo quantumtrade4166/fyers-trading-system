@@ -566,13 +566,29 @@ class DNController:
         import time
         live = self.executor.is_live
         if not live:
+            # Backtest only: `adverse_chain` (set by the historical harness) carries
+            # each option's 1-MINUTE HIGH — the worst price the premium traded at
+            # inside the bar. A real resting stop at the exchange fires on that
+            # intrabar extreme and fills at its trigger; detecting on the bar CLOSE
+            # alone misses spikes that revert before the minute mark and makes the
+            # book look better than it really was. When no adverse chain is set
+            # (live paper on ticks) this falls back to the close mark with the fill
+            # unchanged, so nothing but the historical backtest is affected.
+            adverse = getattr(self, "adverse_chain", None)
             for side in (CE, PE):
                 leg = self.position.leg(side)
                 if leg is None or not leg.is_live or leg.sl_trigger is None:
                     continue
-                m = self._mark(leg)
-                if m is not None and m >= leg.sl_trigger:
-                    leg.mark_stopped(max(m, leg.sl_trigger), self._hm())
+                av = adverse.get((leg.strike, leg.opt_type)) if adverse else None
+                if av is not None:
+                    hit = float(av) >= leg.sl_trigger
+                    fill = leg.sl_trigger          # resting stop fills at its trigger
+                else:
+                    m = self._mark(leg)
+                    hit = m is not None and m >= leg.sl_trigger
+                    fill = max(m, leg.sl_trigger) if m is not None else None
+                if hit and fill is not None:
+                    leg.mark_stopped(fill, self._hm())
                     self._log("stop_hit", side=side, strike=leg.strike,
                               trigger=leg.sl_trigger, fill=leg.exit_price, paper=True)
                     self._retire(side)

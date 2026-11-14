@@ -295,6 +295,14 @@ class Trigger:
                 self.in_pos = False
                 self.entered_bucket = None
                 self.pending = armed
+            elif ok == "cancel":
+                # The exchange refused (e.g. Delta max-OI limit) and nothing is held:
+                # drop THIS signal without burning an entry and wait for a fresh one
+                # from a new candle — never keep retrying it whenever it clears
+                # (user rule 2026-11-14).
+                self.entries -= 1
+                self.in_pos = False
+                self.entered_bucket = None
             elif ok is False:
                 # the fill was refused and nothing is held: stay flat, count the
                 # attempt, and wait for a fresh signal — never re-fire this one

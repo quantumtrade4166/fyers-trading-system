@@ -611,6 +611,13 @@ class SplitVwapBook(VwapBook):
                                             f"to stop paying charges")
                         self.status = "stopped (unwinds)"
                         self.audit(now, "UNWIND_CAP", unwinds=self.unwinds_today, cap=cap)
+                oi = any("max_oi_breached" in str(f.get("error") or "") or
+                         "only_reduce_only" in str(f.get("error") or "") for f in fills.values())
+                if not sold and oi:
+                    # Delta's open-interest limit: drop this signal, wait for a FRESH one
+                    self.audit(now, "OI_LIMIT", n=n, trigger=round(trigger, 2),
+                               action="signal cancelled, no entry used — waiting for a fresh signal")
+                    return "cancel"
                 if not sold and not margin:
                     return "retry"                # nothing sold: the signal stays armed
                 return False

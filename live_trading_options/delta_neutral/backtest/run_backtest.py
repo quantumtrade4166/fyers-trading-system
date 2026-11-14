@@ -63,7 +63,7 @@ def load_data(start: dt.date, end: dt.date):
     """Return (opt, spot) for the window. `opt` indexed for fast per-day slicing;
     `spot` is a minute→price Series from the 1-min index."""
     opt = pd.read_parquet(OPT_PATH, columns=["datetime", "expiry", "strike_price",
-                                             "option_type", "close", "date"])
+                                             "option_type", "close", "high", "date"])
     opt["d"] = pd.to_datetime(opt["date"]).dt.date
     opt["exp"] = pd.to_datetime(opt["expiry"]).dt.date
     opt = opt[(opt["d"] >= start) & (opt["d"] <= end)].copy()
@@ -103,19 +103,26 @@ def trade_days(opt: pd.DataFrame, spot: pd.Series, start: dt.date, end: dt.date)
 
 # ── one day ─────────────────────────────────────────────────────────────────
 def run_day(day: dt.date, dte: int, expiry: dt.date, opt: pd.DataFrame,
-            spot: pd.Series) -> dict:
+            spot: pd.Series, use_high: bool = True) -> dict:
     rows = opt[(opt["d"] == day) & (opt["exp"] == expiry)]
     if rows.empty:
         return {"date": str(day), "dte": dte, "expiry": str(expiry),
                 "traded": False, "realized": 0.0, "reason": "no option rows"}
 
-    # per-minute chain: {timestamp: {(strike,'CE'|'PE'): close}}
+    # per-minute chain: {timestamp: {(strike,'CE'|'PE'): close}}  — the bar MARK
+    # used for entries, MTM and normal exits. `highs` carries the bar HIGH of each
+    # option, fed to the engine as the adverse chain so a short-leg stop fires on
+    # the intrabar extreme (as a real resting exchange stop would), not only when
+    # the 1-min close has already crossed it.
     chains: dict = {}
-    for ts, strike, side, px in zip(rows["dtm"], rows["strike_price"],
-                                    rows["side"], rows["close"]):
+    highs: dict = {}
+    for ts, strike, side, px, hi in zip(rows["dtm"], rows["strike_price"],
+                                        rows["side"], rows["close"], rows["high"]):
         if side is None or pd.isna(px):
             continue
         chains.setdefault(ts, {})[(int(strike), side)] = float(px)
+        if not pd.isna(hi):
+            highs.setdefault(ts, {})[(int(strike), side)] = float(hi)
 
     # spot for this day, forward-filled onto each option timestamp
     sday = spot[(spot.index.date == day)]
@@ -135,6 +142,9 @@ def run_day(day: dt.date, dte: int, expiry: dt.date, opt: pd.DataFrame,
         sp = smark.get(ts)
         if sp is None or pd.isna(sp):
             continue
+        # adverse (high) chain for this minute drives intrabar stop detection;
+        # cleared when --stops close, which reproduces the old close-only number.
+        ctrl.adverse_chain = highs.get(ts, {}) if use_high else {}
         ctrl.on_tick(chains[ts], float(sp), ts.to_pydatetime())
 
     pos = ctrl.position
@@ -155,20 +165,25 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--start", default="2026-06-01")
     ap.add_argument("--end", default="2026-10-31")
+    ap.add_argument("--stops", choices=["high", "close"], default="high",
+                    help="stop detection: 'high' = intrabar 1-min high (realistic, "
+                         "default); 'close' = old 1-min close only")
     a = ap.parse_args()
     start = dt.date.fromisoformat(a.start)
     end = dt.date.fromisoformat(a.end)
+    use_high = (a.stops == "high")
 
     print(f"Loading Breeze NIFTY options {start} → {end} …")
     opt, spot = load_data(start, end)
     days = trade_days(opt, spot, start, end)
-    print(f"{len(days)} trade days (0/1-DTE).  Replaying the live engine in paper mode…\n")
+    print(f"{len(days)} trade days (0/1-DTE).  Replaying the live engine in paper mode "
+          f"(stops on 1-min {'HIGH' if use_high else 'CLOSE'})…\n")
 
     results, details = [], {}
     cum = 0.0
     print(f"{'date':12}{'dte':>4}{'realized':>11}{'cum':>11}  {'ent':>3}{'stp':>4}  note")
     for d in days:
-        r = run_day(d["day"], d["dte"], d["expiry"], opt, spot)
+        r = run_day(d["day"], d["dte"], d["expiry"], opt, spot, use_high=use_high)
         details[f"{r['date']}_{r['dte']}"] = r
         cum += r["realized"]
         results.append({"date": r["date"], "dte": r["dte"], "expiry": r["expiry"],

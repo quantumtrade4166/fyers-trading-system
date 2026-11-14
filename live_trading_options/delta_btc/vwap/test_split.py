@@ -514,6 +514,26 @@ b16.on_sample(D(2026, 10, 16, 9, 38), 40, 40, gc)
 check("after the cap: no further orders", len(c16.orders) == n_ord)
 le.orderbook = _ob_plain
 
+# Delta max-OI refusal -> signal cancelled (no entry used), waits for a fresh signal
+class OIClient(FakeClient):
+    def place_order(self, pid, side, size, **kw):
+        if side == "sell":
+            raise DeltaAPIError("x", code="only_reduce_only_orders_allowed")
+        return FakeClient.place_order(self, pid, side, size, **kw)
+co = OIClient()
+bo, _ = live_book(co)
+fc.__init__()
+setm(bo, 40, 40, D(2026, 11, 14, 9, 30, 1))
+setm(bo, 40, 40, D(2026, 11, 14, 9, 36))
+e0 = bo.trigger.entries
+fire(bo, D(2026, 11, 14, 9, 36, 1))
+check("OI limit: nothing held", bo.legs["CE"] is None and bo.legs["PE"] is None and not co.pos)
+check("OI limit: signal cancelled, no entry used", bo.trigger.pending is None and bo.trigger.entries == e0
+      and not bo.trigger.in_pos)
+n0 = len(co.orders)
+bo.on_sample(D(2026, 11, 14, 9, 36, 5), 40, 40, gc)
+check("OI limit: no retry on later ticks of the same signal", len(co.orders) == n0)
+
 # margin refusal stops entries for the day
 fresh(bl)
 cl.fill_ratio = {}
