@@ -26,7 +26,7 @@ SAMPLE_S = 5
 
 class MtmHistory:
     def __init__(self, path=None):
-        self.path = path or (C.DATA / f"mtm_{dt.datetime.now(IST).date().isoformat()}.json")
+        self.path = path or (C.DATA / f"mtm_{C.day()}.json")
         self.pts: list = []                          # [t, total, {name: pnl}]
         self.lock = threading.Lock()
         self._saved = 0.0
@@ -188,7 +188,7 @@ class AtmHistory:
     during the day; each point keeps the strike it was taken at. Saved to data/atm_YYYY-MM-DD.json."""
 
     def __init__(self, path=None):
-        self.path = path or (C.DATA / f"atm_{dt.datetime.now(IST).date().isoformat()}.json")
+        self.path = path or (C.DATA / f"atm_{C.day()}.json")
         self.pts: dict = {}                      # name -> [[t, straddle, strike], ...]
         self.lock = threading.Lock()
         self._saved = 0.0

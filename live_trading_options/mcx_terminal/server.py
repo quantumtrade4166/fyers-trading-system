@@ -50,10 +50,12 @@ from live_trading_options.mcx_terminal.mtm import AtmHistory, MtmHistory, SAMPLE
 from live_trading_options.mcx_terminal import oi as OI
 from live_trading_options.mcx_terminal.news import NewsDesk
 from live_trading_options.mcx_terminal.recorder import DayRecorder, now_ms, REPLAY_DIR
+from live_trading_options.mcx_terminal.nolive import NoLiveBook, NO_LIVE
+DELTA = C.BROKER == "DELTA"       # BTC desk: Delta's public feed + paper only (no Kotak session at all)
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 log = logging.getLogger("mcx.server")
-RESET_AT = dt.time(0, 5)          # after MCX close: new day = fresh books, guards, arm (everything resets)
+RESET_AT = C.RESET_AT             # new day = fresh books, guards, arm (MCX/NSE 00:05, BTC 17:35 after the daily expiry)
 REFRESH_AT = C.REFRESH_AT         # fresh Kotak login + today's contract list before the desk opens
 
 
@@ -117,7 +119,7 @@ class Engine:
         self.arm: dict = {}                        # who armed LIVE today, and when
         self.settings = Settings()
         self.timers: ExitTimers | None = None      # exit-by-time (per instrument), fired by housekeeping
-        day = dt.datetime.now(IST).date().isoformat()
+        day = C.day()
         self.mtms = {"PAPER": MtmHistory(), "LIVE": MtmHistory(path=C.DATA / f"mtm_live_{day}.json")}
         self.atm_hist = AtmHistory()
         self.oi = OI.OiBook(C.DATA, C.HOURS.get("open", "09:00"))   # OI baselines for the chain meters
@@ -213,7 +215,7 @@ class Engine:
 
     # ── LIVE arm (owner only) ───────────────────────────────────────────────
     def _arm_path(self):
-        return C.DATA / f"live_arm_{dt.datetime.now(IST).date().isoformat()}.json"
+        return C.DATA / f"live_arm_{C.day()}.json"
 
     def _load_arm(self):
         """Armed only for the day it was armed: every new day starts in PAPER."""
@@ -235,6 +237,8 @@ class Engine:
             if user not in owner_users():
                 log.warning("LIVE arm refused for %s (not the owner)", user)
                 return {"ok": False, "msg": "only the owner can arm LIVE trading"}
+            if not C.LIVE_ORDERS:
+                return {"ok": False, "msg": NO_LIVE}
             if str(confirm).strip().upper() != "LIVE":
                 return {"ok": False, "msg": "type LIVE to arm real Kotak P orders"}
             if not self.live.broker.get("ok", True):
@@ -278,18 +282,25 @@ class Engine:
         if C.NEWS:
             self.news = NewsDesk(C.DATA / "news.json", on_new=self._news_new).start()
         try:
-            s = self.sessions.get()
-            self.universe = I.load(s.client)
+            if DELTA:
+                from live_trading_options.mcx_terminal import delta_instruments
+                self.universe = delta_instruments.load()
+            else:
+                s = self.sessions.get()
+                self.universe = I.load(s.client)
         except Exception as e:
             self.error = f"startup: {e}"
             log.exception("startup failed")
             raise
         self.paper = PaperBook(self.universe, self.quote, on_change=self.on_book, settings=self.settings.get)
-        self.live = LiveBook(self.universe, self.quote, self.sessions, armed=lambda: self.mode == "LIVE",
-                             on_change=self.on_book, settings=self.settings.get)
+        if C.LIVE_ORDERS:
+            self.live = LiveBook(self.universe, self.quote, self.sessions, armed=lambda: self.mode == "LIVE",
+                                 on_change=self.on_book, settings=self.settings.get)
+        else:
+            self.live = NoLiveBook(self.universe, self.quote, on_change=self.on_book, settings=self.settings.get)
         self.risks = {"PAPER": RiskGuard(self.paper, self.ltp, on_change=self.on_risk),
                       "LIVE": RiskGuard(self.live, self.ltp, on_change=self.on_risk,
-                                        path=C.DATA / f"risk_live_{dt.datetime.now(IST).date().isoformat()}.json")}
+                                        path=C.DATA / f"risk_live_{C.day()}.json")}
         self._load_arm()
         self.timers = ExitTimers(self._timer_fire, on_change=self.on_timers)
         self.live.notify = self.on_note
@@ -303,16 +314,21 @@ class Engine:
             bk.before_flatten = self.sls[mode].before_flatten
         self.live.on_push_other = self.sls["LIVE"].on_push
         self.live.sl_ids = self.sls["LIVE"].working_ids        # own book (NSE): EXIT ALL cancels the desk's own stops
-        self.orderfeed = OrderFeed(self.sessions, self.live.on_push, self.live.on_push_position,
-                                   on_reconnect=self.live._poll_kick.set).start()
+        if C.LIVE_ORDERS:
+            self.orderfeed = OrderFeed(self.sessions, self.live.on_push, self.live.on_push_position,
+                                       on_reconnect=self.live._poll_kick.set).start()
         self.book_tokens = self.paper.tokens() | self.live.tokens() | self._away_tokens()
         self.rec = DayRecorder()
         if self.rec.active:                        # restarted mid-day: write a fresh header to today's file
             self.rec._activate_header = self._replay_header
         self._spot_toks = {p.spot.token for p in self.universe.products.values() if p.spot}
-        idx = [(p.spot.seg, C.SPOT[p.name][3], p.spot.token) for p in self.universe.products.values() if p.spot]
-        self.feed = KotakFeed(self.sessions, self.on_ticks, self.on_status, seg_of=self.seg_of,
-                              indices=idx, ref_price=self.ltp)
+        if DELTA:
+            from live_trading_options.mcx_terminal.delta_feed import DeltaFeed
+            self.feed = DeltaFeed(self.universe, self.on_ticks, self.on_status, spot_token=C.BTC_SPOT_TOKEN)
+        else:
+            idx = [(p.spot.seg, C.SPOT[p.name][3], p.spot.token) for p in self.universe.products.values() if p.spot]
+            self.feed = KotakFeed(self.sessions, self.on_ticks, self.on_status, seg_of=self.seg_of,
+                                  indices=idx, ref_price=self.ltp)
         # always-on: every future + the nearest option expiry of each product
         first = []
         for p in self.universe.products.values():
@@ -331,8 +347,11 @@ class Engine:
         threading.Thread(target=self._housekeeping, daemon=True, name="Housekeeping").start()
         for s in self.sls.values():
             s.start()
-        threading.Thread(target=self._margin_loop, daemon=True, name="Margin").start()
-        if any(p.spot for p in self.universe.products.values()):
+        if DELTA:
+            self.margin = {"ok": False, "msg": "paper only - no Delta account read"}
+        else:
+            threading.Thread(target=self._margin_loop, daemon=True, name="Margin").start()
+        if not DELTA and any(p.spot for p in self.universe.products.values()):
             threading.Thread(target=self._spot_loop, daemon=True, name="SpotBackup").start()
 
     def seg_of(self, token) -> str:
@@ -387,6 +406,8 @@ class Engine:
 
     def read_margin(self) -> dict:
         """One READ-ONLY Kotak limits() call -> self.margin (also used by the screen's Refresh button)."""
+        if DELTA:
+            return self.margin
         def num(d, *keys):
             for k in keys:
                 if isinstance(d, dict) and d.get(k) not in (None, ""):
@@ -418,6 +439,8 @@ class Engine:
         if self.loop:
             for fn in (self._broadcast_status, self._broadcast_book, self._broadcast_risk):
                 self.loop.call_soon_threadsafe(fn)
+        if not C.LIVE_ORDERS:
+            return {"ok": True, "msg": "refreshed: chain, book and charts (paper only)", "margin": m}
         ok = m.get("ok") and self.live.broker.get("ok", True)
         msg = "refreshed: margin" + (f" ₹{m['available']:,.0f} available" if m.get("available") is not None else "") + \
               (", Kotak orders read" + (" (updated)" if changed else "") if self.live.broker.get("ok", True)
@@ -735,14 +758,18 @@ class Engine:
                 "qty_lots_max": C.MAX_QTY_LOTS_CHOICE, "buffer_pct": C.MKT_BUFFER_PCT,
                 "settings": self.settings.get(), "gap_choices": GAP_CHOICES,
                 "desk": C.DESK, "desk_label": C.DESK_LABEL, "desk_urls": C.DESK_URLS, "hours": C.HOURS,
-                "own_book": C.OWN_BOOK, "news": bool(C.NEWS)}
+                "own_book": C.OWN_BOOK, "news": bool(C.NEWS),
+                "ccy": C.CCY, "broker": C.BROKER_LABEL, "live_orders": C.LIVE_ORDERS,
+                "unit": C.UNIT_LABEL, "lot_note": C.LOT_NOTE}
 
     def chain(self, name, expiry) -> dict:
         p = self.universe.products[name]
         if expiry not in p.chains:
             expiry = p.expiries()[0]
         toks = self.expiry_tokens(name, expiry)
-        self.feed.want_depth(self.chain_tokens(name, expiry))   # 5-level book for paper fills (shown strikes)
+        # 5-level book for paper fills (shown strikes). Delta: depth only for held contracts (its full books are
+        # heavy); paper fills elsewhere use the best bid / ask and their sizes
+        (self.feed.want if DELTA else self.feed.want_depth)(self.chain_tokens(name, expiry))
         und = p.underlying(expiry)
         rows = [{"k": k, "ce": legs["CE"].token, "pe": legs["PE"].token,
                  "cs": legs["CE"].symbol, "ps": legs["PE"].symbol}
@@ -751,7 +778,7 @@ class Engine:
         d = {"t": "chain", "name": name, "expiry": expiry, "lot": p.lot, "tick": p.opt_tick,
              "fut": {"token": und.token, "symbol": und.symbol} if und else None, "rows": rows,
              # OI in lots on screen: the MCX feed sends lots, NSE/BSE units
-             "oi_div": 1 if next(iter(p.chains[expiry].values()))["CE"].seg == "mcx_fo" else p.lot}
+             "oi_div": 1 if next(iter(p.chains[expiry].values()))["CE"].seg in ("mcx_fo", "delta") else p.lot}
         if (name, expiry) not in self.chain_defs:
             self.chain_defs[(name, expiry)] = d
             self.rec.event("chain", d)
@@ -793,7 +820,7 @@ def spawn_replay_build(day: str):
 
 
 def build_missing_replays():
-    today = dt.datetime.now(IST).date().isoformat()
+    today = C.day()
     for raw in sorted(REPLAY_DIR.glob("raw_*.mcxr")):
         day = raw.stem[4:]
         if day < today and not (REPLAY_DIR / f"{C.DESK}_{day}.html").exists():

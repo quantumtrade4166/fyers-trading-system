@@ -37,7 +37,7 @@ class ExitTimers:
         self.fire = fire
         self.on_change = on_change or (lambda: None)
         self.now = now or (lambda: dt.datetime.now(IST))
-        self.path = path or (C.DATA / f"sched_exits_{self.now().date().isoformat()}.json")
+        self.path = path or (C.DATA / f"sched_exits_{C.day(self.now())}.json")
         self.lock = threading.Lock()
         self.items: list = []
         try:

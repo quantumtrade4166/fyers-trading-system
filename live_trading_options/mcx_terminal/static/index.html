@@ -9,7 +9,7 @@
 <script>/* theme before first paint (no dark flash on a light page) */
 try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") document.documentElement.dataset.theme = "light"; } catch (e) {}
 </script>
-<link rel="stylesheet" href="/static/app.css?v=20261112n">
+<link rel="stylesheet" href="/static/app.css?v=20261115c">
 </head>
 <body>
 <header class="top">
@@ -17,6 +17,7 @@ try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") documen
     <span class="mark">◆</span>
     <a class="dk" id="dk-MCX" data-d="MCX">MCX<span class="dot">·</span>DESK</a>
     <a class="dk" id="dk-NSE" data-d="NSE">NSE<span class="dot">·</span>DESK</a>
+    <a class="dk" id="dk-BTC" data-d="BTC">BTC<span class="dot">·</span>DESK</a>
   </div>
   <div class="tickers" id="tickers"></div>
   <div class="right">
@@ -104,11 +105,11 @@ try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") documen
     </div>
 
     <div class="cp-grid3">
-      <label>Stop-loss ₹<input id="rk-stop" type="number" step="500" placeholder="-5000" class="mono"
+      <label>Stop-loss <span class="ccy">₹</span><input id="rk-stop" type="number" step="500" placeholder="-5000" class="mono"
         title="A Session P&amp;L level: exit everything when P&amp;L falls to it. -5000 = stop at a 5,000 loss; +2000 = lock in 2,000"></label>
-      <label>Target ₹<input id="rk-target" type="number" step="500" placeholder="10000" class="mono"
+      <label>Target <span class="ccy">₹</span><input id="rk-target" type="number" step="500" placeholder="10000" class="mono"
         title="A Session P&amp;L level: exit everything when P&amp;L reaches it. Fixed, never trailed"></label>
-      <label>Trail ₹<input id="rk-trail" type="number" step="500" placeholder="5000 step" class="mono"
+      <label>Trail <span class="ccy">₹</span><input id="rk-trail" type="number" step="500" placeholder="5000 step" class="mono"
         title="Every time P&amp;L rises this much, the stop rises by this much. With no stop typed it starts at P&amp;L − trail"></label>
     </div>
     <div class="cp-btns"><button class="btn cp-set" id="rk-set">Set</button><button class="btn cp-clear" id="rk-clear">Clear</button><button class="btn cp-refresh" id="btn-refresh" title="Re-read margin, Kotak orders, positions, chain and charts now">⟳ Refresh</button></div>
@@ -329,6 +330,6 @@ try { if (JSON.parse(localStorage.getItem("mcxdesk.theme")) === "light") documen
 </aside>
 
 <div class="toasts" id="toasts"></div>
-<script src="/static/app.js?v=20261112n"></script>
+<script src="/static/app.js?v=20261115c"></script>
 </body>
 </html>

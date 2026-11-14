@@ -34,7 +34,7 @@ def write(kind: str, user: str = "", **fields):
                           default=str, ensure_ascii=False)
         with _lock:
             DIR.mkdir(parents=True, exist_ok=True)
-            with open(_path(now.date().isoformat()), "a", encoding="utf-8") as f:
+            with open(_path(C.day(now)), "a", encoding="utf-8") as f:
                 f.write(line + "\n")
     except Exception:
         pass

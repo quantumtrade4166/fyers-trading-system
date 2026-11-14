@@ -58,7 +58,7 @@ class RiskGuard:
         self.book = book
         self.ltp_of = ltp_of
         self.on_change = on_change or (lambda: None)
-        self.path = path or (C.DATA / f"risk_{dt.datetime.now(IST).date().isoformat()}.json")
+        self.path = path or (C.DATA / f"risk_{C.day()}.json")
         self.lock = threading.Lock()
         self.s = {"armed": False, "stop": None, "target": None, "trail": None, "base": None,
                   "best": None, "set_at": None, "fired": None, "pnl": 0.0}

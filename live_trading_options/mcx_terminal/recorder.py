@@ -46,7 +46,7 @@ def now_ms() -> int:
 
 class DayRecorder:
     def __init__(self, day: str | None = None, folder=None):
-        self.day = day or dt.datetime.now(IST).date().isoformat()
+        self.day = day or C.day()
         self.folder = folder or REPLAY_DIR
         self.folder.mkdir(parents=True, exist_ok=True)
         self.path = self.folder / f"raw_{self.day}.mcxr"

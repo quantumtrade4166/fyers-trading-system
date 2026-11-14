@@ -126,7 +126,7 @@ class AutoSL:
         self.live = live
         self.on_change = on_change or (lambda: None)
         self.notify = notify or (lambda ev: None)
-        self.path = path or (C.DATA / f"autosl_{'live' if live else 'paper'}_{dt.datetime.now(IST).date().isoformat()}.json")
+        self.path = path or (C.DATA / f"autosl_{'live' if live else 'paper'}_{C.day()}.json")
         self.lock = threading.RLock()
         self.recs = {}            # token -> the stop-loss of that position
         self.done = set()         # tokens not to re-arm until flat (stop hit / dropped by the owner)

@@ -22,8 +22,14 @@ STATIC = HERE / "static"
 LOG_DIR = ROOT / "logs"
 
 DESK = os.getenv("TERMINAL_DESK", "MCX").strip().upper()
-if DESK not in ("MCX", "NSE"):
-    raise SystemExit(f"TERMINAL_DESK must be MCX or NSE, not {DESK!r}")
+if DESK not in ("MCX", "NSE", "BTC"):
+    raise SystemExit(f"TERMINAL_DESK must be MCX, NSE or BTC, not {DESK!r}")
+
+# BTC desk (owner, 15-Nov-2026): Delta Exchange India BTC options, PAPER ONLY for now (live Delta orders are a
+# later step - the one Delta account also runs the live BTC VWAP strategy). Prices from Delta's PUBLIC feed (no
+# key needed). Money in USD. Delta trades 24/7, so the desk's "day" runs 17:35 -> 17:35 IST (after the daily
+# options expire at 17:30) and is named by the date it ENDS on (= the date of that day's daily expiry).
+BTC_SPOT_TOKEN = 1_000_000_001           # our own id for the BTC index .DEXBTUSD (Delta product ids are far below)
 
 _DESKS = {
     "MCX": dict(
@@ -68,8 +74,33 @@ _DESKS = {
         # desk open = commodity hours (crude 09:00 - 23:30, 23:55 in winter); indices still 09:15 - 15:30
         HOURS={"open": "09:00", "close": "23:30", "winter_close": "23:55"},
     ),
+    "BTC": dict(
+        PORT=47684, DATA=HERE / "data_btc", LOG_NAME="btc_terminal.log", AUDIT_NAME="btc_audit",
+        INSTRUMENTS=("BTC",),
+        LABELS={"BTC": "Bitcoin"},
+        SEGMENT={"BTC": "delta"},
+        SYMBOL={},
+        # options settle on Delta's BTC index -> the chain's ATM follows the index (streamed as spot_price)
+        SPOT={"BTC": ("delta", BTC_SPOT_TOKEN, ".DEXBTUSD", None)},
+        OWN_BOOK=True, TAG="btcd", TAG_SL="btcs",
+        STRIKE_GAP={"BTC": 200},
+        GAP_CHOICES={"BTC": (200, 500, 1000, 2000)},
+        RESET_AT=dt.time(17, 35),                          # after Delta's 17:30 IST daily expiry
+        REFRESH_AT=dt.time(17, 35),                        # same moment: fresh contract list (new dailies)
+        REPLAY_BUILD_AT=dt.time(17, 33),
+        HOURS={"always": True, "open": "17:35", "close": "17:35"},
+        BROKER="DELTA", BROKER_LABEL="Delta", CCY="$", LIVE_ORDERS=False,
+        UNIT_LABEL="contract", LOT_NOTE="1 contract = 0.001 BTC",
+        MAX_LOTS_PER_ORDER=5000, CONFIRM_LOTS=1000, MAX_QTY_LOTS_CHOICE=1000,
+        DAY_START=dt.time(17, 35),
+    ),
 }
-globals().update(_DESKS[DESK])
+_COMMON = dict(BROKER="KOTAK", BROKER_LABEL="Kotak P", CCY="₹", LIVE_ORDERS=True, UNIT_LABEL="lot", LOT_NOTE="",
+               RESET_AT=dt.time(0, 5), DAY_START=dt.time(0, 0),
+               MAX_LOTS_PER_ORDER=300,     # hard cap: an order above this is refused (typo guard)
+               CONFIRM_LOTS=50,            # the screen asks "are you sure" above this many lots
+               MAX_QTY_LOTS_CHOICE=100)    # qty box offers 1..this many lots
+globals().update({**_COMMON, **_DESKS[DESK]})
 if os.getenv("TERMINAL_PORT"):             # preview / test copies only: never set on the real engines
     PORT = int(os.getenv("TERMINAL_PORT"))
 DESK_LABEL = f"{DESK} Desk"
@@ -77,7 +108,21 @@ DESK_LABEL = f"{DESK} Desk"
 NEWS = os.getenv("TERMINAL_NEWS", "1" if DESK == "MCX" else "0") == "1"
 # the other desk, for the switch at the top of the screen
 DESK_URLS = {"MCX": os.getenv("MCX_DESK_URL", "https://mcx.trading.contact"),
-             "NSE": os.getenv("NSE_DESK_URL", "https://nse.trading.contact")}
+             "NSE": os.getenv("NSE_DESK_URL", "https://nse.trading.contact"),
+             "BTC": os.getenv("BTC_DESK_URL", "https://btc.trading.contact")}
+
+_IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
+
+
+def day(now: "dt.datetime | None" = None) -> str:
+    """The desk's trading day as YYYY-MM-DD (names every day file: books, MTM, guards, OI, audit...).
+    MCX / NSE: the IST calendar date. BTC: days run DAY_START -> DAY_START (17:35) and carry the date they
+    END on - 14-Nov 18:00 IST is day 15-Nov, the day whose daily options expire 15-Nov 17:30."""
+    now = now or dt.datetime.now(_IST)
+    if DAY_START == dt.time(0, 0):
+        return now.date().isoformat()
+    start = dt.timedelta(hours=DAY_START.hour, minutes=DAY_START.minute)
+    return (now + (dt.timedelta(days=1) - start)).date().isoformat()
 
 HOST = "127.0.0.1"          # VPS-local only (reached through the Cloudflare tunnel / an SSH tunnel)
 # PORT (above) is also the single-instance lock: one process can bind it
@@ -91,11 +136,9 @@ DEFAULT_STRIKES = 10
 
 # ── orders (paper now, same checks will guard live) ──
 MODE = "PAPER"              # start-up mode; LIVE only when the OWNER arms it on the screen (resets daily)
-MAX_LOTS_PER_ORDER = 300    # hard cap: an order above this is refused (typo guard)
-CONFIRM_LOTS = 50           # the screen asks "are you sure" above this many lots
-PAPER_CARRY = False          # paper positions do NOT carry to the next day (daily reset at 00:05)
+# MAX_LOTS_PER_ORDER / CONFIRM_LOTS / MAX_QTY_LOTS_CHOICE: per desk (_COMMON / _DESKS above)
+PAPER_CARRY = False          # paper positions do NOT carry to the next day (daily reset at RESET_AT)
 MKT_BUFFER_PCT = 1.0        # "market" = limit at best ask/bid +/- this % (Kotak takes no MARKET orders)
-MAX_QTY_LOTS_CHOICE = 100   # qty box offers 1..this many lots
 
 DATA.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)

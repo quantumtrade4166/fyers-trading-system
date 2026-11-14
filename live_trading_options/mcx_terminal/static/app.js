@@ -128,6 +128,10 @@ function toastOnce(key, msg, bad) { const n = Date.now(); if (!_once[key] || n -
 
 // PAPER / LIVE switch (the engine only accepts LIVE from the owner, with the typed word LIVE)
 function toggleMode() {
+  if (S.meta && S.meta.live_orders === false && S.mode !== "LIVE") {
+    toast(`${DESK()} desk is PAPER only for now - live ${BROKER()} orders are not built yet`, true);
+    return;
+  }
   if (S.mode === "LIVE") {
     if (confirm("Switch back to PAPER?\n\nNew orders will be paper. Open LIVE positions stay open on Kotak P (switch back to LIVE to see / exit them)."))
       send({ op: "mode_set", mode: "PAPER" });
@@ -142,10 +146,14 @@ document.getElementById("mode").onclick = toggleMode;
 
 // ── desk (MCX / NSE): each desk is its own engine; the switch opens the other one ──
 const DESK = () => (S.meta && S.meta.desk) || "MCX";
+const CCY = () => (S.meta && S.meta.ccy) || "₹";              // BTC desk: USD
+const BROKER = () => (S.meta && S.meta.broker) || "Kotak P";
+const UNIT = () => (S.meta && S.meta.unit) || "lot";          // BTC desk: "contract" (1 = 0.001 BTC)
+const units = (n) => `${UNIT()}${n === 1 ? "" : "s"}`;
 function paintDesk(m) {
   const d = m.desk || "MCX";
   document.title = m.desk_label || `${d} Desk`;
-  for (const k of ["MCX", "NSE"]) {
+  for (const k of ["MCX", "NSE", "BTC"]) {
     const a = $("dk-" + k);
     if (!a) continue;
     a.classList.toggle("on", k === d);
@@ -155,6 +163,8 @@ function paintDesk(m) {
   $("exitall").title = m.own_book
     ? "LIVE: cancel the desk's OWN working orders and stop-losses and close the desk's OWN positions (other strategies on Kotak P are never touched)"
     : "LIVE: cancel every working MCX order on Kotak P and close EVERY open MCX position Kotak shows (also ones placed by hand), then check Kotak is flat";
+  if (m.live_orders === false) $("exitall").title = "PAPER: cancel every paper order and close every paper position (this desk has no live orders yet)";
+  document.querySelectorAll(".ccy").forEach((e) => (e.textContent = CCY()));
 }
 
 // ── meta / controls ─────────────────────────────────────────────────────────
@@ -184,7 +194,7 @@ function onMeta(m) {
     </div>`).join("");
   $("cp-inst").innerHTML = m.products.map((p) => `<option value="${p.name}">${p.label}</option>`).join("");
   $("cp-inst").onchange = () => paintPnl();
-  $("qty").innerHTML = Array.from({ length: m.qty_lots_max }, (_, i) => `<option value="${i + 1}">${i + 1} lot${i ? "s" : ""}</option>`).join("");
+  $("qty").innerHTML = Array.from({ length: m.qty_lots_max }, (_, i) => `<option value="${i + 1}">${i + 1} ${units(i + 1)}</option>`).join("");
   document.querySelectorAll(".ip-item, .tk").forEach((b) => (b.onclick = () => { pick(b.dataset.n); ipClose(); }));
   pick(S.prods[name] ? name : m.products[0].name, true);
 }
@@ -507,7 +517,7 @@ function withHedges(legs) {
 }
 
 function sendLegs(legs, lots, limit, source) {
-  if (lots > S.meta.max_lots) return toast(`${lots} lots is over the cap of ${S.meta.max_lots}`, true);
+  if (lots > S.meta.max_lots) return toast(`${lots} ${units(lots)} is over the cap of ${S.meta.max_lots}`, true);
   let ok;
   const req = ++S.req;
   if (legs.length === 1) ok = send({ op: "order", token: legs[0].tok, side: legs[0].side, lots, limit, source, req });
@@ -515,9 +525,9 @@ function sendLegs(legs, lots, limit, source) {
   if (!ok) return toast("not connected", true);
   const i = S.sym.get(legs[0].tok) || {};
   const what = legs.length === 1
-    ? `${legs[0].side === "B" ? "BUY" : "SELL"} ${lots} lot${lots > 1 ? "s" : ""} ${i.name || ""} ${i.k ?? ""} ${(i.side || "").toUpperCase()}` +
+    ? `${legs[0].side === "B" ? "BUY" : "SELL"} ${lots} ${units(lots)} ${i.name || ""} ${i.k ?? ""} ${(i.side || "").toUpperCase()}` +
       (limit ? ` @ ${limit}` : "")
-    : `basket of ${legs.length} legs × ${lots} lot${lots > 1 ? "s" : ""}`;
+    : `basket of ${legs.length} legs × ${lots} ${units(lots)}`;
   pendToast(req, what + (S.mode === "LIVE" ? " → Kotak" : " (paper)"));
 }
 
@@ -545,7 +555,7 @@ function ticketPaint() {
   if (!k) return;
   if (k.legs.length === 1) {
     const t = S.T.get(k.legs[0].tok);
-    $("t-quote").textContent = t ? `LTP ${fp(t[LTP])} · Bid ${fp(t[BID])} × ${fq(t[BQ])} lots · Ask ${fp(t[ASK])} × ${fq(t[AQ])} lots` : "no quote yet";
+    $("t-quote").textContent = t ? `LTP ${fp(t[LTP])} · Bid ${fp(t[BID])} × ${fq(t[BQ])} ${units(2)} · Ask ${fp(t[ASK])} × ${fq(t[AQ])} ${units(2)}` : "no quote yet";
   } else {
     const ts = k.legs.map((l) => S.T.get(l.tok));
     const sum = ts.every((t) => t && t[LTP] != null) ? ts.reduce((a, t) => a + t[LTP], 0) : null;
@@ -555,8 +565,8 @@ function ticketPaint() {
   const lot = legInfo(k.legs[0].tok).lot;
   $("t-units").textContent = `= ${fq(lots * lot)} qty${k.legs.length > 1 ? " each" : ""}`;
   let w = "";
-  if (lots > S.meta.max_lots) w = `Over the cap of ${S.meta.max_lots} lots — will be refused`;
-  else if (lots > S.meta.confirm_lots) w = k.confirmed ? `Press Enter again to send ${lots} lots` : `${lots} lots — press Enter twice to confirm`;
+  if (lots > S.meta.max_lots) w = `Over the cap of ${S.meta.max_lots} ${units(2)} — will be refused`;
+  else if (lots > S.meta.confirm_lots) w = k.confirmed ? `Press Enter again to send ${lots} ${units(lots)}` : `${lots} ${units(lots)} — press Enter twice to confirm`;
   if (S.hedge && k.legs.some((l) => l.side === "S")) w = (w ? w + " · " : "") + `hedge ${S.hedgeN} strike(s) out is bought first`;
   $("t-warn").textContent = w;
 }
@@ -564,7 +574,7 @@ function closeTicket() { $("ticket").hidden = true; S.ticket = null; }
 function submitTicket() {
   const k = S.ticket;
   const lots = +$("t-lots").value | 0;
-  if (lots < 1) return toast("enter at least 1 lot", true);
+  if (lots < 1) return toast(`enter at least 1 ${UNIT()}`, true);
   if (lots > S.meta.confirm_lots && !k.confirmed) { k.confirmed = true; ticketPaint(); return; }
   const px = S.askPx && k.legs.length === 1 ? parseFloat($("t-px").value) : NaN;
   const full = withHedges(k.legs);
@@ -685,7 +695,7 @@ function paintUnderlying() {
     const ce = S.T.get(row.ce), pe = S.T.get(row.pe);
     if (ce && pe && ce[LTP] != null && pe[LTP] != null) syn = row.k + ce[LTP] - pe[LTP];
   }
-  $("und").innerHTML = `${m.fut.symbol} <b>${fp(px, 0)}</b> · Syn <b>${fp(syn, 1)}</b> · ATM <b>${S.atm ?? "—"}</b> · Lot ${m.lot}`;
+  $("und").innerHTML = `${m.fut.symbol} <b>${fp(px, 0)}</b> · Syn <b>${fp(syn, 1)}</b> · ATM <b>${S.atm ?? "—"}</b> · ${S.meta && S.meta.lot_note ? S.meta.lot_note : "Lot " + m.lot}`;
   let str = null;
   if (row) {
     const ce = S.T.get(row.ce), pe = S.T.get(row.pe);
@@ -1162,7 +1172,7 @@ function renderOrders() {
   tb.innerHTML = rows.map((o) => `<tr>
     <td class="l">${o.ts}</td><td class="l">${o.symbol}${o.slice ? ` <span class="dim">[${o.slice}]</span>` : ""}</td>
     <td class="side-${o.side}">${o.side === "B" ? "BUY" : "SELL"}</td>
-    <td>${o.qty / o.lot} lot${o.qty / o.lot === 1 ? "" : "s"}</td><td>${o.filled / o.lot}</td>
+    <td>${o.qty / o.lot} ${units(o.qty / o.lot)}</td><td>${o.filled / o.lot}</td>
     <td>${fp(o.limit)}${o.kind === "MKT" ? " <span class='dim'>mkt</span>" : ""}</td><td>${o.filled ? fp(o.avg) : "—"}</td>
     <td class="l st-${o.status}">${o.status}</td><td class="detail" title="${(o.reason || "").replace(/"/g, "&quot;")}">${o.reason || ""}</td>
     <td>${o.status === "OPEN" ? `<button class="btn sm" data-c="${o.id}">Cancel</button>` : ""}</td></tr>`).join("");
@@ -1206,7 +1216,7 @@ function onStatus(m) {
   $("mode").textContent = live ? "● LIVE · KOTAK P" : "PAPER" + extra;
   $("mode").className = "badge " + (live ? "live" : "paper") + (extra ? " warn" : "");
   $("mode").title = live ? `LIVE armed by ${(m.arm || {}).by || "?"} at ${(m.arm || {}).at || "?"} · click to go back to PAPER`
-    : "PAPER orders · click to arm LIVE Kotak P orders (owner only)";
+    : (S.meta && S.meta.live_orders === false ? `PAPER only · live ${BROKER()} orders not built yet` : "PAPER orders · click to arm LIVE Kotak P orders (owner only)");
   document.body.classList.toggle("live-mode", live);
   const ps = m.pos_sync || {};
   const src = $("pos-src");
@@ -1233,6 +1243,7 @@ const MCX_HOURS = { open: "09:00", close: "23:30", winter_close: "23:55" };
 const hm2min = (s) => { const [h, m] = String(s).split(":").map(Number); return h * 60 + m; };
 function deskSession(nowMs, hours) {
   hours = hours || MCX_HOURS;
+  if (hours.always) return { open: true, next: "", closeAt: "", sinceOpen: 1e9 };   // BTC: Delta trades 24/7
   const t = new Date(nowMs + 330 * 60000);  // IST wall clock, read with getUTC*
   const y = t.getUTCFullYear(), mo = t.getUTCMonth(), d = t.getUTCDate(), wd = t.getUTCDay();
   const md = mo * 100 + d;
@@ -1403,8 +1414,8 @@ function paintRiskSum() {
   const imbCls = imb == null ? "" : Math.abs(imb) >= 20 ? " warn" : " ok";
   $("rk-sum").innerHTML =
     `<span class="sb${imbCls}" title="(short CE − short PE) ÷ total; above 0 = calls heavier">CE/PE imbalance <b>${imb == null ? "—" : (imb > 0 ? "+" : "") + imb.toFixed(1) + "%"}</b></span>` +
-    `<span class="sb">Short CE premium <b>${nf2.format(ce)}</b> <i>(${nce} lots)</i></span>` +
-    `<span class="sb">Short PE premium <b>${nf2.format(pe)}</b> <i>(${npe} lots)</i></span>` +
+    `<span class="sb">Short CE premium <b>${nf2.format(ce)}</b> <i>(${nce} ${units(nce)})</i></span>` +
+    `<span class="sb">Short PE premium <b>${nf2.format(pe)}</b> <i>(${npe} ${units(npe)})</i></span>` +
     `<span class="sb">Total <b>${nf2.format(tot)}</b></span>` +
     `<span class="sb">Open legs <b>${legs}</b></span>`;
 }
@@ -1663,10 +1674,10 @@ $("btn-replays").onclick = async () => {
 // ── right panel: margin (Kotak P account, read-only, cached by the engine) ──
 function askMargin() { send({ op: "margin", req: ++S.req }); }
 function onMargin(m) {
-  const f = (v) => (v == null ? "—" : "₹ " + nf2.format(v));
+  const f = (v) => (v == null ? "—" : CCY() + " " + nf2.format(v));
   $("cp-mavail").textContent = f(m.available);
   $("cp-mused").textContent = f(m.used);
-  $("cp-mnote").textContent = m.ok ? `Kotak P account · ${m.at || ""}` : `Kotak P account · ${m.msg || "not available"}`;
+  $("cp-mnote").textContent = m.ok ? `${BROKER()} account · ${m.at || ""}` : `${BROKER()} account · ${m.msg || "not available"}`;
 }
 setInterval(askMargin, 30000);
 setTimeout(askMargin, 1500);

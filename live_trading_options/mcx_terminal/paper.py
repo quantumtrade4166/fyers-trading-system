@@ -38,7 +38,7 @@ _ids = itertools.count(1)
 
 
 def today() -> str:
-    return dt.datetime.now(IST).date().isoformat()
+    return C.day()
 
 
 def _round_tick(px: float, tick: float, up: bool) -> float:
@@ -216,7 +216,7 @@ class PaperBook:
             return {"ok": False, "msg": f"qty must be a positive multiple of the lot ({c.lot})"}
         lots = qty // c.lot
         if lots > C.MAX_LOTS_PER_ORDER:
-            return {"ok": False, "msg": f"{lots} lots is over the cap of {C.MAX_LOTS_PER_ORDER} lots per order"}
+            return {"ok": False, "msg": f"{lots} {C.UNIT_LABEL}s is over the cap of {C.MAX_LOTS_PER_ORDER} {C.UNIT_LABEL}s per order"}
         st = self.settings()
         if buffer_pct is not None:                                   # explicit override (tests / callers)
             st = {**st, "entry_buffer": buffer_pct, "exit_buffer": buffer_pct, "entry_unit": "%", "exit_unit": "%"}
@@ -278,12 +278,12 @@ class PaperBook:
         avg = sum(o["avg"] * o["filled"] for o in mine) / filled if filled else None
         word = "BOUGHT" if side == "B" else "SOLD"
         if filled >= qty:
-            state, msg = "filled", f"{word} {lots} lot{'s' if lots != 1 else ''} {c.symbol} @ {avg:,.2f}"
+            state, msg = "filled", f"{word} {lots} {C.UNIT_LABEL}{'s' if lots != 1 else ''} {c.symbol} @ {avg:,.2f}"
         elif filled:
-            state, msg = "partial", (f"{word} {filled // c.lot} of {lots} lots {c.symbol} @ {avg:,.2f} · "
+            state, msg = "partial", (f"{word} {filled // c.lot} of {lots} {C.UNIT_LABEL}s {c.symbol} @ {avg:,.2f} · "
                                      f"{(qty - filled) // c.lot} waiting at {limit:g}")
         else:
-            state, msg = "waiting", f"{'BUY' if side == 'B' else 'SELL'} {lots} lot{'s' if lots != 1 else ''} {c.symbol} waiting at {limit:g}"
+            state, msg = "waiting", f"{'BUY' if side == 'B' else 'SELL'} {lots} {C.UNIT_LABEL}{'s' if lots != 1 else ''} {c.symbol} waiting at {limit:g}"
         return {"ok": True, "ids": ids, "state": state, "msg": msg}
 
     def _fill(self, o, px, q):

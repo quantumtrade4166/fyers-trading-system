@@ -22,6 +22,8 @@ import json
 import logging
 import time
 
+from live_trading_options.mcx_terminal import config as C
+
 log = logging.getLogger("mcx.oi")
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 SAMPLE_S = 60
@@ -33,7 +35,7 @@ class OiBook:
     def __init__(self, folder, open_hhmm: str = "09:00", day: str | None = None):
         self.folder = folder
         self.open_hhmm = open_hhmm
-        self.day = day or dt.datetime.now(IST).date().isoformat()
+        self.day = day or C.day()
         self.path = folder / f"oi_{self.day}.json"
         self.first: dict[int, tuple] = {}             # tok -> (oi, "HH:MM")
         self.last: dict[int, int] = {}
