@@ -587,5 +587,59 @@ class CePeSupertrend(CePeImbalance):
             ctx.state["phase"] = "flat"                                  # entry held (wide quote...): retry
 
 
-REGISTRY = {"cepe": CePeImbalance, "cepe_st": CePeSupertrend, "idle": Idle}
+class CePeNewRules(CePeImbalance):
+    """NEW RULES (owner 15-Nov-2026) — paper book "{NAME}_NR" (BTC only for now), defaults band 30 % / step 400:
+      * react ONLY on a band breach: no early 'back to normal' between normal_trigger and the band
+      * re-centre / back-to-normal only on that breach (same moves as live)
+      * on a breach: shift the heavy side's FRONT strike (nearest the money, the ATM leg included) back
+        to just beyond its LAST strike (A) - repeated while beyond the band;
+        B (light side's far strike moved in) only when A is impossible; C last.
+      * no 'roll light side to ATM' move (that is a shift-ahead like B).
+    Chosen from the 15-Nov replays: best adjusting setting on 36 BTC days (still -$2.2k after fees vs hold)."""
+
+    params = {**CePeImbalance.params, "band": 30.0, "step": 400}
+
+    def op_A_any(self, legs, heavy, step, unit):
+        side = legs[heavy]
+        if not side:
+            return None
+        if heavy == "CE":
+            first, target = min(side), max(side) + step
+        else:
+            first, target = max(side), min(side) - step
+        return [(heavy, first, "BUY", unit), (heavy, target, "SELL", unit)]
+
+    def candidates(self, ctx, atm):
+        step, unit, band = self.step(ctx), self.unit(ctx), float(ctx.params["band"])
+        legs = self.legs(ctx)
+        im = ctx.book.imbalance()
+        imb = im["pct"]
+        if imb is None or abs(imb) <= band:
+            return
+        heavy = "CE" if imb > 0 else "PE"
+        ops = self.op_go_normal(legs, atm, step, unit)
+        if ops:
+            after = self.plan_imbalance(ctx, self.apply_ops(legs, ops))
+            if after is not None and abs(after) <= float(ctx.params["normal_band"]):
+                yield ops, f"back to normal (clean set {after:+.1f}%)"
+        clean = {k: self.clean(k, atm, step, unit) for k in ("CE", "PE")}
+        if legs["CE"] != clean["CE"] and legs["PE"] != clean["PE"] \
+                and sum(legs["CE"].values()) == sum(legs["PE"].values()) == 3 * unit:
+            target, notes = self.plan_book(ctx, atm)
+            if target is not None and target != legs and (target["CE"] == clean["CE"] or target["PE"] == clean["PE"]):
+                after = self.plan_imbalance(ctx, target)
+                if after is not None and abs(after) <= band:
+                    yield self.op_to(legs, target), f"re-centre ({after:+.1f}%)"
+        a = self.op_A_any(legs, heavy, step, unit)
+        if a:
+            yield a, f"A front->back ({heavy} heavy {imb:+.1f}%)"
+        b = self.op_B(legs, heavy, atm, unit)
+        if b:
+            yield b, f"B ({heavy} heavy {imb:+.1f}%)"
+        c = self.op_C(legs, heavy, atm, step, unit)
+        if c:
+            yield c, f"C ({heavy} heavy {imb:+.1f}%)"
+
+
+REGISTRY = {"cepe": CePeImbalance, "cepe_st": CePeSupertrend, "cepe_new": CePeNewRules, "idle": Idle}
 DEFAULT = "cepe"

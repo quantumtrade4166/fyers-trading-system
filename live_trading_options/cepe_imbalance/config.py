@@ -105,9 +105,22 @@ ST_WARMUP_MIN = 150          # minutes of the previous session replayed to warm 
 QUOTES_FLUSH_WAIT_S = 3      # the quote recorder writes every 2 s
 
 
+# NEW-RULES book (owner 15-Nov-2026): "{NAME}_NR" = strategy CePeNewRules (breach-only, heavy front strike ->
+# behind the last, B only as fallback), band 30 % / step 400. BTC IST only for now.
+NR_SUFFIX = "_NR"
+NR_BOOKS = ("BTC",)
+
+
 def und_of(name: str) -> str:
-    """Book name -> underlying ("NIFTY_ST" -> "NIFTY")."""
-    return name[:-len(VARIANT_SUFFIX)] if name.endswith(VARIANT_SUFFIX) else name
+    """Book name -> underlying ("NIFTY_ST" -> "NIFTY", "BTC_NR" -> "BTC")."""
+    for suf in (VARIANT_SUFFIX, NR_SUFFIX):
+        if name.endswith(suf):
+            return name[:-len(suf)]
+    return name
+
+
+def is_new_rules(name: str) -> bool:
+    return name.endswith(NR_SUFFIX)
 
 
 def is_variant(name: str) -> bool:
@@ -115,7 +128,8 @@ def is_variant(name: str) -> bool:
 
 
 def label_of(name: str) -> str:
-    return UNDERLYINGS[und_of(name)]["label"] + (" · Supertrend" if is_variant(name) else "")
+    return UNDERLYINGS[und_of(name)]["label"] + (" · Supertrend" if is_variant(name) else
+                                                 " · New rules" if is_new_rules(name) else "")
 
 
-ALL_BOOKS = ORDER + tuple(n + VARIANT_SUFFIX for n in ORDER)
+ALL_BOOKS = ORDER + tuple(n + VARIANT_SUFFIX for n in ORDER) + tuple(n + NR_SUFFIX for n in NR_BOOKS)

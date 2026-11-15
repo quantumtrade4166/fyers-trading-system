@@ -167,7 +167,8 @@ class Runner:
     def __init__(self, name, market, strategy_name=None, date=None, persist=True):
         self.name = name                    # book name: "NIFTY" or the Supertrend variant "NIFTY_ST"
         self.und = C.und_of(name)
-        strategy_name = strategy_name or ("cepe_st" if C.is_variant(name) else S.DEFAULT)
+        strategy_name = strategy_name or ("cepe_st" if C.is_variant(name) else
+                                          "cepe_new" if C.is_new_rules(name) else S.DEFAULT)
         self.market = market
         self.persist = persist
         self.date = date or book_date(name)
@@ -632,7 +633,7 @@ class Engine:
             e = self.market.expiry(u, r.expiry_n)
             rk = self.market.ref_key(u, e)
             rq = self.market.quote(rk) if rk else None
-            out.append({"name": n, "und": u, "variant": "st" if C.is_variant(n) else "normal",
+            out.append({"name": n, "und": u, "variant": "st" if C.is_variant(n) else "new" if C.is_new_rules(n) else "normal",
                         "label": C.label_of(n), "kind": C.UNDERLYINGS[u]["kind"], "ccy": C.ccy_of(n),
                         "date": r.date, "running": r.running,
                         "strategy": r.strategy_name, "expiry": e, "lot": self.u.underlyings[u].lot,

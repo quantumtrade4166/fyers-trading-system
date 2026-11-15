@@ -188,3 +188,24 @@ def test_crypto_auto_start_on_saturday(universe):
     r = e.runners["BTCFULL"]                                    # 17:31 Saturday evening, Sunday's book
     e.maybe_auto_start("BTCFULL", r, at(D, "17:31"))
     assert started == ["BTC", "BTCFULL"]
+
+
+def test_btc_new_rules_book(universe):
+    """Owner 15-Nov: BTC_NR = CePeNewRules (band 30 / step 400), same BTC market data, own book."""
+    m = Market(universe)
+    e = EN.Engine(universe, m, persist=False)
+    r = e.runners["BTC_NR"]
+    assert r.und == "BTC" and r.strategy_name == "cepe_new" and C.label_of("BTC_NR") == "BTC (IST 09:00) · New rules"
+    assert r.params["band"] == 30.0 and r.params["step"] == 400
+    assert "BTCFULL_NR" not in e.runners and "NIFTY_NR" not in e.runners
+    assert EN.default_auto("BTC_NR")["auto_time"] == "09:00" and EN.session("BTC_NR", D) == EN.session("BTC", D)
+    row = next(x for x in e.summary()["underlyings"] if x["name"] == "BTC_NR")
+    assert row["variant"] == "new" and row["ccy"] == "USD" and row["step"] == 400
+
+
+def test_new_rules_roll_heavy_front_leg_including_atm():
+    from live_trading_options.cepe_imbalance import strategy as S
+    st = S.CePeNewRules()
+    legs = {"CE": {70000: 1, 70400: 1, 70800: 1}, "PE": {70000: 1, 69600: 1, 69200: 1}}
+    assert st.op_A_any(legs, "CE", 400, 1) == [("CE", 70000, "BUY", 1), ("CE", 71200, "SELL", 1)]
+    assert st.op_A_any(legs, "PE", 400, 1) == [("PE", 70000, "BUY", 1), ("PE", 68800, "SELL", 1)]
