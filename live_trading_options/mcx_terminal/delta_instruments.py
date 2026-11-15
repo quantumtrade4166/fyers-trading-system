@@ -72,6 +72,29 @@ def parse(rows: list, now: "dt.datetime | None" = None) -> Universe:
     return Universe(products={"BTC": p}, by_token=by_token)
 
 
+def merge(u: Universe, rows: list, now: "dt.datetime | None" = None) -> list:
+    """Add contracts Delta listed AFTER the day's list was read (15-Nov-2026: Delta adds strikes during the day
+    as BTC moves - after a fall the new lower strikes were missing from the chain until the next reset).
+    Only strikes with both legs are added; nothing is ever removed here (expired dailies go at the 17:35 reset).
+    -> the new Contracts (empty if nothing changed)."""
+    fresh = parse(rows, now=now)
+    p, np_ = u.products["BTC"], fresh.products["BTC"]
+    added = []
+    for e, strikes in np_.chains.items():
+        ch = p.chains.get(e, {})
+        new_k = [k for k in strikes if k not in ch]
+        if not new_k:
+            continue
+        for k in new_k:
+            for leg in strikes[k].values():
+                if leg.token not in u.by_token:
+                    u.by_token[leg.token] = leg
+                    added.append(leg)
+            ch[k] = strikes[k]
+        p.chains[e] = dict(sorted(ch.items()))
+    return added
+
+
 def load(client=None) -> Universe:
     """Today's Delta contract list (public REST), cached to data_btc/products_<day>.json. `client` unused
     (same call shape as instruments.load)."""

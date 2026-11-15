@@ -157,6 +157,30 @@ def test_paper_usd():
     check("over the cap refused", not b.place(ce.token, "S", C.MAX_LOTS_PER_ORDER + 1, kind="MKT").get("ok"))
 
 
+def test_merge_new_strikes():
+    """15-Nov: Delta lists new strikes during the day; the desk's day list missed them (16-Nov puts below
+    63600 'not shown'). merge() adds them, both legs, in strike order, and the feed learns their symbols."""
+    rows = json.loads((HERE / "testdata" / "delta_products_sample.json").read_text(encoding="utf-8"))
+    day = [r for r in rows if r.get("settlement_time", "").startswith("2026-11-16")]
+    k_new = sorted({float(r["strike_price"]) for r in day})[0]           # pretend the lowest strike came later
+    early = [r for r in rows if not (r.get("settlement_time", "").startswith("2026-11-16")
+                                     and float(r["strike_price"]) == k_new)]
+    u = D.parse(early, now=NOW)
+    check("strike missing at first", k_new not in u.products["BTC"].chains["2026-11-16"])
+    f = F.DeltaFeed(u, lambda t: None, spot_token=C.BTC_SPOT_TOKEN)
+    new = D.merge(u, rows, now=NOW)
+    check("both legs added", sorted(c.kind for c in new) == ["CE", "PE"], [c.symbol for c in new])
+    ch = u.products["BTC"].chains["2026-11-16"]
+    check("strike now in chain", k_new in ch and set(ch[k_new]) == {"CE", "PE"})
+    check("chain kept in strike order", list(ch) == sorted(ch))
+    check("tokens known", all(c.token in u.by_token for c in new))
+    f.add_contracts(new)
+    check("feed knows the new symbols", all(f.tok_of.get(c.symbol) == c.token for c in new))
+    f.want([c.token for c in new])
+    check("new contracts can be subscribed", f.wanted == {c.token for c in new})
+    check("nothing new the second time", D.merge(u, rows, now=NOW) == [])
+
+
 def test_imbalance_delta_names():
     """14-Nov: the CE/PE imbalance read calls/puts from names ending in CE/PE -> Delta's C-BTC-… / P-BTC-…
     shorts counted as nothing (strip 0, chart empty)."""

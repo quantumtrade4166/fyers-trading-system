@@ -57,6 +57,7 @@ function connect() {
       case "d": onTicks(m.u); break;
       case "meta": onMeta(m); $("btn-news").hidden = !m.news; break;
       case "chain": onChain(m); break;
+      case "chain_new": onChainNew(m); break;
       case "oib": Object.assign(S.oib, m.b || {}); queueOI(); break;
       case "news": onNews(m); break;
       case "status": onStatus(m); break;
@@ -219,6 +220,22 @@ function pick(name, keepExpiry) {
   paintQty();
   requestChain();
   paintExitBar();
+}
+
+// BTC desk: Delta listed new strikes (or an expiry) during the day -> new expiry list, reload the open chain
+function onChainNew(m) {
+  if (m.meta) for (const p of m.meta.products) {
+    const old = S.prods[p.name];
+    S.prods[p.name] = p;
+    if (p.name === S.cur.name && old && old.expiries.join() !== p.expiries.join()) {
+      const sel = $("expiry"), cur = S.cur.expiry;
+      const opts = [...sel.options].map((o) => [o.value, o.text]);
+      const known = new Set(opts.map((o) => o[0]));
+      for (const e of p.expiries) if (!known.has(e)) { const o = document.createElement("option"); o.value = e; o.text = e; sel.add(o); }
+      sel.value = cur;
+    }
+  }
+  if (m.name === S.cur.name && (m.expiries || []).includes(S.cur.expiry)) requestChain();
 }
 
 function requestChain() {

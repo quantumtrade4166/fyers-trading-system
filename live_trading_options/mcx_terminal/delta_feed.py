@@ -108,6 +108,13 @@ class DeltaFeed:
         except Exception:
             pass
 
+    def add_contracts(self, contracts):
+        """Contracts Delta listed during the day (delta_instruments.merge): known from now on."""
+        for c in contracts:
+            if c.kind in ("CE", "PE", "FUT"):
+                self.sym_of[c.token] = c.symbol
+                self.tok_of[c.symbol] = c.token
+
     def want(self, tokens):
         with self._lock:
             new = [t for t in tokens if t in self.sym_of and t not in self.wanted]

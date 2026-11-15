@@ -76,6 +76,7 @@ REPLAY_BUILD_AT = C.REPLAY_BUILD_AT   # after the desk's close: build the day's 
 # strikes is subscribed whole (MCX as before); a bigger one (NSE gold 545 strikes, NIFTY weeklies) only on the
 # screen's strike gap, SUB_GAPS gaps either side of the price - what the chain can show (04-Nov-2026: the whole
 # NSE gold expiry pushed the MCX desk to 2940 wanted > 2800 and prices went missing).
+DELTA_LIST_S = 120                # BTC desk: re-read Delta's contract list (new strikes appear during the day)
 SUB_ALL_MAX = 100
 SUB_GAPS = 30
 SPOT_POLL_S = 1.0                 # NSE: index price from Kotak REST when the feed has none for SPOT_STALE_S
@@ -349,10 +350,35 @@ class Engine:
             s.start()
         if DELTA:
             self.margin = {"ok": False, "msg": "paper only - no Delta account read"}
+            threading.Thread(target=self._delta_list_loop, daemon=True, name="DeltaList").start()
         else:
             threading.Thread(target=self._margin_loop, daemon=True, name="Margin").start()
         if not DELTA and any(p.spot for p in self.universe.products.values()):
             threading.Thread(target=self._spot_loop, daemon=True, name="SpotBackup").start()
+
+    def _delta_list_loop(self):
+        """BTC desk: Delta lists NEW strikes during the day as BTC moves (15-Nov: after a fall, 63000 / 63400 /
+        63800 on the 16-Nov expiry were missing until the next reset). Re-read the public contract list every
+        DELTA_LIST_S and add what is new; screens showing that expiry re-load their chain. READ-ONLY, public."""
+        from live_trading_options.delta_btc.core import api
+        from live_trading_options.mcx_terminal import delta_instruments
+        while True:
+            time.sleep(DELTA_LIST_S)
+            try:
+                new = delta_instruments.merge(self.universe, api.products())
+                if not new:
+                    continue
+                self.feed.add_contracts(new)
+                exps = sorted({c.expiry for c in new})
+                log.info("Delta listed %d new contracts (%s): %s", len(new), ", ".join(exps),
+                         ", ".join(sorted({c.symbol for c in new})[:12]))
+                for key in [k for k in self.chain_defs if k[1] in exps]:
+                    self.chain_defs.pop(key, None)
+                msg = {"t": "chain_new", "name": "BTC", "expiries": exps, "meta": self.meta()}
+                if self.loop:
+                    self.loop.call_soon_threadsafe(lambda m=msg: [c.send_nowait(m) for c in list(self.clients)])
+            except Exception as e:
+                log.warning("Delta contract list re-read failed: %s", e)
 
     def seg_of(self, token) -> str:
         c = self.universe.by_token.get(token) if self.universe else None
