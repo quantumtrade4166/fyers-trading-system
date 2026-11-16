@@ -704,7 +704,26 @@ class Engine:
         return t if t and t[1] else None
 
     def _flush(self):
+        # Take the batch FIRST and clear flush_scheduled no matter what: the feed thread only schedules a
+        # flush while that flag is False, so an error left it True and NO tick reached any screen again
+        # (16-Nov-2026 10:00 IST, NSE: an OI read error here froze every screen until the page was reloaded).
+        with self._plock:
+            batch = {k: list(v) for k, v in self.pending.items()}   # copies: the feed thread keeps mutating
+            self.pending = {}
+            self.flush_scheduled = False
         now_s = time.time()
+        try:
+            self._flush_side(now_s)
+        except Exception:
+            log.exception("flush: ATM / OI part (ticks still sent)")
+        if not batch:
+            return
+        for c in list(self.clients):
+            rows = [v for k, v in batch.items() if k in c.watch]
+            if rows:
+                c.send_nowait({"t": "d", "s": round(now_s, 3), "u": rows})
+
+    def _flush_side(self, now_s):
         if now_s - self._atm_at >= 1.0 and self.universe and self.clients:
             self._atm_at = now_s
             v = self.atm_straddles()
@@ -718,17 +737,6 @@ class Engine:
             for c in list(self.clients):
                 if c.base:
                     c.send_nowait({"t": "oib", "b": self.oi.bases(c.base, now_s)})
-        with self._plock:
-            batch = {k: list(v) for k, v in self.pending.items()}   # copies: the feed thread keeps mutating
-            self.pending = {}
-            self.flush_scheduled = False
-        if not batch:
-            return
-        now = time.time()
-        for c in list(self.clients):
-            rows = [v for k, v in batch.items() if k in c.watch]
-            if rows:
-                c.send_nowait({"t": "d", "s": round(now, 3), "u": rows})
 
     def _broadcast_status(self):
         st = self.status()
@@ -818,20 +826,49 @@ class Client:
         self.base: set[int] = set()                # chain + futures
         self.watch: set[int] = set()               # base + open positions / orders
         self.q: asyncio.Queue = asyncio.Queue(maxsize=2000)
+        self.dead = False
+        self.who = ws.scope.get("mcx_user", "local") if hasattr(ws, "scope") else "local"
 
     def refresh_watch(self, book_tokens):
         self.watch = self.base | book_tokens
 
     def send_nowait(self, obj):
+        if self.dead:
+            return
         try:
             self.q.put_nowait(obj)
         except asyncio.QueueFull:
-            pass                                   # a stalled screen must never slow the engine
+            # 2000 messages behind: dropping more would leave this screen showing old prices / an old book
+            # with no sign of it. Close it instead (the engine never waits); the page reconnects at once and
+            # gets a fresh snapshot of everything.
+            log.warning("screen %s fell 2000 messages behind - closing it so it reloads fresh", self.who)
+            self._kill()
+
+    def _kill(self):
+        if not self.dead:
+            self.dead = True
+            asyncio.ensure_future(self._close())
+
+    async def _close(self):
+        try:
+            await self.ws.close(code=1013)
+        except Exception:
+            pass
 
     async def writer(self):
         while True:
             obj = await self.q.get()
-            await self.ws.send_text(json.dumps(obj, separators=(",", ":")))
+            try:
+                txt = json.dumps(obj, separators=(",", ":"))
+            except Exception:                      # one odd message must never stop this screen's updates
+                log.exception("screen message not sendable (skipped): %s", str(obj)[:200])
+                continue
+            try:
+                await self.ws.send_text(txt)
+            except Exception as e:                 # socket gone: close so the page reconnects
+                log.info("screen %s send failed (%s) - closing", self.who, type(e).__name__)
+                self._kill()
+                return
 
 
 ENGINE = Engine()

@@ -11,8 +11,6 @@ sys.stderr.reconfigure(encoding="utf-8")
 from pathlib import Path
 import numpy as np
 import pandas as pd
-from statsmodels.regression.linear_model import OLS
-from statsmodels.tools import add_constant
 
 import os
 from dotenv import load_dotenv
@@ -49,16 +47,32 @@ def load_prices(symbols: list[str] = ALL_SYMS) -> dict[str, pd.Series]:
 
 # ── OLS helpers ───────────────────────────────────────────────────────────────
 
+def _slope(y: np.ndarray, x: np.ndarray) -> float:
+    """Slope b of the least-squares line y = a + b*x: b = cov(x, y) / var(x).
+
+    16-Nov-2026: this is the same number statsmodels' OLS(y, add_constant(x)).fit().params[1] gave
+    (checked on every pair, see test_signal_engine_fast.py), without building a full regression
+    result each time. One signal refresh makes ~620 of these; statsmodels took ~0.3 ms each.
+    Raises when there is no line to fit (x constant or not a number), like the old call did."""
+    x = np.asarray(x, dtype=float)
+    y = np.asarray(y, dtype=float)
+    dx = x - x.mean()
+    sxx = float(dx @ dx)
+    if not sxx > 0:
+        raise ValueError("x is constant or not a number")
+    return float(dx @ (y - y.mean()) / sxx)
+
+
 def _ols_beta(pa: np.ndarray, pb: np.ndarray) -> float:
     try:
-        return OLS(pa, add_constant(pb)).fit().params[1]
+        return _slope(pa, pb)
     except Exception:
         return np.nan
 
 
 def _half_life(spread: np.ndarray) -> float:
     try:
-        phi = OLS(np.diff(spread), add_constant(spread[:-1])).fit().params[1]
+        phi = _slope(np.diff(spread), spread[:-1])
         return -np.log(2) / np.log(1 + phi) if phi < 0 else 999.0
     except Exception:
         return 999.0

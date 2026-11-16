@@ -126,7 +126,7 @@ def simulate(date: str, und: str, per: int = 10, mul: float = 3.0, tf: int = 60,
 
 def sim_digest(date: str, name: str):
     """Cached 8000-point simulated history for a variant book on a day it did not run (None otherwise)."""
-    if not C.is_variant(name):
+    if not C.is_variant(name) or C.is_new_rules(name):     # new-rules books: no normal-book history to filter
         return None
     hdir = C.DATA / "history" / date
     if (hdir / f"{name}.jsonl").exists():

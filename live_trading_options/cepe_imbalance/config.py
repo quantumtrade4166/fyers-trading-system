@@ -106,20 +106,42 @@ QUOTES_FLUSH_WAIT_S = 3      # the quote recorder writes every 2 s
 
 
 # NEW-RULES book (owner 15-Nov-2026): "{NAME}_NR" = strategy CePeNewRules (breach-only, heavy front strike ->
-# behind the last, B only as fallback), band 30 % / step 400. BTC IST only for now.
+# behind the last, B only as fallback), band 30 % / step 400. Owner 16-Nov: both BTC books, and each also as
+# a Supertrend book "{NAME}_NR_ST" (Supertrend on/off + the new adjustment rules).
 NR_SUFFIX = "_NR"
-NR_BOOKS = ("BTC",)
+NR_BOOKS = ("BTC", "BTCFULL")
+
+
+# LIVE books (owner 16-Nov-2026): "{NAME}_LIVE" = the NORMAL rules with REAL orders on Kotak D (= Kotak P,
+# env *_D, the same login as this engine's feed). Own book from own fills, 1 lot, own start / stop / lots /
+# max loss / settings per index. Trades only while the owner has ARMED it (data/live/control.json).
+LIVE_SUFFIX = "_LIVE"
+LIVE_BOOKS = ("NIFTY", "SENSEX")
+LIVE_DEFAULT_PARAMS = {"lots": 1, "mtm_stop": 5000.0}       # owner 16-Nov: 1 lot, max loss Rs 5,000 per index
+LIVE_AUTO_TIME = "09:16"                                    # owner 16-Nov: auto-start 09:16, only when ARMED
+LIVE_AUTO_DEFAULT = True
+LIVE_MAX_LOTS = 10                                          # typo guard on the live lots box
+LIVE_TAG = "cpek"                                           # Kotak order-tag prefix (unique tag per order)
+
+
+def is_live(name: str) -> bool:
+    return name.endswith(LIVE_SUFFIX)
 
 
 def und_of(name: str) -> str:
-    """Book name -> underlying ("NIFTY_ST" -> "NIFTY", "BTC_NR" -> "BTC")."""
-    for suf in (VARIANT_SUFFIX, NR_SUFFIX):
-        if name.endswith(suf):
-            return name[:-len(suf)]
+    """Book name -> underlying ("NIFTY_ST" -> "NIFTY", "BTC_NR" -> "BTC", "BTC_NR_ST" -> "BTC", "NIFTY_LIVE" -> "NIFTY")."""
+    if name.endswith(LIVE_SUFFIX):
+        return name[:-len(LIVE_SUFFIX)]
+    if name.endswith(VARIANT_SUFFIX):
+        name = name[:-len(VARIANT_SUFFIX)]
+    if name.endswith(NR_SUFFIX):
+        name = name[:-len(NR_SUFFIX)]
     return name
 
 
 def is_new_rules(name: str) -> bool:
+    if name.endswith(VARIANT_SUFFIX):
+        name = name[:-len(VARIANT_SUFFIX)]
     return name.endswith(NR_SUFFIX)
 
 
@@ -128,8 +150,7 @@ def is_variant(name: str) -> bool:
 
 
 def label_of(name: str) -> str:
-    return UNDERLYINGS[und_of(name)]["label"] + (" · Supertrend" if is_variant(name) else
-                                                 " · New rules" if is_new_rules(name) else "")
+    return UNDERLYINGS[und_of(name)]["label"] + (" · Supertrend" if is_variant(name) else "") +         (" · New rules" if is_new_rules(name) else "") + (" · LIVE Kotak D" if is_live(name) else "")
 
 
-ALL_BOOKS = ORDER + tuple(n + VARIANT_SUFFIX for n in ORDER) + tuple(n + NR_SUFFIX for n in NR_BOOKS)
+ALL_BOOKS = ORDER + tuple(n + VARIANT_SUFFIX for n in ORDER) + tuple(n + NR_SUFFIX for n in NR_BOOKS)     + tuple(n + NR_SUFFIX + VARIANT_SUFFIX for n in NR_BOOKS) + tuple(n + LIVE_SUFFIX for n in LIVE_BOOKS)

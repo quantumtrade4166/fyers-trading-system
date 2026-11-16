@@ -33,6 +33,12 @@ async def lifespan(app: FastAPI):
     global _scheduler
     print(f"\n  ── Pairs Dashboard starting ({MODE} mode) ──")
 
+    # 16-Nov-2026: every proxied call (CE/PE, Builder, ST Directional ...) waits in a worker thread. The
+    # default pool is only cpu+4 (14 here), so a handful of calls stuck on ONE slow service used them all
+    # up and every other tab froze behind them. Waiting threads cost nothing: give the pool room.
+    from concurrent.futures import ThreadPoolExecutor as _TPE
+    asyncio.get_running_loop().set_default_executor(_TPE(max_workers=64, thread_name_prefix="dash-io"))
+
     # ── Single-instance guard ────────────────────────────────────────────────
     # The VPS venv double-launches this app under the system python. Two app
     # instances = two schedulers = duplicate captures AND duplicate ORDERS. Only
@@ -80,6 +86,9 @@ async def lifespan(app: FastAPI):
               "(passive web only). Fix the venv to remove the duplicate entirely.")
 
     asyncio.create_task(_push_loop())
+    # warm the slow read-only answers in the background so the first page load is instant
+    import threading as _th
+    _th.Thread(target=lambda: _warm_caches(), daemon=True, name="cache-warm").start()
     yield
 
     if _scheduler:
@@ -251,6 +260,11 @@ async def _cepe_proxy(path: str, request: _Request):
                                   f"Start it: python -m live_trading_options.cepe_imbalance.service"})
     except Exception as _e:
         return _JSONResponse(status_code=502, content={"ok": False, "error": f"CE/PE proxy: {type(_e).__name__}: {_e}"})
+    if "json" in r.headers.get("content-type", "").lower():
+        # already JSON: pass the bytes through (parsing + re-writing an 860 KB chart here cost ~50 ms of
+        # this process's one core per call)
+        from fastapi.responses import Response as _RawResponse
+        return _RawResponse(content=r.content, status_code=r.status_code, media_type="application/json")
     try:
         return _JSONResponse(status_code=r.status_code, content=r.json())
     except ValueError:
@@ -286,9 +300,52 @@ def _ttl_cached(key: str, ttl: float, producer):
         return val
 
 
+# ── serve-stale-then-refresh cache (16-Nov-2026) ─────────────────────────────
+# Measured live: /api/signals took 11-15 s and /api/positions 8-11 s on the VPS (0.17 s on
+# the PC) because this process shares its one core with the feed + scheduler. The page waited
+# for them on every load. Now a caller NEVER waits once a value exists: it gets the last
+# answer at once and, if that answer is older than `ttl`, ONE background thread recomputes it
+# for the next caller. Only the very first call after a restart blocks (warmed at startup).
+# Read-only: the producer is the same function as before, nothing in the trading path changes.
+_swr_busy: set = set()
+
+
+def _swr_cached(key: str, ttl: float, producer):
+    now = _time.monotonic()
+    with _cache_glock:
+        hit = _cache_store.get(key)
+        start = hit is not None and hit[0] <= now and key not in _swr_busy
+        if start:
+            _swr_busy.add(key)
+    if hit is None:
+        return _ttl_cached(key, ttl, producer)          # nothing yet: compute once, then serve
+
+    if start:
+        def _refresh():
+            try:
+                val = producer()
+                with _cache_glock:
+                    _cache_store[key] = (_time.monotonic() + ttl, val)
+            except Exception as e:                       # keep serving the last good answer
+                print(f"  [cache] refresh of {key} failed: {type(e).__name__}: {e}")
+            finally:
+                with _cache_glock:
+                    _swr_busy.discard(key)
+        _threading.Thread(target=_refresh, daemon=True, name=f"swr-{key}").start()
+    return hit[1]
+
+
+def _warm_caches():
+    for fn in (_signals_cached,):
+        try:
+            fn()
+        except Exception as e:
+            print(f"  [cache] warm-up failed: {type(e).__name__}: {e}")
+
+
 def _signals_cached():
-    """Pair signals, computed at most once per ~2s and off the event loop."""
-    return _ttl_cached("signals", 2.0,
+    """Pair signals: last answer at once, recomputed in the background when older than ~3s."""
+    return _swr_cached("signals", 3.0,
                        lambda: signal_engine.get_all_signals(live_feed.get_live_prices() or None))
 
 
@@ -483,8 +540,9 @@ async def api_strangle_status():
     """L1/L2/L3 signals + verdict + data-collection status for the strangle tab."""
     from strangle_system import dashboard_api as strangle_api
     # already off the loop; add a 5s cache so repeated polls don't rerun the ~3s compute
+    # measured 2-11 s live -> serve the last answer at once, refresh behind (16-Nov-2026)
     return await asyncio.to_thread(
-        lambda: _ttl_cached("strangle_status", 5.0, strangle_api.get_status))
+        lambda: _swr_cached("strangle_status", 10.0, strangle_api.get_status))
 
 
 # ── Strangle combined-premium chart archive (7-day rolling) ──────────────────
@@ -499,6 +557,12 @@ async def api_strangle_charts(all: bool = False):
     """List archived combined-premium charts, newest first. By default only the
     DTE 0/1 trade days are returned (the days the strategy actually trades); the
     DTE>=2 chart-only days are hidden. Pass ?all=true to list every day."""
+    # was read on the event loop (every chart file, 0.6-0.9 s live) - now a thread + 20 s cache
+    return await asyncio.to_thread(
+        lambda: _swr_cached(f"strangle_charts_{bool(all)}", 20.0, lambda: _strangle_charts(all)))
+
+
+def _strangle_charts(all: bool = False):
     if not _CHART_DIR.exists():
         return {"charts": []}
     out, seen = [], set()
@@ -532,6 +596,12 @@ async def api_strangle_pnl_history():
     History view can filter by index and by DTE client-side and recompute the curve,
     daily bars and stats for any selection. Each day's candle bars are fetched on demand
     from /api/strangle/chart?version=V2."""
+    # was read on the event loop (every V2 file, 0.6-1.6 s live) - now a thread + 20 s cache
+    return await asyncio.to_thread(
+        lambda: _swr_cached("strangle_pnl_history", 20.0, _strangle_pnl_history))
+
+
+def _strangle_pnl_history():
     if not _CHART_DIR.exists():
         return {"records": []}
     recs = []
@@ -945,12 +1015,13 @@ async def _push_loop():
         if not _ws_clients:
             continue
         try:
-            today_prices = live_feed.get_live_prices() or None
+            # off the event loop (the compute froze every request for its whole run) and from
+            # the same cache the REST calls use, so a push never costs a second compute
             payload = {
                 "type":      "update",
                 "ts":        datetime.now(IST).strftime("%H:%M:%S"),
-                "signals":   signal_engine.get_all_signals(today_prices),
-                "positions": pos_store.get_positions(),
+                "signals":   await asyncio.to_thread(_signals_cached),
+                "positions": await asyncio.to_thread(pos_store.get_positions),
                 "equity":    pos_store.get_equity(),
                 "mode":      MODE,
                 "feed":      live_feed.is_running(),

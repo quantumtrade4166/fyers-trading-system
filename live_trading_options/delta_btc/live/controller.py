@@ -99,6 +99,13 @@ class BTCController:
                         else float(params.get("sl_combined_multiple", 1.2)))
         self.sl = round(self.sl_mult * 2 * self.target, 2)
         self.sl_only_lowers = bool(params.get("sl_only_lowers", False))
+        # RESEARCH FLAG, default off — live behaviour is unchanged unless set.
+        # Closes the one hole in stop-only-lowers: normally the stop may still
+        # rise on a NEW ENTRY (fresh strangle, or re-entry after a stop-out).
+        # With this on it can never rise at all, so a cycle's stop is monotonic
+        # from its first entry. Used to test whether those rises are what the
+        # run is losing to.
+        self.sl_never_raises = bool(params.get("sl_never_raises", False))
         self._sl_fresh = True          # next recompute may raise the stop (new entry)
 
         self.fees_cfg = params.get("fees", {})
@@ -585,6 +592,8 @@ class BTCController:
         # recomputed off it chases the loser upward and never fires. The stop may
         # rise only on a NEW entry (fresh strangle, or re-entry after a stop-out);
         # a 2x adjustment keeps the stop where it is.
+        if self.sl_never_raises:
+            fresh = False              # research flag: close the new-entry hole
         if (self.sl_only_lowers and not force and not fresh
                 and self.sl is not None and new > self.sl):
             return

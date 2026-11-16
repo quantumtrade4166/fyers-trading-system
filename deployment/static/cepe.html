@@ -2,6 +2,8 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<script src="/static/net.js?v=1"></script>
+<script src="/static/framepause.js?v=1"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>CE/PE Imbalance</title>
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -145,14 +147,25 @@
   .tabs2 { display: flex; gap: 4px; margin-bottom: 8px; }
   .tabs2 button.on { border-color: var(--acc); color: var(--acc); }
   .err { color: var(--neg); }
+  /* LIVE (Kotak D) mode */
+  .modetog button.on[data-m="live"] { border-color: #f43f5e; color: #fff; background: #be123c; }
+  .pill.livep { background: #be123c; color: #fff; border-color: #be123c; }
+  .livecard { border: 1px solid #be123c55; }
+  .livecard .row { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; }
+  .livecard .kv { display: flex; flex-direction: column; gap: 2px; min-width: 120px; }
+  .livecard .kv b { font-size: 15px; }
+  .armbtn { font-weight: 700; padding: 6px 14px; }
+  .armbtn.on { background: #be123c; color: #fff; border-color: #be123c; }
+  .livealarm { color: #fff; background: #be123c; padding: 6px 10px; border-radius: 6px; margin-top: 8px; display: none; }
 </style>
 </head>
 <body>
 <div class="top">
   <span class="name">CE/PE Imbalance</span>
-  <span class="pill paper">Paper</span>
+  <span class="seg modetog" id="modeTog" title="Paper books, or the LIVE books trading real orders on Kotak D"><button data-m="paper">Paper</button><button data-m="live">Live · Kotak D</button></span>
+  <span class="pill paper" id="modePill">Paper</span>
   <span class="seg vtog" id="varTog" title="Normal = the strategy as is · Supertrend = same rules, only while Supertrend on 1-min ATM CE+PE is red"><button data-v="normal">Normal</button><button data-v="st">Supertrend</button></span>
-  <span class="mut">Kotak tick feed (BTC: Delta) · fills at live bid/ask</span>
+  <span class="mut" id="modeNote">Kotak tick feed (BTC: Delta) · fills at live bid/ask</span>
   <div class="right">
     <span id="feed" class="pill">feed …</span>
     <span id="clock" class="num mut"></span>
@@ -171,6 +184,18 @@
     <div class="card"><div class="lbl">Status</div><div class="big" id="phase">–</div><div class="sub" id="phaseSub"></div></div>
     <div class="card"><div class="lbl">Expiry · session</div><div class="big num" id="exp">–</div><div class="sub num" id="sess"></div></div>
     <div class="card" id="stCard" style="display:none"><div class="lbl">Supertrend · 1-min ATM CE+PE</div><div class="big num" id="stTrend">–</div><div class="sub num" id="stSub"></div></div>
+  </div>
+
+  <div class="card livecard" id="liveCard" style="display:none">
+    <div class="row">
+      <button class="armbtn" id="bArm">ARM LIVE</button>
+      <div class="kv"><span class="lbl">Live</span><b id="lvArmed">–</b></div>
+      <div class="kv"><span class="lbl">Kotak D margin used</span><b class="num" id="lvUsed">–</b><span class="sub mut num" id="lvNet"></span></div>
+      <div class="kv"><span class="lbl">This book's margin ≈</span><b class="num" id="lvBook">–</b><span class="sub mut">change in account margin since entry</span></div>
+      <div class="kv"><span class="lbl">Charges (est.)</span><b class="num" id="lvChg">–</b><span class="sub mut num" id="lvNetPnl"></span></div>
+      <div class="kv"><span class="lbl">Orders · Kotak reply</span><b class="num" id="lvOrd">–</b><span class="sub mut num" id="lvSync"></span></div>
+    </div>
+    <div class="livealarm" id="lvAlarm"></div>
   </div>
 
   <div class="card">
@@ -267,9 +292,14 @@ const API = '/api/cepe';
 const IST = 19800;
 let SEL = localGet('cepe_sel') || 'CRUDEOIL';
 // Normal / Supertrend variant: the variant books are "{NAME}_ST" (same API, own book)
-const isST = n => /_ST$/.test(n || ''), baseOf = n => (n || '').replace(/_ST$/, '');
+const isST = n => /_ST$/.test(n || ''), isLive = n => /_LIVE$/.test(n || '');
+const baseOf = n => (n || '').replace(/_LIVE$/, '').replace(/_ST$/, '');
 let VAR = isST(SEL) ? 'st' : 'normal';
-const bookOf = und => VAR === 'st' ? und + '_ST' : und;
+// Paper / Live (owner 16-Nov): Live shows only the "{NAME}_LIVE" books (real orders on Kotak D)
+let MODE = isLive(SEL) ? 'live' : (localGet('cepe_mode') === 'live' ? 'live' : 'paper');
+const bookOf = und => MODE === 'live' ? und + '_LIVE' : VAR === 'st' ? und + '_ST' : und;
+const inView = n => MODE === 'live' ? isLive(n) : (!isLive(n) && isST(n) === (VAR === 'st'));
+const plainLabel = l => String(l || '').replace(' · Supertrend', '').replace(' · LIVE Kotak D', '');
 let STATE = null, ROW = null, lowerTab = 'pos', lastT = 0, histName = null;
 let paramsDirty = false;
 
@@ -598,7 +628,7 @@ async function renderDay() {
   const d = DAY || TODAY; if (!d) return;
   const j = await api(`/day/${DAY || 'live'}`);             // live: each book's own day (BTC full expiry rolls at 17:30)
   if (!j.rows || (DAY || TODAY) !== d) return;
-  const rows = j.rows.filter(r => isST(r.name) === (VAR === 'st'));
+  const rows = j.rows.filter(r => inView(r.name));
   const tot = rows.reduce((a, r) => a + (r.traded && r.ccy !== 'USD' ? r.pnl : 0), 0);
   const usd = rows.filter(r => r.ccy === 'USD' && r.traded), totU = usd.reduce((a, r) => a + r.pnl, 0);
   $('dayTot').innerHTML = `<span class="${cls(tot)}">${rs(tot, 'INR')}</span>` +
@@ -610,7 +640,7 @@ async function renderDay() {
                                  : (r.traded ? 'squared off' : '<span class="mut">no trade</span>');
     const imb = r.imb_min == null ? '–' : `${fmt(r.imb_min, 1)}% … ${fmt(r.imb_max, 1)}%`;
     return `<tr data-n="${esc(r.name)}" class="${r.name === SEL ? 'on' : ''}">
-      <td style="font-weight:600">${esc(r.label.replace(' · Supertrend', ''))}</td>
+      <td style="font-weight:600">${esc(plainLabel(r.label))}</td>
       <td class="num ${cls(r.pnl)}" style="font-weight:700">${r.traded ? rs(r.pnl, r.ccy) : '–'}</td>
       <td>${st}</td><td class="num">${r.fills || ''}</td><td class="num">${r.atm_rule || ''}</td>
       <td class="num">${r.a || ''}</td><td class="num">${r.b || ''}</td>
@@ -628,12 +658,12 @@ function selectUnd(n) {
 
 // ── rendering ───────────────────────────────────────────────────────────
 function renderUnds() {
-  $('unds').innerHTML = STATE.underlyings.filter(u => isST(u.name) === (VAR === 'st')).map(u => {
+  $('unds').innerHTML = STATE.underlyings.filter(u => inView(u.name)).map(u => {
     const ph = u.phase, dc = ph === 'in' ? 'in' : (ph === 'wait_entry' || ph === 'flat') ? 'wait' : ph === 'stopped' ? 'stop' : '';
     const m = u.mtm.total, has = u.open_positions || u.trades;
     const tr = u.st && u.st.trend ? ` <span style="color:${u.st.trend === 'red' ? '#f43f5e' : '#22c55e'}">●</span>` : '';
     return `<div class="und ${u.name === SEL ? 'on' : ''}" data-n="${esc(u.name)}">
-      <div class="n"><span class="dot ${u.running ? dc : ''}"></span>${esc(u.label.replace(' · Supertrend', ''))}${tr}</div>
+      <div class="n"><span class="dot ${u.running ? dc : ''}"></span>${esc(plainLabel(u.label))}${tr}${u.live && u.live.armed ? ' <span style="color:#f43f5e;font-weight:700">ARMED</span>' : ''}</div>
       <div class="num ${cls(m)}">${has ? rs(m, u.ccy) : '<span class="mut">idle</span>'}</div>
       <div class="num mut">${u.imbalance.pct == null ? '' : 'imb ' + fmt(u.imbalance.pct, 1) + '%'}</div></div>`;
   }).join('');
@@ -641,7 +671,31 @@ function renderUnds() {
 }
 
 const PHASE = {in: 'In trade', wait_entry: 'Waiting to enter', stopped: 'Stopped (MTM SL)', done: 'Squared off',
-               flat: 'Flat · waits for red'};
+               flat: 'Flat · waits for red', halted: 'HALTED (order problem)'};
+function renderLive(u) {
+  const L = u.live;
+  $('liveCard').style.display = L ? '' : 'none';
+  if (!L) return;
+  const a = L.account || {};
+  $('bArm').textContent = L.armed ? 'DISARM' : 'ARM LIVE';
+  $('bArm').classList.toggle('on', !!L.armed);
+  $('lvArmed').innerHTML = L.armed ? '<span style="color:#f43f5e">ARMED</span>' : '<span class="mut">disarmed</span>';
+  $('lvUsed').textContent = a.margin_used == null ? '–' : rs(a.margin_used, 'INR');
+  $('lvNet').textContent = a.net == null ? (a.limits_msg || '') : `Net ${rs(a.net, 'INR')} · ${a.limits_age ?? '–'}s ago`;
+  $('lvBook').textContent = L.book_margin == null ? '–' : rs(L.book_margin, 'INR');
+  $('lvChg').textContent = rs(-(L.charges_est || 0), 'INR');
+  $('lvNetPnl').textContent = `MTM after charges ${rs(u.mtm.total - (L.charges_est || 0), 'INR')}`;
+  $('lvOrd').textContent = `${L.orders} · ${L.ack_ms_median == null ? '–' : L.ack_ms_median + ' ms'}`;
+  $('lvSync').innerHTML = (a.positions_ok ? `Kotak positions ${a.positions_age}s ago` : `<span class="err">${esc(a.positions_msg || 'positions not read')}</span>`)
+    + (L.busy_s >= 1 ? ` · <b style="color:#f59e0b">placing orders ${L.busy_s}s</b>` : '');
+  const al = [];
+  if (L.fault) al.push('⚠ ' + L.fault);
+  if (L.pending_exit) al.push(`⚠ EXIT NOT COMPLETE since ${L.pending_exit.since} — retrying: ${(L.pending_exit.left || []).join(', ')}`);
+  if (L.unsettled) al.push(`⚠ ${L.unsettled} order(s) unsettled at Kotak — no new orders until Kotak confirms`);
+  if (L.carried && L.carried.length) al.push('⚠ carried from an earlier day: ' + L.carried.join('; '));
+  $('lvAlarm').style.display = al.length ? 'block' : 'none';
+  $('lvAlarm').innerHTML = al.map(esc).join('<br>');
+}
 function renderStCard(u) {
   const on = isST(u.name);
   $('stCard').style.display = on ? '' : 'none';
@@ -675,6 +729,7 @@ function renderCards() {
   $('phase').textContent = u.running ? (PHASE[u.phase] || 'Running') : (PHASE[u.phase] && u.phase !== 'in' ? PHASE[u.phase] : 'Stopped');
   $('phase').className = 'big ' + (u.running ? (u.phase === 'in' ? 'pos' : 'warn') : 'mut');
   renderStCard(u);
+  renderLive(u);
   $('phaseSub').textContent = `${u.open_positions} open legs · ${u.trades} fills` + (u.errors ? ` · ${u.errors} errors` : '');
   $('exp').textContent = u.expiry || '–';
   const s = u.session;
@@ -788,7 +843,7 @@ async function renderLower() {
     $('lowerR').innerHTML = `<table><thead><tr><th style="text-align:left">Time</th><th style="text-align:left">Contract</th><th>Side</th><th>Lots</th><th>Price</th><th>Bid/Ask</th><th style="text-align:left">Why</th></tr></thead><tbody>` +
       (tr.map(t => `<tr><td class="num mut" style="text-align:left">${esc(t.time)}</td><td style="text-align:left">${esc(k0(t.strike))} ${esc(t.kind)}</td>
         <td class="${t.side === 'SELL' ? 'neg' : 'pos'}">${esc(t.side)}</td><td>${t.lots}</td><td>${fmt(t.price)}</td>
-        <td class="mut">${fmt(t.bid)} / ${fmt(t.ask)}</td><td class="mut" style="text-align:left">${esc(t.reason)}</td></tr>`).join('')
+        <td class="mut">${fmt(t.bid)} / ${fmt(t.ask)}</td><td class="mut" style="text-align:left">${esc(t.reason)}${t.live ? ` · Kotak ${esc((t.order_ids || []).join(','))}` : ''}</td></tr>`).join('')
        || '<tr><td colspan="7" class="mut" style="text-align:center">no fills</td></tr>') + '</tbody></table>';
   }
 }
@@ -805,11 +860,29 @@ async function control(action, confirmMsg) {
   $('ctlMsg').innerHTML = j.ok ? `<span class="pos">${esc(action)} ok</span>` : `<span class="err">${esc(j.error || 'failed')}</span>`;
   refresh();
 }
-$('bStart').onclick = () => control('start', isST(SEL)
+$('bStart').onclick = () => control('start', isLive(SEL)
+  ? `START LIVE on ${ROW ? ROW.label : SEL}?\nREAL ORDERS on Kotak D: sells ATM/+1/+2 CE and PE (${ROW ? ROW.params.lots : 1} lot each) on the next tick.\nMax loss: ₹${ROW ? k0(ROW.params.mtm_stop) : '?'}`
+  : isST(SEL)
   ? `Start the SUPERTREND version (PAPER) on ${ROW ? ROW.label : SEL}?\nIt sells ATM/+1/+2 CE and PE when Supertrend on 1-min ATM CE+PE is red (opening rule: below the first candle's low) and buys everything back when it turns green.`
   : `Start CE/PE imbalance (PAPER) on ${ROW ? ROW.label : SEL}?\nIt sells ATM/+1/+2 CE and PE on the next tick.`);
 $('bStop').onclick = () => control('stop');
-$('bStopExit').onclick = () => control('stop_exit', `Stop ${ROW ? ROW.label : SEL} and buy back ALL paper positions?`);
+$('bStopExit').onclick = () => control('stop_exit', `Stop ${ROW ? ROW.label : SEL} and buy back ALL ${isLive(SEL) ? 'LIVE (Kotak D)' : 'paper'} positions?`);
+$('bArm').onclick = async () => {
+  const L = ROW && ROW.live; if (!L) return;
+  let body;
+  if (L.armed) {
+    if (!confirm(`DISARM ${ROW.label}?\nThe rules stop at once; open positions are KEPT (use Stop & exit all to close them).`)) return;
+    body = {armed: false};
+  } else {
+    const t = prompt(`ARM LIVE on ${ROW.label}?\nReal orders on Kotak D, ${ROW.params.lots} lot, max loss ₹${k0(ROW.params.mtm_stop)}.` +
+                     (ROW.auto_start ? `\nAuto-start at ${ROW.auto_time} while armed.` : '') + '\n\nType LIVE to arm:');
+    if (t == null) return;
+    body = {armed: true, confirm: t};
+  }
+  const j = await api(`/live/${SEL}/arm`, body);
+  $('ctlMsg').innerHTML = j.ok ? `<span class="pos">${j.armed ? 'ARMED' : 'disarmed'}</span>` : `<span class="err">${esc(j.error || 'failed')}</span>`;
+  refresh();
+};
 ['pLots', 'pBand', 'pNormal', 'pTrig', 'pBuf', 'pStep', 'pStop', 'pGap', 'pStPer', 'pStMul'].forEach(id => $(id).addEventListener('input', () => { paramsDirty = true; $('pMsg').textContent = 'unsaved'; }));
 let autoDirty = false;
 async function saveAuto() {
@@ -839,8 +912,8 @@ async function refresh(full) {
     const s = await api('/state');
     if (!s.underlyings) { $('feed').className = 'pill bad'; $('feed').textContent = s.error ? 'engine offline' : 'no data'; $('blocked').textContent = s.error || ''; return; }
     STATE = s;
-    ROW = s.underlyings.find(u => u.name === SEL) || s.underlyings.find(u => u.name === bookOf(baseOf(SEL)))
-          || s.underlyings.find(u => isST(u.name) === (VAR === 'st')) || s.underlyings[0];
+    ROW = s.underlyings.find(u => u.name === SEL && inView(u.name)) || s.underlyings.find(u => u.name === bookOf(baseOf(SEL)))
+          || s.underlyings.find(u => inView(u.name)) || s.underlyings[0];
     SEL = ROW.name;
     setCur(ROW.ccy);
     const f = s.feed || {};
@@ -873,6 +946,20 @@ document.querySelectorAll('#varTog button').forEach(b => b.onclick = () => {
   VAR = b.dataset.v; varButtons(); selectUnd(bookOf(baseOf(SEL)));
 });
 varButtons();
+function modeButtons() {
+  document.querySelectorAll('#modeTog button').forEach(b => b.classList.toggle('on', b.dataset.m === MODE));
+  $('varTog').style.display = MODE === 'live' ? 'none' : '';
+  $('modePill').textContent = MODE === 'live' ? 'LIVE · Kotak D' : 'Paper';
+  $('modePill').className = 'pill ' + (MODE === 'live' ? 'livep' : 'paper');
+  $('modeNote').textContent = MODE === 'live' ? 'REAL orders on Kotak D · fills = what Kotak reports' : 'Kotak tick feed (BTC: Delta) · fills at live bid/ask';
+}
+document.querySelectorAll('#modeTog button').forEach(b => b.onclick = () => {
+  if (MODE === b.dataset.m) return;
+  MODE = b.dataset.m; localSet('cepe_mode', MODE); modeButtons();
+  const base = baseOf(SEL);
+  selectUnd(MODE === 'live' ? ((base === 'NIFTY' || base === 'SENSEX') ? base : 'NIFTY') + '_LIVE' : bookOf(base));
+});
+modeButtons();
 loadDays().then(renderDay);
 refresh(true);
 </script>

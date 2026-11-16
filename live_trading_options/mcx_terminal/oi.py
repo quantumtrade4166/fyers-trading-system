@@ -20,6 +20,7 @@ import collections
 import datetime as dt
 import json
 import logging
+import threading
 import time
 
 from live_trading_options.mcx_terminal import config as C
@@ -41,6 +42,10 @@ class OiBook:
         self.last: dict[int, int] = {}
         self.prev: dict[int, int] = {}                 # tok -> last OI of the previous recorded day
         self.hist: dict[int, collections.deque] = {}   # tok -> deque[(epoch, oi)]
+        # sample() runs on the housekeeping thread, bases() on the web loop / chain workers: one lock, or a
+        # read can hit 'deque mutated during iteration' (16-Nov-2026 10:00 IST: that error inside the tick
+        # flush froze every NSE screen until a refresh)
+        self._lock = threading.Lock()
         self._load()
 
     def _load(self):
@@ -63,6 +68,11 @@ class OiBook:
         """oi_now = {token: live OI} (only contracts whose OI is known)."""
         now = now or time.time()
         hm = dt.datetime.fromtimestamp(now, IST).strftime("%H:%M")
+        with self._lock:
+            self._sample(oi_now, now, hm)
+        self._save()
+
+    def _sample(self, oi_now, now, hm):
         for tok, oi in oi_now.items():
             if oi is None:
                 continue
@@ -75,18 +85,22 @@ class OiBook:
             h.append((now, oi))
             while h and now - h[0][0] > KEEP_S:
                 h.popleft()
-        self._save()
 
     def _save(self):
         try:
             tmp = self.path.with_suffix(".tmp")
-            tmp.write_text(json.dumps({str(k): [f, self.last.get(k, f), hm] for k, (f, hm) in self.first.items()}),
-                           encoding="utf-8")
+            with self._lock:
+                d = {str(k): [f, self.last.get(k, f), hm] for k, (f, hm) in self.first.items()}
+            tmp.write_text(json.dumps(d), encoding="utf-8")
             tmp.replace(self.path)
         except Exception:
             log.exception("OI baselines save failed")
 
     def base(self, tok: int, now: float | None = None):
+        with self._lock:
+            return self._base(tok, now)
+
+    def _base(self, tok: int, now: float | None = None):
         """-> [day_base, since, base_15m] (None where unknown). since = "HH:MM" when the day base is only
         the first OI seen after the open (no earlier day recorded for this contract)."""
         now = now or time.time()
@@ -110,4 +124,5 @@ class OiBook:
 
     def bases(self, toks, now: float | None = None) -> dict:
         now = now or time.time()
-        return {str(t): self.base(t, now) for t in toks if t in self.first or t in self.prev}
+        with self._lock:
+            return {str(t): self._base(t, now) for t in toks if t in self.first or t in self.prev}

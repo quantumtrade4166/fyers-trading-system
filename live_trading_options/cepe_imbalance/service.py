@@ -21,12 +21,19 @@ API (dashboard will proxy /api/cepe/* here):
   POST /reset/{name}    {"start": true}   archive today's paper book (data/books/{date}/_reset_*) + restart
   POST /auto/{name}     {"auto_start": true, "auto_time": "09:05"}   daily auto-start (saved)
   POST /order/{name}    {"strike":..., "kind":"CE"|"PE", "side":"BUY"|"SELL", "lots":1}   manual paper order
+  GET  /live/{name}     LIVE book (NIFTY_LIVE / SENSEX_LIVE): armed, fault, Kotak D margin, every order sent
+  POST /live/{name}/arm {"armed": true, "confirm": "LIVE"}   owner only; disarm also STOPS the book (keeps positions)
+
+LIVE: the "{NAME}_LIVE" books send REAL orders to Kotak D (live.py). Everything else stays paper.
 """
+import bisect
 import datetime as dt
 import json
 import logging
 import socket
 import sys
+import threading
+import time
 
 sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
@@ -50,6 +57,111 @@ def _bad(msg, code=400):
     return JSONResponse({"ok": False, "error": msg}, status_code=code)
 
 
+# ── read-side speed (16-Nov-2026). Display only: nothing below is used by the strategy or by orders. ──
+# The page polls /state every 1 s, /chain every 0.4 s, /day every 3 s, /pnl every 10 s - per viewer. Each
+# answer was rebuilt from scratch for every caller (the day table re-scanned every 0.5 s sample of every
+# book), which kept this process at a full core and left tick processing 2-8 s behind.
+_memo: dict = {}                     # key -> (expires_monotonic, value)
+_memo_locks: dict = {}
+_memo_guard = threading.Lock()
+_memo_gen = 0                        # bumped by every control / order: older answers are not stored
+
+
+def _cached(key, ttl, producer):
+    """Answer shared by every caller for `ttl` seconds. One caller builds it; the others wait for that
+    one result instead of each building their own (no pile-up)."""
+    hit = _memo.get(key)
+    if hit and hit[0] > time.monotonic():
+        return hit[1]
+    with _memo_guard:
+        lock = _memo_locks.setdefault(key, threading.Lock())
+    with lock:
+        hit = _memo.get(key)
+        if hit and hit[0] > time.monotonic():
+            return hit[1]
+        gen = _memo_gen
+        val = producer()
+        if gen == _memo_gen:                                # nothing was changed while it was being built
+            _memo[key] = (time.monotonic() + ttl, val)
+        if len(_memo) > 400:                                # old chain / day keys
+            now = time.monotonic()
+            for k in [k for k, v in list(_memo.items()) if v[0] <= now]:
+                _memo.pop(k, None)
+        return val
+
+
+def _forget():
+    """After any control / order / reset: the next read is built fresh."""
+    global _memo_gen
+    _memo_gen += 1
+    _memo.clear()
+
+
+class _ForgetAfterPost:
+    """Every POST (start, stop, exit, params, order, arm, reset) drops the shared answers when it is done."""
+
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        try:
+            await self.inner(scope, receive, send)
+        finally:
+            if scope.get("type") == "http" and scope.get("method") == "POST":
+                _forget()
+
+
+app.add_middleware(_ForgetAfterPost)
+
+
+def _fast(obj):
+    """Plain json.dumps instead of FastAPI's generic encoder (several times faster on these dicts).
+    Anything it cannot write falls back to the generic encoder, exactly as before."""
+    try:
+        return JSONResponse(obj)
+    except (TypeError, ValueError):
+        return obj
+
+
+def _t_of(row):
+    return row.get("t", 0)
+
+
+_day_run: dict = {}                  # book -> running extremes of today's samples
+_day_run_lock = threading.Lock()
+
+
+def _day_stats(nm):
+    """Today's MTM / imbalance extremes for one book, kept up to date by reading only the samples that
+    arrived since the last call (samples are appended in time order; a reset or a new day swaps in a
+    new list, which starts the count again)."""
+    h = E.hist.get(nm)
+    if h is None:
+        return {"last_mtm": None, "hi": None, "lo": None, "imx": None, "imn": None}
+    with _day_run_lock:
+        s = _day_run.get(nm)
+        if s is None or s["list"] is not h:
+            s = _day_run[nm] = {"list": h, "t": None, "last_mtm": None,
+                                "hi": None, "lo": None, "imx": None, "imn": None}
+        new = h[:] if s["t"] is None else h[bisect.bisect_right(h, s["t"], key=_t_of):]
+        for x in new:
+            m, i = x.get("mtm"), x.get("imb")
+            if m is not None:
+                if s["hi"] is None or m > s["hi"]:
+                    s["hi"] = m
+                if s["lo"] is None or m < s["lo"]:
+                    s["lo"] = m
+            if i is not None:
+                if s["imx"] is None or i > s["imx"]:
+                    s["imx"] = i
+                if s["imn"] is None or i < s["imn"]:
+                    s["imn"] = i
+        if new:
+            s["t"] = _t_of(new[-1])
+            s["last_mtm"] = new[-1]["mtm"]
+        return {k: s[k] for k in ("last_mtm", "hi", "lo", "imx", "imn")}
+
+
 def _name(name):
     name = name.upper()
     return name if E and name in E.runners else None
@@ -66,7 +178,7 @@ def health():
 
 @app.get("/state")
 def state():
-    return E.summary()
+    return _cached("state", 0.4, lambda: _fast(E.summary()))
 
 
 @app.get("/chain/{name}")
@@ -75,6 +187,10 @@ def chain(name: str, n: int = 10, expiry_n: int = 0, grid: int = 1):
     nm = _name(name)
     if not nm:
         return _bad("unknown underlying", 404)
+    return _cached(("chain", nm, n, expiry_n, grid), 0.2, lambda: _fast(_chain(nm, n, expiry_n, grid)))
+
+
+def _chain(nm, n, expiry_n, grid):
     r = E.runners[nm]
     u = r.und                                             # NIFTY_ST shows NIFTY's chain + its own lots
     e = E.market.expiry(u, expiry_n)
@@ -170,9 +286,12 @@ def history(name: str, date: str = "", since: float = 0, max_points: int = 0):
         s = days.hist_stats(date, nm)                     # past day: cached chart copy, no full parse
         rows = days.downsample(s["ds"], max_points) if s else []
     else:
-        rows = list(E.hist.get(nm, [])) if date == E.runners[nm].date else days.history(date, nm)
-        if since:
-            rows = [x for x in rows if x.get("t", 0) > since]
+        today = date == E.runners[nm].date
+        rows = E.hist.get(nm, []) if today else days.history(date, nm)
+        if since:                                         # samples are in time order: jump to the new ones
+            rows = rows[bisect.bisect_right(rows, since, key=_t_of):]
+        elif today:
+            rows = list(rows)
         if max_points > 0:
             rows = days.downsample(rows, max_points)
     # plain json.dumps: FastAPI's generic encoder took ~4 s for 8000 rows (13-Nov)
@@ -181,6 +300,10 @@ def history(name: str, date: str = "", since: float = 0, max_points: int = 0):
 
 @app.get("/days")
 def day_list():
+    return _cached("days", 20.0, _day_list)
+
+
+def _day_list():
     today = next(iter(E.runners.values())).date
     live = {r.date for r in E.runners.values()}           # BTC full expiry is already on tomorrow after 17:30
     return {"today": today, "days": sorted(set(days.list_days()) | live, reverse=True)}
@@ -190,11 +313,15 @@ def day_list():
 def day(date: str):
     """EOD P&L table for every instrument on one day (today = live numbers).
     date "live" = every book's CURRENT day (BTC full expiry is on tomorrow's book from 17:30)."""
+    return _cached(("day", date), 2.0, lambda: _fast(_day(date)))
+
+
+def _day(date):
     rows = []
     want = date
-    for nm, r in E.runners.items():
+    for nm, r in list(E.runners.items()):
         date = r.date if want == "live" else want
-        s = days.summary(date, nm, hist=list(E.hist.get(nm, [])) if date == r.date else None)
+        s = days.summary(date, nm, stats=_day_stats(nm) if date == r.date else None)
         s["date"] = date
         if date == r.date:                                 # today: live MTM, not the last file sample
             m = r.book.mtm()
@@ -213,6 +340,10 @@ def pnl(name: str):
     nm = _name(name)
     if not nm:
         return _bad("unknown underlying", 404)
+    return _cached(("pnl", nm), 5.0, lambda: _pnl(nm))
+
+
+def _pnl(nm):
     r = E.runners[nm]
     live = r.book.mtm()["total"] if r.book.trades else None
     rows = days.pnl_series(nm, today=r.date, today_pnl=live)
@@ -234,7 +365,7 @@ def control(name: str, body: dict = Body(...)):
     if a == "stop_exit":
         return E.stop(nm, exit_positions=True)
     if a == "exit_all":
-        with E.lock:
+        with E.lock_for(nm):
             return {"ok": True, "exits": E.runners[nm].book.exit_all("manual exit all")}
     return _bad(f"unknown action {a!r}")
 
@@ -283,6 +414,31 @@ def order(name: str, body: dict = Body(...)):
         return _bad(f"bad order: {e}")
 
 
+@app.get("/live/{name}")
+def live_view(name: str):
+    nm = _name(name)
+    if not nm or not E.runners[nm].live:
+        return _bad("not a live book", 404)
+    r = E.runners[nm]
+    return {"name": nm, **r.book.live_view(), "orders_all": r.book.orders[-500:]}
+
+
+@app.post("/live/{name}/arm")
+def live_arm(name: str, body: dict = Body(...)):
+    nm = _name(name)
+    if not nm or not E.runners[nm].live:
+        return _bad("not a live book", 404)
+    want = bool(body.get("armed"))
+    if want and str(body.get("confirm", "")).strip().upper() != "LIVE":
+        return _bad("type LIVE to arm")
+    st = E.live.control.set(nm, want, by=str(body.get("by") or "screen")[:40])
+    out = {"ok": True, "armed": st["armed"]}
+    if not want and E.runners[nm].running:
+        out["stop"] = E.stop(nm)                            # disarm = no new risk: rules stop, positions kept
+    E.runners[nm].event("live_arm", armed=want)
+    return out
+
+
 def main():
     import uvicorn
     from live_trading_options.mcx_terminal import kotak_session
@@ -308,8 +464,10 @@ def main():
     u = instruments.load(sess.client)
     crypto.load_into(u)                                   # BTC options from Delta (public, no key)
     market = Market(u)
+    from live_trading_options.cepe_imbalance import live as LV     # LIVE books on Kotak D (same login)
+    live_ctx = LV.LiveCtx(LV.Account(sessions))
     global E
-    E = Engine(u, market)
+    E = Engine(u, market, live=live_ctx)
     feed = crypto.CompositeFeed(MultiFeed(sessions, E.on_ticks), crypto.DeltaFeed(E.on_ticks))
     E.feed = feed
     E.refresh_subscriptions()                             # spots + futures first; windows once ATM is known

@@ -132,11 +132,20 @@ def events(date: str, name: str) -> list:
 
 
 def positions(date: str, name: str) -> list:
+    # 16-Nov: cached until the file changes (the P&L chart re-read every past day's book on every poll)
     p = C.DATA / "books" / date / f"{name}.json"
-    if not p.exists():
+    try:
+        st = os.stat(p)
+    except OSError:
         return []
+    key = "pos:" + str(p)
+    hit = _cache.get(key)
+    if hit and hit[0] == st.st_mtime and hit[1] == st.st_size:
+        return list(hit[2])
     doc = json.loads(p.read_text(encoding="utf-8"))
-    return sorted(doc.get("positions", {}).values(), key=lambda x: (x["expiry"], x["kind"], x["strike"]))
+    rows = sorted(doc.get("positions", {}).values(), key=lambda x: (x["expiry"], x["kind"], x["strike"]))
+    _cache[key] = (st.st_mtime, st.st_size, rows)
+    return list(rows)
 
 
 def day_pnl(date: str, name: str):
@@ -167,15 +176,20 @@ def pnl_series(name: str, today: str = "", today_pnl=None) -> list:
     return out
 
 
-def summary(date: str, name: str, hist=None) -> dict:
+def summary(date: str, name: str, hist=None, stats=None) -> dict:
     """EOD numbers for one instrument on one saved day. `hist`: today's in-memory samples (never
-    re-parse today's growing history file: 7 x ~6 MB every 3 s pegged the CPU on 4-Nov)."""
+    re-parse today's growing history file: 7 x ~6 MB every 3 s pegged the CPU on 4-Nov).
+    `stats`: today's extremes already worked out by the caller ({"last_mtm","hi","lo","imx","imn"}), so
+    the samples are not scanned at all (16-Nov: 26 books x up to 170k samples every 3 s per viewer)."""
     pos = positions(date, name)
     tr = trades(date, name)
     ev = events(date, name)
     realized = sum(p.get("realized", 0.0) for p in pos)
     open_lots = sum(abs(p.get("lots", 0)) for p in pos)
-    if hist is None:                                   # past day: the cached digest, never the full file
+    if stats is not None:
+        last_mtm = stats["last_mtm"] if stats.get("last_mtm") is not None else realized
+        hi, lo, imx, imn = stats.get("hi"), stats.get("lo"), stats.get("imx"), stats.get("imn")
+    elif hist is None:                                 # past day: the cached digest, never the full file
         s = hist_stats(date, name) or {}
         last_mtm = s.get("last_mtm") if s.get("last_mtm") is not None else realized
         hi, lo, imx, imn = s.get("mtm_high"), s.get("mtm_low"), s.get("imb_max"), s.get("imb_min")

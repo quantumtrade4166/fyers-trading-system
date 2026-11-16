@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<script src="/static/net.js?v=1"></script>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trading Dashboard</title>
 <link rel="stylesheet" href="/static/tailwind.built.css">
@@ -1173,6 +1174,35 @@
         </div>
       </div>
       <div id="btc-equity-chart" style="height:260px"></div>
+    </div>
+
+    <!-- Day by day. The equity card above is ONE session; this is the whole run:
+         one bar per traded day, the running total of those bars, and how far that
+         total sits under its own best point. Deliberately NOT tied to the date
+         picker — it is the run, not the selected day, and the note says so. -->
+    <div class="card p-4 mb-5">
+      <div class="flex items-center justify-between mb-2">
+        <div>
+          <div class="text-sm font-semibold text-slate-200">Day by day — <span id="btc-daily-title">A · ist_day</span></div>
+          <div class="text-[10px] text-slate-500">realized P&amp;L per traded day, net of fees · a cycle is filed by its first-entry date</div>
+          <div id="btc-daily-note" class="text-[10px] text-amber-400 mt-0.5"></div>
+        </div>
+        <div class="text-[10px] text-slate-500 text-right" id="btc-daily-stats"></div>
+      </div>
+      <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+        <div>
+          <div class="text-[10px] text-slate-500 mb-1">Daily P&amp;L <span id="btc-bars-sub" class="text-slate-600"></span></div>
+          <div id="btc-bars-chart" style="height:200px"></div>
+        </div>
+        <div>
+          <div class="text-[10px] text-slate-500 mb-1">Cumulative P&amp;L <span id="btc-cum-sub" class="text-slate-600"></span></div>
+          <div id="btc-cum-chart" style="height:200px"></div>
+        </div>
+        <div>
+          <div class="text-[10px] text-slate-500 mb-1">Drawdown from peak <span id="btc-ddown-sub" class="text-slate-600"></span></div>
+          <div id="btc-ddown-chart" style="height:200px"></div>
+        </div>
+      </div>
     </div>
 
     <div class="grid grid-cols-1 xl:grid-cols-2 gap-5">
@@ -5081,6 +5111,8 @@ function btcInit() {
     try { btcEqChart.applyOptions({ width: el.clientWidth }); } catch (e) {}
   }).observe(el);
   btcLoadDates();
+  btcInitDaily();
+  btcLoadDaily();
 }
 
 /* Offer today for live viewing, but DEFAULT to the newest day that actually HAS
@@ -5467,6 +5499,7 @@ function btcSetWinProfile(p) {
   btcWinProfile = p;
   try { localStorage.setItem('btcProfile', p); } catch (e) {}
   btcSyncSelection();
+  btcRenderDaily();      // redraw from cache — the run-wide data does not refetch
   btcFetchState();
 }
 function btcSyncSelection() {
@@ -5646,10 +5679,146 @@ function btcRenderEquity(eq, source) {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   DAY BY DAY — the run, not a session.
+   Three charts off one dataset: a bar per traded day, the running total of
+   those bars, and the distance of that total below its own peak.
+
+   Drawdown is in DOLLARS from a peak that starts at 0. There is no capital
+   base behind a paper book, so a percentage would divide by a number nobody
+   committed. The consequence is worth knowing when reading it: a run that
+   only ever loses shows drawdown equal to its total, because it has never
+   been above where it started.
+   ══════════════════════════════════════════════════════════════════════════ */
+let btcBarsChart = null, btcBarsSeries = null;
+let btcCumChart = null, btcCumSeries = null;
+let btcDdChart = null, btcDdSeries = null;
+let btcDailyData = null, btcDailyTimer = null;
+
+function btcInitDaily() {
+  if (btcBarsChart || !window.LightweightCharts) return;
+  const base = {
+    layout: { background: { color: 'transparent' }, textColor: '#64748b', fontSize: 10 },
+    grid: { vertLines: { color: 'rgba(148,163,184,0.06)' }, horzLines: { color: 'rgba(148,163,184,0.06)' } },
+    rightPriceScale: { borderColor: 'rgba(148,163,184,0.15)' },
+    timeScale: { borderColor: 'rgba(148,163,184,0.15)', timeVisible: false },
+    crosshair: { mode: 0 },
+    height: 200,
+  };
+  const mk = (id, opts) => {
+    const el = document.getElementById(id);
+    if (!el) return [null, null];
+    const c = LightweightCharts.createChart(el, Object.assign({}, base, { width: el.clientWidth }));
+    // REFIT ON RESIZE, not just resize. These charts are built while the tab is
+    // still display:none, so they are born at ~0px wide; widening them later
+    // keeps the old bar spacing and leaves 36 days crammed into a thin band on
+    // one side of an empty panel. Re-fitting on every resize is what makes the
+    // series actually span the panel it was given.
+    new ResizeObserver(() => {
+      try {
+        c.applyOptions({ width: el.clientWidth });
+        c.timeScale().fitContent();
+      } catch (e) {}
+    }).observe(el);
+    return [c, opts(c)];
+  };
+  // Bars carry their own per-point colour (green up, red down), so the series
+  // colour is only the fallback for a value of exactly 0.
+  [btcBarsChart, btcBarsSeries] = mk('btc-bars-chart', c => c.addHistogramSeries({
+    color: '#64748b', priceLineVisible: false, lastValueVisible: false,
+    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+  }));
+  [btcCumChart, btcCumSeries] = mk('btc-cum-chart', c => c.addAreaSeries({
+    lineColor: '#38bdf8', topColor: 'rgba(56,189,248,0.22)',
+    bottomColor: 'rgba(56,189,248,0.0)', lineWidth: 2,
+    priceLineVisible: false, lastValueVisible: true,
+    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+  }));
+  // Drawdown is always <= 0, so the fill is inverted to hang DOWN from the
+  // zero line rather than pooling under the axis minimum.
+  [btcDdChart, btcDdSeries] = mk('btc-ddown-chart', c => c.addAreaSeries({
+    lineColor: '#f43f5e', topColor: 'rgba(244,63,94,0.0)',
+    bottomColor: 'rgba(244,63,94,0.30)', lineWidth: 2, invertFilledArea: true,
+    priceLineVisible: false, lastValueVisible: true,
+    priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
+  }));
+}
+
+async function btcLoadDaily() {
+  try {
+    const r = await fetch('/api/btc/daily', { cache: 'no-store' });
+    const j = await r.json();
+    if (j && j.ok) { btcDailyData = j.profiles || {}; btcRenderDaily(); }
+  } catch (e) {}
+}
+
+function btcRenderDaily() {
+  btcInitDaily();
+  const m = BTC_META[btcWinProfile] || {};
+  const t = document.getElementById('btc-daily-title');
+  if (t) { t.textContent = m.label || btcWinProfile; t.style.color = m.color || ''; }
+  const set = (id, txt) => { const e = document.getElementById(id); if (e) e.textContent = txt; };
+  if (!btcBarsSeries) return;
+
+  const v = (btcDailyData || {})[btcWinProfile];
+  const days = (v && v.days) || [];
+  if (!days.length) {
+    [btcBarsSeries, btcCumSeries, btcDdSeries].forEach(s => { try { s.setData([]); } catch (e) {} });
+    set('btc-daily-stats', '');
+    set('btc-bars-sub', ''); set('btc-cum-sub', ''); set('btc-ddown-sub', '');
+    set('btc-daily-note', btcDailyData ? 'No completed cycles for this profile yet.' : '');
+    return;
+  }
+  // Daily data keyed by date string — no epoch, so no timezone shift to undo.
+  try {
+    btcBarsSeries.setData(days.map(d => ({
+      time: d.date, value: d.pnl,
+      color: d.pnl > 0 ? '#10b981' : (d.pnl < 0 ? '#f43f5e' : '#64748b'),
+    })));
+    btcCumSeries.setData(days.map(d => ({ time: d.date, value: d.cum })));
+    btcDdSeries.setData(days.map(d => ({ time: d.date, value: d.dd })));
+  } catch (e) {}
+  [btcBarsChart, btcCumChart, btcDdChart].forEach(c => {
+    try { c.timeScale().fitContent(); } catch (e) {}
+  });
+
+  const money = (x, dp) => btcMoney(x, dp === undefined ? 2 : dp);
+  const st = document.getElementById('btc-daily-stats');
+  if (st) {
+    const cls = v.total > 0 ? 'text-emerald-400' : (v.total < 0 ? 'text-rose-400' : 'text-slate-400');
+    st.innerHTML = v.traded_days + ' traded days · ' + v.first + ' → ' + v.last
+      + '<div class="' + cls + ' font-semibold">' + money(v.total) + ' total · '
+      + money(v.avg_day) + '/day</div>'
+      // Fees are a COST, so they get no +/- sign: "fees +$1,021.78" reads as
+      // money earned, and gross + a positive-looking fee does not equal total.
+      + '<div class="text-slate-500">gross ' + money(v.gross)
+      + ' · less fees $' + Number(v.fees || 0).toFixed(2) + '</div>';
+  }
+  set('btc-bars-sub', '— ' + v.wins + ' up / ' + v.losses + ' down (' + v.win_pct + '% won)'
+    + ' · best ' + money(v.best_day) + ' · worst ' + money(v.worst_day));
+  set('btc-cum-sub', '— now ' + money(v.total) + ' after ' + v.traded_days + ' days');
+  set('btc-ddown-sub', '— max ' + money(v.max_dd) + ' on ' + (v.max_dd_date || '—')
+    + ' · now ' + money(v.cur_dd));
+
+  // Two things a reader would otherwise get wrong: these charts ignore the date
+  // picker, and a monotonic loser's drawdown equals its total by construction.
+  const notes = ['whole run — not affected by the date picker above'];
+  if (v.excluded) notes.push(v.excluded + ' cycle(s) excluded (late start / interrupted)');
+  if (days.length && Math.abs(v.max_dd - v.total) < 0.01 && v.total < 0) {
+    notes.push('the curve never rose above its start, so max drawdown = the total');
+  }
+  set('btc-daily-note', notes.join(' · '));
+}
+
 function btcStartPoll() {
   btcStopPoll();
   btcSyncSelection();
   btcFetchState();
+  // A row only appears when a cycle CLOSES — once a day per profile — so this
+  // refreshes slowly. Polling it at the ticker's rate would re-read the whole
+  // run every second to learn nothing.
+  btcLoadDaily();
+  btcDailyTimer = setInterval(btcLoadDaily, 120000);
   // The 1s ticker exists to move a live price. On a past day there is nothing to
   // move, and letting it run would paint today's spot and MTM over a historical
   // page — so it simply does not start.
@@ -5664,6 +5833,7 @@ function btcStartPoll() {
 function btcStopPoll() {
   if (btcTickTimer) { clearInterval(btcTickTimer); btcTickTimer = null; }
   if (btcStateTimer) { clearInterval(btcStateTimer); btcStateTimer = null; }
+  if (btcDailyTimer) { clearInterval(btcDailyTimer); btcDailyTimer = null; }
 }
 
 // ════════════════════════════════════════════════════════════════════════════

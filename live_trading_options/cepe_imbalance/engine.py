@@ -52,6 +52,8 @@ def save_settings(name, **fields):
 
 
 def default_auto(name) -> dict:
+    if C.is_live(name):                                  # owner 16-Nov: 09:16, and only while ARMED
+        return {"auto_start": C.LIVE_AUTO_DEFAULT, "auto_time": C.LIVE_AUTO_TIME}
     u = C.und_of(name)
     times = C.ST_AUTO_START_TIME if C.is_variant(name) else C.AUTO_START_TIME
     return {"auto_start": C.AUTO_START_DEFAULT, "auto_time": times.get(u) or times[C.kind_of(name)]}
@@ -164,18 +166,22 @@ class Context:
 
 
 class Runner:
-    def __init__(self, name, market, strategy_name=None, date=None, persist=True):
+    def __init__(self, name, market, strategy_name=None, date=None, persist=True, book_factory=None):
         self.name = name                    # book name: "NIFTY" or the Supertrend variant "NIFTY_ST"
         self.und = C.und_of(name)
-        strategy_name = strategy_name or ("cepe_st" if C.is_variant(name) else
-                                          "cepe_new" if C.is_new_rules(name) else S.DEFAULT)
+        strategy_name = strategy_name or ({(True, False): "cepe_st", (False, True): "cepe_new",
+                                           (True, True): "cepe_st_new"}.get((C.is_variant(name), C.is_new_rules(name)))
+                                          or S.DEFAULT)
         self.market = market
         self.persist = persist
         self.date = date or book_date(name)
-        self.book = PaperBook(name, market, self.date, persist=persist)
+        self.book = (book_factory or PaperBook)(name, market, self.date, persist=persist)
+        self.live = bool(getattr(self.book, "live", False))
         self.strategy_name = strategy_name
         self.strategy = S.REGISTRY[strategy_name]()
         self.params = dict(getattr(self.strategy, "params", {}) or {})
+        if C.is_live(name):
+            self.params.update(C.LIVE_DEFAULT_PARAMS)    # 1 lot, max loss Rs 5,000 (until changed on screen)
         self.expiry_n = 0
         self.running = False
         self.square_off_done = False
@@ -235,17 +241,18 @@ class Runner:
 
 
 class Engine:
-    def __init__(self, universe, market, feed=None, persist=True):
+    def __init__(self, universe, market, feed=None, persist=True, live=None):
         self.u = universe
         self.market = market
         self.feed = feed
         self.persist = persist
+        self.live = live                    # live.LiveCtx (Kotak D) or None: then NO live books exist at all
         self.lock = threading.RLock()
-        # books: one normal + one Supertrend variant ("NIFTY_ST") per underlying
+        # books: one normal + one Supertrend variant ("NIFTY_ST") per underlying (+ the LIVE books)
         self.runners = {}
         for n in C.ALL_BOOKS:
-            if C.und_of(n) in universe.underlyings:
-                self.runners[n] = self._attach(Runner(n, market, persist=persist))
+            if C.und_of(n) in universe.underlyings and (live is not None or not C.is_live(n)):
+                self.runners[n] = self._runner(n)
         self.unds = [n for n in C.ORDER if n in universe.underlyings]
         self.signals = {u: STS.StSignal(u) for u in self.unds}
         self.routes: dict[str, set] = {}          # feed key -> {book names}
@@ -256,8 +263,44 @@ class Engine:
         self.started_at = time.time()
         self.hist: dict[str, list] = {n: [] for n in self.runners}   # today's MTM/imbalance samples
         self.quotes = QuoteRecorder(universe) if persist else None    # every tick, for exact replays
+        # LIVE books (16-Nov fix): a Kotak order takes seconds (send, poll, re-price). Run under the engine
+        # lock on the feed thread, it froze EVERY book and every price/MTM until Kotak answered. Each live
+        # book now has its own lock + worker thread; ticks only queue keys for it (live_async, set by
+        # run_timer). Tests leave live_async off -> everything runs inline, as before.
+        self.live_async = False
+        self.live_locks = {n: threading.RLock() for n in self.runners if C.is_live(n)}
+        self._live_keys = {n: set() for n in self.live_locks}
+        self._live_wake = {n: threading.Event() for n in self.live_locks}
+        self._live_klock = threading.Lock()
+        self.live_busy: dict = {}                 # name -> time the worker began its current step
         if persist:
             self._load_hist()
+
+    def lock_for(self, name):
+        """The lock guarding one book: its own for a live book (async), else the engine lock."""
+        return self.live_locks.get(name) if (self.live_async and name in self.live_locks) else self.lock
+
+    def _runner(self, name, strategy_name=None, date=None):
+        """A Runner; a "{NAME}_LIVE" book trades real orders on Kotak D (live.KotakLiveBook)."""
+        bf = None
+        if C.is_live(name):
+            from live_trading_options.cepe_imbalance.live import KotakLiveBook
+            bf = lambda n, m, d, persist: KotakLiveBook(n, m, self.live, d, persist)
+        return self._attach(Runner(name, self.market, strategy_name, date=date, persist=self.persist, book_factory=bf))
+
+    # ── live guard: an order that could not be completed -> flatten + stop the book ──
+    def live_guard(self, r):
+        b = r.book
+        if not r.live or not b.fault or r.state.get("phase") == "halted":
+            return
+        r.event("live_fault", fault=b.fault)
+        log.error("%s LIVE FAULT: %s -> exit all + stop", r.name, b.fault)
+        out = b.exit_all("FAULT: " + str(b.fault)[:120])
+        r.state["phase"] = "halted"
+        r.state["blocked"] = "LIVE halted: " + str(b.fault)[:200]
+        r.running = False
+        r.event("live_halted", exits=len(out), pending_exit=bool(b.pending_exit))
+        r.save_state()
 
     def _attach(self, r):
         """Give a Supertrend variant book its signal (the underlying's shared StSignal)."""
@@ -397,29 +440,56 @@ class Engine:
                 touched.setdefault(n, []).append(k)
         if not touched:
             return
+        if self.live_async:                                     # live books: hand the keys to their worker
+            for n in [n for n in touched if n in self.live_locks]:
+                with self._live_klock:
+                    self._live_keys[n].update(touched.pop(n))
+                self._live_wake[n].set()
         with self.lock:
             for n, ks in touched.items():
                 r = self.runners[n]
                 if r.running and not r.square_off_done:
                     r.call(r.strategy.on_tick, ks)
+                    self.live_guard(r)
 
     # ── controls ────────────────────────────────────────────────────────────
     def start(self, name, how="manual"):
-        with self.lock:
+        with self.lock_for(name):
             r = self.runners[name]
+            if r.live:
+                if not self.live.control.armed(name):
+                    return {"ok": False, "error": "LIVE is not armed - arm it first"}
+                if r.book.pending_exit:
+                    return {"ok": False, "error": "an exit is still being retried - wait until flat"}
+                if r.book.fault and not r.book.clear_fault():
+                    return {"ok": False, "error": f"book not flat / orders unsettled: {r.book.fault}"}
             r.state["auto_done"] = True                     # any start/stop today ends auto-start for today
             if r.running:
                 return {"ok": True, "note": "already running"}
             r.running, r.square_off_done = True, False
             r.event("start", strategy=r.strategy_name, how=how)
+            if r.live and r.state.get("phase") in ("halted", "stopped", "done"):
+                r.state["phase"] = None                     # a fresh Start after a halt / stop
+                r.state["blocked"] = None
+            if r.live and self.live_async:                  # entry orders run on the book's worker, not here
+                r.pending_start = True
+                if r.state.get("phase") not in ("in", "wait_entry"):    # a restart before the worker ran
+                    r.state["phase"] = "in" if any(p.lots for p in r.book.positions.values()) else "wait_entry"
+                r.save_state()
+                self._live_wake[name].set()
+                return {"ok": True, "note": "starting - entry orders go out now"}
             r.call(r.strategy.on_start)
+            self.live_guard(r)
             r.save_state()
             return {"ok": True}
 
     def stop(self, name, exit_positions=False):
-        with self.lock:
+        r0 = self.runners[name]
+        r0.running = False                                  # at once: a live worker mid-step stops after it
+        with self.lock_for(name):
             r = self.runners[name]
             r.running = False
+            r.pending_start = False
             r.state["auto_done"] = True                     # a manual stop is not undone by auto-start
             out = r.book.exit_all("stop") if exit_positions else []
             r.event("stop", exited=len(out))
@@ -433,6 +503,8 @@ class Engine:
             bad = [k for k in changes if k not in allowed]
             if bad:
                 return {"ok": False, "error": f"unknown params {bad}"}
+            if r.live and not (1 <= int(changes.get("lots", 1)) <= C.LIVE_MAX_LOTS):
+                return {"ok": False, "error": f"live lots must be 1..{C.LIVE_MAX_LOTS}"}
             for k, v in changes.items():
                 r.params[k] = type(r.strategy.params[k])(v) if r.strategy.params[k] is not None else v
             r.event("params", **changes)
@@ -461,6 +533,8 @@ class Engine:
         import shutil
         with self.lock:
             r = self.runners[name]
+            if r.live:
+                return {"ok": False, "error": "a LIVE book is never reset (its file is the record of real orders)"}
             stamp = dt.datetime.now(IST).strftime("%H%M%S")
             moved = []
             if self.persist:
@@ -475,7 +549,7 @@ class Engine:
                 if h.exists():
                     shutil.move(str(h), str(arch / f"{name}_history.jsonl"))
                     moved.append(h.name)
-            nr = self._attach(Runner(name, self.market, r.strategy_name, date=r.date, persist=self.persist))
+            nr = self._runner(name, r.strategy_name, date=r.date)
             nr.state["auto_done"] = True                     # reset = owner's action; no auto re-trigger
             self.runners[name] = nr
             self.hist[name] = []
@@ -490,6 +564,8 @@ class Engine:
         """Start once a day at auto_time (Mon-Fri, inside the session, before square-off)."""
         if r.running or r.square_off_done or not r.auto.get("auto_start") or r.state.get("auto_done"):
             return
+        if r.live and not self.live.control.armed(n):       # live auto-start only while ARMED
+            return
         if now.weekday() >= 5 and not every_day(n):
             return
         o, _close, sq = session(n, trading_day(n, now))
@@ -503,6 +579,8 @@ class Engine:
     def manual_order(self, name, strike, kind, side, lots, expiry_n=None):
         with self.lock:
             r = self.runners[name]
+            if r.live:
+                return {"ok": False, "error": "manual orders are paper-only (the live book trades its rules only)"}
             e = self.market.expiry(r.und, r.expiry_n if expiry_n is None else int(expiry_n))
             c = self.market.contract(r.und, e, float(strike), kind.upper())
             if not c:
@@ -525,7 +603,11 @@ class Engine:
             self.refresh_subscriptions()
         with self.lock:
             for n, r in self.runners.items():
+                if self.live_async and n in self.live_locks:
+                    continue                                 # its own worker runs it (live_step)
                 self.maybe_auto_start(n, r, now)
+                if r.live:
+                    self.live_timer(n, r, now)
                 if not r.running or r.square_off_done:
                     continue
                 o, close, sq = session(n, trading_day(n, now))
@@ -536,6 +618,7 @@ class Engine:
                     r.save_state()
                 elif now >= o:
                     r.call(r.strategy.on_timer)
+                self.live_guard(r)
         if time.time() - self._last_st >= STS.SAMPLE_S:
             self._last_st = time.time()
             try:
@@ -545,6 +628,77 @@ class Engine:
         if time.time() - self._last_sample >= C.HISTORY_EVERY_S:
             self._last_sample = time.time()
             self.sample(now)
+
+    # ── live book worker: its ticks, timer and orders, off the feed thread and the engine lock ──
+    def live_step(self, n, timer=True, now=None):
+        with self.live_locks[n]:
+            r = self.runners.get(n)
+            if r is None:
+                return
+            now = now or dt.datetime.now(IST)
+            with self._live_klock:
+                keys, self._live_keys[n] = self._live_keys[n], set()
+            if r.date != book_date(n, now):
+                return                                       # the timer thread rolls the day over first
+            self.live_busy[n] = time.time()
+            try:
+                if timer:
+                    self.maybe_auto_start(n, r, now)
+                    self.live_timer(n, r, now)
+                if getattr(r, "pending_start", False):
+                    r.pending_start = False
+                    if r.running:
+                        r.call(r.strategy.on_start)
+                        self.live_guard(r)
+                        r.save_state()
+                        keys = set()                         # on_start just evaluated on the newest prices
+                if r.running and not r.square_off_done:
+                    o, _close, sq = session(n, trading_day(n, now))
+                    if timer and now >= sq:
+                        r.square_off_done = True
+                        r.event("session_end_square_off")
+                        r.call(r.strategy.on_session_end)
+                        r.save_state()
+                    elif keys:
+                        r.call(r.strategy.on_tick, sorted(keys))
+                    elif timer and now >= o:
+                        r.call(r.strategy.on_timer)
+                    self.live_guard(r)
+            finally:
+                self.live_busy.pop(n, None)
+
+    def start_live_workers(self):
+        self.live_async = True
+
+        def loop(n):
+            wake, last = self._live_wake[n], 0.0
+            while not self._stop.is_set():
+                wake.wait(0.5)
+                wake.clear()
+                t = time.time()
+                try:
+                    self.live_step(n, timer=t - last >= 0.5)
+                except Exception:
+                    log.exception("%s live worker", n)
+                    time.sleep(0.5)
+                if t - last >= 0.5:
+                    last = t
+        for n in self.live_locks:
+            threading.Thread(target=loop, args=(n,), daemon=True, name=f"CepeLive-{n}").start()
+
+    def live_timer(self, n, r, now):
+        """Live books: retry an unfinished exit; square off at square-off time even if stopped by hand."""
+        b = r.book
+        try:
+            b.retry_exit()
+            o, _close, sq = session(n, trading_day(n, now))
+            if now >= sq and not r.state.get("live_eod_done") and any(p.lots for p in b.positions.values()):
+                r.state["live_eod_done"] = True
+                r.event("live_eod_square_off", running=r.running)
+                b.exit_all("session end (live safety)")
+                r.save_state()
+        except Exception:
+            log.exception("%s live timer", n)
 
     def sample(self, now):
         for n, r in self.runners.items():
@@ -605,7 +759,10 @@ class Engine:
                     continue
                 if any(p.lots for p in r.book.positions.values()):
                     r.event("rollover_with_open_positions_dropped")
-                self.runners[n] = self._attach(Runner(n, self.market, r.strategy_name, date=date, persist=self.persist))
+                if r.live and any(p.lots for p in r.book.positions.values()):
+                    r.event("rollover_with_LIVE_positions_carried")      # the new book carries them in
+                with self.live_locks.get(n) or self.lock:     # never swap a live book mid-order
+                    self.runners[n] = self._runner(n, r.strategy_name, date=date)
                 self.hist[n] = []
         log.info("day rollover -> %s%s", date, f" ({only})" if only else "")
 
@@ -617,6 +774,7 @@ class Engine:
                 except Exception:
                     log.exception("timer")
         threading.Thread(target=loop, daemon=True, name="CepeTimer").start()
+        self.start_live_workers()
 
     def stop_all(self):
         self._stop.set()
@@ -633,7 +791,8 @@ class Engine:
             e = self.market.expiry(u, r.expiry_n)
             rk = self.market.ref_key(u, e)
             rq = self.market.quote(rk) if rk else None
-            out.append({"name": n, "und": u, "variant": "st" if C.is_variant(n) else "new" if C.is_new_rules(n) else "normal",
+            out.append({"name": n, "und": u, "variant": "st_new" if C.is_variant(n) and C.is_new_rules(n) else "st" if C.is_variant(n)
+                        else "new" if C.is_new_rules(n) else "normal",
                         "label": C.label_of(n), "kind": C.UNDERLYINGS[u]["kind"], "ccy": C.ccy_of(n),
                         "date": r.date, "running": r.running,
                         "strategy": r.strategy_name, "expiry": e, "lot": self.u.underlyings[u].lot,
@@ -648,6 +807,7 @@ class Engine:
                         "strat_atm": r.state.get("atm"), "blocked": r.state.get("blocked"),
                         "params": r.params, "step": float(r.params.get("step") or C.STRIKE_STEP.get(u) or 0),
                         "auto_start": r.auto.get("auto_start"), "auto_time": r.auto.get("auto_time"),
-                        "auto_done": bool(r.state.get("auto_done"))})
+                        "auto_done": bool(r.state.get("auto_done")), "live": ({**r.book.live_view(), "busy_s": round(time.time() - self.live_busy[n], 1)
+                                  if n in self.live_busy else None} if r.live else None)})
         return {"now": now.isoformat(timespec="seconds"), "underlyings": out,
                 "feed": self.feed.status() if self.feed else None, "universe_date": self.u.file_date}

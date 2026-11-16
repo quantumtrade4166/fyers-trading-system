@@ -49,9 +49,12 @@ function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
   S.ws = ws;
-  ws.onopen = () => setFeed("connected", "ok");
-  ws.onclose = () => { setFeed("reconnecting…", "bad"); setTimeout(connect, 1000); };
+  S.wsAt = performance.now();
+  ws.onopen = () => { S.wsAt = performance.now(); setFeed("connected", "ok"); };
+  ws.onclose = () => { if (S.ws !== ws) return; setFeed("reconnecting…", "bad"); setTimeout(connect, 1000); };
   ws.onmessage = (ev) => {
+    if (S.ws !== ws) return;                   // an old socket the watchdog replaced
+    S.wsAt = performance.now();
     const m = JSON.parse(ev.data);
     switch (m.t) {
       case "d": onTicks(m.u); break;
@@ -101,6 +104,21 @@ function connect() {
 }
 const send = (o) => { if (S.ws && S.ws.readyState === 1) { S.ws.send(JSON.stringify(o)); return true; } return false; };
 setInterval(() => send({ op: "ping", c: performance.now() }), 2000);
+// Watchdog: the engine answers every ping (2 s), so 8 s of silence = this page's link is dead even if the
+// browser still calls it open (a half-dead connection through the tunnel never fires onclose). Drop it and
+// connect again - the engine sends a full fresh snapshot, same as pressing reload.
+const WS_SILENT_MS = 8000;
+function wsWatch() {
+  const ws = S.ws;
+  if (!ws || ws.readyState !== 1 || performance.now() - (S.wsAt || 0) < WS_SILENT_MS) return;
+  console.warn("no data for", Math.round(performance.now() - S.wsAt), "ms - reconnecting");
+  S.ws = null;
+  try { ws.close(); } catch (e) {}
+  setFeed("reconnecting…", "bad");
+  connect();
+}
+setInterval(wsWatch, 2000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) wsWatch(); });
 
 function setFeed(txt, cls) { $("feedtxt").textContent = txt; $("feed").className = "pill " + (cls || ""); }
 

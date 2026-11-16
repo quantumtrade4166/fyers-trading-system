@@ -372,3 +372,120 @@ def audit(limit: int = Query(400, ge=1, le=5000), day: str = Query(None),
     rows = rows[-limit:]
     return {"ok": True, "day": day, "events": rows,
             "total": total, "truncated": total > len(rows)}
+
+
+@router.get("/daily")
+def daily():
+    """Day-by-day realized P&L per profile, with the cumulative and drawdown curves.
+
+    The equity endpoint answers "how did ONE session go". This one answers "how is
+    the run going" — one bar per day the profile actually traded, the running total
+    of those bars, and how far that total sits below its own best point.
+
+    Which day a cycle belongs to: the date of its FIRST ENTRY, the same rule
+    `/cycles` uses. A full_cycle/continuous cycle opens 17:35 and closes 17:10 the
+    next day, so filing it by its end date would push nearly every one of them onto
+    the day after the session you were watching.
+
+    Late-start and interrupted cycles are counted in `excluded`, never in the
+    curves: both are evidence about the plumbing (engine restarted, session already
+    under way), not about the strategy, so averaging them in would quietly mix a
+    deployment accident into the result.
+
+    Drawdown is in DOLLARS, measured from the running peak of the cumulative P&L,
+    and the peak starts at 0 — this is a P&L curve with no capital base behind it,
+    so a percentage would be a division by an amount nobody committed. A run that
+    only ever loses therefore shows drawdown equal to its total, which is the
+    honest reading: it has never been above where it started.
+    """
+    f = RESULTS / "cycles.jsonl"
+    rows = []
+    if f.exists():
+        try:
+            for line in f.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rows.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+        except Exception:
+            pass
+
+    out = {}
+    for name in PROFILES:
+        mine = [r for r in rows if r.get("profile") == name]
+        clean = [r for r in mine
+                 if not r.get("late_start") and not r.get("interrupted")]
+
+        # Group by day. One cycle per day is the norm, but summing rather than
+        # assuming keeps a day with two of them from silently losing one.
+        agg = {}
+        for r in clean:
+            d = (r.get("first_entry") or r.get("ended") or "")[:10]
+            if len(d) != 10:
+                continue
+            a = agg.setdefault(d, {"date": d, "pnl": 0.0, "gross": 0.0, "fees": 0.0,
+                                   "cycles": 0, "stops": 0, "adj": 0, "legs": 0})
+            a["pnl"] += r.get("realized") or 0.0
+            a["gross"] += r.get("gross") or 0.0
+            a["fees"] += r.get("fees") or 0.0
+            a["stops"] += r.get("stopped_legs") or 0
+            a["adj"] += r.get("adjustments") or 0
+            a["legs"] += r.get("legs") or 0
+            a["cycles"] += 1
+
+        days, cum, peak, max_dd, max_dd_day = [], 0.0, 0.0, 0.0, None
+        for d in sorted(agg):
+            a = agg[d]
+            cum += a["pnl"]
+            peak = max(peak, cum)
+            dd = cum - peak
+            if dd < max_dd:
+                max_dd, max_dd_day = dd, d
+            days.append({
+                "date": d,
+                "pnl": round(a["pnl"], 4),
+                "gross": round(a["gross"], 4),
+                "fees": round(a["fees"], 4),
+                "cycles": a["cycles"],
+                "stops": a["stops"],
+                "adj": a["adj"],
+                "legs": a["legs"],
+                "cum": round(cum, 4),
+                "peak": round(peak, 4),
+                "dd": round(dd, 4),
+            })
+
+        wins = [d for d in days if d["pnl"] > 0]
+        losses = [d for d in days if d["pnl"] < 0]
+        best = max(days, key=lambda x: x["pnl"]) if days else None
+        worst = min(days, key=lambda x: x["pnl"]) if days else None
+        out[name] = {
+            "days": days,
+            "traded_days": len(days),
+            "total": round(cum, 4),
+            "gross": round(sum(d["gross"] for d in days), 4),
+            "fees": round(sum(d["fees"] for d in days), 4),
+            "avg_day": round(cum / len(days), 4) if days else None,
+            "wins": len(wins),
+            "losses": len(losses),
+            "win_pct": round(100.0 * len(wins) / len(days), 1) if days else None,
+            "avg_win": round(sum(d["pnl"] for d in wins) / len(wins), 4) if wins else None,
+            "avg_loss": round(sum(d["pnl"] for d in losses) / len(losses), 4) if losses else None,
+            "best_day": best["pnl"] if best else None,
+            "best_date": best["date"] if best else None,
+            "worst_day": worst["pnl"] if worst else None,
+            "worst_date": worst["date"] if worst else None,
+            "max_dd": round(max_dd, 4),
+            "max_dd_date": max_dd_day,
+            "cur_dd": days[-1]["dd"] if days else None,
+            "first": days[0]["date"] if days else None,
+            "last": days[-1]["date"] if days else None,
+            "excluded": len(mine) - len(clean),
+        }
+
+    return {"ok": True, "profiles": out,
+            "counted": "one bar per traded day, by first-entry date; "
+                       "excludes late-start and interrupted cycles"}

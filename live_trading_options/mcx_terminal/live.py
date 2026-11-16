@@ -497,7 +497,10 @@ class LiveBook(PaperBook):
             r = getattr(self._client(), fn_name)(**kw)
         except Exception as e:
             r = {"Error": f"{type(e).__name__}: {e}"}
-        low = txt(r)[:300].lower() if not isinstance(r, list) else ""
+        # a good reply ({'stat': 'Ok', ...}) is never a dead session, even when its numbers contain "401"
+        # (16-Nov-2026: positions replies tripped this every ~30 s -> a needless Kotak re-login each time)
+        ok_reply = isinstance(r, dict) and str(r.get("stat", "")).lower() == "ok"
+        low = txt(r)[:300].lower() if not isinstance(r, list) and not ok_reply else ""
         if self._client_override is None and any(w in low for w in ("2fa", "session", "unauthor", "invalid token", "401")):
             log.warning("Kotak %s looked like an expired session (%s) - logging in again", fn_name, low[:120])
             try:

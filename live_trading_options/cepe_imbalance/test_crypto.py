@@ -197,7 +197,7 @@ def test_btc_new_rules_book(universe):
     r = e.runners["BTC_NR"]
     assert r.und == "BTC" and r.strategy_name == "cepe_new" and C.label_of("BTC_NR") == "BTC (IST 09:00) · New rules"
     assert r.params["band"] == 30.0 and r.params["step"] == 400
-    assert "BTCFULL_NR" not in e.runners and "NIFTY_NR" not in e.runners
+    assert "NIFTY_NR" not in e.runners and "NIFTY_NR_ST" not in e.runners
     assert EN.default_auto("BTC_NR")["auto_time"] == "09:00" and EN.session("BTC_NR", D) == EN.session("BTC", D)
     row = next(x for x in e.summary()["underlyings"] if x["name"] == "BTC_NR")
     assert row["variant"] == "new" and row["ccy"] == "USD" and row["step"] == 400
@@ -209,3 +209,25 @@ def test_new_rules_roll_heavy_front_leg_including_atm():
     legs = {"CE": {70000: 1, 70400: 1, 70800: 1}, "PE": {70000: 1, 69600: 1, 69200: 1}}
     assert st.op_A_any(legs, "CE", 400, 1) == [("CE", 70000, "BUY", 1), ("CE", 71200, "SELL", 1)]
     assert st.op_A_any(legs, "PE", 400, 1) == [("PE", 70000, "BUY", 1), ("PE", 68800, "SELL", 1)]
+
+
+def test_new_rules_full_expiry_and_supertrend_books(universe):
+    """Owner 16-Nov: new rules also on BTCFULL, and a Supertrend copy of both (BTC_NR_ST, BTCFULL_NR_ST)."""
+    from live_trading_options.cepe_imbalance import strategy as S
+    m = Market(universe)
+    e = EN.Engine(universe, m, persist=False)
+    f = e.runners["BTCFULL_NR"]
+    assert f.und == "BTCFULL" and f.strategy_name == "cepe_new" and f.params["band"] == 30.0
+    assert EN.session("BTCFULL_NR", D) == EN.session("BTCFULL", D)
+    assert EN.trading_day("BTCFULL_NR", at(D, "17:30")) == D + dt.timedelta(days=1)
+    for n, u in (("BTC_NR_ST", "BTC"), ("BTCFULL_NR_ST", "BTCFULL")):
+        r = e.runners[n]
+        assert r.und == u and C.is_variant(n) and C.is_new_rules(n) and C.ccy_of(n) == "USD"
+        assert r.strategy_name == "cepe_st_new" and isinstance(r.strategy, S.CePeSupertrend)
+        assert r.strategy.candidates.__func__ is S.CePeNewRules.candidates
+        assert r.params["band"] == 30.0 and r.params["step"] == 400 and r.params["st_period"] == 10
+        assert callable(getattr(r.ctx, "signal", None))                # gets the shared Supertrend signal
+        row = next(x for x in e.summary()["underlyings"] if x["name"] == n)
+        assert row["variant"] == "st_new" and row["und"] == u
+    assert C.label_of("BTCFULL_NR_ST") == "BTC (full expiry) · Supertrend · New rules"
+    assert EN.default_auto("BTC_NR_ST")["auto_time"] == "09:01" and EN.default_auto("BTCFULL_NR_ST")["auto_time"] == "17:31"

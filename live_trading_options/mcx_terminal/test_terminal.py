@@ -906,6 +906,109 @@ def test_news_desk():
     d2 = NW.NewsDesk(d.path, fetch=fetch)
     check("survives a restart", len(d2.items) == 3 and len(d2.events) == 2 and d2.snapshot()["full"])
 
+
+def test_screens_never_freeze():
+    """16-Nov-2026 10:00 IST (NSE): an OI read raced the OI sampler ('deque mutated during iteration') inside
+    the tick flush; flush_scheduled stayed True and no tick reached any screen until a reload."""
+    import asyncio
+    import threading
+    import time as _t
+    from live_trading_options.mcx_terminal import oi as OI
+    from live_trading_options.mcx_terminal import server as S
+
+    # 1. OI reads and samples from two threads at once: no error
+    b = OI.OiBook(Path(_tf.mkdtemp()), "09:00", day="2026-11-16")
+    toks = list(range(1, 400))
+    errs, stop = [], threading.Event()
+
+    def writer():
+        t = 1.7e9
+        while not stop.is_set():
+            t += 1
+            b.sample({k: int(t) % 997 for k in toks}, t)
+    th = threading.Thread(target=writer, daemon=True)
+    th.start()
+    end = _t.time() + 1.5
+    while _t.time() < end:
+        try:
+            b.bases(toks, 1.7e9 + 10**6)
+        except Exception as e:
+            errs.append(repr(e))
+            break
+    stop.set()
+    th.join(2)
+    check("OI read during sampling never raises", not errs, errs[:1])
+
+    # 2. a failing ATM/OI part of the flush still sends ticks and re-arms the next flush
+    class FakeClient:
+        def __init__(self):
+            self.got, self.base, self.watch = [], {7}, {7}
+
+        def send_nowait(self, m):
+            self.got.append(m)
+    e = S.Engine()
+    c = FakeClient()
+    e.clients.add(c)
+    e.universe = object()
+    e._atm_at = 0.0
+
+    def boom():
+        raise RuntimeError("deque mutated during iteration")
+    e.atm_straddles = boom
+    e.pending = {7: [7, 101.5] + [None] * 10}
+    e.flush_scheduled = True
+    e._flush()
+    check("flush re-armed after an error", e.flush_scheduled is False)
+    check("ticks still sent after an error", any(m.get("t") == "d" for m in c.got), c.got)
+
+    # 3. a screen 2000 messages behind is closed (it reloads fresh), never left silently stale
+    class FakeWs:
+        scope = {"mcx_user": "t"}
+        closed = None
+
+        async def close(self, code=1000):
+            FakeWs.closed = code
+
+        async def send_text(self, t):
+            raise ConnectionError("gone")
+
+    async def run():
+        cl = S.Client(FakeWs(), asyncio.get_running_loop())
+        for i in range(2001):
+            cl.send_nowait({"i": i})
+        await asyncio.sleep(0)
+        r1 = cl.dead and FakeWs.closed == 1013
+        cl2 = S.Client(FakeWs(), asyncio.get_running_loop())
+        FakeWs.closed = None
+        cl2.send_nowait({"x": {1, 2}})                     # not JSON: skipped, writer keeps going
+        cl2.send_nowait({"ok": 1})                         # send fails -> screen closed
+        await asyncio.wait_for(cl2.writer(), 2)
+        await asyncio.sleep(0)
+        return r1, cl2.dead and FakeWs.closed == 1013
+    r1, r2 = asyncio.run(run())
+    check("screen far behind -> closed so it reloads", r1)
+    check("bad message skipped, dead socket closed", r2)
+
+
+def test_good_kotak_reply_is_not_expired_session():
+    from live_trading_options.mcx_terminal import live as L
+    calls = []
+
+    class Cl:
+        def positions(self):
+            calls.append(1)
+            return {"stat": "Ok", "stCode": 200, "data": [{"actId": "17IC2", "flBuyQty": "401", "x": "session"}]}
+
+    class Sess:
+        def get(self, force=False):
+            calls.append("login" if force else "get")
+            return type("X", (), {"client": Cl()})()
+    lb = L.LiveBook.__new__(L.LiveBook)
+    lb._client_override = None
+    lb.sessions = Sess()
+    r = lb._call("positions")
+    check("good reply with '401' inside: no re-login", "login" not in calls and r["stat"] == "Ok", calls)
+
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:
         fn()

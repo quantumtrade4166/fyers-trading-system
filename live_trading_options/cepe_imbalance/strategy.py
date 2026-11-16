@@ -588,16 +588,19 @@ class CePeSupertrend(CePeImbalance):
 
 
 class CePeNewRules(CePeImbalance):
-    """NEW RULES (owner 15-Nov-2026) — paper book "{NAME}_NR" (BTC only for now), defaults band 30 % / step 400:
-      * react ONLY on a band breach: no early 'back to normal' between normal_trigger and the band
-      * re-centre / back-to-normal only on that breach (same moves as live)
-      * on a breach: shift the heavy side's FRONT strike (nearest the money, the ATM leg included) back
-        to just beyond its LAST strike (A) - repeated while beyond the band;
-        B (light side's far strike moved in) only when A is impossible; C last.
-      * no 'roll light side to ATM' move (that is a shift-ahead like B).
-    Chosen from the 15-Nov replays: best adjusting setting on 36 BTC days (still -$2.2k after fees vs hold)."""
+    """NEW RULES (owner 15/16-Nov-2026) — paper books "{NAME}_NR" / "{NAME}_NR_ST", band 30 % / step 400:
+      * react ONLY on a band breach (no early 'back to normal' between normal_trigger and the band)
+      * balance by making the HEAVY side lighter: its FRONT strike (nearest the money, ATM included) is
+        bought back and sold again beyond its LAST strike (A), repeated while beyond the band. Near expiry
+        (e.g. ATM CE 30 vs ATM PE 150) that leaves BOTH sides OTM - the light side is never pulled in.
+      * NO C (never sell ITM). Entry / re-centre plan the same way: clean set, then A on the heavy side.
+      * WAIT FOR A: a wide / missing quote on A's strikes holds the book (no fall-through to B).
+        A only fires when it lowers |imbalance| (no CE<->PE ping-pong). B only when A cannot be built.
+      * every side keeps its lots on at least 2 different strikes (3 strikes never balanced by 1).
+      * a leg that drifts ITM is rolled out only on a breach (A takes the front strike first)."""
 
     params = {**CePeImbalance.params, "band": 30.0, "step": 400}
+    MIN_STRIKES = 2
 
     def op_A_any(self, legs, heavy, step, unit):
         side = legs[heavy]
@@ -608,6 +611,35 @@ class CePeNewRules(CePeImbalance):
         else:
             first, target = max(side), min(side) - step
         return [(heavy, first, "BUY", unit), (heavy, target, "SELL", unit)]
+
+    def strikes_ok(self, old, new):
+        """Each side on >= MIN_STRIKES strikes (a side already below that may not lose more)."""
+        return all(len(new[k]) >= min(self.MIN_STRIKES, max(len(old[k]), 1)) or not new[k] for k in ("CE", "PE"))
+
+    def plan_book(self, ctx, atm):
+        """Clean set at `atm`, then A on the heavy side until |imbalance| <= band (or A stops helping)."""
+        step, unit, band = self.step(ctx), self.unit(ctx), float(ctx.params["band"])
+        legs = {"CE": self.clean("CE", atm, step, unit), "PE": self.clean("PE", atm, step, unit)}
+        imb = self.plan_imbalance(ctx, legs)
+        if imb is None:
+            return None, "waiting for prices of the 6 strikes"
+        notes = []
+        for _ in range(6):
+            if abs(imb) <= band:
+                break
+            heavy = "CE" if imb > 0 else "PE"
+            ops = self.op_A_any(legs, heavy, step, unit)
+            if not ops or not ctx.contract(ops[1][1], heavy):
+                break                                              # no strike that far out
+            nxt_legs = self.apply_ops(legs, ops)
+            nxt = self.plan_imbalance(ctx, nxt_legs)
+            if nxt is None:
+                return None, f"waiting for prices of {heavy} {ops[1][1]:g}"
+            if abs(nxt) >= abs(imb):
+                break
+            legs, imb = nxt_legs, nxt
+            notes.append(f"A {heavy} {ops[0][1]:g}->{ops[1][1]:g}")
+        return legs, notes
 
     def candidates(self, ctx, atm):
         step, unit, band = self.step(ctx), self.unit(ctx), float(ctx.params["band"])
@@ -623,23 +655,38 @@ class CePeNewRules(CePeImbalance):
             if after is not None and abs(after) <= float(ctx.params["normal_band"]):
                 yield ops, f"back to normal (clean set {after:+.1f}%)"
         clean = {k: self.clean(k, atm, step, unit) for k in ("CE", "PE")}
-        if legs["CE"] != clean["CE"] and legs["PE"] != clean["PE"] \
-                and sum(legs["CE"].values()) == sum(legs["PE"].values()) == 3 * unit:
+        if legs["CE"] != clean["CE"] and legs["PE"] != clean["PE"]                 and sum(legs["CE"].values()) == sum(legs["PE"].values()) == 3 * unit:
             target, notes = self.plan_book(ctx, atm)
             if target is not None and target != legs and (target["CE"] == clean["CE"] or target["PE"] == clean["PE"]):
                 after = self.plan_imbalance(ctx, target)
                 if after is not None and abs(after) <= band:
                     yield self.op_to(legs, target), f"re-centre ({after:+.1f}%)"
         a = self.op_A_any(legs, heavy, step, unit)
-        if a:
-            yield a, f"A front->back ({heavy} heavy {imb:+.1f}%)"
-        b = self.op_B(legs, heavy, atm, unit)
-        if b:
+        if a and ctx.contract(a[1][1], heavy):
+            nxt = self.apply_ops(legs, a)
+            after = self.plan_imbalance(ctx, nxt)
+            if after is None:
+                self.blocked(ctx, f"A ({heavy} heavy {imb:+.1f}%): waiting for a price of {heavy} {a[1][1]:g}",
+                             key=f"A price {heavy} {a[1][1]:g}")
+                return
+            if abs(after) >= abs(imb):
+                self.blocked(ctx, f"A ({heavy} heavy {imb:+.1f}%) would not lower the imbalance ({after:+.1f}%): waiting",
+                             key=f"A no gain {heavy}")
+                return
+            if self.strikes_ok(legs, nxt):
+                yield a, f"A front->back ({heavy} heavy {imb:+.1f}%)"
+                return                                                   # held by a wide quote: wait for A, never B
+        b = self.op_B(legs, heavy, atm, unit)                            # A cannot be built at all
+        if b and self.strikes_ok(legs, self.apply_ops(legs, b)):
             yield b, f"B ({heavy} heavy {imb:+.1f}%)"
-        c = self.op_C(legs, heavy, atm, step, unit)
-        if c:
-            yield c, f"C ({heavy} heavy {imb:+.1f}%)"
 
 
-REGISTRY = {"cepe": CePeImbalance, "cepe_st": CePeSupertrend, "cepe_new": CePeNewRules, "idle": Idle}
+class CePeSupertrendNewRules(CePeSupertrend, CePeNewRules):
+    """Owner 16-Nov-2026 — book "{NAME}_NR_ST": Supertrend decides in / flat (CePeSupertrend), and while in,
+    adjustments follow the new rules (CePeNewRules.candidates via the MRO)."""
+    params = {**CePeNewRules.params, "st_period": 10, "st_mult": 3.0}
+
+
+REGISTRY = {"cepe": CePeImbalance, "cepe_st": CePeSupertrend, "cepe_new": CePeNewRules,
+            "cepe_st_new": CePeSupertrendNewRules, "idle": Idle}
 DEFAULT = "cepe"
