@@ -20,6 +20,7 @@ from live_trading_options.cepe_imbalance import st_signal as STS
 from live_trading_options.cepe_imbalance import strategy as S
 from live_trading_options.cepe_imbalance.book import IST, PaperBook, atomic_write, today
 from live_trading_options.cepe_imbalance.quotes import QuoteRecorder
+from live_trading_options.cepe_imbalance.writer import W
 
 log = logging.getLogger("cepe.engine")
 
@@ -29,24 +30,30 @@ log = logging.getLogger("cepe.engine")
 _settings_lock = threading.Lock()
 
 
-def settings_path():
-    return C.DATA / "settings.json"
+def settings_path(name=None):
+    """17-Nov: the LIVE books keep their settings in their own file (the live engine is its own process;
+    two processes rewriting one file could lose a change)."""
+    return C.DATA / ("settings_live.json" if name and C.is_live(name) else "settings.json")
 
 
-def load_settings() -> dict:
-    p = settings_path()
+def load_settings(name=None) -> dict:
+    p = settings_path(name)
+    if not p.exists() and name and C.is_live(name):
+        p = settings_path()                                  # first run: the values saved before the split
     try:
         return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {}
     except ValueError:
-        log.exception("settings.json unreadable; using defaults")
+        log.exception("%s unreadable; using defaults", p.name)
         return {}
 
 
 def save_settings(name, **fields):
     with _settings_lock:
-        doc = load_settings()
+        doc = load_settings(name)
+        if C.is_live(name):
+            doc = {k: v for k, v in doc.items() if C.is_live(k)}
         doc.setdefault(name, {}).update(fields)
-        p = settings_path()
+        p = settings_path(name)
         p.parent.mkdir(parents=True, exist_ok=True)
         atomic_write(p, json.dumps(doc, indent=1))
 
@@ -169,6 +176,8 @@ class Runner:
     def __init__(self, name, market, strategy_name=None, date=None, persist=True, book_factory=None):
         self.name = name                    # book name: "NIFTY" or the Supertrend variant "NIFTY_ST"
         self.und = C.und_of(name)
+        if not strategy_name and C.is_flex(name):                    # owner 17-Nov: NIFTY / SENSEX flex rules
+            strategy_name = "cepe_st_flex" if C.is_variant(name) else "cepe_flex"
         strategy_name = strategy_name or ({(True, False): "cepe_st", (False, True): "cepe_new",
                                            (True, True): "cepe_st_new"}.get((C.is_variant(name), C.is_new_rules(name)))
                                           or S.DEFAULT)
@@ -192,7 +201,7 @@ class Runner:
         self.ctx = Context(self)
         self.auto = default_auto(name)
         if persist:
-            saved = load_settings().get(name, {})
+            saved = load_settings(name).get(name, {})
             self.params.update({k: v for k, v in (saved.get("params") or {}).items() if k in self.params})
             self.auto.update({k: saved[k] for k in ("auto_start", "auto_time") if k in saved})
             self._load_state()
@@ -200,6 +209,8 @@ class Runner:
     # ── persistence ─────────────────────────────────────────────────────────
     def _state_path(self):
         d = C.DATA / "books" / self.date
+        if W.started and not self.live:                      # the writer makes the folder: no disk call here
+            return d / f"{self.name}_state.json"             # (the rules save state on almost every tick)
         d.mkdir(parents=True, exist_ok=True)
         return d / f"{self.name}_state.json"
 
@@ -217,17 +228,25 @@ class Runner:
         if not self.persist:
             return
         p = self._state_path()
-        atomic_write(p, json.dumps({"running": self.running, "square_off_done": self.square_off_done,
-                                    "strategy": self.strategy_name, "params": self.params,
-                                    "expiry_n": self.expiry_n, "state": self.state}, indent=1, default=str))
+        text = json.dumps({"running": self.running, "square_off_done": self.square_off_done,
+                           "strategy": self.strategy_name, "params": self.params,
+                           "expiry_n": self.expiry_n, "state": self.state}, indent=1, default=str)
+        if self.live:                                        # live book: on disk before anything else happens
+            atomic_write(p, text)
+        else:
+            W.replace(p, text)                               # paper: writer thread (at once when not started)
 
     def event(self, event, **fields):
         e = {"ts": time.time(), "time": dt.datetime.now(IST).strftime("%H:%M:%S"), "event": event, **fields}
         self.events.append(e)
         del self.events[:-500]
         if self.persist:
-            with open(C.DATA / "books" / self.date / f"{self.name}_events.jsonl", "a", encoding="utf-8") as fh:
-                fh.write(json.dumps(e, default=str) + "\n")
+            p = C.DATA / "books" / self.date / f"{self.name}_events.jsonl"
+            if self.live or not W.started:
+                with open(p, "a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(e, default=str) + "\n")
+            else:
+                W.append(p, json.dumps(e, default=str) + "\n")
 
     # ── strategy calls (engine holds its lock) ──────────────────────────────
     def call(self, fn, *a):
@@ -241,17 +260,18 @@ class Runner:
 
 
 class Engine:
-    def __init__(self, universe, market, feed=None, persist=True, live=None):
+    def __init__(self, universe, market, feed=None, persist=True, live=None, role="all"):
         self.u = universe
         self.market = market
         self.feed = feed
         self.persist = persist
         self.live = live                    # live.LiveCtx (Kotak D) or None: then NO live books exist at all
+        self.role = role                    # "paper" / "live" = one of the two processes (config.ROLE)
         self.lock = threading.RLock()
         # books: one normal + one Supertrend variant ("NIFTY_ST") per underlying (+ the LIVE books)
         self.runners = {}
         for n in C.ALL_BOOKS:
-            if C.und_of(n) in universe.underlyings and (live is not None or not C.is_live(n)):
+            if C.und_of(n) in universe.underlyings and (live is not None or not C.is_live(n))                     and C.book_in_role(n, role) and (role != "live" or C.und_of(n) in C.LIVE_BOOKS):
                 self.runners[n] = self._runner(n)
         self.unds = [n for n in C.ORDER if n in universe.underlyings]
         self.signals = {u: STS.StSignal(u) for u in self.unds}
@@ -262,7 +282,9 @@ class Engine:
         self._last_subs = 0.0
         self.started_at = time.time()
         self.hist: dict[str, list] = {n: [] for n in self.runners}   # today's MTM/imbalance samples
-        self.quotes = QuoteRecorder(universe) if persist else None    # every tick, for exact replays
+        # every tick, for exact replays (the paper engine records NIFTY / SENSEX; the live engine must not
+        # write the same files from a second process)
+        self.quotes = QuoteRecorder(universe) if persist and role != "live" else None
         # LIVE books (16-Nov fix): a Kotak order takes seconds (send, poll, re-price). Run under the engine
         # lock on the feed thread, it froze EVERY book and every price/MTM until Kotak answered. Each live
         # book now has its own lock + worker thread; ticks only queue keys for it (live_async, set by
@@ -273,6 +295,7 @@ class Engine:
         self._live_wake = {n: threading.Event() for n in self.live_locks}
         self._live_klock = threading.Lock()
         self.live_busy: dict = {}                 # name -> time the worker began its current step
+        self.live_loop_at: dict = {}              # name -> last time its worker loop went round (heartbeat)
         if persist:
             self._load_hist()
 
@@ -411,9 +434,20 @@ class Engine:
             keys += [k for k, p in r.book.positions.items() if p.lots]
         return keys
 
+    def feed_wanted(self, name) -> bool:
+        """Live engine (17-Nov): subscribe only the index that is ARMED, running or still holds positions -
+        the owner trades NIFTY or SENSEX on a given day, so the feed carries ~60 strikes, not ~1,100."""
+        if self.role != "live":
+            return True
+        r = self.runners[name]
+        armed = bool(self.live and self.live.control.armed(name))
+        return armed or r.running or any(p.lots for p in r.book.positions.values())
+
     def refresh_subscriptions(self) -> int:
         new = 0
         for name in self.runners:
+            if not self.feed_wanted(name):
+                continue
             keys = self.wanted_keys(name)
             for k in keys:
                 self.routes.setdefault(k, set()).add(name)
@@ -492,6 +526,8 @@ class Engine:
             r.pending_start = False
             r.state["auto_done"] = True                     # a manual stop is not undone by auto-start
             out = r.book.exit_all("stop") if exit_positions else []
+            if exit_positions and not any(p.lots for p in r.book.positions.values()):
+                r.state["phase"] = "exited"                 # 17-Nov: flat after Stop & exit all (was left "in")
             r.event("stop", exited=len(out))
             r.save_state()
             return {"ok": True, "exits": out}
@@ -505,21 +541,34 @@ class Engine:
                 return {"ok": False, "error": f"unknown params {bad}"}
             if r.live and not (1 <= int(changes.get("lots", 1)) <= C.LIVE_MAX_LOTS):
                 return {"ok": False, "error": f"live lots must be 1..{C.LIVE_MAX_LOTS}"}
+            old_lots = r.strategy.unit(r.ctx) if any(p.lots for p in r.book.positions.values()) else None
             for k, v in changes.items():
                 r.params[k] = type(r.strategy.params[k])(v) if r.strategy.params[k] is not None else v
+            out = {}
+            # owner 17-Nov: a lots change while IN TRADE resizes the open book (every strike scaled, CE / PE
+            # pairs); flat books just use the new lots at the next entry
+            new_lots = int(r.params.get("lots") or 1)
+            if old_lots and "lots" in changes and new_lots != old_lots:
+                r.state["resize_to"] = new_lots
+                out["resize"] = f"{old_lots} -> {new_lots} lots on the open book: orders go out now"
+            elif "lots" in changes and r.state.get("resize_to"):
+                r.state["resize_to"] = None if new_lots == old_lots else new_lots
             r.event("params", **changes)
             r.save_state()
             if self.persist:
                 save_settings(name, params=r.params)        # carry to the next days
-            return {"ok": True, "params": r.params}
+            if r.state.get("resize_to") and r.live and self.live_async:
+                self._live_wake[name].set()                 # the live worker resizes at once
+            return {"ok": True, "params": r.params, "applied_at": dt.datetime.now(IST).strftime("%H:%M:%S"), **out}
 
     def set_auto(self, name, auto_start=None, auto_time=None):
         with self.lock:
             r = self.runners[name]
             if auto_time is not None:
                 t = str(auto_time).strip()
-                dt.time.fromisoformat(t)                    # ValueError on a bad time
-                r.auto["auto_time"] = t[:5]
+                tm = dt.time.fromisoformat(t)               # ValueError on a bad time
+                # owner 17-Nov: to the SECOND ("09:15:20"); "09:15" still means 09:15:00
+                r.auto["auto_time"] = tm.strftime("%H:%M:%S") if tm.second else tm.strftime("%H:%M")
             if auto_start is not None:
                 r.auto["auto_start"] = bool(auto_start)
             r.event("auto", **r.auto)
@@ -537,6 +586,8 @@ class Engine:
                 return {"ok": False, "error": "a LIVE book is never reset (its file is the record of real orders)"}
             stamp = dt.datetime.now(IST).strftime("%H%M%S")
             moved = []
+            W.flush()                                        # everything of this book on disk before it moves
+            W.forget()                                       # ...and the files that move away get written again
             if self.persist:
                 arch = C.DATA / "books" / r.date / f"_reset_{stamp}"
                 arch.mkdir(parents=True, exist_ok=True)
@@ -676,6 +727,7 @@ class Engine:
                 wake.wait(0.5)
                 wake.clear()
                 t = time.time()
+                self.live_loop_at[n] = t                     # heartbeat: the live card shows its age
                 try:
                     self.live_step(n, timer=t - last >= 0.5)
                 except Exception:
@@ -703,7 +755,7 @@ class Engine:
     def sample(self, now):
         for n, r in self.runners.items():
             d = C.DATA / "history" / r.date
-            if self.persist:
+            if self.persist and not W.started:
                 d.mkdir(parents=True, exist_ok=True)
             has_book = any(p.lots or p.realized for p in r.book.positions.values())
             if not (r.running or has_book):
@@ -711,7 +763,9 @@ class Engine:
             m, im = r.book.mtm(), r.book.imbalance()
             u = r.und
             e = self.market.expiry(u, r.expiry_n)
-            atm = r.state.get("atm") or self.market.atm(u, e)
+            # owner 17-Nov: a running book charts ITS strategy ATM (the strike its rules / exit levels use);
+            # a stopped book's ATM no longer updates, so its chart follows the market's ATM instead of freezing
+            atm = (r.state.get("atm") if r.running else None) or self.market.atm(u, e)
             row = {"t": round(time.time(), 2), "mtm": m["total"], "imb": im["pct"],
                    "ce": im["ce_value"], "pe": im["pe_value"], "ref": self.market.ref_price(u, e), "atm": atm}
             if C.is_variant(n):                              # Supertrend variant: its signal ATM + ST line
@@ -730,9 +784,8 @@ class Engine:
                 row["sp"] = sp
             self.hist.setdefault(n, []).append(row)
             del self.hist[n][:-200000]
-            if self.persist:
-                with open(d / f"{n}.jsonl", "a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(row) + "\n")
+            if self.persist:                                 # chart rows: display only, never urgent
+                W.append(d / f"{n}.jsonl", json.dumps(row) + "\n", wake=False)
 
     def spreads(self, n, r, e, atm):
         """Bid-ask gap as % of mid for ATM CE, CE+1, CE+2, ATM PE, PE-1, PE-2 (owner 4-Nov: spread chart).
@@ -769,10 +822,12 @@ class Engine:
     def run_timer(self):
         def loop():
             while not self._stop.wait(0.5):
+                self.timer_busy = time.time()                # read by the stall watchdog (diag.py)
                 try:
                     self.tick_timer()
                 except Exception:
                     log.exception("timer")
+                self.timer_busy = 0.0
         threading.Thread(target=loop, daemon=True, name="CepeTimer").start()
         self.start_live_workers()
 
@@ -800,6 +855,8 @@ class Engine:
                         "ref": rq.ltp if rq else None, "ref_age": round(time.time() - rq.recv_ts, 1) if rq else None,
                         "atm": self.market.atm(u, e), "synthetic": self.market.synthetic(u, e), "mtm": r.book.mtm(), "imbalance": r.book.imbalance(),
                         "open_positions": sum(1 for p in r.book.positions.values() if p.lots),
+                        "book_lots": r.strategy.unit(r.ctx) if any(p.lots for p in r.book.positions.values()) else None,
+                        "resize_to": r.state.get("resize_to"), "atm_cp": r.state.get("atm_cp"),
                         "trades": len(r.book.trades), "errors": r.errors, "last_error": r.last_error,
                         "session": {"open": o.strftime("%H:%M"), "close": close.strftime("%H:%M"),
                                     "square_off": sq.strftime("%H:%M"), "in_session": o <= now < close},
@@ -808,6 +865,9 @@ class Engine:
                         "params": r.params, "step": float(r.params.get("step") or C.STRIKE_STEP.get(u) or 0),
                         "auto_start": r.auto.get("auto_start"), "auto_time": r.auto.get("auto_time"),
                         "auto_done": bool(r.state.get("auto_done")), "live": ({**r.book.live_view(), "busy_s": round(time.time() - self.live_busy[n], 1)
-                                  if n in self.live_busy else None} if r.live else None)})
+                                  if n in self.live_busy else None,
+                                  "loop_age": round(time.time() - self.live_loop_at[n], 1) if n in self.live_loop_at else None,
+                                  "stale_s": r.state.get("stale_s"), "engine": self.role,
+                                  "subscribed": self.feed_wanted(n)} if r.live else None)})
         return {"now": now.isoformat(timespec="seconds"), "underlyings": out,
                 "feed": self.feed.status() if self.feed else None, "universe_date": self.u.file_date}

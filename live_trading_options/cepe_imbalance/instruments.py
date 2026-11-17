@@ -185,21 +185,23 @@ def master_url(client, seg: str) -> str:
     raise RuntimeError(f"{seg}: no scrip master URL ({str(url)[:200]})")
 
 
-def load(client) -> Universe:
-    """Today's scrip masters (cached to data/scrip_{seg}_{date}.csv, one download a day)."""
+def load(client, segs=None, prefix="scrip_") -> Universe:
+    """Today's scrip masters (cached to data/{prefix}{seg}_{date}.csv, one download a day).
+    The live engine (17-Nov) loads only NSE / BSE F&O into its own cache files (prefix "live_scrip_"), so
+    two processes never write or delete the same file."""
     import requests
     today = dt.datetime.now(IST).date().isoformat()
     C.DATA.mkdir(parents=True, exist_ok=True)
     texts = {}
-    for seg in C.KOTAK_SEGS:                                      # Delta (crypto) comes from crypto.attach
-        cache = C.DATA / f"scrip_{seg}_{today}.csv"
+    for seg in (segs or C.KOTAK_SEGS):                            # Delta (crypto) comes from crypto.attach
+        cache = C.DATA / f"{prefix}{seg}_{today}.csv"
         if cache.exists() and cache.stat().st_size > 100_000:
             texts[seg] = cache.read_text(encoding="utf-8")
             continue
         url = master_url(client, seg)
         texts[seg] = requests.get(url, timeout=120).text
         cache.write_text(texts[seg], encoding="utf-8")
-        for old in C.DATA.glob(f"scrip_{seg}_*.csv"):
+        for old in C.DATA.glob(f"{prefix}{seg}_*.csv"):
             if old != cache:
                 old.unlink(missing_ok=True)
     u = build(texts, today=today)

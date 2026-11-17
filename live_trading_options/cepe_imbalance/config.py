@@ -124,6 +124,40 @@ LIVE_MAX_LOTS = 10                                          # typo guard on the 
 LIVE_TAG = "cpek"                                           # Kotak order-tag prefix (unique tag per order)
 
 
+# FLEX rules (owner 16/17-Nov-2026): NIFTY / SENSEX normal, Supertrend and LIVE books trade strategy CePeFlex
+# (>= 2 strikes a side, heavy shift before B, flexible lots, one side keeps ATM, no C, planned ahead).
+FLEX_BOOKS = ("NIFTY", "SENSEX")
+
+
+def is_flex(name: str) -> bool:
+    return und_of(name) in FLEX_BOOKS and not is_new_rules(name)
+
+
+# SEPARATE LIVE ENGINE (owner 17-Nov-2026): the same program runs as two processes.
+#   CEPE_ROLE=paper  port 47690: every paper book + the page / API; requests for *_LIVE books are forwarded
+#                    to the live engine (so the screen is unchanged)
+#   CEPE_ROLE=live   port 47691: ONLY the *_LIVE books, own Kotak login + own small feed (only the index that
+#                    is armed or holds positions), own settings file, own scrip cache, no quote recorder
+#   unset ("all")    old single process (tests, tools)
+import os as _os
+ROLE = _os.getenv("CEPE_ROLE", "all").strip().lower() or "all"
+LIVE_PORT = 47691
+LIVE_SEGS = ("nse_fo", "bse_fo")                            # NIFTY / SENSEX options only
+
+
+def port_for(role: str | None = None) -> int:
+    return LIVE_PORT if (role or ROLE) == "live" else PORT
+
+
+def book_in_role(name: str, role: str | None = None) -> bool:
+    role = role or ROLE
+    if role == "paper":
+        return not is_live(name)
+    if role == "live":
+        return is_live(name)
+    return True
+
+
 def is_live(name: str) -> bool:
     return name.endswith(LIVE_SUFFIX)
 

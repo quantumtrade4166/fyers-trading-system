@@ -13,6 +13,8 @@ setlocal EnableDelayedExpansion
 cd /d C:\trading\fyers_data_pipeline
 if not exist logs mkdir logs
 set LOG=logs\cepe_imbalance_stdout.log
+REM 17-Nov: this is the PAPER engine (port 47690). LIVE books run in run_cepe_live.bat (port 47691).
+set CEPE_ROLE=paper
 set FAILS=0
 
 :run

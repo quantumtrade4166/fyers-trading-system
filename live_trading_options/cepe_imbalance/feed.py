@@ -117,6 +117,7 @@ class MultiFeed:
         self.slowest = 0.0                         # slowest on_ticks batch (s)
         self.work_s = 0.0
         self._lag_logged = 0.0
+        self.busy_since = 0.0                      # when the batch being processed right now began (0 = idle)
 
     # ── public ──────────────────────────────────────────────────────────────
     def start(self):
@@ -187,7 +188,9 @@ class MultiFeed:
                 self.connected = True
                 self.on_status(self.status())
                 t0 = time.time()
-                self.ws.run_forever(ping_interval=15, ping_timeout=8)
+                # 17-Nov: 8 -> 12 s. Kotak's pong sits in the same stream as the prices; right after a
+                # (re)connect or in a burst it was read a few seconds late and a healthy feed was dropped.
+                self.ws.run_forever(ping_interval=15, ping_timeout=12)
                 if time.time() - t0 > 60:
                     backoff = 1.0
             except Exception as e:
@@ -227,10 +230,12 @@ class MultiFeed:
                 self.ticks += len(batch)
                 self.last_tick_at = time.time()
                 t0 = time.perf_counter()
+                self.busy_since = time.time()                # read by the stall watchdog (diag.py)
                 try:
                     self.on_ticks(batch)
                 except Exception:
                     log.exception("on_ticks failed")
+                self.busy_since = 0.0
                 dt_ = time.perf_counter() - t0
                 self.work_s += dt_
                 if dt_ > self.slowest:

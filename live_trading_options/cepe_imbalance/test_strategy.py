@@ -255,9 +255,10 @@ def test_lots_param(universe):
     invariants(g)
 
 
-def test_lots_change_mid_day_keeps_book_size(universe):
-    """11-Nov SENSEX: lots 1 -> 10 with a 1-lot book open. Adjustments must stay 1 lot (never buy 10 of a
-    1-lot short); the new size only applies to the next fresh entry."""
+def test_lots_change_mid_day_resizes_the_whole_book(universe):
+    """11-Nov SENSEX: lots 1 -> 10 with a 1-lot book open made A buy 10 of a 1-lot short. Owner 17-Nov: a lots
+    change in trade now RESIZES the open book (every strike x10, CE / PE pairs) - adjustments then use the
+    new size, never more than the book holds, never net long."""
     g = Rig(universe, 9400)
     g.eng.start(N)
     g.eng.set_params(N, {"lots": 10})
@@ -265,7 +266,7 @@ def test_lots_change_mid_day_keeps_book_size(universe):
         g.move(f)
         invariants(g)
         lg = g.legs()
-        assert sum(lg["CE"].values()) == sum(lg["PE"].values()) == 3, lg        # still the 1-lot book
+        assert sum(lg["CE"].values()) == sum(lg["PE"].values()) == 30, lg       # the 10-lot book
         assert all(p.lots <= 0 for p in g.r.book.positions.values())         # never net long
     g.eng.stop(N, exit_positions=True)
     g.eng.start(N)

@@ -59,7 +59,7 @@ def install_clock():
 CePeOwnerTest = S.CePeNewRules
 
 
-RULES = {"live": S.CePeImbalance, "owner": CePeOwnerTest}
+RULES = {"live": S.CePeImbalance, "owner": CePeOwnerTest, "flex": S.CePeFlex}
 
 
 # ── replay ──────────────────────────────────────────────────────────────────

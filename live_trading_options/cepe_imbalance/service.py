@@ -42,15 +42,17 @@ from fastapi import Body, FastAPI
 from fastapi.responses import JSONResponse
 
 from live_trading_options.cepe_imbalance import config as C
-from live_trading_options.cepe_imbalance import crypto, days, instruments, st_sim
+from live_trading_options.cepe_imbalance import crypto, days, diag, instruments, st_sim
 from live_trading_options.cepe_imbalance.book import IST
 from live_trading_options.cepe_imbalance.engine import Engine
 from live_trading_options.cepe_imbalance.feed import MultiFeed
 from live_trading_options.cepe_imbalance.market import Market
+from live_trading_options.cepe_imbalance.writer import W
 
 log = logging.getLogger("cepe.service")
 app = FastAPI(title="CE/PE Imbalance (paper)")
 E: Engine | None = None
+_log_listener = None
 
 
 def _bad(msg, code=400):
@@ -114,6 +116,86 @@ class _ForgetAfterPost:
 app.add_middleware(_ForgetAfterPost)
 
 
+# ── SEPARATE LIVE ENGINE (17-Nov-2026) ─────────────────────────────────────────────────────────────────
+# The paper engine (CEPE_ROLE=paper, 47690) serves the page. Every request about a *_LIVE book is passed
+# unchanged to the live engine (CEPE_ROLE=live, 47691), and /state + /day add the live engine's rows, so the
+# screen and the dashboard proxy stay exactly as they were.
+LIVE_URL = f"http://{C.HOST}:{C.LIVE_PORT}"
+_live_last: dict = {"state": None, "at": 0.0, "error": ""}
+
+
+def _live_call(method, path_qs, body=None, timeout=5.0):
+    """-> (status, body bytes, content type). Never raises: an unreachable live engine is a 503."""
+    import urllib.error
+    import urllib.request
+    req = urllib.request.Request(LIVE_URL + path_qs, data=body if method != "GET" else None, method=method,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read(), r.headers.get("content-type") or "application/json"
+    except urllib.error.HTTPError as e:
+        return e.code, e.read(), "application/json"
+    except Exception as e:                                  # noqa: BLE001 - down / starting / timeout
+        return 503, json.dumps({"ok": False, "error": f"live engine not reachable: {e}"}).encode(), "application/json"
+
+
+def _is_live_path(path: str) -> bool:
+    return any(seg.upper().endswith(C.LIVE_SUFFIX) for seg in path.strip("/").split("/")[1:])
+
+
+class _LiveForward:
+    def __init__(self, inner):
+        self.inner = inner
+
+    async def __call__(self, scope, receive, send):
+        if C.ROLE != "paper" or scope.get("type") != "http" or not _is_live_path(scope.get("path", "")):
+            return await self.inner(scope, receive, send)
+        from starlette.concurrency import run_in_threadpool
+        body = b""
+        while True:
+            m = await receive()
+            body += m.get("body", b"")
+            if not m.get("more_body"):
+                break
+        qs = scope.get("query_string", b"").decode()
+        path = scope["path"] + ("?" + qs if qs else "")
+        method = scope["method"]
+        status, data, ctype = await run_in_threadpool(_live_call, method, path, body,
+                                                      60.0 if method == "POST" else 8.0)
+        await send({"type": "http.response.start", "status": status,
+                    "headers": [(b"content-type", ctype.encode()), (b"content-length", str(len(data)).encode())]})
+        await send({"type": "http.response.body", "body": data})
+
+
+app.add_middleware(_LiveForward)
+
+
+def _live_rows():
+    """The live engine's /state rows (kept 0.4 s). Unreachable -> the last rows seen, marked engine_down."""
+    def fetch():
+        st, data, _ = _live_call("GET", "/state", timeout=2.0)
+        if st == 200:
+            try:
+                rows = json.loads(data).get("underlyings") or []
+                _live_last.update(state=rows, at=time.time(), error="")
+                return rows
+            except ValueError:
+                _live_last["error"] = "bad answer"
+        else:
+            try:
+                _live_last["error"] = json.loads(data).get("error") or f"HTTP {st}"
+            except ValueError:
+                _live_last["error"] = f"HTTP {st}"
+        rows = [dict(x) for x in (_live_last["state"] or [])]
+        age = round(time.time() - _live_last["at"], 1) if _live_last["at"] else None
+        for x in rows:
+            x["live"] = {**(x.get("live") or {}), "engine_down": True, "engine_error": _live_last["error"],
+                         "engine_age_s": age}
+            x["blocked"] = f"LIVE ENGINE NOT REACHABLE ({_live_last['error']})"
+        return rows
+    return _cached("live_rows", 0.4, fetch)
+
+
 def _fast(obj):
     """Plain json.dumps instead of FastAPI's generic encoder (several times faster on these dicts).
     Anything it cannot write falls back to the generic encoder, exactly as before."""
@@ -173,12 +255,33 @@ def health():
         return {"ok": False, "error": "starting"}
     f = E.feed.status() if E.feed else {}
     return {"ok": bool(f.get("authed")), "feed": f, "delta_ok": bool((f.get("delta") or {}).get("connected")),
-            "universe_date": E.u.file_date}
+            "universe_date": E.u.file_date, "writer": W.status(), "gc": dict(diag.GC), "role": C.ROLE,
+            "live_engine": _live_last if C.ROLE == "paper" else None}
+
+
+@app.get("/debug/prof")
+def debug_prof(secs: float = 5.0):
+    """Where every thread of this engine spends its time (read-only; see diag.py)."""
+    return diag.profile(secs)
+
+
+@app.get("/debug/stacks")
+def debug_stacks():
+    return diag.stacks()
 
 
 @app.get("/state")
 def state():
-    return _cached("state", 0.4, lambda: _fast(E.summary()))
+    return _cached("state", 0.4, lambda: _fast(_state()))
+
+
+def _state():
+    out = E.summary()
+    if C.ROLE == "paper":
+        out["underlyings"] = out["underlyings"] + _live_rows()
+        out["live_engine"] = {"ok": not _live_last["error"], "error": _live_last["error"],
+                              "age_s": round(time.time() - _live_last["at"], 1) if _live_last["at"] else None}
+    return out
 
 
 @app.get("/chain/{name}")
@@ -287,6 +390,10 @@ def history(name: str, date: str = "", since: float = 0, max_points: int = 0):
         rows = days.downsample(s["ds"], max_points) if s else []
     else:
         today = date == E.runners[nm].date
+        if today and not since and max_points > 0:
+            # 17-Nov: the whole-day chart (1 MB) is built once and shared for 2 s - opening a book, a second
+            # screen or a reload no longer each rebuild it while the engine is busy with prices
+            return _cached(("hist", nm, date, max_points), 2.0, lambda: _hist_full(nm, date, max_points))
         rows = E.hist.get(nm, []) if today else days.history(date, nm)
         if since:                                         # samples are in time order: jump to the new ones
             rows = rows[bisect.bisect_right(rows, since, key=_t_of):]
@@ -295,6 +402,11 @@ def history(name: str, date: str = "", since: float = 0, max_points: int = 0):
         if max_points > 0:
             rows = days.downsample(rows, max_points)
     # plain json.dumps: FastAPI's generic encoder took ~4 s for 8000 rows (13-Nov)
+    return JSONResponse({"name": nm, "date": date, "rows": rows})
+
+
+def _hist_full(nm, date, max_points):
+    rows = days.downsample(list(E.hist.get(nm, [])), max_points)
     return JSONResponse({"name": nm, "date": date, "rows": rows})
 
 
@@ -329,6 +441,13 @@ def _day(date):
                      fills=len(r.book.trades), traded=bool(r.book.trades), running=r.running, phase=r.state.get("phase"))
         s["ccy"] = C.ccy_of(nm)
         rows.append(s)
+    if C.ROLE == "paper":                                  # the live engine's books on that day
+        st, data, _ = _live_call("GET", f"/day/{want}", timeout=3.0)
+        if st == 200:
+            try:
+                rows += json.loads(data).get("rows") or []
+            except ValueError:
+                pass
     # rupees and dollars are never added together: BTC books (USD) have their own total
     return {"date": want, "rows": rows, "total": round(sum(x["pnl"] for x in rows if x["ccy"] == "INR"), 2),
             "total_usd": round(sum(x["pnl"] for x in rows if x["ccy"] == "USD"), 2)}
@@ -431,8 +550,14 @@ def live_arm(name: str, body: dict = Body(...)):
     want = bool(body.get("armed"))
     if want and str(body.get("confirm", "")).strip().upper() != "LIVE":
         return _bad("type LIVE to arm")
+    if want:                                                # owner 17-Nov: one live index a day
+        other = [n for n in E.runners if n != nm and E.runners[n].live and E.live.control.armed(n)]
+        if other:
+            return _bad(f"{other[0]} is armed - disarm it first (only one live index at a time)")
     st = E.live.control.set(nm, want, by=str(body.get("by") or "screen")[:40])
     out = {"ok": True, "armed": st["armed"]}
+    if want:
+        E.refresh_subscriptions()                           # live engine: start this index's prices now
     if not want and E.runners[nm].running:
         out["stop"] = E.stop(nm)                            # disarm = no new risk: rules stop, positions kept
     E.runners[nm].event("live_arm", armed=want)
@@ -444,38 +569,78 @@ def main():
     from live_trading_options.mcx_terminal import kotak_session
     from live_trading_options.mcx_terminal import config as MC
 
+    # 17-Nov split: the service is always ONE of the two processes. No role given = the paper engine, which
+    # never builds a live book - a live book can never run in two processes at once.
+    if C.ROLE not in ("paper", "live"):
+        C.ROLE = "paper"
     C.DATA.mkdir(parents=True, exist_ok=True)
     C.LOG_DIR.mkdir(parents=True, exist_ok=True)
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-                        handlers=[logging.FileHandler(C.LOG_DIR / "cepe_imbalance.log", encoding="utf-8"),
-                                  logging.StreamHandler(sys.stdout)])
+    # 17-Nov: log lines go through a queue; the file / console are written by the queue's own thread, so a
+    # busy disk cannot hold up the tick worker or a live book in the middle of a log line.
+    import logging.handlers
+    import queue as _queue
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    logname = "cepe_live.log" if C.ROLE == "live" else "cepe_imbalance.log"
+    sinks = [logging.FileHandler(C.LOG_DIR / logname, encoding="utf-8"), logging.StreamHandler(sys.stdout)]
+    for h in sinks:
+        h.setFormatter(fmt)
+    logq = _queue.Queue(-1)
+    qh = logging.handlers.QueueHandler(logq)
+    qh.setFormatter(logging.Formatter("%(message)s"))      # the sinks add time / level / name
+    logging.basicConfig(level=logging.INFO, handlers=[qh])
+    # Python lets a busy thread keep going for 5 ms before another may run. The price-socket reader needs
+    # the baton back after EVERY network read, so while any other thread was busy (rules, a chart request)
+    # it got ~200 reads a second at most, fell behind the stream and the feed was dropped as dead.
+    # 1 ms keeps the reader (and the screen's answers) moving; the cost is a few % of raw speed.
+    sys.setswitchinterval(0.001)
+    global _log_listener
+    _log_listener = logging.handlers.QueueListener(logq, *sinks)
+    _log_listener.start()
     # single instance: refuse if the port is taken
+    port = C.port_for()
     s = socket.socket()
     try:
-        s.bind((C.HOST, C.PORT))
+        s.bind((C.HOST, port))
     except OSError:
-        log.error("port %s busy: another CE/PE imbalance engine is running", C.PORT)
+        log.error("port %s busy: another CE/PE imbalance engine (%s) is running", port, C.ROLE)
         sys.exit(1)
     s.close()
 
+    # start-up builds millions of long-lived objects (contract list, today's chart samples): the automatic
+    # memory clean-up re-scanning them again and again made a restart ~30 s slower. Off while loading.
+    import gc
+    gc.disable()
     MC.ENV_SUFFIX = C.ENV_SUFFIX                          # Kotak P login (same account as the MCX terminal)
     sessions = kotak_session.SessionHolder()
     sess = sessions.get()
-    u = instruments.load(sess.client)
-    crypto.load_into(u)                                   # BTC options from Delta (public, no key)
+    live_role = C.ROLE == "live"
+    if live_role:                                         # NIFTY / SENSEX only, own scrip cache files
+        u = instruments.load(sess.client, segs=C.LIVE_SEGS, prefix="live_scrip_")
+    else:
+        u = instruments.load(sess.client)
+        crypto.load_into(u)                               # BTC options from Delta (public, no key)
     market = Market(u)
-    from live_trading_options.cepe_imbalance import live as LV     # LIVE books on Kotak D (same login)
-    live_ctx = LV.LiveCtx(LV.Account(sessions))
+    live_ctx = None
+    if C.ROLE != "paper":
+        from live_trading_options.cepe_imbalance import live as LV     # LIVE books on Kotak D (same login)
+        live_ctx = LV.LiveCtx(LV.Account(sessions))
     global E
-    E = Engine(u, market, live=live_ctx)
-    feed = crypto.CompositeFeed(MultiFeed(sessions, E.on_ticks), crypto.DeltaFeed(E.on_ticks))
+    E = Engine(u, market, live=live_ctx, role=C.ROLE)
+    kotak_feed = MultiFeed(sessions, E.on_ticks)
+    feed = kotak_feed if live_role else crypto.CompositeFeed(kotak_feed, crypto.DeltaFeed(E.on_ticks))
     E.feed = feed
     E.refresh_subscriptions()                             # spots + futures first; windows once ATM is known
+    diag.gc_guard()                                       # everything loaded so far is permanent (see diag.py)
+    gc.enable()
+    if not live_role:
+        W.start()                                         # paper-book + chart files: written off the hot path
+    diag.start_watchdog(E, lambda: kotak_feed)
     feed.start()
     E.run_timer()
     import threading                                      # past-day digests, so the day table is instant
-    threading.Thread(target=days.warm, args=(list(E.runners), next(iter(E.runners.values())).date),
-                     daemon=True, name="CepeDaysWarm").start()
+    if E.runners and not live_role:
+        threading.Thread(target=days.warm, args=(list(E.runners), next(iter(E.runners.values())).date),
+                         daemon=True, name="CepeDaysWarm").start()
 
     def daily_exit():                                     # 08:45 IST next day -> exit 3; the task starts a
         import os, time as _t                             # fresh engine (new Kotak login + contract list)
@@ -485,11 +650,16 @@ def main():
             now = dt.datetime.now(IST)
             if now.date() > born and now.strftime("%H:%M") >= "08:45":
                 log.info("daily restart (exit 3)")
+                W.flush(15)                               # every queued file write and log line first
+                try:
+                    _log_listener.stop()
+                except Exception:
+                    pass
                 os._exit(3)
     import threading
     threading.Thread(target=daily_exit, daemon=True, name="CepeDailyExit").start()
-    log.info("CE/PE imbalance paper engine up on %s:%s", C.HOST, C.PORT)
-    uvicorn.run(app, host=C.HOST, port=C.PORT, log_level="warning")
+    log.info("CE/PE imbalance %s engine up on %s:%s (%d books)", C.ROLE, C.HOST, port, len(E.runners))
+    uvicorn.run(app, host=C.HOST, port=port, log_level="warning")
 
 
 if __name__ == "__main__":

@@ -87,6 +87,8 @@ class CePeImbalance(Strategy):
         "step": 0,               # strike grid; 0 = config default for the underlying
         "max_actions": 8,        # safety: adjustments allowed in one tick
         "max_spread_pct": 3.0,   # never SELL a strike whose bid-ask gap is wider than this % of its mid
+        "exit_above": 0.0,       # owner 17-Nov: ATM CE + ATM PE >= this -> exit all, stopped for the day (0 = off)
+        "exit_below": 0.0,       # owner 17-Nov: ATM CE + ATM PE <= this -> exit all, stopped for the day (0 = off)
     }                            # (or 2 ticks, whichever is bigger). Buy-backs / exits are never held.
 
     @staticmethod
@@ -357,6 +359,26 @@ class CePeImbalance(Strategy):
         return legs, notes
 
     @staticmethod
+    def paired(ops, atm=None):
+        """Owner 17-Nov (09:15 entry sat on CALLS ONLY for 10 s, MTM -8,400): orders of one direction
+        (all SELL at entry, all BUY / all SELL on a resize) go out as CE / PE PAIRS - call, then put of the
+        same number of lots - nearest the money first. After every pair the calls and puts done are equal,
+        and the next pair is only sent once both legs of this one have filled (orders run one by one and
+        the first failure stops the rest). Lots are split where needed so each pair has equal lots."""
+        def near(o):
+            return (abs(o[1] - atm) if atm is not None else 0, o[1])
+        side = {k: [list(o) for o in sorted((o for o in ops if o[0] == k), key=near)] for k in ("CE", "PE")}
+        out, ce, pe = [], side["CE"], side["PE"]
+        while ce and pe:
+            n = min(ce[0][3], pe[0][3])
+            out += [(ce[0][0], ce[0][1], ce[0][2], n), (pe[0][0], pe[0][1], pe[0][2], n)]
+            for q in (ce, pe):
+                q[0][3] -= n
+                if q[0][3] <= 0:
+                    q.pop(0)
+        return out + [tuple(o) for o in ce + pe]                   # unequal totals: the rest last
+
+    @staticmethod
     def op_to(legs, target):
         """Ops turning `legs` into `target` (buy-backs first)."""
         buys, sells = [], []
@@ -370,6 +392,88 @@ class CePeImbalance(Strategy):
                     sells.append((kind, k, "SELL", d))
         return buys + sells
 
+    def atm_straddle(self, ctx, atm):
+        """ATM CE + ATM PE price (LTP kept inside bid / ask), or None while either is missing."""
+        ce, pe = ctx.contract(atm, "CE"), ctx.contract(atm, "PE")
+        a, b = self.price(ctx, ce), self.price(ctx, pe)
+        return round(a + b, 2) if a > 0 and b > 0 else None
+
+    def level_exit(self, ctx, atm) -> bool:
+        """Owner 17-Nov: exit everything the first tick ATM CE+PE trades at / above `exit_above` or at / below
+        `exit_below` (0 = off; both editable in the market). Stopped for the day, like the MTM stop."""
+        cp = self.atm_straddle(ctx, atm)
+        ctx.state["atm_cp"] = cp
+        hi, lo = float(ctx.params.get("exit_above") or 0), float(ctx.params.get("exit_below") or 0)
+        if cp is None or not ((hi > 0 and cp >= hi) or (lo > 0 and cp <= lo)):
+            return False
+        why = (f"ATM {atm:g} CE+PE {cp:g} >= exit level {hi:g}" if hi > 0 and cp >= hi
+               else f"ATM {atm:g} CE+PE {cp:g} <= exit level {lo:g}")
+        out = ctx.book.exit_all("level exit: " + why)
+        ctx.state["phase"] = "stopped"
+        ctx.state["blocked"] = f"EXITED: {why} - stopped for the day (Start to trade again)"
+        ctx.log("level_exit", why=why, mtm=ctx.book.mtm()["total"], exits=len(out))
+        ctx.save()
+        return True
+
+    def resize_target(self, ctx, legs, new):
+        """Owner 17-Nov: lots changed while in trade -> every strike scaled by new/old, same shape (1a / 2a).
+        Leftover lots (when a strike's share is not whole) go, one at a time, to the strike that keeps the
+        imbalance nearest 0 - never more than its rounded-up share, so a cut only buys and a raise only sells."""
+        import math
+        ce, pe = sum(legs["CE"].values()), sum(legs["PE"].values())
+        if not ce or ce != pe or ce % 3:
+            return None, f"sides hold {ce} / {pe} lots - not a whole {ce // 3 or 1}-lot book"
+        old = ce // 3
+        if new == old:
+            return None, "same size"
+        r = new / old
+        tgt = {k: {s: int(math.floor(v * r + 1e-9)) for s, v in legs[k].items()} for k in ("CE", "PE")}
+        cap = {k: {s: int(math.ceil(v * r - 1e-9)) for s, v in legs[k].items()} for k in ("CE", "PE")}
+        for _ in range(3 * new):
+            moved = False
+            for k in ("CE", "PE"):
+                if sum(tgt[k].values()) >= 3 * new:
+                    continue
+                best = None
+                for st_ in tgt[k]:
+                    if tgt[k][st_] >= cap[k][st_]:
+                        continue
+                    trial = {"CE": dict(tgt["CE"]), "PE": dict(tgt["PE"])}
+                    trial[k][st_] += 1
+                    im = self.plan_imbalance(ctx, {x: {a: b for a, b in trial[x].items() if b} for x in trial})
+                    score = abs(im) if im is not None else 1e9
+                    if best is None or score < best[0]:
+                        best = (score, st_)
+                if best:
+                    tgt[k][best[1]] += 1
+                    moved = True
+            if not moved:
+                break
+        tgt = {k: {s: n for s, n in v.items() if n} for k, v in tgt.items()}
+        if sum(tgt["CE"].values()) != 3 * new or sum(tgt["PE"].values()) != 3 * new:
+            return None, "could not split the lots evenly"
+        return tgt, old
+
+    def resize(self, ctx, new, atm):
+        """Run a pending lots change on the open book. True = done / dropped, False = try again next tick."""
+        legs = self.legs(ctx)
+        target, old = self.resize_target(ctx, legs, new)
+        if target is None:
+            ctx.state["resize_to"] = None
+            if old != "same size":
+                ctx.log("resize_skipped", why=old)
+            return True
+        ops = self.paired(self.op_to(legs, target), atm)
+        cost = self.cost_note(ctx, ops) if hasattr(self, "cost_note") else f"{len(ops)} orders"
+        why = f"resize {old} -> {new} lots ({'buy back' if new < old else 'add'} on every strike, {cost})"
+        self._fail = None
+        if self.execute(ctx, ops, why):
+            ctx.state["resize_to"] = None
+            return True
+        if self._fail == "order":                                       # live: the book's guard halts it
+            ctx.state["resize_to"] = None
+        return False
+
     def entry(self, ctx, atm):
         step, unit, band = self.step(ctx), self.unit(ctx), float(ctx.params["band"])
         rq = ctx.quote(ctx.market.ref_key(ctx.name, ctx.expiry))
@@ -378,7 +482,7 @@ class CePeImbalance(Strategy):
         legs, notes = self.plan_book(ctx, atm)
         if legs is None:
             return self.blocked(ctx, f"entry: {notes}", key="entry prices")
-        ops = [(k, s, "SELL", n) for k in ("CE", "PE") for s, n in sorted(legs[k].items())]
+        ops = self.paired([(k, s, "SELL", n) for k in ("CE", "PE") for s, n in sorted(legs[k].items())], atm)
         if self.execute(ctx, ops, "entry" + (" (pre-" + ", pre-".join(notes) + ")" if notes else "")):
             ctx.state["phase"] = "in"
             ctx.state["entry_atm"] = atm
@@ -472,8 +576,14 @@ class CePeImbalance(Strategy):
         atm = self.current_atm(ctx)
         if atm is None:
             return
+        if ph == "in" and self.level_exit(ctx, atm):
+            return
         if ph == "wait_entry":
             self.entry(ctx, atm)
+            ctx.save()
+            return
+        if ctx.state.get("resize_to"):                                  # owner 17-Nov: lots changed in trade
+            self.resize(ctx, int(ctx.state["resize_to"]), atm)
             ctx.save()
             return
         acted = False
@@ -687,6 +797,229 @@ class CePeSupertrendNewRules(CePeSupertrend, CePeNewRules):
     params = {**CePeNewRules.params, "st_period": 10, "st_mult": 3.0}
 
 
+class CePeFlex(CePeImbalance):
+    """FLEX RULES (owner 16/17-Nov-2026) - NIFTY / SENSEX normal, Supertrend and LIVE books.
+    Inside the band: unchanged (only the early 'back to normal'). On a breach, in this order:
+      back to normal -> re-centre -> ITM back -> light side back to ATM -> heavy shift -> B -> wait.
+      * heavy shift: lots of the HEAVY side move OUT to just beyond its farthest strike (partial or full,
+        from whichever strike fixes it best). At most 4 strikes a side; its front never past OTM2.
+      * B: lots of the LIGHT side move IN to the next strike it already holds, never past ATM.
+      * flexible lots: each step takes the FEWEST lots that bring the book inside the band (tie -> nearest
+        0 %); if nothing gets inside, the step that lowers |imbalance| the most. Every step must lower it.
+    Guards: every side on >= 2 strikes (3 strikes never balanced by 1) - at least one side keeps a strike at
+    ATM (a light side without ATM comes straight back to ATM first) - NO C: nothing is ever SOLD in the money
+    - the whole chain is planned on paper first and only the NET orders go out - each adjustment logs its
+    order count and bid-ask cost."""
+    MIN_STRIKES = 2
+    MAX_STRIKES = 4
+    FRONT_MAX = 2            # heavy side's nearest strike: at most this many steps OTM
+    MAX_SPAN = 3             # 17-Nov fix: heavy side's farthest strike at most 3 steps beyond its nearest (the
+                             # "4th strike"); before, 1-lot back legs were walked out to 26000 (worthless)
+    MIN_GAIN = 0.5           # 17-Nov fix: a step must lower |imbalance| by at least 0.5 points (no creeping)
+    MAX_STEPS = 12           # steps planned in one adjustment
+    STALE_S = 5.0            # owner 17-Nov: index price older than this -> hold adjustments (stop / square-off still act)
+
+    # ── helpers ─────────────────────────────────────────────────────────────
+    @staticmethod
+    def otm(kind, k, atm, step) -> int:
+        """Steps out of the money (0 = ATM, negative = ITM)."""
+        return int(round(((k - atm) if kind == "CE" else (atm - k)) / step))
+
+    def _px(self, ctx, kind, k):
+        key = (kind, k)
+        if key not in self._pxc:
+            c = ctx.contract(k, kind)
+            self._pxc[key] = (self.price(ctx, c) * c.lot * c.mult) if c else 0.0
+        return self._pxc[key]
+
+    def _imb(self, ctx, legs):
+        tot = {"CE": 0.0, "PE": 0.0}
+        for kind in ("CE", "PE"):
+            for k, n in legs[kind].items():
+                px = self._px(ctx, kind, k)
+                if px <= 0:
+                    return None
+                tot[kind] += px * n
+        t = tot["CE"] + tot["PE"]
+        return (tot["CE"] - tot["PE"]) / t * 100 if t > 0 else None
+
+    def _sellable(self, ctx, kind, k, atm, step) -> bool:
+        key = (kind, k)
+        if key not in self._sellc:
+            ok = self.otm(kind, k, atm, step) >= 0                      # never SELL in the money
+            c = ctx.contract(k, kind) if ok else None
+            self._sellc[key] = bool(c) and self._px(ctx, kind, k) > 0 and self.spread_ok(ctx, c)[0]
+        return self._sellc[key]
+
+    def guards_ok(self, old, new, atm, step, heavy=None) -> bool:
+        for k in ("CE", "PE"):
+            if new[k] and len(new[k]) < min(self.MIN_STRIKES, max(len(old[k]), 1)):
+                return False                                             # >= 2 strikes a side
+            if len(new[k]) > max(self.MAX_STRIKES, len(old[k])):
+                return False                                             # <= 4 strikes a side
+        if (atm in old["CE"] or atm in old["PE"]) and not (atm in new["CE"] or atm in new["PE"]):
+            return False                                                 # one side keeps ATM
+        if heavy and new[heavy]:
+            def front(s):
+                return min(self.otm(heavy, k, atm, step) for k in s)
+
+            def span(s):
+                o = [self.otm(heavy, k, atm, step) for k in s]
+                return max(o) - min(o) if o else 0
+            if front(new[heavy]) > max(self.FRONT_MAX, front(old[heavy]) if old[heavy] else 0):
+                return False                                             # front never past OTM2
+            if span(new[heavy]) > max(self.MAX_SPAN, span(old[heavy])):
+                return False                                             # back never past the 4th strike
+        return True
+
+    # ── move builders ───────────────────────────────────────────────────────
+    def moves_out(self, legs, heavy, atm, step, sources=None):
+        """Heavy shift: n lots from strike s to just beyond the farthest strike (or onto the farthest)."""
+        side = legs[heavy]
+        if not side:
+            return
+        sgn = 1 if heavy == "CE" else -1
+        far = max(side) if heavy == "CE" else min(side)
+        for s in sorted(side, key=lambda k: self.otm(heavy, k, atm, step)):
+            if sources is not None and s not in sources:
+                continue
+            for t in (far + sgn * step, far):
+                if t == s:
+                    continue
+                for n in range(1, side[s] + 1):
+                    yield [(heavy, s, "BUY", n), (heavy, t, "SELL", n)], f"{heavy} {s:g}->{t:g} x{n}"
+
+    def moves_in(self, legs, heavy, atm, step):
+        """B: n lots of the light side from strike s in to the next strike it already holds (never ITM)."""
+        light = "PE" if heavy == "CE" else "CE"
+        side = legs[light]
+        order = sorted(side, key=lambda k: self.otm(light, k, atm, step))
+        for i in range(1, len(order)):
+            s, t = order[i], order[i - 1]
+            if self.otm(light, t, atm, step) < 0:
+                continue
+            for n in range(1, side[s] + 1):
+                yield [(light, s, "BUY", n), (light, t, "SELL", n)], f"{light} {s:g}->{t:g} x{n}"
+
+    def moves_atm(self, legs, light, atm, step):
+        """Light side has no ATM strike: its farthest strike comes straight back to ATM."""
+        side = legs[light]
+        if not side or atm in side:
+            return
+        far = max(side, key=lambda k: (abs(k - atm), k if light == "CE" else -k))
+        for n in range(1, side[far] + 1):
+            yield [(light, far, "BUY", n), (light, atm, "SELL", n)], f"{light} {far:g}->ATM {atm:g} x{n}"
+
+    def best_move(self, ctx, legs, cands, imb, band, atm, step, heavy=None):
+        best = None
+        for ops, tag in cands:
+            if not all(self._sellable(ctx, o[0], o[1], atm, step) for o in ops if o[2] == "SELL"):
+                continue
+            new = self.apply_ops(legs, ops)
+            if not self.guards_ok(legs, new, atm, step, heavy):
+                continue
+            after = self._imb(ctx, new)
+            if after is None or abs(after) > abs(imb) - self.MIN_GAIN:   # must lower |imbalance| (>= 0.5 pt)
+                continue
+            n = ops[0][3]
+            rank = (0, n, abs(after)) if abs(after) <= band else (1, abs(after), n)
+            if best is None or rank < best[0]:
+                best = (rank, tag, new, after)
+        return best
+
+    def chain(self, ctx, legs, atm, imb, band):
+        """Plan every step on paper. Returns (final legs, final imbalance, step notes)."""
+        step = self.step(ctx)
+        self._pxc, self._sellc = {}, {}
+        cur, ci, notes = legs, imb, []
+        for _ in range(self.MAX_STEPS):
+            if ci is None or abs(ci) <= band:
+                break
+            heavy = "CE" if ci > 0 else "PE"
+            light = "PE" if heavy == "CE" else "CE"
+            itm = {k for k in cur[heavy] if self.otm(heavy, k, atm, step) < 0}
+            pick = phase = None
+            for phase, gen, hv in (("ITM back", self.moves_out(cur, heavy, atm, step, itm) if itm else (), heavy),
+                                   ("to ATM", self.moves_atm(cur, light, atm, step), None),
+                                   ("shift", self.moves_out(cur, heavy, atm, step), heavy),
+                                   ("B", self.moves_in(cur, heavy, atm, step), None)):
+                pick = self.best_move(ctx, cur, gen, ci, band, atm, step, hv)
+                if pick:
+                    break
+            if not pick:
+                break
+            _, tag, cur, ci = pick
+            notes.append(f"{phase} {tag}")
+        return cur, ci, notes
+
+    def cost_note(self, ctx, ops) -> str:
+        tot = 0.0
+        for kind, k, _side, n in ops:
+            c = ctx.contract(k, kind)
+            q = ctx.quote(c.key) if c else None
+            if q and q.bid and q.ask and q.ask >= q.bid:
+                tot += (q.ask - q.bid) / 2 * n * c.lot * c.mult
+        return f"{len(ops)} orders, bid-ask ~{tot:,.0f}"
+
+    # ── rules ───────────────────────────────────────────────────────────────
+    def plan_book(self, ctx, atm):
+        """Entry / re-centre: clean set at `atm`, then the same chain (heavy shift first, then B; no C)."""
+        step, unit, band = self.step(ctx), self.unit(ctx), float(ctx.params["band"])
+        legs = {"CE": self.clean("CE", atm, step, unit), "PE": self.clean("PE", atm, step, unit)}
+        imb = self.plan_imbalance(ctx, legs)
+        if imb is None:
+            return None, "waiting for prices of the 6 strikes"
+        final, _after, notes = self.chain(ctx, legs, atm, imb, band)
+        return final, notes
+
+    def candidates(self, ctx, atm):
+        step, unit, band = self.step(ctx), self.unit(ctx), float(ctx.params["band"])
+        legs = self.legs(ctx)
+        imb = ctx.book.imbalance()["pct"]
+        if imb is None or abs(imb) <= band:
+            yield from super().candidates(ctx, atm)                     # missing prices / early normal only
+            return
+        heavy = "CE" if imb > 0 else "PE"
+        rq = ctx.quote(ctx.market.ref_key(ctx.name, ctx.expiry))
+        age = time.time() - rq.recv_ts if rq and rq.recv_ts else 0.0
+        if age > self.STALE_S:                                           # feed dropped / lagging: never adjust blind
+            ctx.state["stale_s"] = round(age, 1)
+            self.blocked(ctx, f"prices stale {age:.0f} s - adjustments held until the feed is back", key="stale prices")
+            return
+        ctx.state["stale_s"] = None
+        # 1. BACK TO NORMAL: clean set now within +-normal_band.
+        ops = self.op_go_normal(legs, atm, step, unit)
+        if ops:
+            after = self.plan_imbalance(ctx, self.apply_ops(legs, ops))
+            if after is not None and abs(after) <= float(ctx.params["normal_band"]) and abs(after) < abs(imb):
+                yield ops, f"back to normal (clean set {after:+.1f}%, {self.cost_note(ctx, ops)})"
+        # 2. RE-CENTRE: both sides adjusted -> rebuild like entry when that plan is inside the band.
+        clean = {k: self.clean(k, atm, step, unit) for k in ("CE", "PE")}
+        if legs["CE"] != clean["CE"] and legs["PE"] != clean["PE"] \
+                and sum(legs["CE"].values()) == sum(legs["PE"].values()) == 3 * unit:
+            target, _notes = self.plan_book(ctx, atm)
+            if target is not None and target != legs:
+                after = self.plan_imbalance(ctx, target)
+                if after is not None and abs(after) <= band:
+                    ops = self.op_to(legs, target)
+                    yield ops, f"re-centre ({after:+.1f}%, {self.cost_note(ctx, ops)})"
+        # 3. THE CHAIN: ITM back -> light to ATM -> heavy shift -> B, planned ahead, net orders only.
+        final, after, notes = self.chain(ctx, legs, atm, imb, band)
+        ops = self.op_to(legs, final) if notes else None
+        if ops:
+            yield ops, (f"flex ({heavy} heavy {imb:+.1f}% -> {after:+.1f}%: {'; '.join(notes)}; "
+                        f"{self.cost_note(ctx, ops)})")
+        else:
+            self.blocked(ctx, f"{heavy} heavy {imb:+.1f}%: no move allowed (2-strike / ATM / OTM2 rules or wide quotes)",
+                         key=f"{heavy} heavy: no flex move")
+
+
+class CePeSupertrendFlex(CePeSupertrend, CePeFlex):
+    """Supertrend in / flat (CePeSupertrend) + the flex adjustment rules while in (NIFTY_ST / SENSEX_ST)."""
+    params = {**CePeSupertrend.params}
+
+
 REGISTRY = {"cepe": CePeImbalance, "cepe_st": CePeSupertrend, "cepe_new": CePeNewRules,
-            "cepe_st_new": CePeSupertrendNewRules, "idle": Idle}
+            "cepe_st_new": CePeSupertrendNewRules,
+            "cepe_flex": CePeFlex, "cepe_st_flex": CePeSupertrendFlex, "idle": Idle}
 DEFAULT = "cepe"

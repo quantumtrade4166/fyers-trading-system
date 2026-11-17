@@ -194,6 +194,7 @@
       <div class="kv"><span class="lbl">This book's margin ≈</span><b class="num" id="lvBook">–</b><span class="sub mut">change in account margin since entry</span></div>
       <div class="kv"><span class="lbl">Charges (est.)</span><b class="num" id="lvChg">–</b><span class="sub mut num" id="lvNetPnl"></span></div>
       <div class="kv"><span class="lbl">Orders · Kotak reply</span><b class="num" id="lvOrd">–</b><span class="sub mut num" id="lvSync"></span></div>
+      <div class="kv"><span class="lbl">Live engine · heartbeat</span><b class="num" id="lvHb">–</b><span class="sub mut num" id="lvHbSub"></span></div>
     </div>
     <div class="livealarm" id="lvAlarm"></div>
   </div>
@@ -206,7 +207,7 @@
       <span class="msg mut" id="ctlMsg"></span>
       <span class="auto" style="margin-left:auto;display:flex;gap:8px;align-items:center">
         <label style="display:flex;gap:6px;align-items:center;cursor:pointer"><input type="checkbox" id="aOn"> <b>Auto-start daily</b></label>
-        <span class="mut">at</span><input type="time" id="aTime" style="width:100px">
+        <span class="mut">at</span><input type="time" id="aTime" step="1" style="width:120px" title="HH:MM:SS - e.g. 09:15:20">
         <span class="mut">IST</span>
         <span class="mut" id="aMsg"></span>
       </span>
@@ -221,6 +222,9 @@
       <label><span class="lbl">Strike step</span><input type="number" id="pStep" min="0" step="1"></label>
       <label><span class="lbl">MTM stop <span class="cur">₹</span> (0=off)</span><input type="number" id="pStop" min="0" step="500"></label>
       <label title="Never sell a strike whose bid-ask gap is wider than this % of its price (exits never wait)"><span class="lbl">Max quote gap %</span><input type="number" id="pGap" min="0.5" step="0.5"></label>
+      <label title="Exit everything (stopped for the day) the first tick ATM CE + ATM PE is at or above this. 0 = off"><span class="lbl">Exit if ATM CE+PE ≥ (0=off)</span><input type="number" id="pExHi" min="0" step="0.5"></label>
+      <label title="Exit everything (stopped for the day) the first tick ATM CE + ATM PE is at or below this. 0 = off"><span class="lbl">Exit if ATM CE+PE ≤ (0=off)</span><input type="number" id="pExLo" min="0" step="0.5"></label>
+      <span class="mut num" id="pCp" title="live ATM CE + ATM PE"></span>
       <label class="stOnly" title="Supertrend ATR period (1-min ATM CE+PE candles) used for entries / exits"><span class="lbl">ST period</span><input type="number" id="pStPer" min="1" step="1"></label>
       <label class="stOnly" title="Supertrend multiplier used for entries / exits"><span class="lbl">ST ×</span><input type="number" id="pStMul" min="0.1" step="0.1"></label>
       <button id="bSave">Save settings</button>
@@ -670,7 +674,8 @@ function renderUnds() {
   document.querySelectorAll('.und').forEach(el => el.onclick = () => selectUnd(el.dataset.n));
 }
 
-const PHASE = {in: 'In trade', wait_entry: 'Waiting to enter', stopped: 'Stopped (MTM SL)', done: 'Squared off',
+const PHASE = {in: 'In trade', wait_entry: 'Waiting to enter', stopped: 'Stopped (exit rule)', done: 'Squared off',
+               exited: 'Stopped · all exited',
                flat: 'Flat · waits for red', halted: 'HALTED (order problem)'};
 function renderLive(u) {
   const L = u.live;
@@ -688,7 +693,22 @@ function renderLive(u) {
   $('lvOrd').textContent = `${L.orders} · ${L.ack_ms_median == null ? '–' : L.ack_ms_median + ' ms'}`;
   $('lvSync').innerHTML = (a.positions_ok ? `Kotak positions ${a.positions_age}s ago` : `<span class="err">${esc(a.positions_msg || 'positions not read')}</span>`)
     + (L.busy_s >= 1 ? ` · <b style="color:#f59e0b">placing orders ${L.busy_s}s</b>` : '');
+  // heartbeat (17-Nov): own live engine; price age, worker loop age; red when either is old
+  const inS = u.session && u.session.in_session, pa = u.ref_age, la = L.loop_age;
+  const old = x => x != null && x > 5;
+  if (L.engine_down) {
+    $('lvHb').innerHTML = '<span class="err">ENGINE DOWN</span>';
+    $('lvHbSub').textContent = `${L.engine_error || ''}${L.engine_age_s != null ? ' · last seen ' + L.engine_age_s + 's ago' : ''}`;
+  } else {
+    const bad = (inS && L.subscribed && old(pa)) || old(la);
+    $('lvHb').innerHTML = `<span style="color:${bad ? '#f43f5e' : '#22c55e'}">●</span> price ${pa == null ? '–' : pa + 's'} · loop ${la == null ? '–' : la + 's'}`;
+    $('lvHbSub').textContent = L.subscribed ? 'own Kotak feed: this index' : 'not subscribed (arm to start prices)';
+  }
   const al = [];
+  if (L.engine_down) al.push('⚠ LIVE ENGINE NOT REACHABLE — positions at Kotak are unchanged; check before trading');
+  if (L.stale_s) al.push(`⚠ PRICES STALE ${L.stale_s}s — adjustments held until the feed is back (stop / square-off still act)`);
+  else if (inS && L.subscribed && u.running && old(pa)) al.push(`⚠ no index price for ${pa}s`);
+  if (old(la) && !L.engine_down) al.push(`⚠ live worker not turning for ${la}s`);
   if (L.fault) al.push('⚠ ' + L.fault);
   if (L.pending_exit) al.push(`⚠ EXIT NOT COMPLETE since ${L.pending_exit.since} — retrying: ${(L.pending_exit.left || []).join(', ')}`);
   if (L.unsettled) al.push(`⚠ ${L.unsettled} order(s) unsettled at Kotak — no new orders until Kotak confirms`);
@@ -736,6 +756,9 @@ function renderCards() {
   $('sess').innerHTML = `${s.open}–${s.close} · exit ${s.square_off} · ` + (s.in_session ? '<span class="pos">open</span>' : '<span class="mut">closed</span>');
   $('blocked').textContent = u.blocked ? '⚠ ' + u.blocked : (u.last_error ? 'error: ' + u.last_error : '');
   $('bStart').disabled = u.running; $('bStop').disabled = !u.running;
+  { const P = u.params || {}, cp = u.atm_cp, hi = P.exit_above, lo = P.exit_below;
+    $('pCp').innerHTML = cp == null ? '' : `ATM CE+PE now <b>${fmt(cp, 2)}</b>` +
+      (hi > 0 ? ` · ${fmt(hi - cp, 2)} to the ≥ exit` : '') + (lo > 0 ? ` · ${fmt(cp - lo, 2)} to the ≤ exit` : ''); }
   if (document.activeElement !== $('aTime') && !autoDirty) { $('aOn').checked = !!u.auto_start; $('aTime').value = u.auto_time || ''; }
   $('aMsg').innerHTML = !u.auto_start ? 'off'
     : u.auto_done ? '<span class="pos">done for today</span>'
@@ -743,6 +766,7 @@ function renderCards() {
   if (!paramsDirty) {
     $('pLots').value = p.lots; $('pBand').value = p.band; $('pNormal').value = p.normal_band; $('pTrig').value = p.normal_trigger;
     $('pBuf').value = p.atm_buffer_pct; $('pStep').value = p.step || u.step; $('pStop').value = p.mtm_stop; $('pGap').value = p.max_spread_pct;
+    $('pExHi').value = p.exit_above || 0; $('pExLo').value = p.exit_below || 0;
     if (p.st_period != null) { $('pStPer').value = p.st_period; $('pStMul').value = p.st_mult; }
   }
   $('cMtm').textContent = rs(u.mtm.total); $('cImb').textContent = im == null ? '' : fmt(im, 1) + '%';
@@ -883,7 +907,7 @@ $('bArm').onclick = async () => {
   $('ctlMsg').innerHTML = j.ok ? `<span class="pos">${j.armed ? 'ARMED' : 'disarmed'}</span>` : `<span class="err">${esc(j.error || 'failed')}</span>`;
   refresh();
 };
-['pLots', 'pBand', 'pNormal', 'pTrig', 'pBuf', 'pStep', 'pStop', 'pGap', 'pStPer', 'pStMul'].forEach(id => $(id).addEventListener('input', () => { paramsDirty = true; $('pMsg').textContent = 'unsaved'; }));
+['pLots', 'pBand', 'pNormal', 'pTrig', 'pBuf', 'pStep', 'pStop', 'pGap', 'pExHi', 'pExLo', 'pStPer', 'pStMul'].forEach(id => $(id).addEventListener('input', () => { paramsDirty = true; $('pMsg').textContent = 'unsaved'; }));
 let autoDirty = false;
 async function saveAuto() {
   autoDirty = true;
@@ -896,16 +920,51 @@ $('aOn').onchange = saveAuto;
 $('aTime').onchange = saveAuto;
 $('bSave').onclick = async () => {
   const body = {lots: +$('pLots').value, band: +$('pBand').value, normal_band: +$('pNormal').value, normal_trigger: +$('pTrig').value,
-                atm_buffer_pct: +$('pBuf').value, step: +$('pStep').value, mtm_stop: +$('pStop').value, max_spread_pct: +$('pGap').value};
+                atm_buffer_pct: +$('pBuf').value, step: +$('pStep').value, mtm_stop: +$('pStop').value, max_spread_pct: +$('pGap').value,
+                exit_above: +$('pExHi').value || 0, exit_below: +$('pExLo').value || 0};
   if (isST(SEL)) { body.st_period = +$('pStPer').value; body.st_mult = +$('pStMul').value; }
+  // owner 17-Nov: settings act IN THE MARKET - say what will happen before it happens
+  const R = ROW || {}, P = R.params || {};
+  if (R.book_lots && body.lots !== R.book_lots) {
+    const d = Math.abs(body.lots - R.book_lots), cut = body.lots < R.book_lots;
+    const msg = `${R.label}: change ${R.book_lots} → ${body.lots} lots on the OPEN book?
+
+` +
+      (cut ? `Buys back about ${d} lot(s) on every strike (${6 * d} lots in all), calls and puts in pairs. That P&L is booked.`
+           : `Sells about ${d} more lot(s) on every strike held (${6 * d} lots in all), calls and puts in pairs.`) +
+      (R.live ? '
+REAL orders on Kotak D.' : '') + '
+
+Type YES to go ahead:';
+    const t = prompt(msg);
+    if (t == null || t.trim().toUpperCase() !== 'YES') { $('pMsg').innerHTML = '<span class="warn">not saved</span>'; return; }
+  }
+  const cp = R.atm_cp;
+  if (R.open_positions && cp != null && ((body.exit_above > 0 && cp >= body.exit_above) || (body.exit_below > 0 && cp <= body.exit_below)) &&
+      !confirm(`ATM CE+PE is ${cp} now - this level EXITS EVERYTHING NOW and stops the book for the day. Save anyway?`)) {
+    $('pMsg').innerHTML = '<span class="warn">not saved</span>'; return;
+  }
+  const m = R.mtm ? R.mtm.total : 0;
+  if (body.mtm_stop > 0 && R.open_positions && m <= -body.mtm_stop &&
+      !confirm(`MTM is ${rs(m, R.ccy)} - a max loss of ${rs(body.mtm_stop, R.ccy)} EXITS EVERYTHING NOW. Save anyway?`)) {
+    $('pMsg').innerHTML = '<span class="warn">not saved</span>'; return;
+  }
   const j = await api(`/params/${SEL}`, body);
   paramsDirty = !j.ok;
-  $('pMsg').innerHTML = j.ok ? '<span class="pos">saved</span>' : `<span class="err">${esc(j.error)}</span>`;
+  $('pMsg').innerHTML = j.ok ? `<span class="pos">applied ${esc(j.applied_at || '')} · max loss ${j.params.mtm_stop ? rs(j.params.mtm_stop, R.ccy) : 'off'} · band ${j.params.band}% · lots ${j.params.lots}</span>` +
+      (j.resize ? ` <b style="color:#f59e0b">${esc(j.resize)}</b>` : '') : `<span class="err">${esc(j.error)}</span>`;
   refresh();
 };
 
 // ── loops ───────────────────────────────────────────────────────────────
 let busy = false;
+let histBusy = false, histAgain = false;
+async function histLoop(full) {                            // one chart request at a time, on its own track
+  if (histBusy) { if (full) histAgain = true; return; }
+  histBusy = true;
+  try { await loadHistory(full); } catch (e) {}
+  finally { histBusy = false; if (histAgain) { histAgain = false; histLoop(true); } }
+}
 async function refresh(full) {
   if (busy && !full) return; busy = true;
   try {
@@ -927,7 +986,8 @@ async function refresh(full) {
     }
     renderUnds(); renderCards();
     if (full) { chainLoop(); renderLower(); loadPnl(); }   // tables first: never wait behind the chart load
-    await loadHistory(full);
+    histLoop(full);                                        // 17-Nov: NOT awaited - a slow chart load must never
+                                                           // stop the cards / MTM / live status refreshing
   } catch (e) { $('feed').className = 'pill bad'; $('feed').textContent = 'offline'; }
   finally { busy = false; }
 }

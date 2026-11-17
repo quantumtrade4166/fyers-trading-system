@@ -37,8 +37,21 @@ def jsonl(path) -> list:
     return rows
 
 
+_days_memo = [0.0, None, None]      # (good until, data folder, answer)
+
+
 def list_days() -> list:
-    """Dates (newest first) that have any saved book or history."""
+    """Dates (newest first) that have any saved book or history. Shared for 5 s: the P&L chart of every
+    book asked for it (a folder scan each) on every refresh."""
+    import time
+    if _days_memo[2] is not None and _days_memo[1] == C.DATA and _days_memo[0] > time.monotonic():
+        return list(_days_memo[2])
+    out = _list_days()
+    _days_memo[:] = [time.monotonic() + 5.0, C.DATA, out]
+    return list(out)
+
+
+def _list_days() -> list:
     out = set()
     for sub in ("books", "history"):
         d = C.DATA / sub
@@ -119,6 +132,7 @@ def warm(names, today: str):
                     from live_trading_options.cepe_imbalance import st_sim
                     st_sim.sim_digest(d, n)                # no-op when the variant really ran that day
                 hist_stats(d, n)
+                day_pnl(d, n)                              # 17-Nov: the P&L chart's first load after a restart
             except Exception:
                 pass
 

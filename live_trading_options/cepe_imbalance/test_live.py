@@ -174,7 +174,7 @@ def test_live_defaults(universe):
     g = Rig(universe)
     assert g.r.live and g.r.params["lots"] == 1 and g.r.params["mtm_stop"] == 5000
     assert g.r.auto == {"auto_start": True, "auto_time": "09:16"}
-    assert g.r.strategy_name == "cepe"                     # the NORMAL rules
+    assert g.r.strategy_name == "cepe_flex"                # owner 17-Nov: the FLEX rules
 
 
 def test_start_refused_when_not_armed(universe):
@@ -254,6 +254,8 @@ def test_buyback_never_bigger_than_kotak_holds(universe):
     g.eng.start(B)
     k = next(iter(g.r.book.positions))
     g.k.drop[k] = 65                                       # owner closed this leg by hand in the Kotak app
+    for key in list(g.r.book.last_fill_ts):                # the fills are > POS_AFTER_FILL_S old (was timing-flaky)
+        g.r.book.last_fill_ts[key] -= LV.POS_AFTER_FILL_S + 1
     g.ctx.account.read_positions()
     out = g.eng.stop(B, exit_positions=True)
     assert g.r.book.fault and "closed outside" in g.r.book.fault

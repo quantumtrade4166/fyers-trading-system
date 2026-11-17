@@ -22,6 +22,7 @@ import time
 from dataclasses import asdict, dataclass
 
 from live_trading_options.cepe_imbalance import config as C
+from live_trading_options.cepe_imbalance.writer import W
 
 IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
@@ -103,6 +104,14 @@ class PaperBook:
 
     def _save(self, trade: dict | None):
         if not self.persist:
+            return
+        if W.started and not getattr(self, "live", False):    # paper book: the writer thread does the disk work
+            d = C.DATA / "books" / self.date
+            if trade:
+                W.append(d / f"{self.name}_trades.jsonl", json.dumps(trade) + "\n")
+            W.replace(d / f"{self.name}.json",
+                      json.dumps({"name": self.name, "date": self.date, "saved_at": time.time(),
+                                  "positions": {k: asdict(v) for k, v in self.positions.items()}}, indent=1))
             return
         d = self._dir()
         if trade:                                             # the fill record first: it can't be rebuilt later
