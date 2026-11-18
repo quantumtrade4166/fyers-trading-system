@@ -1009,6 +1009,16 @@ def test_good_kotak_reply_is_not_expired_session():
     r = lb._call("positions")
     check("good reply with '401' inside: no re-login", "login" not in calls and r["stat"] == "Ok", calls)
 
+
+def test_key_press_orders_never_queue():
+    """17-Nov: an exit waiting on Kotak held the screen's socket, so the next exit key waited behind it.
+    Orders / exits / cancels now each run as their own task; settings and mode changes stay in order."""
+    from live_trading_options.mcx_terminal import server as S
+    for op in ("order", "basket", "move", "cancel", "exit", "exit_all", "exit_inst", "cancel_all"):
+        check(f"{op} never holds the socket", op in S.SLOW_OPS)
+    for op in ("mode_set", "settings_set", "risk_set"):
+        check(f"{op} stays in order", op not in S.SLOW_OPS)
+
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:
         fn()

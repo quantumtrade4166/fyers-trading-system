@@ -337,3 +337,108 @@ def test_heavy_side_never_walks_back_strikes_far_out(universe):
         for part in a.split("; "):
             if "shift" in part:
                 assert "10400" not in part and "10600" not in part, a
+
+
+def test_both_sides_stay_bunched():
+    """17-Nov owner: strikes on EITHER side must stay bunched - last strike at most 3 steps from the first."""
+    g = S.CePeFlex()
+    atm, step = 9400, 200
+    old = {"CE": [9400, 9600, 9800], "PE": [9000, 9200, 9400]}
+    ok_ce = {"CE": [9400, 9600, 9800], "PE": [8800, 9200, 9400]}         # PE 9400..8800 = 3 steps: fine
+    far_pe = {"CE": [9400, 9600, 9800], "PE": [8600, 9200, 9400]}        # PE 9400..8600 = 4 steps: scattered
+    far_ce = {"CE": [9400, 9600, 10200], "PE": [9000, 9200, 9400]}       # CE 9400..10200 = 4 steps: scattered
+    assert g.guards_ok(old, ok_ce, atm, step, heavy="CE")
+    assert not g.guards_ok(old, far_pe, atm, step, heavy="CE")          # light side checked too
+    assert not g.guards_ok(old, far_ce, atm, step, heavy="PE")
+    assert not g.guards_ok(old, far_ce, atm, step)                      # and with no heavy side given
+
+
+def _fake_mtm(g, box):
+    g.r.book.mtm = lambda: {"total": box[0], "realized": 0.0, "unrealized": box[0]}
+
+
+def test_profit_target_exits_and_stops_for_the_day(universe):
+    """Owner 18-Nov: exit everything the first tick the day's MTM reaches the profit target."""
+    g = flex(Rig(universe, 9400))
+    g.eng.start(N)
+    box = [0.0]
+    _fake_mtm(g, box)
+    g.eng.set_params(N, {"profit_target": 5000})
+    box[0] = 4999
+    g.move(9400)
+    assert g.r.state["phase"] == "in"
+    box[0] = 5000
+    g.move(9400)
+    assert g.r.state["phase"] == "stopped" and not any(p.lots for p in g.r.book.positions.values())
+    assert any(e["event"] == "profit_exit" and "target" in e["why"] for e in g.r.events)
+    n = len(g.r.book.trades)
+    g.move(9400)
+    assert len(g.r.book.trades) == n                                 # stopped for the day
+
+
+def test_trailing_lock_follows_the_best_mtm(universe):
+    """Lock starts at 10k with a 3k gap: best 14k -> exits when MTM falls to 11k, not before."""
+    g = flex(Rig(universe, 9400))
+    g.eng.start(N)
+    box = [0.0]
+    _fake_mtm(g, box)
+    g.eng.set_params(N, {"lock_start": 10000, "lock_gap": 3000})
+    for v in (6000, 9000, 6500):                                   # below the start: lock off, no exit
+        box[0] = v
+        g.move(9400)
+        assert g.r.state["phase"] == "in" and g.r.state["lock_floor"] is None
+    for v in (10000, 14000, 12000, 11500):                         # lock on, floor trails the best (14k - 3k)
+        box[0] = v
+        g.move(9400)
+        assert g.r.state["phase"] == "in"
+    assert g.r.state["mtm_peak"] == 14000 and g.r.state["lock_floor"] == 11000
+    box[0] = 11000
+    g.move(9400)
+    assert g.r.state["phase"] == "stopped" and not any(p.lots for p in g.r.book.positions.values())
+    assert "profit lock" in g.r.state["blocked"]
+
+
+def test_target_and_lock_off_by_default_and_restart_does_not_fire_at_once(universe):
+    g = flex(Rig(universe, 9400))
+    g.eng.start(N)
+    box = [50000.0]
+    _fake_mtm(g, box)
+    g.move(9400)
+    assert g.r.state["phase"] == "in"                               # 0 = off
+    g.eng.stop(N, exit_positions=False)
+    g.eng.set_params(N, {"profit_target": 20000, "lock_start": 10000, "lock_gap": 5000})
+    g.eng.start(N)                                                  # already above the target at the Start
+    g.move(9400)
+    assert g.r.state["phase"] == "in"                               # does not exit at once
+    box[0] = 44000                                                  # lock restarted from 50k: floor 45k
+    g.move(9400)
+    assert g.r.state["phase"] == "stopped" and "profit lock" in g.r.state["blocked"]
+
+
+def test_itm_push_back_uses_the_buffered_atm(universe):
+    """Owner 18-Nov (SENSEX 09:15:37: 82300 CE 2 ITM for 27 s while the band waited): a sold strike ITM vs the
+    BUFFERED ATM is pushed back at once - that side becomes ATM / OTM1 / OTM2 - band or not."""
+    g = flex(Rig(universe, 9400))
+    g.r.params.update(band=60, normal_trigger=60)                  # a wide band: only the push-back can act
+    hold(g, {"CE": {9400: 1, 9600: 1, 9800: 1}, "PE": {9000: 1, 9200: 1, 9400: 1}}, 9400)
+    n = len(g.r.book.trades)
+    g.move(9520)                                                    # 120 past 9400 < 140 (50 % + 20 % buffer)
+    assert g.r.state["atm"] == 9400                                  # inside the buffer: nothing is ITM yet
+    assert not any("ITM push-back" in a for a in g.actions()), g.actions()
+    g.move(9560)                                                    # 160 past: buffered ATM -> 9600
+    assert g.r.state["atm"] == 9600
+    lg = g.legs()
+    assert min(lg["CE"]) >= 9600, lg                                # no call left in the money
+    assert any("ITM push-back" in a for a in g.actions()), g.actions()
+    for t in sells(g, n):                                           # never SOLD in the money
+        k = t.get("strike")
+        if k is not None:
+            assert (k >= 9600) if t.get("kind") == "CE" else (k <= 9600), t
+
+
+def test_itm_push_back_can_be_switched_off(universe):
+    g = flex(Rig(universe, 9400))
+    g.r.params.update(itm_push=0, band=60, normal_trigger=60)
+    hold(g, {"CE": {9400: 1, 9600: 1, 9800: 1}, "PE": {9000: 1, 9200: 1, 9400: 1}}, 9400)
+    g.move(9560)
+    assert not any("ITM push-back" in a for a in g.actions())

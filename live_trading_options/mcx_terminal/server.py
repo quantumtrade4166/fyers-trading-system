@@ -500,10 +500,14 @@ class Engine:
                 self.paper.housekeep()
                 self.live.housekeep()
                 now = time.time()
-                if now - last_mtm < SAMPLE_S:             # between samples: catch a short spike / dip
+                if _before_open(now):
+                    pass                                  # 17-Nov: after the 00:05 reset Kotak still lists the
+                                                          # previous day's trades until ~01:30 -> no chart points
+                                                          # before the market opens (it began at yesterday's +26,640)
+                elif now - last_mtm < SAMPLE_S:           # between samples: catch a short spike / dip
                     for mode, bk in (("PAPER", self.paper), ("LIVE", self.live)):
                         self.mtms[mode].watch([p for p in bk.positions() if p["net"] or p["realized"]], self.ltp, now)
-                if now - last_mtm >= SAMPLE_S:
+                if now - last_mtm >= SAMPLE_S and not _before_open(now):
                     last_mtm = now
                     for mode, bk in (("PAPER", self.paper), ("LIVE", self.live)):
                         h = self.mtms[mode]
@@ -819,6 +823,14 @@ class Engine:
         return {**d, "snap": snap, "oib": self.oi.bases(toks)}
 
 
+def _before_open(now: float) -> bool:
+    """Between the day's start (reset) and the market open - nothing of TODAY can have traded yet."""
+    if C.HOURS.get("always"):
+        return False
+    t = dt.datetime.fromtimestamp(now, IST).strftime("%H:%M")
+    return t < C.HOURS.get("open", "00:00")
+
+
 class Client:
     def __init__(self, ws: WebSocket, loop):
         self.ws = ws
@@ -1031,7 +1043,11 @@ async def health():
 
 
 QUIET_OPS = {"margin", "mtm_hist", "atm_hist"}
-SLOW_OPS = {"exit_all", "exit", "exit_inst", "refresh", "cancel_all"}
+# Ops that never hold the screen's socket: each runs as its own task, so the next key press goes out at once
+# instead of queuing behind a slow Kotak call (17-Nov 20:52:54: an exit waited 8 s on Kotak and the next exit key
+# waited behind it). Settings / mode / risk changes stay in order on the socket.
+SLOW_OPS = {"exit_all", "exit", "exit_inst", "refresh", "cancel_all",
+            "order", "basket", "move", "cancel", "sl_set", "sl_drop", "margin", "mtm_hist", "atm_hist"}
 
 
 async def run_op(c, loop, op, msg, user):

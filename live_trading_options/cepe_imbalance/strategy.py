@@ -89,6 +89,10 @@ class CePeImbalance(Strategy):
         "max_spread_pct": 3.0,   # never SELL a strike whose bid-ask gap is wider than this % of its mid
         "exit_above": 0.0,       # owner 17-Nov: ATM CE + ATM PE >= this -> exit all, stopped for the day (0 = off)
         "exit_below": 0.0,       # owner 17-Nov: ATM CE + ATM PE <= this -> exit all, stopped for the day (0 = off)
+        "itm_push": 1,           # owner 18-Nov (NIFTY/SENSEX flex): a sold strike ITM vs the buffered ATM -> push back now
+        "profit_target": 0.0,    # owner 18-Nov: MTM >= this (rupees) -> exit all, stopped for the day (0 = off)
+        "lock_start": 0.0,       # owner 18-Nov: trailing profit lock - once the day's best MTM reaches this ...
+        "lock_gap": 0.0,         # ... exit all when MTM falls this far below that best (0 = off)
     }                            # (or 2 ticks, whichever is bigger). Buy-backs / exits are never held.
 
     @staticmethod
@@ -415,6 +419,31 @@ class CePeImbalance(Strategy):
         ctx.save()
         return True
 
+    def money_exit(self, ctx) -> bool:
+        """Owner 18-Nov: profit target + trailing profit lock, both on the day's MTM (booked + open), both
+        editable in the market (0 = off), first tick, stopped for the day like the MTM stop. A (re)Start sets
+        `money_base`: a target already met at the Start does not fire at once, and the lock's best restarts."""
+        m = float(ctx.book.mtm()["total"])
+        base = ctx.state.get("money_base")
+        peak = max(float(ctx.state.get("mtm_peak") if ctx.state.get("mtm_peak") is not None else m), m)
+        ctx.state["mtm_peak"] = peak
+        tgt = float(ctx.params.get("profit_target") or 0)
+        ls, gap = float(ctx.params.get("lock_start") or 0), float(ctx.params.get("lock_gap") or 0)
+        ctx.state["lock_floor"] = (peak - gap) if ls > 0 and gap > 0 and peak >= ls else None
+        why = None
+        if tgt > 0 and m >= tgt and not (base is not None and base >= tgt):
+            why = f"profit target: MTM {m:,.0f} >= {tgt:,.0f}"
+        elif ctx.state["lock_floor"] is not None and m <= ctx.state["lock_floor"]:
+            why = f"profit lock: MTM {m:,.0f} fell {gap:,.0f} below the day's best {peak:,.0f}"
+        if not why:
+            return False
+        out = ctx.book.exit_all(why)
+        ctx.state["phase"] = "stopped"
+        ctx.state["blocked"] = f"EXITED: {why} - stopped for the day (Start to trade again)"
+        ctx.log("profit_exit", why=why, mtm=ctx.book.mtm()["total"], exits=len(out))
+        ctx.save()
+        return True
+
     def resize_target(self, ctx, legs, new):
         """Owner 17-Nov: lots changed while in trade -> every strike scaled by new/old, same shape (1a / 2a).
         Leftover lots (when a strike's share is not whole) go, one at a time, to the strike that keeps the
@@ -562,6 +591,78 @@ class CePeImbalance(Strategy):
             ctx.state["blocked_keys"] = sorted(self._keys_now)
             self._keys_now = None
 
+    # ── adjustment-loop guard (17-Nov-2026) ─────────────────────────────────
+    # Crude expiry day: C -> ITM back -> B -> C ... returned the book to the SAME legs every 3 moves
+    # (imbalance +15 -> -27 -> +32 -> +15: the deep-ITM 8200 PE at 142 vs OTM legs at 3.5 / 28 made every
+    # one-lot move overshoot the band). It ran on every tick: 60,133 fills on CRUDEOIL (-6 L) and 247,801 on
+    # CRUDEOIL_ST (-26 L) of pure spread. Now a move that would put the book back to legs it held in the
+    # last LOOP_WINDOW_S seconds is skipped (the book waits for prices to move), and a book never makes
+    # more than MAX_ADJ_PER_MIN adjustments in one minute.
+    LOOP_WINDOW_S = 120
+    MAX_ADJ_PER_MIN = 20
+
+    @staticmethod
+    def _legs_sig(legs) -> str:
+        return "|".join(f"{k}:" + ",".join(f"{s:g}x{n}" for s, n in sorted(legs[k].items()) if n) for k in ("CE", "PE"))
+
+    def _book_hist(self, ctx, now):
+        hist = [h for h in (ctx.state.get("book_hist") or []) if now - h[0] < self.LOOP_WINDOW_S]
+        cur = self._legs_sig(self.legs(ctx))
+        if not hist or hist[-1][1] != cur:
+            hist.append([now, cur])
+        ctx.state["book_hist"] = hist[-100:]
+        return hist
+
+    def loop_ok(self, ctx, ops, reason) -> bool:
+        now = time.time()
+        m = int(now // 60)
+        cnt = ctx.state.get("adj_minute") or [m, 0]
+        if cnt[0] == m and cnt[1] >= self.MAX_ADJ_PER_MIN:
+            self.blocked(ctx, f"{reason}: held - {self.MAX_ADJ_PER_MIN} adjustments already this minute (loop guard)",
+                         key="loop guard: per-minute cap")
+            return False
+        if not self.closer_ok(ctx, ops, reason):
+            return False
+        hist = self._book_hist(ctx, now)
+        after = self._legs_sig(self.apply_ops(self.legs(ctx), ops))
+        seen = next((h for h in hist[:-1] if h[1] == after), None)
+        if seen:
+            ago = now - seen[0]
+            self.blocked(ctx, f"{reason}: held - it would put the book back to its legs of {ago:.0f} s ago "
+                              f"(adjustment loop guard)", key="loop guard: repeat book")
+            if not ctx.state.get("loop_logged") or now - ctx.state["loop_logged"] > 300:
+                ctx.state["loop_logged"] = now
+                ctx.log("loop_guard", action=reason, back_to=after, seconds_ago=round(ago, 1))
+            return False
+        return True
+
+    def closer_ok(self, ctx, ops, reason) -> bool:
+        """Owner 17-Nov-2026 (PAPER books only): outside the band, an adjustment must bring the imbalance
+        CLOSER TO 0 than it is now. Crude expiry day: C (-15% -> +44%) and "ITM back" (+44% -> -45%) undid
+        each other every 2 minutes from 17:28 (240 fills in 5 h, P&L unchanged, brokerage never counted).
+        A move that lands further away is held; the book waits for prices to move. Live books unchanged."""
+        r = getattr(ctx, "_r", None)
+        if C.is_live(str(getattr(r, "name", "") or "")):
+            return True
+        band = float(ctx.params["band"])
+        legs = self.legs(ctx)
+        before = self.plan_imbalance(ctx, legs)
+        if before is None or abs(before) <= band:
+            return True
+        after = self.plan_imbalance(ctx, self.apply_ops(legs, ops))
+        if after is None or abs(after) < abs(before):
+            return True
+        self.blocked(ctx, f"{reason}: held - it would take the imbalance from {before:+.1f}% to {after:+.1f}% "
+                          f"(further from 0)", key="closer rule")
+        return False
+
+    def loop_note(self, ctx):
+        now = time.time()
+        m = int(now // 60)
+        cnt = ctx.state.get("adj_minute") or [m, 0]
+        ctx.state["adj_minute"] = [m, cnt[1] + 1] if cnt[0] == m else [m, 1]
+        self._book_hist(ctx, now)
+
     def _evaluate(self, ctx):
         ph = ctx.state.get("phase")
         if ph not in ("wait_entry", "in") or not ctx.in_session():
@@ -572,6 +673,8 @@ class CePeImbalance(Strategy):
             ctx.state["phase"] = "stopped"
             ctx.log("stop_loss", mtm=ctx.book.mtm()["total"], exits=len(out))
             ctx.save()
+            return
+        if ph == "in" and self.money_exit(ctx):
             return
         atm = self.current_atm(ctx)
         if atm is None:
@@ -592,7 +695,10 @@ class CePeImbalance(Strategy):
             done = False
             for ops, reason in self.candidates(ctx, atm):          # held by a wide quote -> try the next
                 self._fail = None
+                if not self.loop_ok(ctx, ops, reason):
+                    continue
                 if self.execute(ctx, ops, reason):
+                    self.loop_note(ctx)
                     done = True
                     break
                 if self._fail == "order":
@@ -661,6 +767,8 @@ class CePeSupertrend(CePeImbalance):
             ctx.state["phase"] = "stopped"
             ctx.log("stop_loss", mtm=ctx.book.mtm()["total"], exits=len(out))
             ctx.save()
+            return
+        if self.money_exit(ctx):                                        # day's MTM, booked too (like the stop)
             return
         s = self.signal(ctx)
         has = any(p.lots for p in ctx.book.positions.values())
@@ -863,13 +971,15 @@ class CePeFlex(CePeImbalance):
             def front(s):
                 return min(self.otm(heavy, k, atm, step) for k in s)
 
-            def span(s):
-                o = [self.otm(heavy, k, atm, step) for k in s]
-                return max(o) - min(o) if o else 0
             if front(new[heavy]) > max(self.FRONT_MAX, front(old[heavy]) if old[heavy] else 0):
                 return False                                             # front never past OTM2
-            if span(new[heavy]) > max(self.MAX_SPAN, span(old[heavy])):
-                return False                                             # back never past the 4th strike
+        for k in ("CE", "PE"):                                           # 17-Nov: BOTH sides stay bunched
+            o_new = [self.otm(k, x, atm, step) for x in new[k]]
+            o_old = [self.otm(k, x, atm, step) for x in old[k]]
+            sp_new = max(o_new) - min(o_new) if o_new else 0
+            sp_old = max(o_old) - min(o_old) if o_old else 0
+            if sp_new > max(self.MAX_SPAN, sp_old):
+                return False                                             # last strike <= 3 steps from the first
         return True
 
     # ── move builders ───────────────────────────────────────────────────────
@@ -972,14 +1082,49 @@ class CePeFlex(CePeImbalance):
         final, _after, notes = self.chain(ctx, legs, atm, imb, band)
         return final, notes
 
+    def push_back(self, ctx, legs, atm, step, band):
+        """Owner 18-Nov: a SOLD strike that is in the money against the BUFFERED ATM (ctx.state['atm'] - it only
+        moves 50 % + atm_buffer_pct of a step past the half-way point) is pushed back at once, band or not:
+        that side is rebuilt as ATM / OTM1 / OTM2 with the same lots (net orders only); if the book is then
+        outside the band, the flex chain rebalances it in the same plan. Returns (ops, reason) or None."""
+        new, moved = {k: dict(v) for k, v in legs.items()}, []
+        for kind in ("CE", "PE"):
+            side = legs[kind]
+            itm = sorted(k for k in side if self.otm(kind, k, atm, step) < 0)
+            if not itm:
+                continue
+            n = sum(side.values())
+            sgn = 1 if kind == "CE" else -1
+            ladder = [atm + sgn * i * step for i in range(3)]
+            out = {k: n // 3 for k in ladder}
+            for k in ladder[:n % 3]:
+                out[k] += 1
+            new[kind] = {k: v for k, v in out.items() if v}
+            moved.append(f"{kind} {','.join(f'{k:g}' for k in itm)} ITM")
+        if not moved:
+            return None
+        self._pxc, self._sellc = {}, {}
+        for kind in ("CE", "PE"):
+            for k, v in new[kind].items():
+                if v > legs[kind].get(k, 0) and not self._sellable(ctx, kind, k, atm, step):
+                    self.blocked(ctx, f"ITM push-back ({'; '.join(moved)}): {kind} {k:g} has no fair quote yet",
+                                 key="itm push: wide quote")
+                    return None
+        after = self._imb(ctx, new)
+        notes = []
+        if after is not None and abs(after) > band:
+            new, after, notes = self.chain(ctx, new, atm, after, band)
+        ops = self.op_to(legs, new)
+        if not ops:
+            return None
+        return ops, (f"ITM push-back ({'; '.join(moved)} vs ATM {atm:g} -> "
+                     f"{'+' if (after or 0) >= 0 else ''}{(after or 0):.1f}%"
+                     f"{': ' + '; '.join(notes) if notes else ''}; {self.cost_note(ctx, ops)})")
+
     def candidates(self, ctx, atm):
         step, unit, band = self.step(ctx), self.unit(ctx), float(ctx.params["band"])
         legs = self.legs(ctx)
         imb = ctx.book.imbalance()["pct"]
-        if imb is None or abs(imb) <= band:
-            yield from super().candidates(ctx, atm)                     # missing prices / early normal only
-            return
-        heavy = "CE" if imb > 0 else "PE"
         rq = ctx.quote(ctx.market.ref_key(ctx.name, ctx.expiry))
         age = time.time() - rq.recv_ts if rq and rq.recv_ts else 0.0
         if age > self.STALE_S:                                           # feed dropped / lagging: never adjust blind
@@ -987,6 +1132,15 @@ class CePeFlex(CePeImbalance):
             self.blocked(ctx, f"prices stale {age:.0f} s - adjustments held until the feed is back", key="stale prices")
             return
         ctx.state["stale_s"] = None
+        if int(ctx.params.get("itm_push", 1) or 0):                     # 0. ITM PUSH-BACK (owner 18-Nov), band or not
+            pb = self.push_back(ctx, legs, atm, step, band)
+            if pb:
+                yield pb
+                return
+        if imb is None or abs(imb) <= band:
+            yield from super().candidates(ctx, atm)                     # missing prices / early normal only
+            return
+        heavy = "CE" if imb > 0 else "PE"
         # 1. BACK TO NORMAL: clean set now within +-normal_band.
         ops = self.op_go_normal(legs, atm, step, unit)
         if ops:

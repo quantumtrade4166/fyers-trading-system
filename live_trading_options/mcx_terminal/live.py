@@ -173,6 +173,7 @@ class LiveBook(PaperBook):
         self._pos_kick = threading.Event()
         self._burst_until = 0.0
         self._pushed = threading.Event()                # set by Kotak's push channel on any order change
+        self._poller_on = False                         # True once the background order-book poller runs
         self._early = {}                                # pushes that beat place_order's own reply {oid: row}
         self.notify = None                              # engine hook: a fill / reject that came after the pop-up
         self.on_push_other = None                       # auto stop-loss: pushes for orders the book does not track
@@ -592,8 +593,14 @@ class LiveBook(PaperBook):
         deadline = time.time() + (VERDICT_WAIT_S if kind == "MKT" else 0.25)  # a short look for the fill
         while time.time() < deadline and any(o["status"] not in TERMINAL for o in mine if o["broker_id"]):
             self._pushed.clear()
-            if not self._pushed.wait(0.1):              # a push wakes this at once; else read the book
-                self.poll()
+            # 17-Nov: this used to read the order book ITSELF after 0.1 s (a ~250 ms REST call) and stayed blocked
+            # in it even when Kotak's fill push arrived meanwhile -> buys answered ~0.25 s late. Now it only
+            # waits: the push, or the background poller (kicked, burst-polling every 0.15 s), wakes it.
+            if not self._pushed.wait(0.05):
+                if self._poller_on:
+                    self._poll_kick.set()
+                else:                                   # no background poller (tests / tools): read it here
+                    self.poll()
         res = self._result(mine, side, lots, c, qty, limit)
         with self.lock:
             for o in mine:                              # anything still working is announced when it fills
@@ -703,6 +710,8 @@ class LiveBook(PaperBook):
                 self._save()
         if changed:
             self.on_change()
+        if changed:
+            self._pushed.set()                     # a waiting place() sees the fill at once
         return changed
 
     def _match_lost(self, r):
@@ -782,6 +791,8 @@ class LiveBook(PaperBook):
             new = "PART-CANCELLED" if o["filled"] else "CANCELLED"
         if new != o["status"]:
             o["status"] = new
+            if new in TERMINAL:
+                o["t_done"] = time.time()              # sl.py: no new stop right after an exit filled
             if new == "COMPLETE":
                 o["reason"] = f"filled by Kotak @ {o['avg']:,.2f}"
             changed = True
@@ -799,6 +810,7 @@ class LiveBook(PaperBook):
         return changed
 
     def _poll_loop(self):
+        self._poller_on = True
         while True:
             try:
                 with self.lock:

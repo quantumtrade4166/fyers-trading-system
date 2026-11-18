@@ -183,6 +183,8 @@ class PaperBook:
             return None
         buf = float(st[f"{role}_buffer"] or 0)
         adj = ref * buf / 100 if st[f"{role}_unit"] == "%" else buf
+        if buf > 0:                                    # owner 18-Nov: never less than MKT_MIN_TICKS ticks, so a
+            adj = max(adj, C.MKT_MIN_TICKS * c.tick)   # cheap option's "market" order still crosses a moving book
         px = ref + adj if side == "B" else ref - adj
         return max(_round_tick(px, c.tick, side == "B"), c.tick)
 

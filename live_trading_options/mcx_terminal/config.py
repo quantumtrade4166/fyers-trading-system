@@ -138,7 +138,8 @@ DEFAULT_STRIKES = 10
 MODE = "PAPER"              # start-up mode; LIVE only when the OWNER arms it on the screen (resets daily)
 # MAX_LOTS_PER_ORDER / CONFIRM_LOTS / MAX_QTY_LOTS_CHOICE: per desk (_COMMON / _DESKS above)
 PAPER_CARRY = False          # paper positions do NOT carry to the next day (daily reset at RESET_AT)
-MKT_BUFFER_PCT = 1.0        # "market" = limit at best ask/bid +/- this % (Kotak takes no MARKET orders)
+MKT_BUFFER_PCT = 1.0        # "market" = limit at best ask/bid +/- this % (Kotak takes no MARKET orders; the MCX desk is set to 2% in its settings.json, owner 18-Nov)
+MKT_MIN_TICKS = 5           # ... but never less than this many ticks (0.5 on CRUDEOIL): cheap options still fill
 
 DATA.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)

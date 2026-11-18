@@ -501,6 +501,8 @@ class Engine:
             if r.running:
                 return {"ok": True, "note": "already running"}
             r.running, r.square_off_done = True, False
+            r.state["money_base"] = r.book.mtm()["total"]  # owner 18-Nov: target / lock count from this Start
+            r.state["mtm_peak"] = None
             r.event("start", strategy=r.strategy_name, how=how)
             if r.live and r.state.get("phase") in ("halted", "stopped", "done"):
                 r.state["phase"] = None                     # a fresh Start after a halt / stop
@@ -857,6 +859,7 @@ class Engine:
                         "open_positions": sum(1 for p in r.book.positions.values() if p.lots),
                         "book_lots": r.strategy.unit(r.ctx) if any(p.lots for p in r.book.positions.values()) else None,
                         "resize_to": r.state.get("resize_to"), "atm_cp": r.state.get("atm_cp"),
+                        "mtm_peak": r.state.get("mtm_peak"), "lock_floor": r.state.get("lock_floor"),
                         "trades": len(r.book.trades), "errors": r.errors, "last_error": r.last_error,
                         "session": {"open": o.strftime("%H:%M"), "close": close.strftime("%H:%M"),
                                     "square_off": sq.strftime("%H:%M"), "in_session": o <= now < close},

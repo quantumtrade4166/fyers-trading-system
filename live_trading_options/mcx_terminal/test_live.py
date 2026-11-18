@@ -129,6 +129,9 @@ class FakeKotak:
 
     def cancel_order(self, order_id, **kw):
         self.cancels.append(order_id)
+        if getattr(self, "slow_cancel", 0):                    # 17-Nov: Kotak took 8 s to answer a cancel
+            d, self.slow_cancel = self.slow_cancel, 0
+            time.sleep(d)
         if self.deaf_cancels:
             self.deaf_cancels -= 1
             return {"result": order_id, "stat": "Ok", "stCode": 200}
@@ -660,9 +663,18 @@ def test_auto_stop_loss():
     k.fill(b.orders[-1]["broker_id"], 100, 96.0)
     for rr in m.pause:
         m.pause[rr] = 0
+    for o in b.orders:                                       # and the 3 s after an exit fill are over
+        if o.get("t_done"):
+            o["t_done"] -= 10
     step()
     check("no re-arm before the terminal sees the exit filled", ce.token not in m.recs, m.recs.get(ce.token))
     b.poll()
+    step()
+    check("no re-arm in the first seconds after the exit filled (Kotak positions lag)", ce.token not in m.recs,
+          m.recs.get(ce.token))
+    for o in b.orders:
+        if o.get("t_done"):
+            o["t_done"] -= 10
     step()
     check("re-armed for the rest, trail kept", m.recs[ce.token]["qty"] == 100 and m.recs[ce.token]["trigger"] == 130.0,
           m.recs.get(ce.token))
@@ -686,6 +698,9 @@ def test_auto_stop_loss():
     # stop already crossed when found -> not placed
     k.hand_trade(ce.symbol, "S", 100, 100.0)
     m.pause.clear()
+    for o in b.orders:                                       # and the 3 s after an exit fill are over
+        if o.get("t_done"):
+            o["t_done"] -= 10
     step(160.0)
     check("stop already crossed -> not placed", m.recs[ce.token]["state"] == "past" and not m.recs[ce.token]["oid"],
           m.recs.get(ce.token))
@@ -711,6 +726,9 @@ def test_auto_stop_loss():
     k.hand_trade(ce.symbol, "S", 100, 100.0)
     for rr in m.pause:
         m.pause[rr] = 0
+    for o in b.orders:                                       # and the 3 s after an exit fill are over
+        if o.get("t_done"):
+            o["t_done"] -= 10
     step(100.0)
     check("refused -> watching", m.recs[ce.token]["state"] == "watching" and "refused" in notes[-1]["msg"].lower(), m.recs.get(ce.token))
     k.refuse = None
@@ -764,6 +782,9 @@ def test_sl_cancel_verified_and_no_rearm_during_exit():
     b.place(ce.token, "B", 100, "MKT")
     ex = b.orders[-1]
     m.pause.clear()
+    for o in b.orders:                                       # and the 3 s after an exit fill are over
+        if o.get("t_done"):
+            o["t_done"] -= 10
     step()
     check("no new SL while the exit is still working", ce.token not in m.recs, m.recs.get(ce.token))
     check("ignored cancel is being watched", sl1 in m.cancelling, m.cancelling)
@@ -782,6 +803,9 @@ def test_sl_cancel_verified_and_no_rearm_during_exit():
     k.fill(b.orders[-1]["broker_id"], 100, 100.0)
     b.poll()
     m.pause.clear()
+    for o in b.orders:                                       # and the 3 s after an exit fill are over
+        if o.get("t_done"):
+            o["t_done"] -= 10
     step()
     sl2 = (m.recs.get(ce.token) or {}).get("oid")
     k.deaf_cancels = 99
@@ -1080,6 +1104,9 @@ def test_positions_row_controls():
         k.fill(o["broker_id"], o["qty"], 100.0)
     b.sync_positions()
     m.pause.clear()
+    for o in b.orders:                                       # and the 3 s after an exit fill are over
+        if o.get("t_done"):
+            o["t_done"] -= 10
     r = b.move(ch[9350.0]["CE"].token, 1, False, lots=1)
     check("partial Move close: 9350 CE back to 9300 CE, 1 lot", r["ok"] and {(o["trading_symbol"], o["transaction_type"], int(o["quantity"]))
           for o in k.sent[-2:]} == {(ch[9350.0]["CE"].symbol, "B", 100), (ce.symbol, "S", 100)}, k.sent[-2:])
@@ -1097,7 +1124,14 @@ def test_fastrest_shim():
             seen.update(kw)
             return "ok"
     sh = FR._Shim()
-    sh._local.s = S()
+    a = FR._Shim()
+    got = []
+    import threading
+    for _ in range(3):
+        t = threading.Thread(target=lambda: got.append(a._s()))
+        t.start(); t.join()
+    check("one shared session for every thread (orders reuse a warm connection)", len({id(x) for x in got}) == 1)
+    sh._session = S()
     check("post goes through the kept-open session", sh.post("https://x", data={}) == "ok")
     check("every call gets a timeout", seen.get("timeout") == (FR.CONNECT_TIMEOUT, FR.READ_TIMEOUT), seen)
     check("other requests names still there", sh.exceptions is __import__("requests").exceptions)
@@ -1221,6 +1255,76 @@ def test_mcx_exit_all_leaves_nse_desk_crude_alone():
     check("NSE desk crude order + its stop-loss untouched", n not in k.cancels and s not in k.cancels, k.cancels)
     path.unlink(missing_ok=True)
 
+
+
+def test_slow_sl_cancel_never_freezes_an_exit():
+    """17-Nov 20:52:54: Kotak did not answer an SL cancel for 8 s, so that exit leg waited 8 s while crude fell;
+    then a NEW stop was placed 1 s after the exit filled (Kotak positions still showed the old short)."""
+    from live_trading_options.mcx_terminal import sl as SL
+    q = {}
+    u, b, k, flag, path = _live("slowsl", q)
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[ce.token] = _q(100.0)
+    cfg = {"auto_sl": {"arm_on": "sell", "sl_auto": True, "sl_val": 50, "sl_unit": "%", "qty": "full",
+                       "trail_auto": False, "trail_on": False, "trail_every": 10}}
+    spath = path.with_name("slowsl_test.json")
+    spath.unlink(missing_ok=True)
+    m = SL.AutoSL(b, lambda t: (q.get(t) or {}).get("ltp"), lambda: cfg, live=True, path=spath, notify=lambda n: None)
+    b.before_reduce, b.before_flatten, b.on_push_other = m.before_reduce, m.before_flatten, m.on_push
+
+    def step():
+        b.sync_positions()
+        m._rows_at = 0.0
+        m.step()
+    k.hand_trade(ce.symbol, "S", 100, 100.0)
+    step()
+    sl_oid = m.recs[ce.token]["oid"]
+    k.slow_cancel = 4.0                                      # Kotak sits on the cancel
+    t = time.time()
+    res = b.exit_position(ce.token, 1.0)
+    took = time.time() - t
+    check("exit not frozen by a slow SL cancel (price far from the stop)", res["ok"] and took < 3.0, (res, took))
+    check("cancel re-sent", k.cancels.count(sl_oid) >= 1 and sl_oid in m.cancelling, (k.cancels, m.cancelling))
+    k.fill(b.orders[-1]["broker_id"], 100, 100.0)
+    b.poll()
+    k.hand_trade(ce.symbol, "S", 100, 100.0)                  # Kotak's positions still show the short for a moment
+    m.pause.clear()
+    step()
+    check("no new stop in the 3 s after the exit filled", ce.token not in m.recs, m.recs.get(ce.token))
+    time.sleep(4.2)                                          # let the slow cancel thread finish
+    spath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
+def test_market_price_floor_ticks():
+    from live_trading_options.mcx_terminal import config as C
+    q = {}
+    u, b, k, flag, path = _live("floor", q)
+    c = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[c.token] = {"ltp": 15.0, "bid": 15.0, "ask": 15.2, "bq": 10**6, "aq": 10**6, "depth": None}
+    st = {"entry_ref": "touch", "entry_buffer": 2.0, "entry_unit": "%", "exit_ref": "touch", "exit_buffer": 2.0,
+          "exit_unit": "%"}
+    buy = b._price(c.token, "B", "entry", st)
+    check("cheap option: 2% (0.30) lifted to 5 ticks", abs(buy - (15.2 + C.MKT_MIN_TICKS * c.tick)) < 1e-9, (buy, c.tick))
+    q[c.token] = {"ltp": 500.0, "bid": 500.0, "ask": 500.0, "bq": 10**6, "aq": 10**6, "depth": None}
+    check("dear option: 2% stays", abs(b._price(c.token, "S", "exit", st) - 490.0) < 1e-9)
+    path.unlink(missing_ok=True)
+
+
+def test_mtm_chart_waits_for_the_open():
+    import datetime as _dt
+    from live_trading_options.mcx_terminal import server as S
+    ist = _dt.timezone(_dt.timedelta(hours=5, minutes=30))
+    at = lambda h, mi: _dt.datetime(2026, 11, 17, h, mi, tzinfo=ist).timestamp()
+    old = S.C.HOURS
+    S.C.HOURS = {"open": "09:00", "close": "23:30"}
+    try:
+        check("00:06 after the reset: no chart point", S._before_open(at(0, 6)))
+        check("09:00 on: charted", not S._before_open(at(9, 0)) and not S._before_open(at(23, 50)))
+        S.C.HOURS = {"always": True, "open": "17:35"}
+        check("24h desk (BTC) always charted", not S._before_open(at(3, 0)))
+    finally:
+        S.C.HOURS = old
 
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:

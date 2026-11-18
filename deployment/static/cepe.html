@@ -219,12 +219,17 @@
       <label><span class="lbl">Normal ±%</span><input type="number" id="pNormal" min="0" step="0.5"></label>
       <label title="Between this and the band, only &quot;back to normal&quot; may trade (early clean-up). Set equal to the band to turn off."><span class="lbl">Go-normal at ±%</span><input type="number" id="pTrig" min="0" step="0.5"></label>
       <label><span class="lbl">ATM buffer %</span><input type="number" id="pBuf" min="0" max="50" step="5"></label>
+      <label title="NIFTY / SENSEX: a sold strike in the money vs the buffered ATM is pushed back at once (that side becomes ATM / OTM1 / OTM2), band or not"><span class="lbl">ITM push-back</span><select id="pItm"><option value="1">on</option><option value="0">off</option></select></label>
       <label><span class="lbl">Strike step</span><input type="number" id="pStep" min="0" step="1"></label>
       <label><span class="lbl">MTM stop <span class="cur">₹</span> (0=off)</span><input type="number" id="pStop" min="0" step="500"></label>
       <label title="Never sell a strike whose bid-ask gap is wider than this % of its price (exits never wait)"><span class="lbl">Max quote gap %</span><input type="number" id="pGap" min="0.5" step="0.5"></label>
       <label title="Exit everything (stopped for the day) the first tick ATM CE + ATM PE is at or above this. 0 = off"><span class="lbl">Exit if ATM CE+PE ≥ (0=off)</span><input type="number" id="pExHi" min="0" step="0.5"></label>
       <label title="Exit everything (stopped for the day) the first tick ATM CE + ATM PE is at or below this. 0 = off"><span class="lbl">Exit if ATM CE+PE ≤ (0=off)</span><input type="number" id="pExLo" min="0" step="0.5"></label>
       <span class="mut num" id="pCp" title="live ATM CE + ATM PE"></span>
+      <label title="Exit everything (stopped for the day) the first tick the day's MTM reaches this profit. 0 = off"><span class="lbl">Profit target ₹ (0=off)</span><input type="number" id="pTgt" min="0" step="500"></label>
+      <label title="Trailing profit lock: starts once the day's best MTM reaches this. 0 = off"><span class="lbl">Lock starts at ₹ (0=off)</span><input type="number" id="pLkS" min="0" step="500"></label>
+      <label title="Trailing profit lock: exit everything when MTM falls this far below the day's best. 0 = off"><span class="lbl">Lock trail gap ₹</span><input type="number" id="pLkG" min="0" step="500"></label>
+      <span class="mut num" id="pLk" title="profit target / lock now"></span>
       <label class="stOnly" title="Supertrend ATR period (1-min ATM CE+PE candles) used for entries / exits"><span class="lbl">ST period</span><input type="number" id="pStPer" min="1" step="1"></label>
       <label class="stOnly" title="Supertrend multiplier used for entries / exits"><span class="lbl">ST ×</span><input type="number" id="pStMul" min="0.1" step="0.1"></label>
       <button id="bSave">Save settings</button>
@@ -758,7 +763,12 @@ function renderCards() {
   $('bStart').disabled = u.running; $('bStop').disabled = !u.running;
   { const P = u.params || {}, cp = u.atm_cp, hi = P.exit_above, lo = P.exit_below;
     $('pCp').innerHTML = cp == null ? '' : `ATM CE+PE now <b>${fmt(cp, 2)}</b>` +
-      (hi > 0 ? ` · ${fmt(hi - cp, 2)} to the ≥ exit` : '') + (lo > 0 ? ` · ${fmt(cp - lo, 2)} to the ≤ exit` : ''); }
+      (hi > 0 ? ` · ${fmt(hi - cp, 2)} to the ≥ exit` : '') + (lo > 0 ? ` · ${fmt(cp - lo, 2)} to the ≤ exit` : '');
+    const m = u.mtm ? u.mtm.total : 0, tg = +P.profit_target || 0, ls = +P.lock_start || 0, lg = +P.lock_gap || 0;
+    $('pLk').innerHTML = (tg > 0 ? `target ${rs(tg, u.ccy)} · ${rs(Math.max(tg - m, 0), u.ccy)} to go` : '') +
+      (ls > 0 && lg > 0 ? (tg > 0 ? ' · ' : '') + (u.lock_floor != null
+        ? `<b class="pos">lock ON</b> · best ${rs(u.mtm_peak, u.ccy)} · exits at ${rs(u.lock_floor, u.ccy)}`
+        : `lock waits for ${rs(ls, u.ccy)}`) : ''); }
   if (document.activeElement !== $('aTime') && !autoDirty) { $('aOn').checked = !!u.auto_start; $('aTime').value = u.auto_time || ''; }
   $('aMsg').innerHTML = !u.auto_start ? 'off'
     : u.auto_done ? '<span class="pos">done for today</span>'
@@ -767,6 +777,8 @@ function renderCards() {
     $('pLots').value = p.lots; $('pBand').value = p.band; $('pNormal').value = p.normal_band; $('pTrig').value = p.normal_trigger;
     $('pBuf').value = p.atm_buffer_pct; $('pStep').value = p.step || u.step; $('pStop').value = p.mtm_stop; $('pGap').value = p.max_spread_pct;
     $('pExHi').value = p.exit_above || 0; $('pExLo').value = p.exit_below || 0;
+    $('pItm').value = String(p.itm_push == null ? 1 : +p.itm_push);
+    $('pTgt').value = p.profit_target || 0; $('pLkS').value = p.lock_start || 0; $('pLkG').value = p.lock_gap || 0;
     if (p.st_period != null) { $('pStPer').value = p.st_period; $('pStMul').value = p.st_mult; }
   }
   $('cMtm').textContent = rs(u.mtm.total); $('cImb').textContent = im == null ? '' : fmt(im, 1) + '%';
@@ -907,7 +919,7 @@ $('bArm').onclick = async () => {
   $('ctlMsg').innerHTML = j.ok ? `<span class="pos">${j.armed ? 'ARMED' : 'disarmed'}</span>` : `<span class="err">${esc(j.error || 'failed')}</span>`;
   refresh();
 };
-['pLots', 'pBand', 'pNormal', 'pTrig', 'pBuf', 'pStep', 'pStop', 'pGap', 'pExHi', 'pExLo', 'pStPer', 'pStMul'].forEach(id => $(id).addEventListener('input', () => { paramsDirty = true; $('pMsg').textContent = 'unsaved'; }));
+['pLots', 'pBand', 'pNormal', 'pTrig', 'pBuf', 'pStep', 'pStop', 'pGap', 'pExHi', 'pExLo', 'pTgt', 'pLkS', 'pLkG', 'pItm', 'pStPer', 'pStMul'].forEach(id => $(id).addEventListener('input', () => { paramsDirty = true; $('pMsg').textContent = 'unsaved'; }));
 let autoDirty = false;
 async function saveAuto() {
   autoDirty = true;
@@ -921,21 +933,17 @@ $('aTime').onchange = saveAuto;
 $('bSave').onclick = async () => {
   const body = {lots: +$('pLots').value, band: +$('pBand').value, normal_band: +$('pNormal').value, normal_trigger: +$('pTrig').value,
                 atm_buffer_pct: +$('pBuf').value, step: +$('pStep').value, mtm_stop: +$('pStop').value, max_spread_pct: +$('pGap').value,
-                exit_above: +$('pExHi').value || 0, exit_below: +$('pExLo').value || 0};
+                exit_above: +$('pExHi').value || 0, exit_below: +$('pExLo').value || 0,
+                profit_target: +$('pTgt').value || 0, lock_start: +$('pLkS').value || 0, lock_gap: +$('pLkG').value || 0, itm_push: +$('pItm').value};
   if (isST(SEL)) { body.st_period = +$('pStPer').value; body.st_mult = +$('pStMul').value; }
   // owner 17-Nov: settings act IN THE MARKET - say what will happen before it happens
   const R = ROW || {}, P = R.params || {};
   if (R.book_lots && body.lots !== R.book_lots) {
     const d = Math.abs(body.lots - R.book_lots), cut = body.lots < R.book_lots;
-    const msg = `${R.label}: change ${R.book_lots} → ${body.lots} lots on the OPEN book?
-
-` +
+    const msg = `${R.label}: change ${R.book_lots} → ${body.lots} lots on the OPEN book?\n\n` +
       (cut ? `Buys back about ${d} lot(s) on every strike (${6 * d} lots in all), calls and puts in pairs. That P&L is booked.`
            : `Sells about ${d} more lot(s) on every strike held (${6 * d} lots in all), calls and puts in pairs.`) +
-      (R.live ? '
-REAL orders on Kotak D.' : '') + '
-
-Type YES to go ahead:';
+      (R.live ? '\nREAL orders on Kotak D.' : '') + '\n\nType YES to go ahead:';
     const t = prompt(msg);
     if (t == null || t.trim().toUpperCase() !== 'YES') { $('pMsg').innerHTML = '<span class="warn">not saved</span>'; return; }
   }
@@ -949,9 +957,15 @@ Type YES to go ahead:';
       !confirm(`MTM is ${rs(m, R.ccy)} - a max loss of ${rs(body.mtm_stop, R.ccy)} EXITS EVERYTHING NOW. Save anyway?`)) {
     $('pMsg').innerHTML = '<span class="warn">not saved</span>'; return;
   }
+  const pk = Math.max(R.mtm_peak != null ? R.mtm_peak : m, m);
+  if (R.open_positions && ((body.profit_target > 0 && m >= body.profit_target) ||
+      (body.lock_start > 0 && body.lock_gap > 0 && pk >= body.lock_start && m <= pk - body.lock_gap)) &&
+      !confirm(`MTM is ${rs(m, R.ccy)} (best today ${rs(pk, R.ccy)}) - this profit target / lock EXITS EVERYTHING NOW. Save anyway?`)) {
+    $('pMsg').innerHTML = '<span class="warn">not saved</span>'; return;
+  }
   const j = await api(`/params/${SEL}`, body);
   paramsDirty = !j.ok;
-  $('pMsg').innerHTML = j.ok ? `<span class="pos">applied ${esc(j.applied_at || '')} · max loss ${j.params.mtm_stop ? rs(j.params.mtm_stop, R.ccy) : 'off'} · band ${j.params.band}% · lots ${j.params.lots}</span>` +
+  $('pMsg').innerHTML = j.ok ? `<span class="pos">applied ${esc(j.applied_at || '')} · max loss ${j.params.mtm_stop ? rs(j.params.mtm_stop, R.ccy) : 'off'} · target ${j.params.profit_target ? rs(j.params.profit_target, R.ccy) : 'off'} · lock ${j.params.lock_start && j.params.lock_gap ? rs(j.params.lock_start, R.ccy) + ' / gap ' + rs(j.params.lock_gap, R.ccy) : 'off'} · band ${j.params.band}% · lots ${j.params.lots}</span>` +
       (j.resize ? ` <b style="color:#f59e0b">${esc(j.resize)}</b>` : '') : `<span class="err">${esc(j.error)}</span>`;
   refresh();
 };
@@ -965,6 +979,7 @@ async function histLoop(full) {                            // one chart request 
   try { await loadHistory(full); } catch (e) {}
   finally { histBusy = false; if (histAgain) { histAgain = false; histLoop(true); } }
 }
+let lastFeedTicks = null;
 async function refresh(full) {
   if (busy && !full) return; busy = true;
   try {
@@ -976,6 +991,9 @@ async function refresh(full) {
     SEL = ROW.name;
     setCur(ROW.ccy);
     const f = s.feed || {};
+    // 17-Nov: the engine restarted (its tick counter went back down): its books / chart rows may have been
+    // rebuilt (Crude loop fix), so reload the chart whole instead of adding new points to the old curve
+    if (f.ticks != null) { if (lastFeedTicks != null && f.ticks < lastFeedTicks) histName = ''; lastFeedTicks = f.ticks; }
     if (ROW.kind === 'crypto') {                              // BTC books run on the public Delta feed
       const d = f.delta || {};
       $('feed').className = 'pill ' + (d.connected ? 'ok' : 'bad');

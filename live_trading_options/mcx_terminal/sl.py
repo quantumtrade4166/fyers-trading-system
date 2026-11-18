@@ -50,6 +50,10 @@ LOOP_S = 0.5
 STATUS_EVERY_S = 1.0       # live: read Kotak's order book this often while SL orders exist
 MODIFY_EVERY_S = 1.0       # at most one trail modify per position per second
 REARM_PAUSE_S = 4.0        # after an exit of a contract, wait this long before re-arming it
+REARM_AFTER_FILL_S = 3.0   # ... and this long after the terminal's own exit of it FILLED (17-Nov: Kotak's positions
+                           # still showed -400 one second after the exit filled -> a new 400 SL on a flat contract)
+CANCEL_WAIT_S = 1.5        # an exit waits at most this for Kotak to answer its SL cancel (17-Nov: 8 s ReadTimeout
+                           # froze one exit leg while crude fell); the cancel is retried and confirmed in background
 RECANCEL_S = 2.0           # a cancelled SL still working at Kotak this long -> cancel sent again
 CANCEL_ALERT_TRIES = 3     # ... and after this many tries the owner is told to cancel it by hand
 BAND_KEEP_S = 900.0        # Kotak's option price band (learned from a reject) is used this long
@@ -204,7 +208,17 @@ class AutoSL:
                                     "trail": r.get("trail"), "dir": r["side"]}
             oid = r.get("oid")
             if self.live and oid and r.get("state") not in ("hit",):
-                err = self._retire(oid, r["symbol"], "exit sent")
+                err, pending = self._retire_fast(oid, r["symbol"], "exit sent")
+                if pending and not self._near_trigger(token, r):
+                    # Kotak has not answered in CANCEL_WAIT_S and the price is nowhere near the stop: the stop
+                    # cannot have filled, so the exit goes now. A second cancel goes out at once on another
+                    # connection and the cancel tracker keeps checking Kotak's order book until it is gone.
+                    log.warning("SL %s cancel: no Kotak answer in %.1fs, stop not near its trigger -> exit goes "
+                                "ahead, cancel re-sent and checked in background", oid, CANCEL_WAIT_S)
+                    threading.Thread(target=self._cancel, args=(oid,), daemon=True, name="SlRecancel").start()
+                    err = None
+                elif pending:
+                    err = self._wait_cancel(pending)
                 if err:
                     st = self._status_of(oid)
                     if st and any(w in st for w in BROKER_FILLED):
@@ -212,9 +226,43 @@ class AutoSL:
                         return "stop-loss already FILLED at Kotak - exit not sent (check positions)"
                     log.warning("SL %s cancel refused before exit (%s) - status %s; exit goes ahead", oid, err, st)
             self.recs.pop(token, None)
+            self.pause[token] = time.time() + REARM_PAUSE_S     # from NOW: a slow cancel must not use up the pause
             self._save()
         self.on_change()
         return None
+
+    def _retire_fast(self, oid, symbol, why):
+        """_retire, but the caller waits at most CANCEL_WAIT_S for Kotak's answer.
+        -> (error or None, None) when answered, or (None, the waiting thread) when not answered yet."""
+        oid = str(oid)
+        box = {}
+        th = threading.Thread(target=lambda: box.setdefault("err", self._cancel(oid)), daemon=True, name="SlCancel")
+        th.start()
+        th.join(CANCEL_WAIT_S)
+        c = self.cancelling.setdefault(oid, {"symbol": symbol, "why": why, "tries": 0, "t0": time.time()})
+        c.update(t=time.time(), tries=c["tries"] + 1)
+        self._rows_at = 0.0
+        self._kick.set()
+        if th.is_alive():
+            return None, (th, box)
+        return box.get("err"), None
+
+    @staticmethod
+    def _wait_cancel(pending, limit=10.0):
+        th, box = pending
+        th.join(limit)
+        return box.get("err") if not th.is_alive() else f"no Kotak answer to the cancel in {limit:.0f}s"
+
+    def _near_trigger(self, token, r) -> bool:
+        """Has the price reached this stop's trigger (so the stop may have filled)? Unknown price = yes."""
+        trg = r.get("trigger")
+        try:
+            px = self.ltp_of(token)
+        except Exception:
+            px = None
+        if not trg or not px:
+            return True
+        return px >= trg * 0.97 if r["side"] == "B" else px <= trg * 1.03
 
     def working_ids(self, name: str | None = None) -> list:
         """Kotak ids of this desk's stop-loss orders that may still be working (own-book EXIT ALL cancels them;
@@ -550,8 +598,9 @@ class AutoSL:
             # Only MKT exits (fill in seconds) and any exit's first 30 s: a LMT exit left resting for long
             # gets its stop back, else the position would sit unprotected while the limit waits.
             busy = {o.get("token") for o in getattr(self.book, "orders", [])
-                    if o.get("live") and o.get("role") == "exit" and o.get("status") not in TERMINAL
-                    and (o.get("kind") == "MKT" or now - o.get("t0", now) < 30)}
+                    if o.get("live") and o.get("role") == "exit"
+                    and ((o.get("status") not in TERMINAL and (o.get("kind") == "MKT" or now - o.get("t0", now) < 30))
+                         or (o.get("filled") and now - (o.get("t_done") or 0) < REARM_AFTER_FILL_S))}
         with self.lock:
             # 1. live: Kotak's view of our SL orders first (a fill there is a HIT, not a vanished position)
             if self.live and (any(r.get("oid") for r in self.recs.values()) or self.cancelling

@@ -9,7 +9,6 @@ sends through ONE keep-alive requests.Session with a timeout. Only this process 
 shared venv and every other engine stay as they are.
 """
 import logging
-import threading
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -21,19 +20,22 @@ READ_TIMEOUT = 8.0
 
 
 class _Shim:
-    """Looks like the `requests` module to the SDK: post / get / exceptions / everything else."""
+    """Looks like the `requests` module to the SDK: post / get / exceptions / everything else.
+
+    ONE Session for the whole process (18-Nov-2026). It used to be one per thread, but orders run on the web
+    server's worker threads, so most orders landed on a thread whose connection was cold or long idle and paid
+    a fresh TCP + TLS handshake: MCX place_order took a median 357 ms on 17-Nov (45-65 ms when warm). Now the
+    positions poll (every 2 s, same Kotak host) keeps the pool's connections warm and every order reuses one.
+    urllib3's connection pool is thread-safe; Kotak auth travels in headers, not cookies."""
 
     def __init__(self):
-        self._local = threading.local()          # one Session per thread (Session is not thread-safe to share)
+        s = requests.Session()
+        ad = HTTPAdapter(pool_connections=4, pool_maxsize=16, max_retries=0)
+        s.mount("https://", ad)
+        self._session = s
 
     def _s(self) -> requests.Session:
-        s = getattr(self._local, "s", None)
-        if s is None:
-            s = requests.Session()
-            ad = HTTPAdapter(pool_connections=4, pool_maxsize=16, max_retries=0)
-            s.mount("https://", ad)
-            self._local.s = s
-        return s
+        return self._session
 
     def post(self, url, **kw):
         kw.setdefault("timeout", (CONNECT_TIMEOUT, READ_TIMEOUT))

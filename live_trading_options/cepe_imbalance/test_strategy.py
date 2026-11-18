@@ -598,3 +598,66 @@ def test_history_records_six_strike_spreads(universe):
     sp = g.eng.hist[N][-1]["sp"]
     assert len(sp) == 6 and sp[1] == round(20 / 150 * 100, 2)
     assert all(v is not None and v < 5 for j, v in enumerate(sp) if j != 1)
+
+
+# ── adjustment-loop guard (17-Nov: Crude expiry day C -> ITM back -> B -> C ... 300k fills) ──────────
+def _cycling(strategy, moves):
+    """Make candidates() always offer the same moves, like the 17-Nov 3-step cycle."""
+    def cands(ctx, atm):
+        lg = CePeImbalance.legs(ctx)
+        for ops, why in moves:
+            if all((o[2] == "SELL") or lg[o[0]].get(o[1], 0) >= o[3] for o in ops):
+                yield ops, why
+    strategy.candidates = cands
+
+
+def test_loop_guard_stops_a_book_cycling_back_and_forth(universe):
+    g = setup_book(universe, 9400, {"CE": {9400: 1, 9600: 1, 9800: 1}, "PE": {9000: 1, 9200: 1, 9400: 1}}, 9400)
+    there = [("PE", 9000, "BUY", 1), ("PE", 8800, "SELL", 1)]
+    back = [("PE", 8800, "BUY", 1), ("PE", 9000, "SELL", 1)]
+    _cycling(g.r.strategy, [(there, "X out"), (back, "Y back")])
+    for _ in range(50):                                           # 50 ticks at unchanged prices
+        g.r.call(g.r.strategy.on_tick, [])
+    acts = g.actions()
+    assert acts == ["X out"], acts                                 # the return move is held, not repeated
+    assert "loop guard" in (g.r.state.get("blocked") or "")
+    assert any(e["event"] == "loop_guard" for e in g.r.events)
+
+
+def test_loop_guard_caps_adjustments_per_minute(universe):
+    g = setup_book(universe, 9400, {"CE": {9400: 1, 9600: 1, 9800: 1}, "PE": {9000: 1, 9200: 1, 9400: 1}}, 9400)
+    n = {"i": 0}
+
+    def cands(ctx, atm):                                          # always a NEW book (never a repeat)
+        n["i"] += 1
+        k = 9000 + 50 * (n["i"] % 17)                             # liquid strikes; lots grow = always a new book
+        yield [("PE", k, "SELL", 1)], f"move {n['i']}"
+    g.r.strategy.candidates = cands
+    g.r.strategy.closer_ok = lambda *a: True                      # this test is about the cap only
+    for _ in range(10):
+        g.r.call(g.r.strategy.on_tick, [])
+    assert len(g.actions()) <= CePeImbalance.MAX_ADJ_PER_MIN
+    assert "per-minute" in (g.r.state.get("blocked_key") or "") or "this minute" in (g.r.state.get("blocked") or "")
+
+
+def test_closer_rule_holds_a_move_that_overshoots(universe):
+    """Owner 17-Nov: outside the band a move must bring the imbalance closer to 0 (crude expiry day: C took
+    -15% to +44% and ITM back took it straight back, every 2 minutes). Paper only; live books unchanged."""
+    up = {(9400, "CE"): 300.0, (9600, "CE"): 250.0, (9800, "CE"): 160.0}      # CE far richer
+    g = setup_book(universe, 9400, {"CE": {9400: 1, 9600: 1, 9800: 1}, "PE": {9000: 1, 9200: 1, 9400: 1}}, 9400, up)
+    st, ctx = g.r.strategy, g.r.ctx
+    legs = st.legs(ctx)
+    before = st.plan_imbalance(ctx, legs)
+    band = float(ctx.params["band"])
+    worse = [("PE", 9000, "SELL", 2)] if before < 0 else [("CE", 9800, "SELL", 2)]
+    better = [("CE", 9800, "SELL", 1)] if before < 0 else [("PE", 9000, "SELL", 1)]
+    ctx.params["band"] = 0.0                                          # every state counts as a breach
+    try:
+        assert not st.closer_ok(ctx, worse, "worse")
+        assert "further from 0" in (g.r.state.get("blocked") or "")
+        assert st.closer_ok(ctx, better, "better")
+        g.r.name = N + "_LIVE"                                        # live books keep the old behaviour
+        assert st.closer_ok(ctx, worse, "worse")
+    finally:
+        g.r.name = N
+        ctx.params["band"] = band
