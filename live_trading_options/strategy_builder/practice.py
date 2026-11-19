@@ -82,6 +82,22 @@ class Replay:
                 s = (pd.to_datetime(g["t"]) - base_naive).dt.total_seconds().to_numpy()
                 o = np.argsort(s)
                 c["sec"] = (s[o], g["c"].to_numpy(float)[o])
+        # REAL TICKS (packs built by practice_ticks.py from the tick recorder): exact LTP + real bid/ask
+        tp = d / "ticks.parquet"
+        if tp.exists():
+            tk = pd.read_parquet(tp)
+            for (k, typ), g in tk.groupby(["strike", "type"], sort=False):
+                c = self.contracts.get((float(k), typ))
+                if c is None:
+                    continue
+                o = np.argsort(g["s"].to_numpy(), kind="stable")
+                c["tick"] = tuple(g[x].to_numpy()[o] for x in ("s", "ltp", "bid", "ask"))
+        self.spot_tick = None
+        stp = d / "spot_ticks.parquet"
+        if stp.exists():
+            st = pd.read_parquet(stp)
+            o = np.argsort(st["s"].to_numpy(), kind="stable")
+            self.spot_tick = (st["s"].to_numpy()[o], st["ltp"].to_numpy()[o])
         spot = pd.read_parquet(d / "spot.parquet")
         m = ((pd.to_datetime(spot["t"]) - base_naive).dt.total_seconds() // 60).astype(int).to_numpy()
         ok = (m >= 0) & (m < 375)
@@ -114,10 +130,26 @@ class Replay:
         i = min(int(x), 2)
         return float(pts[i] + (pts[i + 1] - pts[i]) * (x - i))
 
+    def quote(self, key, s: float):
+        """(ltp, bid, ask) from the REAL ticks at second s, or None when this day has no tick data
+        (bid/ask can each be None if the book was empty at that moment)."""
+        c = self.contracts.get(key)
+        if c is None or c.get("tick") is None:
+            return None
+        ts, ltp, bid, ask = c["tick"]
+        j = int(np.searchsorted(ts, s, side="right")) - 1
+        if j < 0:
+            return None
+        f = lambda v: None if v != v or v <= 0 else round(float(v), 2)   # NaN / empty side -> None
+        return f(ltp[j]), f(bid[j]), f(ask[j])
+
     def price(self, key, s: float):
         c = self.contracts.get(key)
         if c is None:
             return None
+        q = self.quote(key, s)
+        if q and q[0] is not None:
+            return q[0]
         if c["sec"] is not None:
             ts, cl = c["sec"]
             j = int(np.searchsorted(ts, s, side="right")) - 1
@@ -136,6 +168,11 @@ class Replay:
         return (None if np.isnan(v) else float(v)), (None if np.isnan(v) or first is None else float(v - first))
 
     def spot_at(self, s):
+        if self.spot_tick is not None:
+            ts, px = self.spot_tick
+            j = int(np.searchsorted(ts, s, side="right")) - 1
+            if j >= 0:
+                return float(px[j])
         m = int(min(max(s // 60, 0), 374))
         return self._path(self.spot[m], (s - m * 60) / 60.0)
 
@@ -151,6 +188,7 @@ class ReplayFeed(ChainFeed):
         self.speed = 1
         self.ended = False
         self._alive = True
+        self.allow_back = True          # jumping back is fine until the session has a fill (kept up to date by the manager)
         idx, exp = replay.index, replay.expiry
         self.sym = {}
         by_symbol, by_strike = {}, {}
@@ -208,9 +246,13 @@ class ReplayFeed(ChainFeed):
                 row.update(oi=oi, oich=oich)
                 if ltp is None:
                     continue
-                half = max(TICK, _tick((a + b * ltp) / 2))
-                self.live[sym] = {"ltp": _tick(ltp), "bid": max(TICK, _tick(ltp - half)),
-                                  "ask": _tick(ltp + half), "t": now}
+                q = r.quote(key, s)
+                if q and q[1] and q[2] and q[2] >= q[1]:          # real recorded bid/ask
+                    bid, ask = q[1], q[2]
+                else:                                             # 1-minute days: modelled spread
+                    half = max(TICK, _tick((a + b * ltp) / 2))
+                    bid, ask = max(TICK, _tick(ltp - half)), _tick(ltp + half)
+                self.live[sym] = {"ltp": _tick(ltp), "bid": bid, "ask": ask, "t": now}
                 row["ltp"] = _tick(ltp)
             sp = r.spot_at(s)
             if sp is not None:
@@ -237,8 +279,8 @@ class ReplayFeed(ChainFeed):
             elif action == "seek":
                 h, m = [int(x) for x in str(value).split(":")[:2]]
                 target = (h * 60 + m - (9 * 60 + 15)) * 60
-                if target < self.s:
-                    raise ValueError("can only jump FORWARD (your fills are already in the past)")
+                if target < self.s and not self.allow_back:
+                    raise ValueError("can only jump FORWARD (your fills are already in the past) — Reset the session to go back")
                 self.s = float(min(target, DAY_SECONDS - 1))
             else:
                 raise ValueError(f"unknown action {action}")
@@ -347,15 +389,37 @@ class PracticeManager:
             def resolve(acct, leg):
                 return {"symbol": leg["fyers_symbol"], "exchange": "PAPER", "lot": lot, "token": None}
 
-            desk = O.Desk(_PracticeHub(), leg_quotes, {"paper": O.PaperAdapter(quote, clock=feed.now)},
-                          resolve, clock=feed.now, dep_dir=folder / "deployments",
-                          control=folder / "control.json")
+            self._mk_desk = lambda: O.Desk(_PracticeHub(), leg_quotes, {"paper": O.PaperAdapter(quote, clock=feed.now)},
+                                           resolve, clock=feed.now, dep_dir=folder / "deployments",
+                                           control=folder / "control.json")
+            desk = self._mk_desk()
             self.feed, self.desk, self.sess = feed, desk, sess
             self._save()
             feed.start()
             self._mon_alive = True
             threading.Thread(target=self._monitor, daemon=True, name="SB-practice-mon").start()
             log.info("practice %s opened at %s", sess["name"], feed.state()["time"])
+            return self.state()
+
+    def reset(self) -> dict:
+        """Wipe this session's trades: positions, orders, per-strategy MTM history and the session MTM curve.
+        The replay clock stays where it is; with no fills left, jumping back in time is allowed again."""
+        import shutil
+        with self._lock:
+            if not self.sess:
+                raise ValueError("practice mode is not running")
+            if self.desk._busy:
+                raise ValueError("an order is still being filled — try again in a second")
+            folder = SESS_DIR / self.sess["id"]
+            shutil.rmtree(folder / "deployments", ignore_errors=True)
+            for f in ("combined.jsonl", "control.json"):
+                (folder / f).unlink(missing_ok=True)
+            self.desk = self._mk_desk()
+            self._last_comb = 0.0
+            self.feed.allow_back = True
+            self.sess.update(mtm=None, strategies=0, resets=self.sess.get("resets", 0) + 1)
+            self._save()
+            log.info("practice %s reset at %s", self.sess["name"], self.feed.state()["time"])
             return self.state()
 
     def end(self):
@@ -391,6 +455,7 @@ class PracticeManager:
         while self._mon_alive:
             try:
                 self.desk.tick()
+                self.feed.allow_back = not any(d["orders"] for d in list(self.desk.deps.values()))
                 self._combined()
                 if time.monotonic() - last_save > 5:
                     self._save()

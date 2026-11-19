@@ -64,8 +64,8 @@ def list_packs(index: str | None = None) -> list:
         for d in sorted(root.iterdir()):
             m = read_meta(idx, d.name)
             if m:
-                out.append({"index": idx, "date": d.name, "expiry": m["expiry"],
-                            "seconds": bool(m.get("seconds")), "strikes": len(m["strikes"])})
+                out.append({"index": idx, "date": d.name, "expiry": m["expiry"], "ticks": bool(m.get("ticks")),
+                            "seconds": bool(m.get("seconds") or m.get("ticks")), "strikes": len(m["strikes"])})
     return out
 
 

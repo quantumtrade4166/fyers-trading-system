@@ -14,6 +14,7 @@ Run:
 """
 import sys
 import logging
+import os
 import time
 
 sys.stdout.reconfigure(encoding="utf-8")
@@ -40,13 +41,18 @@ practice = None             # PracticeManager — replays a past day through the
 
 # Every chain / order endpoint takes ?px=1 from the page while practice mode is on. These three
 # pick the replay or the live objects — practice can never reach the live desk or a broker.
+# PRACTICE-ONLY (owner's private copy on the PC, 19-Nov): SB_PRACTICE_ONLY=1 -> no Fyers feed, no broker
+# logins, no live desk; EVERY call is a practice call. Launched by "Strategy Builder Practice.bat".
+PRACTICE_ONLY = os.getenv("SB_PRACTICE_ONLY") == "1"
+
+
 def bpx(px, body) -> int:
     """practice if EITHER the query or the body says so (belt and braces against a proxy dropping one)."""
-    return 1 if px or (isinstance(body, dict) and body.get("px")) else 0
+    return 1 if PRACTICE_ONLY or px or (isinstance(body, dict) and body.get("px")) else 0
 
 
 def F(px):
-    if px:
+    if px or PRACTICE_ONLY:
         if not (practice and practice.active):
             raise ValueError("practice mode is not running")
         return practice.feed
@@ -54,7 +60,7 @@ def F(px):
 
 
 def D(px):
-    if px:
+    if px or PRACTICE_ONLY:
         if not (practice and practice.active):
             raise ValueError("practice mode is not running")
         return practice.desk
@@ -63,7 +69,9 @@ def D(px):
 
 
 def H(px):
-    return practice.desk.hub if px and practice and practice.active else hub
+    if PRACTICE_ONLY and not (practice and practice.active):
+        raise ValueError("start a practice day first")
+    return practice.desk.hub if (px or PRACTICE_ONLY) and practice and practice.active else hub
 
 
 def _leg_quotes(legs):
@@ -74,7 +82,12 @@ def _leg_quotes(legs):
 
 @app.on_event("startup")
 def _start():
-    global hub, desk
+    global hub, desk, practice
+    if PRACTICE_ONLY:                         # nothing live: no Fyers, no brokers, no live desk
+        from live_trading_options.strategy_builder.practice import PracticeManager
+        practice = PracticeManager()
+        logging.getLogger("sb").info("PRACTICE-ONLY mode — no live feed, no broker logins")
+        return
     feed.start()
     # brokers / order desk load lazily-safe: a broker import problem must not take the chain down
     try:
@@ -86,7 +99,6 @@ def _start():
                                          "paper": paper}, B.resolve)
         hub.start()
         desk.run_monitor()
-        global practice
         from live_trading_options.strategy_builder.practice import PracticeManager
         practice = PracticeManager()
     except Exception as e:
@@ -110,11 +122,12 @@ def page():
 
 @app.get("/api/sb/health")
 def health():
-    return {"ok": True, "feed": feed.status()}
+    return {"ok": True, "practice_only": PRACTICE_ONLY, "feed": None if PRACTICE_ONLY else feed.status()}
 
 
 @app.get("/api/sb/meta")
 def meta(px: int = Query(0)):
+    px = 1 if PRACTICE_ONLY else px
     try:
         f = F(px)
     except ValueError as e:
@@ -127,6 +140,7 @@ def meta(px: int = Query(0)):
 
 @app.get("/api/sb/chain")
 def chain(index: str = Query(...), expiry: str = Query(None), px: int = Query(0)):
+    px = 1 if PRACTICE_ONLY else px
     if index not in C.INDICES:
         return _bad(f"unknown index {index}")
     try:
@@ -206,7 +220,11 @@ def _need_desk():
 
 def _call(fn):
     try:
-        _need_desk()
+        if PRACTICE_ONLY:
+            if not (practice and practice.active):
+                raise ValueError("start a practice day first (🎓 Practice)")
+        else:
+            _need_desk()
         return fn()
     except (ValueError, KeyError, RuntimeError) as e:
         return _bad(str(e))
@@ -214,6 +232,7 @@ def _call(fn):
 
 @app.get("/api/sb/brokers")
 def brokers(px: int = Query(0)):
+    px = 1 if PRACTICE_ONLY else px
     return _call(lambda: {"ok": True, "brokers": H(px).status(), "control": D(px).armed()})
 
 
@@ -278,6 +297,7 @@ def deploy(body: dict = Body(...), px: int = Query(0)):
 
 @app.get("/api/sb/deployments")
 def deployments(px: int = Query(0)):
+    px = 1 if PRACTICE_ONLY else px
     return _call(lambda: {"ok": True, "deployments": D(px).list(include_closed_days=10000 if px else 1),
                           "control": D(px).armed()})
 
@@ -312,6 +332,7 @@ def quick(body: dict = Body(...), px: int = Query(0)):
 
 @app.get("/api/sb/deployments/{dep_id}/history")
 def history(dep_id: str, date: str = Query(None), px: int = Query(0)):
+    px = 1 if PRACTICE_ONLY else px
     """MTM + CE/PE imbalance samples (every 5 s) for the day — the EOD charts."""
     return _call(lambda: {"ok": True, "points": D(px).history(dep_id, date)})
 
@@ -341,6 +362,9 @@ def practice_prepare(body: dict = Body(...)):
     index, date, seconds = body.get("index"), body.get("date"), bool(body.get("seconds"))
     if index not in C.INDICES or not date:
         return _bad("index and date are required")
+    if PRACTICE_ONLY:
+        return _bad("this private copy only replays days already built on the VPS — they are copied "
+                    "automatically each time you start it")
     if _job.get("state") == "running":
         return _bad(f"already downloading {_job.get('index')} {_job.get('date')} — wait for it to finish")
     if PD.batch_running() and not seconds:
@@ -358,6 +382,11 @@ def practice_prepare(body: dict = Body(...)):
 
     def run():
         try:
+            from live_trading_options.strategy_builder import practice_ticks as PT
+            if not seconds and PT.have_ticks(date, index):       # recorded day: real ticks, seconds, no Breeze
+                PT.build(index, date, log=say)
+                _job.update(state="done", finished=time.strftime("%H:%M:%S"))
+                return
             b = PD.Builder(index, log=say, fast=True)
             meta = PD.read_meta(index, date)
             if meta and seconds and not meta.get("seconds"):
@@ -405,6 +434,12 @@ def practice_control(body: dict = Body(...)):
     return _pcall(go)
 
 
+@app.post("/api/sb/practice/reset")
+def practice_reset():
+    """Clear this practice session's positions, orders and MTM history (clock stays)."""
+    return _pcall(lambda: {"ok": True, **practice.reset()})
+
+
 @app.post("/api/sb/practice/end")
 def practice_end():
     return _pcall(lambda: (practice.end(), {"ok": True, "active": False})[1])
@@ -423,4 +458,4 @@ def practice_combined(sid: str):
 if __name__ == "__main__":
     import uvicorn
     # binding the port is also the single-instance guard: a second copy fails here
-    uvicorn.run(app, host="127.0.0.1", port=C.PORT, log_level="warning")
+    uvicorn.run(app, host="127.0.0.1", port=int(os.getenv("SB_PORT", C.PORT)), log_level="warning")   # 127.0.0.1 only

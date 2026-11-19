@@ -253,6 +253,20 @@
   #bookPane th:first-child, #bookPane td:first-child { text-align: left; }
   #bookPane td button { padding: 1px 7px; font-size: 11px; }
   #bookPane .flat td { opacity: .45; }
+  #termPane { display: none; border-bottom: 1px solid var(--line); padding: 6px 12px 10px; background: #0b1324; }
+  #termPane .th { display: flex; gap: 12px; align-items: baseline; margin: 4px 0; }
+  #termPane .th .t { font-weight: 700; color: var(--hi); }
+  #termMtm { width: 100%; height: 150px; display: block; }
+  #termOrders { max-height: 170px; overflow-y: auto; }
+  #termOrders table { width: 100%; border-collapse: collapse; font-size: 11.5px; }
+  #termOrders td, #termOrders th { padding: 3px 6px; text-align: right; border-bottom: 1px solid var(--line2); white-space: nowrap; }
+  #termOrders th { font-size: 10px; color: var(--muted); font-weight: 500; text-transform: uppercase; }
+  #termOrders td:first-child, #termOrders th:first-child { text-align: left; }
+  #termOrders tr.new td { background: rgba(56, 189, 248, .14); }
+  /* private practice-only copy on the PC: nothing live on screen */
+  body.px-only #pxOnlyNote { display: block !important; }
+  body.px-only #btnArm, body.px-only #btnKill, body.px-only #pxLive, body.px-only #pxGet,
+  body.px-only #pxSec, body.px-only label:has(#pxSec), body.px-only #pxBatch, body.px-only #pxClose { display: none !important; }
   .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: #0f172a;
            border: 1px solid #334155; padding: 8px 14px; border-radius: 8px; z-index: 40; display: none; }
 </style>
@@ -282,7 +296,7 @@
   <label style="color:#c4b5fd">Jump to <input type="time" id="pxJump" min="09:15" max="15:29" style="width:96px"></label><button id="pxJumpGo">Go</button>
   <span style="color:#a78bfa;font-size:11px" id="pxSrc"></span>
   <span class="pxsum num" id="pxSum"></span>
-  <span style="margin-left:auto;display:flex;gap:8px"><button id="pxChart">📈 Session chart</button><button id="pxLive" title="pause the replay and go to LIVE — the session stays open">⇄ Back to live</button><button id="pxEnd">End practice</button></span>
+  <span style="margin-left:auto;display:flex;gap:8px"><button id="pxChart">📈 Session chart</button><button id="pxReset" title="clear this session's positions, orders and MTM — the clock stays">↺ Reset</button><button id="pxLive" title="pause the replay and go to LIVE — the session stays open">⇄ Back to live</button><button id="pxEnd">End practice</button></span>
   <div class="prog" id="pxProg"></div>
 </div>
 
@@ -328,6 +342,12 @@
   <!-- RIGHT: analysis -->
   <div class="right">
     <div id="bookPane" class="num"></div>
+    <div id="termPane" class="num">
+      <div class="th"><span class="t">MTM</span><span class="mut" id="termMtmInfo"></span></div>
+      <canvas id="termMtm"></canvas>
+      <div class="th"><span class="t">Order book</span><span class="mut" id="termOrdInfo"></span></div>
+      <div id="termOrders"></div>
+    </div>
     <div class="tabs small" id="rightTabs">
       <button data-t="payoff" class="on">Payoff</button>
       <button data-t="greeks">Greeks</button>
@@ -477,6 +497,8 @@
     <div class="note" id="pxHint"></div>
     <div class="note num" id="pxJob"></div>
     <div class="note num" id="pxBatch"></div>
+    <div class="note" id="pxOnlyNote" style="display:none">Private practice copy — days are copied from the VPS each time you start it
+      (the VPS builds every new day from the tick recording after the close).</div>
     <div class="row"><button id="pxGet">Download day</button><button class="pri" id="pxStart">Start practice</button></div>
     <div class="lbl" style="margin-top:14px">Saved practice sessions</div><div id="pxSess"></div>
   </div>
@@ -1286,7 +1308,7 @@ async function pollDeps() {
     const r = await jget('/deployments');
     if (!r.ok) return;
     S.deps = r.deployments; S.control = r.control; renderArm();
-    buildBook(); renderBook();
+    buildBook(); renderBook(); renderTerm();
     { const html = intoOpts();                        // redraw the bar only when the strategy list really changed
       if (html !== S._intoHtml && !(document.activeElement && $('qbar').contains(document.activeElement))) { S._intoHtml = html; renderQbar(); } }
     if (S.clickMode === 'trade') analyse();
@@ -1326,6 +1348,60 @@ function buildBook() {
   const mtm = rows.some(r => r.unknown && r.net) ? null : rows.reduce((a, r) => a + r.pnl, 0);
   S.book = { rows, map, offset, mtm, imb: N.imb, ce: N.ce, pe: N.pe };
 }
+// ── terminal: order book + live MTM curve under My positions (Trade mode) ──
+function termDeps() {                               // the books shown: practice desk = all; live = what Trade sends to
+  if (S.px) return S.deps;
+  const into = S.qInto && S.deps.find(d => d.id === S.qInto);
+  if (into) return [into];
+  const today = new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10);
+  return S.deps.filter(d => d.quick && d.broker === S.qTarget && (d.created || '').slice(0, 10) === today);
+}
+function renderTerm() {
+  const pane = $('termPane');
+  pane.style.display = S.clickMode === 'trade' ? 'block' : 'none';
+  if (S.clickMode !== 'trade') return;
+  const ds = termDeps();
+  const rows = ds.flatMap(d => d.orders.map((o, i) => ({ ...o, dep: d, i, leg: d.legs.find(l => l.id === o.leg) })))
+    .sort((a, b) => (b.time || '').localeCompare(a.time || '') || b.i - a.i).slice(0, 60);
+  const fresh = S.newOrders || new Set();
+  $('termOrdInfo').textContent = `${rows.length} order${rows.length === 1 ? '' : 's'}${S.px ? ' · practice paper' : ''}`;
+  $('termOrders').innerHTML = !rows.length ? '<div class="mut">No orders yet — tap B / S on the chain.</div>'
+    : `<table><thead><tr><th>Time</th><th>Side</th><th>Contract</th><th>Qty</th><th>Fill</th><th>Status</th></tr></thead><tbody>` +
+      rows.map(o => `<tr class="${fresh.has(o.dep.id + ':' + o.i) ? 'new' : ''}" title="${esc(o.msg || '')}">
+        <td>${o.time || ''}</td><td class="${o.side === 'B' ? 'pos' : 'neg'}"><b>${o.side === 'B' ? 'BUY' : 'SELL'}</b></td>
+        <td>${o.leg ? `${o.leg.strike} ${o.leg.type}` : ''} <span class="mut">${o.purpose === 'exit' ? 'exit' : ''}</span></td>
+        <td>${o.filled || o.qty}</td><td>${fmt(o.avg)}</td>
+        <td class="${o.status === 'COMPLETE' ? 'pos' : o.status === 'REJECTED' ? 'neg' : ''}">${o.status === 'COMPLETE' ? 'FILLED' : o.status}${o.msg ? ' ⓘ' : ''}</td></tr>`).join('') +
+      '</tbody></table>';
+}
+S.termPts = []; S.termKey = null;
+async function loadTermMtm() {
+  if (S.clickMode !== 'trade') return;
+  let pts = [];
+  try {
+    if (S.px && S.pstate) {
+      const r = await fetch(API + `/practice/sessions/${S.pstate.session.id}/combined`).then(x => x.json());
+      pts = r.points || [];
+    } else {
+      const ds = termDeps();
+      if (ds.length === 1) { const r = await jget(`/deployments/${ds[0].id}/history`); pts = r.points || []; }
+    }
+  } catch (e) { }
+  const day = pts.length ? pts[pts.length - 1].t.slice(0, 10) : null;
+  S.termPts = day ? pts.filter(p => p.t.slice(0, 10) === day) : [];
+  drawTermMtm();
+}
+function drawTermMtm() {
+  const cv = $('termMtm'); if (!cv || S.clickMode !== 'trade') return;
+  const B = S.book;
+  $('termMtmInfo').innerHTML = `now <b class="${sgn(B.mtm)}">${rs(B.mtm)}</b> · CE/PE imbalance <b class="${imbCls(B.imb)}">${imbTxt(B.imb)}</b>` +
+    (S.termPts.length ? ` · ${S.termPts.length} points (every 5 s)` : ' · the curve starts with your first position');
+  if (S.termPts.length) lineChart(cv, S.termPts, 'mtm', v => rs(v), true);
+  else { const ctx = cv.getContext('2d'); cv.width = cv.clientWidth; cv.height = cv.clientHeight; ctx.clearRect(0, 0, cv.width, cv.height); }
+}
+setInterval(loadTermMtm, 5000);
+window.addEventListener('resize', drawTermMtm);
+
 function renderBook() {
   const pane = $('bookPane');
   pane.style.display = S.clickMode === 'trade' ? 'block' : 'none';
@@ -1484,7 +1560,7 @@ function renderQbar() {
 $('qbar').addEventListener('click', e => {
   const m = e.target.closest('#qMode button');
   if (m) {
-    S.clickMode = m.dataset.v; renderQbar(); renderBook(); analyse(); renderChain();
+    S.clickMode = m.dataset.v; renderQbar(); renderBook(); renderTerm(); loadTermMtm(); analyse(); renderChain();
     toast(S.clickMode === 'trade' ? 'Trade mode: chain B/S sends an order'
       : S.px ? 'Build = what-if only: nothing is recorded and MTM is not kept. Use Trade to practise adjustments.'
       : 'Build mode: chain B/S adds to the playground', S.px && S.clickMode === 'build' ? 6000 : 2500);
@@ -1579,6 +1655,10 @@ function sendQuick(tgt, side, legs, depId) {
 }
 async function sendQuickNow(tgt, side, legs, depId) {
   let r;
+  // remember how many orders the target book has now -> the confirmation reads only the new ones
+  const quickBook = S.deps.find(d => d.quick && d.broker === (depId ? '' : tgt.id) &&
+    (d.created || '').slice(0, 10) === (S.px && S.pstate ? S.pstate.session.date : new Date(Date.now() + 330 * 60000).toISOString().slice(0, 10)));
+  const before = orderCount(depId || (quickBook && quickBook.id));
   const dep = depId ? S.deps.find(d => d.id === depId) : null;
   if (dep) tgt = { id: dep.broker, name: `${dep.name} (${dep.broker_name})` };
   for (let i = 0; i < 8; i++) {
@@ -1586,8 +1666,30 @@ async function sendQuickNow(tgt, side, legs, depId) {
     if (r.ok || !/busy/i.test(r.error || '')) break;
     await new Promise(res => setTimeout(res, 150 + 100 * i));
   }
-  toast(r.ok ? `${side === 'B' ? 'BUY' : 'SELL'} ${legs[legs.length - 1].lots} lot${legs[legs.length - 1].lots > 1 ? 's' : ''} ${legs[legs.length - 1].strike} ${legs[legs.length - 1].type} → ${tgt.name}` : (r.error || 'refused'), r.ok ? 1800 : 4000);
-  [250, 600, 1200].forEach(ms => setTimeout(pollDeps, ms));
+  if (!r.ok) { toast('✗ ' + (r.error || 'refused'), 5000); return; }
+  const L = legs[legs.length - 1];
+  toast(`${side === 'B' ? 'BUY' : 'SELL'} ${L.lots} lot${L.lots > 1 ? 's' : ''} ${L.strike} ${L.type} sent → ${tgt.name}…`, 1500);
+  confirmFill(r.deployment, before, legs);
+}
+// the order book before an order, so the confirmation can find exactly the rows this tap created
+function orderCount(depId) { const d = S.deps.find(x => x.id === depId); return d ? d.orders.length : 0; }
+async function confirmFill(depId, before, legs) {
+  for (let i = 0; i < 8; i++) {
+    await new Promise(res => setTimeout(res, i ? 400 : 200));
+    await pollDeps();
+    const d = S.deps.find(x => x.id === depId); if (!d) continue;
+    const mine = d.orders.slice(before);
+    if (mine.length && mine.every(o => ['COMPLETE', 'REJECTED', 'CANCELLED'].includes(o.status))) {
+      S.newOrders = new Set(mine.map((o, j) => d.id + ':' + (before + j)));
+      setTimeout(() => { S.newOrders = null; renderTerm(); }, 4000);
+      renderTerm();
+      const txt = mine.map(o => { const l = d.legs.find(x => x.id === o.leg) || {};
+        return o.status === 'COMPLETE' ? `${o.side === 'B' ? 'BOUGHT' : 'SOLD'} ${Math.round(o.filled / ((l.contract && l.contract.lot) || lotOf(l.index || S.index)))} lot ${l.strike} ${l.type} @ ${fmt(o.avg)} ✓`
+                                       : `✗ ${l.strike} ${l.type} ${o.status}${o.msg ? ': ' + o.msg : ''}`; }).join(' · ');
+      toast(txt, 3500); loadTermMtm(); return;
+    }
+  }
+  toast('order sent — waiting for the fill (see Order book)', 3000);
 }
 async function sendQt() {
   const q = S.qticket; if (!q) return;
@@ -1713,6 +1815,7 @@ function pxEnter(st) {
   toast(`Practice: ${sess.name} — press ▶ to start the clock`, 4000);
 }
 function pxLeave() {
+  if (S.pxOnly) { setTimeout(() => { $('pxModal').classList.add('open'); pxPicker(); }, 50); }
   S.px = false; S.pstate = null;
   document.body.classList.remove('practice');
   $('pxBar').style.display = 'none';
@@ -1725,7 +1828,8 @@ function renderPx() {
   const st = S.pstate; if (!st || !st.active) return;
   const s = st.session;
   $('pxName').textContent = `${s.index} · ${new Date(s.date + 'T00:00:00').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} · expiry ${dMon(s.expiry)}`;
-  $('pxSrc').textContent = s.seconds ? `1-second data on ${s.seconds} contracts + 1-minute` : '1-minute data';
+  $('pxSrc').textContent = /tick/i.test(s.source || '') ? '⚡ real ticks + real bid/ask'
+    : s.seconds ? `1-second data on ${s.seconds} contracts + 1-minute` : '1-minute data';
   $('pxClock').textContent = st.ended ? `${st.time} · day over` : st.time;
   $('pxPlay').textContent = st.playing ? '⏸ Pause' : '▶ Play';
   $('pxPlay').classList.toggle('on', st.playing);
@@ -1748,6 +1852,14 @@ $('pxEnd').onclick = async () => {
   await fetch(API + '/practice/end', { method: 'POST' }); pxLeave(); toast('Practice saved and closed');
 };
 $('pxChart').onclick = () => openChart('session:' + S.pstate.session.id);
+$('pxReset').onclick = async () => {
+  if (!confirm('Reset this practice session? All positions, orders and the MTM curve of this session are cleared. The clock stays where it is, and you can jump back in time again.')) return;
+  const r = await fetch(API + '/practice/reset', { method: 'POST' }).then(x => x.json());
+  if (!r.ok) { toast(r.error || 'reset failed', 4000); return; }
+  S.pstate = r; S.deps = []; S.book = { rows: [], map: {}, offset: 0 }; S.termPts = [];
+  await pollDeps(); renderBook(); renderTerm(); drawTermMtm(); renderPx(); renderChain(); analyse();
+  toast('Practice reset — positions, orders and MTM cleared', 3000);
+};
 $('pxLive').onclick = async () => {
   const st = S.pstate;
   if (st && st.playing) await pxControl('pause');
@@ -1809,8 +1921,19 @@ $('pxSess').onclick = async e => {
 };
 async function jpostRaw(u, b) { const r = await fetch(API + u, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(b) }); return r.json(); }
 // The page ALWAYS opens LIVE. An open practice session only marks the 🎓 button; return to it from there.
+// EXCEPT the private practice-only copy (SB_PRACTICE_ONLY on the PC): straight into practice, nothing live.
 (async () => {
-  try { const r = await fetch(API + '/practice/state').then(x => x.json()); pxMarkOpen(r.ok && r.active ? r : null); } catch (e) { }
+  try {
+    const h = await fetch(API + '/health').then(x => x.json());
+    S.pxOnly = !!h.practice_only;
+    const r = await fetch(API + '/practice/state').then(x => x.json());
+    if (S.pxOnly) {
+      document.body.classList.add('px-only'); document.title = 'Practice — Strategy Builder (private)';
+      if (r.ok && r.active) pxEnter(r); else { $('pxModal').classList.add('open'); pxPicker(); }
+      return;
+    }
+    pxMarkOpen(r.ok && r.active ? r : null);
+  } catch (e) { }
 })();
 function pxMarkOpen(st) {
   S.pOpen = st;
