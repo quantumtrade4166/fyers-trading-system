@@ -45,7 +45,7 @@ import threading
 import traceback
 
 from core.shared import singleton, now_ist, LOGS
-from core.api import btc_options, btc_option_tickers
+from core.api import btc_options, btc_option_tickers, btc_option_tickers_for
 from core.chain import LiveChain
 from vwap.book import VwapBook, atomic_write
 from vwap.split_book import SplitVwapBook
@@ -170,7 +170,6 @@ def main():
         started = time.monotonic()
         now = now_ist()
         try:
-            tickers = btc_option_tickers()
             with _lock:
                 wanted = set()
                 for b in books.values():
@@ -181,6 +180,10 @@ def main():
                         if bd:
                             from core.chain import expiry_code
                             wanted.add(expiry_code(b.s.expiry_date(bd)))
+            # only the expiries in use (18-Nov-2026: the whole chain every 2 s was ~115 GB a day). Fetched
+            # OUTSIDE the lock, as before: the push feed and the screen must not wait on a download.
+            tickers = btc_option_tickers_for(wanted) if wanted else []
+            with _lock:
                 for code in wanted:
                     ch = get_chain(code)
                     if ch is not None:

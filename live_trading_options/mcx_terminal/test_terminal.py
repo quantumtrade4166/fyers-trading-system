@@ -1019,6 +1019,24 @@ def test_key_press_orders_never_queue():
     for op in ("mode_set", "settings_set", "risk_set"):
         check(f"{op} stays in order", op not in S.SLOW_OPS)
 
+
+def test_chain_and_orders_never_block_the_socket():
+    """18-Nov: a chain build was awaited on the socket that carries key presses, on a pool shared with every
+    order and chart refresh -> orders waited seconds. Orders and queries now have their own pools."""
+    import asyncio
+    from live_trading_options.mcx_terminal import server as S
+    check("orders have their own pool", S.ORDER_POOL is not S.QUERY_POOL and S.ORDER_POOL._max_workers >= 16)
+    check("chart queries kept off the order pool", {"margin", "mtm_hist", "atm_hist"} <= S.QUERY_OPS)
+
+    async def go():
+        loop = asyncio.get_running_loop()
+        import time as _t
+        t = _t.time()
+        r = await S._in_pool(loop, S.ORDER_POOL, "test", lambda: 42)
+        return r, _t.time() - t
+    r, took = asyncio.run(go())
+    check("pool call returns", r == 42 and took < 1.0, (r, took))
+
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:
         fn()

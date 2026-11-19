@@ -76,6 +76,9 @@ POS_STALE_S = 15.0                 # older than this = positions UNKNOWN on the 
 POS_RETRY_S = 0.3                  # a failed positions read is tried once more after this pause
 EXIT_PUSH_S = 2.5                  # EXIT ALL: an exit still working after this is pushed through the book
 EXIT_VERIFY_S = 8.0                # EXIT ALL: re-read Kotak this long, waiting to see flat
+WARM_CONNS = 3                     # connections to Kotak's ORDER host kept open and ready (parallel exits)
+WARM_EVERY_S = 30.0
+EXIT_RETRIES = 3                   # EXIT ALL: a refused leg is re-sent at most this many times
 TERMINAL = ("COMPLETE", "REJECTED", "CANCELLED", "PART-CANCELLED")
 BROKER_DONE = ("complete", "traded", "rejected", "cancelled")
 
@@ -169,6 +172,7 @@ class LiveBook(PaperBook):
         self._client_override = client
         self.by_symbol = {c.symbol: c for c in universe.by_token.values()}
         self._seq = 0
+        self._tag_lock = threading.Lock()               # parallel sends (EXIT ALL) must never share a tag
         self._poll_kick = threading.Event()
         self._pos_kick = threading.Event()
         self._burst_until = 0.0
@@ -199,6 +203,7 @@ class LiveBook(PaperBook):
             self.sync_positions()
             threading.Thread(target=self._poll_loop, daemon=True, name="LiveOrders").start()
             threading.Thread(target=self._pos_loop, daemon=True, name="LivePositions").start()
+            threading.Thread(target=self._warm_loop, daemon=True, name="KotakWarm").start()
 
     def _carry_forward(self):
         """MCX: never - Kotak is the truth for positions, every day starts from what Kotak shows.
@@ -478,6 +483,15 @@ class LiveBook(PaperBook):
         a = self.pos_sync.get("at")
         return bool(self.pos_sync.get("ok") and a and time.time() - a <= POS_STALE_S)
 
+    def _warm_loop(self):
+        """Keeps WARM_CONNS connections to Kotak open, so parallel exits never wait for a new connection."""
+        while True:
+            try:
+                fastrest.warm(WARM_CONNS)
+            except Exception:
+                log.exception("warm connections")
+            time.sleep(WARM_EVERY_S)
+
     def _pos_loop(self):
         while True:
             try:
@@ -512,8 +526,11 @@ class LiveBook(PaperBook):
         return r
 
     def _tag(self) -> str:
-        self._seq = (self._seq + 1) % 1000
-        return f"{TAG}{dt.datetime.now(IST):%H%M%S}{self._seq:03d}"
+        # 18-Nov-2026 20:25: EXIT ALL's parallel threads raced on this counter, two legs got the SAME tag and
+        # Kotak refused the second as a duplicate ("error from core") - 2 of 4 legs left open. Under a lock now.
+        with self._tag_lock:
+            self._seq = (self._seq + 1) % 1000
+            return f"{TAG}{dt.datetime.now(IST):%H%M%S}{self._seq:03d}"
 
     @staticmethod
     def _px(p: float) -> str:
@@ -1008,15 +1025,17 @@ class LiveBook(PaperBook):
                                                            if self.own else
                                                            f"Kotak shows no open {'MCX' if name is None else name} position") +
                     (f" · {n_cancel} working order(s) cancelled" if n_cancel else "")}
+        t_start = time.time()
         res = self._send_parallel(legs, fraction, src)
         bad = [r["msg"] for r in res if not r["ok"]]
         # verify: re-read Kotak until flat; push any exit still working after EXIT_PUSH_S through the book
         pushed, left = set(), legs
+        resent = {}
         t_sent = time.time()                            # the check window starts once everything is sent
         first = True
         while first or time.time() - t_sent < EXIT_PUSH_S + EXIT_VERIFY_S:
             first = False
-            time.sleep(0.5)
+            time.sleep(0.25)
             self.poll()
             if time.time() - t_sent >= EXIT_PUSH_S:
                 with self.lock:
@@ -1034,6 +1053,24 @@ class LiveBook(PaperBook):
             left = self._legs(toks)
             if fraction < 1.0 or not left:
                 break
+            # RE-SEND a leg Kotak refused (18-Nov-2026: two legs refused, nothing re-sent, 11 s "NOT FLAT").
+            # Only a contract whose exits in THIS run all ended REJECTED / CANCELLED with nothing filled - a leg
+            # that filled is never sent twice, even while Kotak's positions still lag behind the fill.
+            with self.lock:
+                mine = [o for o in self.orders if o.get("source") == src and o.get("t0", 0) >= t_start - 1]
+            retry = []
+            for t, prod, n in left:
+                os_ = [o for o in mine if o["token"] == t]
+                if os_ and all(o["status"] in ("REJECTED", "CANCELLED") and not o.get("filled") for o in os_)                         and resent.get(t, 0) < EXIT_RETRIES:
+                    retry.append((t, prod, n))
+                    resent[t] = resent.get(t, 0) + 1
+            if retry:
+                log.warning("EXIT %s: re-sending %d refused leg(s): %s", what, len(retry),
+                            ", ".join(self.u.by_token[t].symbol for t, _, _ in retry))
+                audit.write("exit-all", what=f"re-sent {len(retry)} refused leg(s)",
+                            legs=[self.u.by_token[t].symbol for t, _, _ in retry])
+                res2 = self._send_parallel(retry, fraction, src)
+                bad = [r["msg"] for r in res2 if not r["ok"]]
         secs = time.time() - t0
         if fraction >= 1.0 and not left:
             msg = ((f"FLAT - the desk's own {'' if name is None else name + ' '}positions are closed, checked "

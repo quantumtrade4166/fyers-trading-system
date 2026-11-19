@@ -46,6 +46,7 @@ def main():
     ap.add_argument("--last-entry", default=None, help="OPTIONAL test: no new entries after HH:MM, e.g. 14:45")
     ap.add_argument("--target", type=float, default=None, help="OPTIONAL test: book profit at this many points")
     ap.add_argument("--hard-sl", type=float, default=None, help="OPTIONAL test: fixed stop this many points above the sell price")
+    ap.add_argument("--ref-wait-opt-st", action="store_true", help="OPTIONAL test: reference candle only once the option ST is red")
     ap.add_argument("--tag", default=Config.tag)
     ap.add_argument("--no-day-charts", action="store_true")
     a = ap.parse_args()
@@ -53,7 +54,7 @@ def main():
                  slippage_points=a.slippage, breakeven_after_points=a.breakeven,
                  cpr_max_width=a.cpr_max, rsi_filter=a.rsi,
                  trigger_high_sl=a.trigger_high_sl, last_entry_time=a.last_entry,
-                 target_points=a.target, hard_sl_points=a.hard_sl, tag=a.tag)
+                 target_points=a.target, hard_sl_points=a.hard_sl, ref_wait_opt_st=a.ref_wait_opt_st, tag=a.tag)
 
     out = RESULTS / cfg.tag
     (out / "days").mkdir(parents=True, exist_ok=True)

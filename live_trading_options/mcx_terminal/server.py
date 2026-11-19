@@ -839,6 +839,7 @@ class Client:
         self.watch: set[int] = set()               # base + open positions / orders
         self.q: asyncio.Queue = asyncio.Queue(maxsize=2000)
         self.dead = False
+        self.chain_seq = 0
         self.who = ws.scope.get("mcx_user", "local") if hasattr(ws, "scope") else "local"
 
     def refresh_watch(self, book_tokens):
@@ -979,6 +980,9 @@ app.mount("/static", StaticFiles(directory=C.STATIC), name="static")
 async def _startup():
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, ENGINE.start, loop)
+    asyncio.create_task(_loop_lag_watch())
+    threading.Thread(target=_stall_camera, args=(loop, threading.get_ident()), daemon=True,
+                     name="StallCamera").start()
 
 
 @app.get("/")
@@ -1050,9 +1054,38 @@ SLOW_OPS = {"exit_all", "exit", "exit_inst", "refresh", "cancel_all",
             "order", "basket", "move", "cancel", "sl_set", "sl_drop", "margin", "mtm_hist", "atm_hist"}
 
 
+# 18-Nov-2026: everything used to share asyncio's default pool (14 threads) - orders, chart refreshes from every
+# screen, chain builds. A busy pool made a key press wait seconds before it even started. Orders now have their
+# own workers; chart / chain queries their own. Anything that waits or runs long is logged (SLOW_OP_S).
+from concurrent.futures import ThreadPoolExecutor as _TPE
+ORDER_POOL = _TPE(max_workers=32, thread_name_prefix="OrderOp")
+QUERY_POOL = _TPE(max_workers=8, thread_name_prefix="Query")
+QUERY_OPS = {"margin", "mtm_hist", "atm_hist"}
+SLOW_OP_S = 1.0
+
+
+async def _in_pool(loop, pool, label, fn, *args):
+    t_sub = time.time()
+    box = {}
+
+    def run():
+        box["start"] = time.time()
+        try:
+            return fn(*args)
+        finally:
+            box["end"] = time.time()
+    try:
+        return await loop.run_in_executor(pool, run)
+    finally:
+        q = box.get("start", time.time()) - t_sub
+        r = box.get("end", time.time()) - box.get("start", time.time())
+        if q > SLOW_OP_S or r > 3 * SLOW_OP_S:
+            log.warning("slow %s: waited %.2fs for a worker, ran %.2fs", label, q, r)
+
+
 async def run_op(c, loop, op, msg, user):
     try:
-        res = await loop.run_in_executor(None, ORDER_OPS[op], msg)
+        res = await _in_pool(loop, QUERY_POOL if op in QUERY_OPS else ORDER_POOL, f"op {op}", ORDER_OPS[op], msg)
     except Exception as e:
         log.exception("order op %s", op)
         res = {"ok": False, "msg": _txt(e)}
@@ -1061,6 +1094,75 @@ async def run_op(c, loop, op, msg, user):
         audit.write("op", user, op=op, mode=ENGINE.mode, args=args, ok=res.get("ok"),
                     result=str(res.get("msg", ""))[:300])
     c.send_nowait({"t": "ack", "op": op, "req": msg.get("req"), **res})
+
+
+async def _send_chain(c, loop, msg, seq, all_futs):
+    try:
+        ch = await _in_pool(loop, QUERY_POOL, "chain", ENGINE.chain, msg["name"], msg.get("expiry"))
+    except Exception:
+        log.exception("chain %s", msg.get("name"))
+        return
+    if seq != c.chain_seq:
+        return                                     # the screen asked for another chain meanwhile
+    c.base = {r["ce"] for r in ch["rows"]} | {r["pe"] for r in ch["rows"]} | all_futs
+    c.refresh_watch(ENGINE.book_tokens)
+    c.send_nowait(ch)
+    c.send_nowait({"t": "d", "s": round(time.time(), 3),
+                   "u": [ENGINE.last[t] for t in c.watch if t in ENGINE.last]})
+    c.send_nowait({"t": "status", **ENGINE.status()})       # subscription counts changed
+
+
+_IDLE_FRAMES = {"wait", "sleep", "select", "recv", "recv_into", "accept", "_wait_for_tstate_lock", "get", "read",
+                "readinto", "_recv_bytes", "poll", "settimeout", "run_forever", "_worker", "acquire", "_run_once",
+                "recvfrom", "sock_recv", "connect", "do_handshake", "getaddrinfo"}
+
+
+def _stall_camera(loop, loop_tid):
+    """Thread: pokes the web loop every 0.2 s. If it has not answered in 0.4 s, logs WHERE the loop thread is
+    stuck (its Python stack at that moment) and how long the stall lasted. At most one report per 5 s."""
+    import traceback
+    last = 0.0
+    while True:
+        try:
+            done = threading.Event()
+            t = time.time()
+            loop.call_soon_threadsafe(done.set)
+            if not done.wait(0.25):
+                frames = sys._current_frames()
+                fr = frames.get(loop_tid)
+                stack = "".join(traceback.format_stack(fr, limit=14)) if fr is not None else "?"
+                # every OTHER thread that is actually running Python right now (not waiting / sleeping):
+                # a loop that waits on a line with nothing deeper is waiting for the GIL - one of these holds it
+                names = {th.ident: th.name for th in threading.enumerate()}
+                busy = []
+                for tid, f in frames.items():
+                    if tid in (loop_tid, threading.get_ident()):
+                        continue
+                    top = traceback.extract_stack(f, limit=6)
+                    inner = top[-1].name if top else ""
+                    if inner in _IDLE_FRAMES:
+                        continue
+                    busy.append(f"[{names.get(tid, tid)}] " + " > ".join(f"{x.filename.split(chr(92))[-1]}:{x.lineno}:{x.name}"
+                                                                          for x in top[-4:]))
+                done.wait(10)
+                if time.time() - last > 2:
+                    last = time.time()
+                    log.warning("STALL %.2fs - web loop was in: %s || BUSY THREADS: %s", time.time() - t,
+                                stack[-1200:].replace(chr(10), " | "), " || ".join(busy)[:2500])
+            time.sleep(0.05)
+        except Exception:
+            time.sleep(1)
+
+
+async def _loop_lag_watch():
+    """Logs any moment the web loop itself was stuck (a screen's requests are only read when it runs)."""
+    loop = asyncio.get_running_loop()
+    while True:
+        t = loop.time()
+        await asyncio.sleep(0.25)
+        lag = loop.time() - t - 0.25
+        if lag > 0.5:
+            log.warning("web loop stalled %.2fs", lag)
 
 
 @app.websocket("/ws")
@@ -1087,13 +1189,9 @@ async def ws_endpoint(ws: WebSocket):
             if op == "ping":
                 c.send_nowait({"t": "pong", "c": msg.get("c"), "s": round(time.time(), 3)})
             elif op == "chain":
-                ch = await loop.run_in_executor(None, ENGINE.chain, msg["name"], msg.get("expiry"))
-                c.base = {r["ce"] for r in ch["rows"]} | {r["pe"] for r in ch["rows"]} | all_futs
-                c.refresh_watch(ENGINE.book_tokens)
-                c.send_nowait(ch)
-                c.send_nowait({"t": "d", "s": round(time.time(), 3),
-                               "u": [ENGINE.last[t] for t in c.watch if t in ENGINE.last]})
-                c.send_nowait({"t": "status", **ENGINE.status()})       # subscription counts changed
+                # never awaited here: a chain build must not hold the socket that carries the next key press
+                c.chain_seq += 1
+                asyncio.create_task(_send_chain(c, loop, msg, c.chain_seq, all_futs))
             elif op == "ui":                           # a button press on the screen (audit only)
                 audit.write("ui", user, what=str(msg.get("what", ""))[:120], mode=ENGINE.mode)
             elif op in ORDER_OPS:

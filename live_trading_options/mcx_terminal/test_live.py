@@ -63,6 +63,9 @@ class FakeKotak:
         self.sent.append({**kw, "_t": time.time()})
         if self.refuse:
             return {"stat": "Not_Ok", "errMsg": self.refuse, "stCode": 1009}
+        if kw["trading_symbol"] in getattr(self, "refuse_once", set()):   # 18-Nov: "error from core" once
+            self.refuse_once.discard(kw["trading_symbol"])
+            return {"Error": "error from core"}
         self.n += 1
         oid = f"26102700{self.n}"
         row = {"nOrdNo": oid, "trdSym": kw["trading_symbol"], "trnsTp": kw["transaction_type"],
@@ -1325,6 +1328,92 @@ def test_mtm_chart_waits_for_the_open():
         check("24h desk (BTC) always charted", not S._before_open(at(3, 0)))
     finally:
         S.C.HOURS = old
+
+
+def test_screen_never_waits_on_stop_loss_or_login():
+    """18-Nov 20:11: the screen refresh waited for the stop-loss lock while it talked to Kotak (1.6 s / 2.6 s
+    freezes of every screen); 20:07: the Cloudflare token check ran on the web loop (0.7 s)."""
+    import asyncio
+    import threading
+    from live_trading_options.mcx_terminal import access as A
+    from live_trading_options.mcx_terminal import sl as SL
+    q = {}
+    u, b, k, flag, path = _live("viewlock", q)
+    spath = path.with_name("viewlock_sl.json")
+    spath.unlink(missing_ok=True)
+    m = SL.AutoSL(b, lambda t: None, lambda: {"auto_sl": {}}, live=True, path=spath, notify=lambda n: None)
+    m.recs[1] = {"trigger": 10.0, "state": "pending"}
+    v1 = m.view()
+    hold = threading.Event()
+    th = threading.Thread(target=lambda: (m.lock.acquire(), hold.wait(3), m.lock.release()), daemon=True)
+    th.start()
+    time.sleep(0.05)
+    t = time.time()
+    v2 = m.view()
+    took = time.time() - t
+    hold.set()
+    th.join(2)
+    check("SL view returns at once while the lock is busy", took < 0.2 and v2 == v1, (took, v2))
+    calls = []
+    g = A.AccessGuard(lambda *a: None, team="t", aud="a", emails="")
+    g.verify = lambda tok: (calls.append(tok), (True, "me@x.com"))[1]
+    r1 = asyncio.run(g._verify_cached("TOKEN"))
+    r2 = asyncio.run(g._verify_cached("TOKEN"))
+    check("verified token reused, checked once", r1 == r2 == (True, "me@x.com") and calls == ["TOKEN"], calls)
+    spath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
+def test_parallel_tags_unique_and_refused_exit_leg_resent():
+    """18-Nov-2026 20:25: EXIT ALL's parallel threads produced duplicate tags, Kotak refused 2 of 4 legs and
+    nothing was re-sent (11 s NOT FLAT). Tags are unique under threads; a refused leg is re-sent."""
+    import threading
+    q = {}
+    u, b, k, flag, path = _live("tags", q)
+    tags, ths = [], []
+    for _ in range(8):
+        th = threading.Thread(target=lambda: [tags.append(b._tag()) for _ in range(25)])
+        ths.append(th)
+        th.start()
+    for th in ths:
+        th.join()
+    check("200 parallel tags, all unique", len(tags) == len(set(tags)) == 200, len(set(tags)))
+    path.unlink(missing_ok=True)
+
+
+def test_exit_all_resends_a_refused_leg():
+    q = {}
+    u, b, k, flag, path = _live("exitretry", q)
+    ch = u.products["CRUDEOIL"].chains["2026-11-17"]
+    a, c2 = ch[9300.0]["CE"], ch[9300.0]["PE"]
+    for t in (a, c2):
+        q[t.token] = _q(200.0)
+    k.carry[(a.symbol, "NRML")] = [0, 100, 0.0, 20000.0]
+    k.carry[(c2.symbol, "NRML")] = [0, 100, 0.0, 20000.0]
+    k.instant = "complete"
+    k.refuse_once = {a.symbol}                                          # Kotak refuses this leg the first time
+    t0 = time.time()
+    r = b.exit_all()
+    took = time.time() - t0
+    sent_a = [x for x in k.sent if x["trading_symbol"] == a.symbol]
+    check("refused leg re-sent at once", len(sent_a) == 2, [x["tag"] for x in sent_a])
+    check("re-sent with a NEW tag", len({x["tag"] for x in sent_a}) == 2)
+    check("EXIT ALL ends FLAT quickly", r["ok"] and "FLAT" in r["msg"] and took < 3.0, (r, took))
+    check("the filled leg is never sent twice", len([x for x in k.sent if x["trading_symbol"] == c2.symbol]) == 1)
+    path.unlink(missing_ok=True)
+
+
+def test_one_tls_context_for_every_kotak_connection():
+    """18-Nov-2026 21:12-21:18: each new connection read the Windows certificate store under the GIL and froze
+    the engine 7-35 s. One context, built once, verification unchanged."""
+    import ssl
+    from live_trading_options.mcx_terminal import fastrest as FR
+    a, b = FR.ssl_ctx(), FR.ssl_ctx()
+    check("same context reused", a is b)
+    check("still verifies certificates and host names", a.verify_mode == ssl.CERT_REQUIRED and a.check_hostname)
+    sh = FR._Shim()
+    ad = sh._s().get_adapter("https://e22.kotaksecurities.com/")
+    check("REST session uses the shared-context adapter", isinstance(ad, FR._CtxAdapter))
 
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:

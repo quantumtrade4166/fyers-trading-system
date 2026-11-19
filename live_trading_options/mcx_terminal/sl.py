@@ -189,10 +189,20 @@ class AutoSL:
             return dict(DEFAULTS)
 
     def view(self) -> dict:
-        with self.lock:
-            return {str(t): {k: r.get(k) for k in ("trigger", "limit", "qty", "state", "msg", "trail", "entry", "at_broker",
-                                                   "qty_mode")}
-                    for t, r in self.recs.items()}
+        """The stop-loss column for the screen. Called on the web loop, so it NEVER waits for the lock: the
+        lock is held while this module talks to Kotak (seconds when Kotak is slow), and waiting here froze the
+        whole engine - every screen, every key press (18-Nov-2026 20:11: 1.6 s and 2.6 s). Busy -> the last
+        view (at most one step old)."""
+        if not self.lock.acquire(timeout=0.02):
+            return getattr(self, "_view_cache", {})
+        try:
+            v = {str(t): {k: r.get(k) for k in ("trigger", "limit", "qty", "state", "msg", "trail", "entry",
+                                                 "at_broker", "qty_mode")}
+                 for t, r in self.recs.items()}
+            self._view_cache = v
+            return v
+        finally:
+            self.lock.release()
 
     # ── hooks from the book ────────────────────────────────────────────────
     def before_reduce(self, token: int) -> str | None:

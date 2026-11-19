@@ -35,6 +35,7 @@ import time
 import websocket                                   # websocket-client
 
 from live_trading_options.mcx_terminal import config as C
+from live_trading_options.mcx_terminal import fastrest
 
 log = logging.getLogger("mcx.feed")
 
@@ -229,7 +230,7 @@ class KotakFeed:
                 self.connected = True
                 self.on_status(self.status())
                 t0 = time.time()
-                self.ws.run_forever(ping_interval=15, ping_timeout=8)
+                self.ws.run_forever(ping_interval=15, ping_timeout=8, sslopt={"context": fastrest.ssl_ctx()})
                 if time.time() - t0 > 60:
                     backoff = 1.0                  # it was a healthy session; retry fast
             except Exception as e:

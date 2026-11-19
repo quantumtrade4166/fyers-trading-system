@@ -21,6 +21,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.stderr.reconfigure(encoding="utf-8")
 
 import time
+import gzip
 import json
 import urllib.parse
 import urllib.request
@@ -49,10 +50,15 @@ def _get(path: str, params: dict = None, base: str = BASE, retries: int = 3) -> 
     last = None
     for attempt in range(retries):
         try:
+            # gzip (18-Nov-2026): urllib does not ask for it by itself - every chain download came in at
+            # full size (~2.7 MB instead of ~1.4 MB)
             req = urllib.request.Request(
-                url, headers={"Accept": "application/json", "User-Agent": _UA})
+                url, headers={"Accept": "application/json", "User-Agent": _UA, "Accept-Encoding": "gzip"})
             with urllib.request.urlopen(req, timeout=_TIMEOUT) as r:
-                d = json.loads(r.read().decode())
+                raw = r.read()
+                if (r.headers.get("Content-Encoding") or "").lower() == "gzip":
+                    raw = gzip.decompress(raw)
+                d = json.loads(raw.decode())
             if not d.get("success", True):
                 raise DeltaError(f"{path}: {d.get('error')}")
             return d
@@ -104,6 +110,25 @@ def btc_option_tickers(base: str = BASE) -> list[dict]:
     afford to run every minute forever."""
     return [t for t in tickers(base=base)
             if t.get("underlying_asset_symbol") == "BTC"]
+
+
+def btc_option_tickers_for(codes, base: str = BASE) -> list[dict]:
+    """Tickers of ONLY these expiries (Delta codes "DDMMYY"), one call each: ~56 rows / ~75 KB per expiry
+    instead of ~1,080 rows / ~1.4 MB for the whole chain. 18-Nov-2026: the VWAP (2 s) and DN (5 s) engines
+    polled the whole chain, ~160 GB a day between them, and the VPS was throttled for going over its data
+    allowance. Same row format as btc_option_tickers(); an expiry that comes back empty (filter not honoured,
+    new listing) falls back to the whole chain, so a chain is never left without prices."""
+    out = []
+    for code in sorted(set(c for c in codes if c)):
+        day = f"{code[0:2]}-{code[2:4]}-20{code[4:6]}"
+        rows = _get("/v2/tickers", {"contract_types": "call_options,put_options",
+                                    "underlying_asset_symbols": "BTC", "expiry_date": day}, base=base)["result"]
+        rows = [t for t in rows if t.get("underlying_asset_symbol") == "BTC"
+                and t.get("symbol", "").endswith(f"-{code}")]
+        if not rows:
+            return btc_option_tickers(base=base)
+        out += rows
+    return out
 
 
 # ── depth ────────────────────────────────────────────────────────────────

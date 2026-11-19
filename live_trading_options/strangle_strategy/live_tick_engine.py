@@ -516,15 +516,42 @@ def _maybe_attach_kotak_rohit(book, idx, date_str, pick, meta):
         print(f"  [kotak_rohit] {idx} attach failed (others unaffected): {e}")
 
 
+def _resolve_with_retry(client, idx, date_str, tries: int = 5, pause: float = 2.5):
+    """select_and_cache, retrying on the Fyers -360 '5 requests/second' limit.
+
+    NIFTY and SENSEX resolve back-to-back at ~9:20 and the burst of Fyers calls
+    (index spot + option quotes) can exceed the Standard plan's 5 req/s, throwing
+    -360. Before this, the loser of that race hit `continue` and was SKIPPED for the
+    whole run — that is exactly why SENSEX missed days (e.g. its 11-18 1-DTE). The
+    selection is internally time-gated to the 9:20 price, so retrying a few seconds
+    later still picks the correct strikes. Non-rate-limit errors are NOT retried."""
+    last = None
+    for attempt in range(1, tries + 1):
+        try:
+            return select_and_cache(client, idx, date_str)
+        except Exception as e:
+            last = e
+            m = str(e)
+            if "-360" in m or "requests/second" in m or "requests per second" in m:
+                print(f"  [V2] {idx} strike resolve hit Fyers rate-limit "
+                      f"(try {attempt}/{tries}); retrying in {pause}s")
+                time.sleep(pause)
+                continue
+            print(f"  [V2] {idx} strike resolve failed: {e}")
+            return None
+    print(f"  [V2] {idx} strike resolve gave up after {tries} tries (rate-limit): {last}")
+    return None
+
+
 def build_books(date_str: str):
     """Resolve the day's strikes (cached) and create a book per index."""
     from core.fyers_client import get_client
     client = get_client()
-    for idx in INDICES:
-        try:
-            pick = select_and_cache(client, idx, date_str)
-        except Exception as e:
-            print(f"  [V2] {idx} strike resolve failed: {e}")
+    for n, idx in enumerate(INDICES):
+        if n:
+            time.sleep(1.5)        # space index resolutions apart (Fyers Standard = 5 req/s)
+        pick = _resolve_with_retry(client, idx, date_str)
+        if pick is None:
             continue
         meta = {k: pick.get(k) for k in ("spot", "atm", "otm_level", "ce_strike",
                 "pe_strike", "combined_premium", "threshold", "dte")}

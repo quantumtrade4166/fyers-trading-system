@@ -16,6 +16,7 @@ import threading
 import time
 
 import websocket                                    # websocket-client
+from live_trading_options.mcx_terminal import fastrest
 
 log = logging.getLogger("mcx.orderfeed")
 
@@ -82,7 +83,7 @@ class OrderFeed:
                 self.ws = websocket.WebSocketApp(url, on_open=on_open, on_message=self._on_msg,
                                                  on_error=lambda w, e: self._down(f"error: {e}"),
                                                  on_close=lambda w, c, r: self._down("closed"))
-                self.ws.run_forever(ping_interval=20, ping_timeout=10)
+                self.ws.run_forever(ping_interval=20, ping_timeout=10, sslopt={"context": fastrest.ssl_ctx()})
             except Exception as e:
                 self._down(f"cannot connect: {e}")
             if self._stop:

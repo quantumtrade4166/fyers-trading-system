@@ -114,11 +114,18 @@ class DayMachine:
         if c is None:
             s.notes.append(f"reference candle {t.time()} missing; first later candle used")
             self.log(T, "reference_candle_missing", s, candle=t.time())
+        elif getattr(self.cfg, "ref_wait_opt_st", False) and not self._opt_st_red(c):
+            self.log(T, "reference_wait_opt_st", s, candle=t.time(), st_dir=c.get("st_dir"))
         else:
             s.ref_candle_ts = t
             s.ref_low_initial = s.ref_low = float(c["low"])
             self.log(T, "reference_set", s, candle=t.time(), ref_low=s.ref_low)
         return s
+
+    @staticmethod
+    def _opt_st_red(c) -> bool:
+        d = c.get("st_dir", np.nan)
+        return (not pd.isna(d)) and int(d) == -1
 
     def evaluate(self, s, t, T):
         c = self.option_candle(s.contract, t)
@@ -127,7 +134,9 @@ class DayMachine:
             self.log(T, "option_candle_missing", s, candle=t.time())
             return
         low, close = float(c["low"]), float(c["close"])
-        if s.ref_low is None:                      # reference candle was missing
+        if s.ref_low is None:                      # reference candle missing, or waiting for red option ST
+            if getattr(self.cfg, "ref_wait_opt_st", False) and not self._opt_st_red(c):
+                return
             s.ref_candle_ts = t
             s.ref_low_initial = s.ref_low = low
             self.log(T, "reference_set", s, candle=t.time(), ref_low=low, late=True)

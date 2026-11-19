@@ -92,8 +92,10 @@ function connect() {
         }
         else if (m.op === "mode_set") toast(m.msg, !m.ok, !m.ok ? "bad" : m.mode === "LIVE" ? "ok" : "info");
         else if (ORDER_ACKS.has(m.op)) {
+          const pd = S.pend.get(m.req);
+          if (pd) clearTimeout(pd.timer);              // confirmed before the SENDING notice was due: never shown
           toast(m.msg || (m.ok ? "done" : "failed"), !m.ok,
-                !m.ok ? "bad" : m.state === "waiting" || m.state === "partial" ? "wait" : "ok", S.pend.get(m.req));
+                !m.ok ? "bad" : m.state === "waiting" || m.state === "partial" ? "wait" : "ok", pd && pd.el);
           S.pend.delete(m.req);
         }
         else toast(m.msg || (m.ok ? "done" : "failed"), !m.ok, m.ok ? "info" : "bad");
@@ -138,9 +140,16 @@ function toast(msg, bad, kind, el) {
   el._t = setTimeout(() => el.remove(), { bad: 8000, wait: 5000, ok: 4000, send: 12000 }[kind] || 3000);
   return el;
 }
-// an order's pop-up appears the moment it is sent, then turns green / amber / red in the same box
+// an order's pop-up: green / amber / red when the engine answers. The blue "SENDING" box only appears if that
+// takes longer than SEND_SHOW_MS (owner 18-Nov-2026: a normal order is confirmed in ~0.3-0.5 s and the
+// sending box flashing first looked like the order was pending) - a real delay is still shown.
+const SEND_SHOW_MS = 1000;
 S.pend = new Map();
-function pendToast(req, text) { S.pend.set(req, toast(text, false, "send")); }
+function pendToast(req, text) {
+  const pd = { el: null, timer: null };
+  pd.timer = setTimeout(() => { pd.el = toast(text, false, "send"); }, SEND_SHOW_MS);
+  S.pend.set(req, pd);
+}
 const ORDER_ACKS = new Set(["order", "basket", "exit", "exit_all", "exit_inst", "move"]);
 const _once = {};
 function toastOnce(key, msg, bad) { const n = Date.now(); if (!_once[key] || n - _once[key] > 30000) { _once[key] = n; toast(msg, bad); } }

@@ -46,7 +46,7 @@ import traceback
 import datetime as dt
 
 from core.shared import singleton, PORT_BTC_ENGINE, now_ist, STATE_DIR, LOGS
-from core.api import btc_options, btc_option_tickers, DeltaError
+from core.api import btc_options, btc_option_tickers, btc_option_tickers_for, DeltaError
 from core.chain import LiveChain, nearest_expiry
 from core.sessions import load_profiles
 from live.controller import BTCController
@@ -181,7 +181,6 @@ def main():
         started = time.monotonic()
         now = now_ist()
         try:
-            tickers = btc_option_tickers()
             front = nearest_expiry(now, products(), SETTLE)
             if front is None:
                 products(force=True)
@@ -194,6 +193,8 @@ def main():
             for c in ctrls.values():
                 if c.expiry and not c.position.is_flat:
                     wanted.add(c.expiry)
+            # only the expiries in use (18-Nov-2026: the whole chain every 5 s was ~46 GB a day)
+            tickers = btc_option_tickers_for(wanted)
             for code in wanted:
                 ch = chain_for(code)
                 before = ch.new_strikes

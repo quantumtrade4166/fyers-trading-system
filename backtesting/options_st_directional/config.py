@@ -57,6 +57,12 @@ class Config:
     target_points: float | None = None
     hard_sl_points: float | None = None
 
+    # OPTIONAL test (owner 18-Nov, off in the baseline, NOT in paper/live): the reference
+    # candle must have the OPTION's own Supertrend red (st_dir == -1). If it is still
+    # green at the spot flip, wait; the first candle whose close turns it red becomes
+    # the reference (its low). Already red at the flip -> flip candle, as before.
+    ref_wait_opt_st: bool = False
+
     # OPTIONAL test (off in the baseline, NOT in paper/live): no new entry when the
     # fill time would be after this HH:MM (a later signal is dropped).
     last_entry_time: str | None = None

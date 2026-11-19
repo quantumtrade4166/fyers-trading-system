@@ -23,6 +23,8 @@ import os
 import threading
 import time
 
+VERIFIED_KEEP_S = 300.0                         # a token that passed is trusted this long (Cloudflare tokens live hours)
+
 from live_trading_options.mcx_terminal import config as C
 
 log = logging.getLogger("mcx.access")
@@ -44,6 +46,7 @@ class AccessGuard:
         self._jwks_at = 0.0
         self._lock = threading.Lock()
         self._denied_log_at = 0.0
+        self._ok_cache: dict = {}                   # token -> (trusted until, email)
         if not (self.team and self.aud):
             log.warning("Access lock NOT configured (MCX_ACCESS_TEAM / MCX_ACCESS_AUD): all external requests refused")
 
@@ -96,6 +99,24 @@ class AccessGuard:
             return False, f"{email or 'unknown user'} is not allowed"
         return True, email
 
+    async def _verify_cached(self, token):
+        """verify() off the web loop, and a token that passed is trusted for VERIFIED_KEEP_S (18-Nov-2026: the
+        check ran on the loop for every request and, once an hour, downloaded Cloudflare's keys there too -
+        a 0.7 s freeze of every screen). Failures are never cached."""
+        import asyncio
+        if not token:
+            return self.verify(token)
+        now = time.time()
+        hit = self._ok_cache.get(token)
+        if hit and hit[0] > now:
+            return True, hit[1]
+        ok, why = await asyncio.to_thread(self.verify, token)
+        if ok:
+            if len(self._ok_cache) > 500:
+                self._ok_cache.clear()
+            self._ok_cache[token] = (now + VERIFIED_KEEP_S, why)
+        return ok, why
+
     # ── ASGI ────────────────────────────────────────────────────────────────
     async def __call__(self, scope, receive, send):
         if scope["type"] not in ("http", "websocket"):
@@ -104,7 +125,7 @@ class AccessGuard:
         if not self.is_external(h):
             scope["mcx_user"] = "local"                 # on the VPS itself / through an SSH tunnel
             return await self.app(scope, receive, send)
-        ok, why = self.verify(self.token_of(h))
+        ok, why = await self._verify_cached(self.token_of(h))
         if ok:
             scope["mcx_user"] = why                     # the verified Cloudflare email (decides who may arm LIVE)
             return await self.app(scope, receive, send)
