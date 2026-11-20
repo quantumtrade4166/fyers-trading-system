@@ -62,6 +62,8 @@ def _list_days() -> list:
 
 def downsample(rows: list, max_points: int = 4000) -> list:
     """Keep at most ~max_points rows: one per time bucket (the last one), plus the very first and last."""
+    if hasattr(rows, "downsample"):                  # today's compact HistBuf: same rows, no full walk
+        return rows.downsample(max_points)
     if len(rows) <= max_points:
         return rows
     t0, t1 = rows[0]["t"], rows[-1]["t"]

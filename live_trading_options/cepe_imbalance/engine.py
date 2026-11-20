@@ -15,6 +15,7 @@ import logging
 import threading
 import time
 
+from live_trading_options.cepe_imbalance.histbuf import HistBuf
 from live_trading_options.cepe_imbalance import config as C
 from live_trading_options.cepe_imbalance import st_signal as STS
 from live_trading_options.cepe_imbalance import strategy as S
@@ -281,7 +282,7 @@ class Engine:
         self._last_st = 0.0
         self._last_subs = 0.0
         self.started_at = time.time()
-        self.hist: dict[str, list] = {n: [] for n in self.runners}   # today's MTM/imbalance samples
+        self.hist: dict[str, HistBuf] = {n: HistBuf() for n in self.runners}   # today's chart samples (compact)
         # every tick, for exact replays (the paper engine records NIFTY / SENSEX; the live engine must not
         # write the same files from a second process)
         self.quotes = QuoteRecorder(universe) if persist and role != "live" else None
@@ -396,8 +397,16 @@ class Engine:
     def _load_hist(self):
         for n, r in self.runners.items():
             p = C.DATA / "history" / r.date / f"{n}.jsonl"
-            rows = p.read_text(encoding="utf-8").splitlines() if p.exists() else []
-            self.hist[n] = [json.loads(x) for x in rows if x.strip()]
+            buf = HistBuf()
+            if p.exists():
+                with open(p, encoding="utf-8") as fh:    # line by line: never the whole day as dicts at once
+                    for x in fh:
+                        if x.strip():
+                            try:
+                                buf.append(json.loads(x))
+                            except (ValueError, KeyError):
+                                pass                        # a half-written last line after a crash
+            self.hist[n] = buf
 
     # ── subscriptions ───────────────────────────────────────────────────────
     def wanted_keys(self, name) -> list:
@@ -605,7 +614,7 @@ class Engine:
             nr = self._runner(name, r.strategy_name, date=r.date)
             nr.state["auto_done"] = True                     # reset = owner's action; no auto re-trigger
             self.runners[name] = nr
-            self.hist[name] = []
+            self.hist[name] = HistBuf()
             nr.event("reset", archived=moved, folder=f"_reset_{stamp}")
             nr.save_state()
             out = {"ok": True, "archived": moved}
@@ -784,8 +793,8 @@ class Engine:
             sp = self.spreads(u, r, e, atm)                    # bid-ask gap % of the 6 strategy strikes
             if sp:
                 row["sp"] = sp
-            self.hist.setdefault(n, []).append(row)
-            del self.hist[n][:-200000]
+            self.hist.setdefault(n, HistBuf()).append(row)
+            self.hist[n].trim(200000)
             if self.persist:                                 # chart rows: display only, never urgent
                 W.append(d / f"{n}.jsonl", json.dumps(row) + "\n", wake=False)
 
@@ -818,7 +827,7 @@ class Engine:
                     r.event("rollover_with_LIVE_positions_carried")      # the new book carries them in
                 with self.live_locks.get(n) or self.lock:     # never swap a live book mid-order
                     self.runners[n] = self._runner(n, r.strategy_name, date=date)
-                self.hist[n] = []
+                self.hist[n] = HistBuf()
         log.info("day rollover -> %s%s", date, f" ({only})" if only else "")
 
     def run_timer(self):

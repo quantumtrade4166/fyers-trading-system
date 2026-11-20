@@ -1037,6 +1037,22 @@ def test_chain_and_orders_never_block_the_socket():
     r, took = asyncio.run(go())
     check("pool call returns", r == 42 and took < 1.0, (r, took))
 
+
+def test_versioned_static_cached_for_good():
+    """20-Nov: tagged page files (?v=) are cached by the browser; untagged ones are not."""
+    import asyncio
+    from live_trading_options.mcx_terminal import server as S
+    st = S._VersionedStatic(directory=S.C.STATIC)
+
+    def get(q):
+        scope = {"type": "http", "method": "GET", "path": "/app.js", "query_string": q, "headers": []}
+        return asyncio.run(st.get_response("app.js", scope))
+    r1, r2 = get(b"v=test1"), get(b"")
+    check("tagged file: cached for good", r1.status_code == 200 and "immutable" in r1.headers.get("cache-control", ""),
+          (r1.status_code, dict(r1.headers)))
+    check("untagged file: no long cache", r2.status_code == 200 and "immutable" not in r2.headers.get("cache-control", ""))
+
+
 if __name__ == "__main__":
     for fn in [v for k, v in dict(globals()).items() if k.startswith("test_")]:
         fn()

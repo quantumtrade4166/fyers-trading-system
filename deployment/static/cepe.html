@@ -529,8 +529,32 @@ function drawSeries() {
     : (DAY ? 'not recorded this day' : 'waiting…');
 }
 // Today: first load downsampled, then raw increments. Past day: one downsampled load, no polling.
+// 20-Nov: every book's chart is kept in the page while you look at others, so switching back is instant
+// (then only the samples since are fetched). Older than CHART_KEEP_MS or after an engine restart: reloaded.
+const chartCache = new Map(), CHART_KEEP_MS = 15 * 60 * 1000, CHART_CACHE_MAX = 16;
+const CHART_POINTS = 4000;              // whole-day chart points (was 8000): ~2 per pixel, half the data to send/draw
+function saveChart(key) {
+  if (!key || !series.m.length) return;
+  chartCache.delete(key);
+  chartCache.set(key, {at: Date.now(), lastT, lastAtm, lastPrem, lastSp,
+    s: {m: series.m, i: series.i, c: series.c, p: series.p, s: series.s, est: series.est, marks: series.marks, sp: series.sp}});
+  while (chartCache.size > CHART_CACHE_MAX) chartCache.delete(chartCache.keys().next().value);
+}
+function restoreChart(key) {
+  const c = chartCache.get(key);
+  if (!c || Date.now() - c.at > CHART_KEEP_MS) { chartCache.delete(key); return false; }
+  Object.assign(series, c.s); series.warm = [];
+  lastT = c.lastT; lastAtm = c.lastAtm; lastPrem = c.lastPrem; lastSp = c.lastSp;
+  return true;
+}
 async function loadHistory(full) {
   const key = SEL + '|' + (DAY || 'live');
+  if (histName && histName !== key) saveChart(histName);
+  if (histName !== key && restoreChart(key)) {             // seen before: draw it at once, then catch up
+    histName = key; drawSeries(); [0, 1, 2, 3].forEach(fitChart);
+    if (DAY) return;
+    full = false;
+  }
   const fresh = full || histName !== key;
   if (fresh) {
     histName = key; lastT = 0; series.m = []; series.i = []; series.c = []; series.p = []; series.s = []; series.marks = []; series.est = [];
@@ -538,7 +562,7 @@ async function loadHistory(full) {
     series.sp = [[], [], [], [], [], []]; lastAtm = null; lastPrem = null; lastSp = null;
     drawSeries();
   } else if (DAY) return;
-  const q = DAY ? `date=${DAY}&max_points=8000` : (lastT ? `since=${lastT}` : 'max_points=8000');
+  const q = DAY ? `date=${DAY}&max_points=${CHART_POINTS}` : (lastT ? `since=${lastT}` : `max_points=${CHART_POINTS}`);
   const j = await api(`/history/${SEL}?${q}`);
   if (histName !== key) return;                             // instrument / day changed while loading
   loadWarm(key);
@@ -662,7 +686,9 @@ async function renderDay() {
 function selectUnd(n) {
   SEL = n; localSet('cepe_sel', SEL); paramsDirty = false;
   $('lowerR').innerHTML = '<div class="mut" style="padding:14px;text-align:center">loading…</div>';
-  refresh(true); renderDay();
+  // 20-Nov: chart, chain, tables and P&L start NOW, side by side with the overview - not after it
+  histLoop(true); chainLoop(); renderLower(); loadPnl();
+  refresh(true, true); renderDay();
 }
 
 // ── rendering ───────────────────────────────────────────────────────────
@@ -980,8 +1006,9 @@ async function histLoop(full) {                            // one chart request 
   finally { histBusy = false; if (histAgain) { histAgain = false; histLoop(true); } }
 }
 let lastFeedTicks = null;
-async function refresh(full) {
+async function refresh(full, histStarted) {
   if (busy && !full) return; busy = true;
+  const asked = SEL;
   try {
     const s = await api('/state');
     if (!s.underlyings) { $('feed').className = 'pill bad'; $('feed').textContent = s.error ? 'engine offline' : 'no data'; $('blocked').textContent = s.error || ''; return; }
@@ -993,7 +1020,7 @@ async function refresh(full) {
     const f = s.feed || {};
     // 17-Nov: the engine restarted (its tick counter went back down): its books / chart rows may have been
     // rebuilt (Crude loop fix), so reload the chart whole instead of adding new points to the old curve
-    if (f.ticks != null) { if (lastFeedTicks != null && f.ticks < lastFeedTicks) histName = ''; lastFeedTicks = f.ticks; }
+    if (f.ticks != null) { if (lastFeedTicks != null && f.ticks < lastFeedTicks) { histName = ''; chartCache.clear(); } lastFeedTicks = f.ticks; }
     if (ROW.kind === 'crypto') {                              // BTC books run on the public Delta feed
       const d = f.delta || {};
       $('feed').className = 'pill ' + (d.connected ? 'ok' : 'bad');
@@ -1003,8 +1030,9 @@ async function refresh(full) {
       $('feed').textContent = f.authed ? `feed ok · ${f.subscribed ?? ''} subs` : 'feed down';
     }
     renderUnds(); renderCards();
-    if (full) { chainLoop(); renderLower(); loadPnl(); }   // tables first: never wait behind the chart load
-    histLoop(full);                                        // 17-Nov: NOT awaited - a slow chart load must never
+    const moved = SEL !== asked;                           // the overview picked another book (mode / variant)
+    if (full && (!histStarted || moved)) { chainLoop(); renderLower(); loadPnl(); }   // tables first
+    if (!histStarted || moved) histLoop(full);                                        // 17-Nov: NOT awaited - a slow chart load must never
                                                            // stop the cards / MTM / live status refreshing
   } catch (e) { $('feed').className = 'pill bad'; $('feed').textContent = 'offline'; }
   finally { busy = false; }

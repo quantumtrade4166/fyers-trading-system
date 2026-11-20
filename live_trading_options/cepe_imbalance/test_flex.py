@@ -344,7 +344,7 @@ def test_both_sides_stay_bunched():
     g = S.CePeFlex()
     atm, step = 9400, 200
     old = {"CE": [9400, 9600, 9800], "PE": [9000, 9200, 9400]}
-    ok_ce = {"CE": [9400, 9600, 9800], "PE": [8800, 9200, 9400]}         # PE 9400..8800 = 3 steps: fine
+    ok_ce = {"CE": [9400, 9600, 9800], "PE": [8800, 9000, 9200, 9400]}   # PE 9400..8800 = 3 steps, no gap: fine
     far_pe = {"CE": [9400, 9600, 9800], "PE": [8600, 9200, 9400]}        # PE 9400..8600 = 4 steps: scattered
     far_ce = {"CE": [9400, 9600, 10200], "PE": [9000, 9200, 9400]}       # CE 9400..10200 = 4 steps: scattered
     assert g.guards_ok(old, ok_ce, atm, step, heavy="CE")
@@ -442,3 +442,28 @@ def test_itm_push_back_can_be_switched_off(universe):
     hold(g, {"CE": {9400: 1, 9600: 1, 9800: 1}, "PE": {9000: 1, 9200: 1, 9400: 1}}, 9400)
     g.move(9560)
     assert not any("ITM push-back" in a for a in g.actions())
+
+
+def test_no_gaps_inside_a_side():
+    """19-Nov owner: strikes on a side stay next to each other - no move may leave MORE empty strikes inside it."""
+    g = S.CePeFlex()
+    atm, step = 9400, 200
+    old = {"CE": {9400: 1, 9600: 1, 9800: 1}, "PE": {9000: 1, 9200: 1, 9400: 1}}
+    assert g.gaps(old["CE"], step) == 0 and g.gaps({9400: 1, 10000: 2}, step) == 2
+    shift_ok = {"CE": {9600: 1, 9800: 1, 10000: 1}, "PE": old["PE"]}       # front 9400 -> 10000: still contiguous
+    hole = {"CE": {9400: 1, 9800: 1, 10000: 1}, "PE": old["PE"]}           # middle 9600 -> 10000: empty 9600
+    assert g.gaps_ok(old, shift_ok, step)
+    assert not g.gaps_ok(old, hole, step)
+    assert not g.guards_ok(old, hole, atm, step, heavy="CE")
+    gapped = {"CE": {9400: 1, 10000: 2}, "PE": old["PE"]}                 # already gapped: may close it ...
+    assert g.gaps_ok(gapped, {"CE": {9400: 1, 9600: 1, 10000: 1}, "PE": old["PE"]}, step)
+    assert not g.gaps_ok({"CE": {9400: 1, 9800: 2}, "PE": old["PE"]}, gapped, step)   # ... never widen it
+    # owner 19-Nov: no exception - even with no strike at ATM, a move back to ATM may not leave a gap ...
+    no_atm = {"CE": {9800: 1, 10000: 2}, "PE": {8800: 1, 9000: 2}}
+    jump = {"CE": {9800: 1, 10000: 2}, "PE": {9000: 2, 9400: 1}}                 # PE 9200 empty
+    assert not g.gaps_ok(no_atm, jump, step, atm=9400)
+    # ... "to ATM" offers the side as 3 continuous strikes from ATM instead (same 3 lots)
+    cands = list(g.moves_atm(no_atm, "PE", 9400, step))
+    blocks = [g.apply_ops(no_atm, ops)["PE"] for ops, tag in cands if "to ATM as" in tag]
+    assert blocks == [{9400: 1, 9200: 1, 9000: 1}]
+    assert g.gaps_ok(no_atm, g.apply_ops(no_atm, [o for ops, tag in cands if "to ATM as" in tag for o in ops]), step)

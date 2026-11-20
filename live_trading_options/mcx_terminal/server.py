@@ -117,6 +117,7 @@ class Engine:
         self.sls = None
         self.risks: dict = {}                      # "PAPER"/"LIVE" -> RiskGuard (both always watching)
         self.mode = "PAPER"                        # which book the screen trades into
+        self.gw = None                             # GatewayLink when the order gateway runs the LIVE side
         self.arm: dict = {}                        # who armed LIVE today, and when
         self.settings = Settings()
         self.timers: ExitTimers | None = None      # exit-by-time (per instrument), fired by housekeeping
@@ -244,6 +245,14 @@ class Engine:
                 return {"ok": False, "msg": "type LIVE to arm real Kotak P orders"}
             if not self.live.broker.get("ok", True):
                 return {"ok": False, "msg": f"Kotak order book not readable: {self.live.broker.get('msg')}"}
+        if self.gw:                                # the gateway holds the arm (and writes the arm file)
+            r = self.gw.op("mode_set", {"mode": mode, "_user": user})
+            if not r.get("ok"):
+                return r
+            self._gw_mode(mode, (self.gw.state.get("status") or {}).get("arm") or
+                          {"armed": mode == "LIVE", "by": user, "at": dt.datetime.now(IST).strftime("%H:%M:%S")})
+            audit.write("mode", user, what=f"MODE -> {mode} (via order gateway)")
+            return r
         self.mode = mode
         self.arm = {"armed": mode == "LIVE", "by": user, "at": dt.datetime.now(IST).strftime("%H:%M:%S")}
         try:
@@ -294,28 +303,42 @@ class Engine:
             log.exception("startup failed")
             raise
         self.paper = PaperBook(self.universe, self.quote, on_change=self.on_book, settings=self.settings.get)
-        if C.LIVE_ORDERS:
+        if C.ORDER_GATEWAY:                        # LIVE book, stops, guard, timers, arm: all in the gateway
+            from live_trading_options.mcx_terminal.remote import GatewayLink, RemoteLive
+            self.gw = GatewayLink(on_update=self._gw_update)
+            self.live = RemoteLive(self.gw)
+        elif C.LIVE_ORDERS:
             self.live = LiveBook(self.universe, self.quote, self.sessions, armed=lambda: self.mode == "LIVE",
                                  on_change=self.on_book, settings=self.settings.get)
         else:
             self.live = NoLiveBook(self.universe, self.quote, on_change=self.on_book, settings=self.settings.get)
-        self.risks = {"PAPER": RiskGuard(self.paper, self.ltp, on_change=self.on_risk),
-                      "LIVE": RiskGuard(self.live, self.ltp, on_change=self.on_risk,
-                                        path=C.DATA / f"risk_live_{C.day()}.json")}
-        self._load_arm()
+        if self.gw:
+            from live_trading_options.mcx_terminal.remote import RemoteRisk
+            self.risks = {"PAPER": RiskGuard(self.paper, self.ltp, on_change=self.on_risk),
+                          "LIVE": RemoteRisk(self.gw)}
+        else:
+            self.risks = {"PAPER": RiskGuard(self.paper, self.ltp, on_change=self.on_risk),
+                          "LIVE": RiskGuard(self.live, self.ltp, on_change=self.on_risk,
+                                            path=C.DATA / f"risk_live_{C.day()}.json")}
+            self._load_arm()                        # with the gateway, the arm comes from the gateway
         self.timers = ExitTimers(self._timer_fire, on_change=self.on_timers)
         self.live.notify = self.on_note
         # per-position auto stop-loss (+ trail): real SL orders at Kotak in LIVE, watched in PAPER
+        if self.gw:
+            from live_trading_options.mcx_terminal.remote import RemoteSL
+            live_sl = RemoteSL(self.gw)
+        else:
+            live_sl = AutoSL(self.live, self.ltp, self.settings.get, live=True, on_change=self.on_book,
+                             notify=self.on_note)
         self.sls = {"PAPER": AutoSL(self.paper, self.ltp, self.settings.get, live=False,
                                     on_change=self.on_book, notify=self.on_note),
-                    "LIVE": AutoSL(self.live, self.ltp, self.settings.get, live=True,
-                                   on_change=self.on_book, notify=self.on_note)}
+                    "LIVE": live_sl}
         for mode, bk in (("PAPER", self.paper), ("LIVE", self.live)):
             bk.before_reduce = self.sls[mode].before_reduce
             bk.before_flatten = self.sls[mode].before_flatten
         self.live.on_push_other = self.sls["LIVE"].on_push
         self.live.sl_ids = self.sls["LIVE"].working_ids        # own book (NSE): EXIT ALL cancels the desk's own stops
-        if C.LIVE_ORDERS:
+        if C.LIVE_ORDERS and not self.gw:
             self.orderfeed = OrderFeed(self.sessions, self.live.on_push, self.live.on_push_position,
                                        on_reconnect=self.live._poll_kick.set).start()
         self.book_tokens = self.paper.tokens() | self.live.tokens() | self._away_tokens()
@@ -622,6 +645,36 @@ class Engine:
         if self.loop:
             self.loop.call_soon_threadsafe(self._broadcast_status)
 
+    # ── order gateway updates (GatewayStream thread) ───────────────────────
+    def _gw_mode(self, mode: str, arm: dict):
+        if mode == self.mode and arm == self.arm:
+            return
+        self.mode, self.arm = mode, dict(arm or {})
+        log.warning("MODE -> %s (order gateway)", mode)
+        if self.rec:
+            self.rec.event("mode", {"mode": mode, **self.arm})
+        if self.loop:
+            for fn in (self._broadcast_status, self._broadcast_book, self._broadcast_risk):
+                self.loop.call_soon_threadsafe(fn)
+
+    def _gw_update(self, kind: str, data):
+        if kind == "book":
+            self.on_book()
+        elif kind == "risk":
+            self.on_risk()
+        elif kind == "timers":
+            self.on_timers()
+        elif kind == "status":
+            st = data or {}
+            if self.gw and self.gw.up and "armed" in st:
+                self._gw_mode("LIVE" if st.get("armed") else "PAPER", st.get("arm") or {})
+            elif self.gw and not self.gw.up and self.mode == "LIVE":
+                log.warning("order gateway not answering while LIVE - LIVE orders refused until it is back")
+            if self.loop:
+                self.loop.call_soon_threadsafe(self._broadcast_status)
+        elif kind == "note":
+            self.on_note({k: v for k, v in (data or {}).items() if k != "t"})
+
     def on_book(self):
         """Paper or live book changed (any thread)."""
         if self.paper is None or self.live is None:      # still starting up (the live book reads Kotak in its constructor)
@@ -665,8 +718,14 @@ class Engine:
         if self.loop:
             self.loop.call_soon_threadsafe(self._broadcast_timers)
 
+    def timers_view(self) -> list:
+        items = self.timers.view() if self.timers else []
+        if self.gw:                                # LIVE timers live in the gateway; the screen keeps PAPER ones
+            items = [x for x in items if x.get("mode") != "LIVE"] + list(self.gw.state.get("timers") or [])
+        return items
+
     def _broadcast_timers(self):
-        msg = {"t": "timers", "items": self.timers.view() if self.timers else []}
+        msg = {"t": "timers", "items": self.timers_view()}
         for c in list(self.clients):
             c.send_nowait(msg)
 
@@ -761,7 +820,9 @@ class Engine:
     def status(self) -> dict:
         f = self.feed.status() if self.feed else {}
         lv = self.live
+        gwv = {"on": True, "up": self.gw.up} if self.gw else {"on": False}
         return {"feed": f, "error": self.error, "mode": self.mode, "uptime": round(time.time() - self.started_at),
+                "gateway": gwv,
                 "arm": self.arm, "live_open": lv.open_positions() if lv else 0, "live_working": lv.working() if lv else 0,
                 "broker": lv.broker if lv else {},
                 "order_push": dict(self.orderfeed.status) if getattr(self, "orderfeed", None) else {},
@@ -973,7 +1034,19 @@ ORDER_OPS = {
 
 app = FastAPI(title=f"{C.DESK} Terminal")
 app.add_middleware(AccessGuard)               # second lock behind Cloudflare Access
-app.mount("/static", StaticFiles(directory=C.STATIC), name="static")
+class _VersionedStatic(StaticFiles):
+    """20-Nov-2026: app.js / app.css were re-checked with the server on every page open (no cache header;
+    ~0.65 s each over the India round trip). A file asked for WITH a version tag (?v=...) never changes -
+    a new version gets a new tag - so the browser may keep it for good. Untagged files: unchanged."""
+
+    async def get_response(self, path, scope):
+        r = await super().get_response(path, scope)
+        if b"v=" in (scope.get("query_string") or b"") and r.status_code == 200:
+            r.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return r
+
+
+app.mount("/static", _VersionedStatic(directory=C.STATIC), name="static")
 
 
 @app.on_event("startup")
@@ -1083,9 +1156,41 @@ async def _in_pool(loop, pool, label, fn, *args):
             log.warning("slow %s: waited %.2fs for a worker, ran %.2fs", label, q, r)
 
 
+# LIVE actions the order gateway performs when it is on (GATEWAY_DESIGN.md). PAPER stays in this process.
+GW_OPS = {"order", "basket", "move", "cancel", "cancel_all", "exit", "exit_all", "exit_inst",
+          "sl_set", "sl_drop", "sl_apply", "risk_set", "risk_clear", "timer_set"}
+
+
+def _gw_forward(op, m):
+    """Run a LIVE action on the order gateway. Prices the screen sees go with it as a hint."""
+    fwd = {k: v for k, v in m.items() if k not in ("op", "req")}
+    if op == "order" and m.get("token") is not None:
+        fwd["hint"] = ENGINE.quote(int(m["token"]))
+    elif op == "basket":
+        fwd["legs"] = [{**leg, "hint": ENGINE.quote(int(leg["token"]))} for leg in m.get("legs", [])]
+    elif op == "sl_apply" and m.get("values"):
+        r = ENGINE.settings.update({"auto_sl": m["values"]})       # the screen owns settings.json
+        if not r["ok"]:
+            return r
+        fwd.pop("values", None)
+    res = ENGINE.gw.op(op, fwd)
+    if op == "sl_apply":
+        res = {**res, "settings": ENGINE.settings.get()}
+    return res
+
+
+def _op_call(op, m):
+    if ENGINE.gw is not None:
+        if op in GW_OPS and ENGINE.mode == "LIVE":
+            return _gw_forward(op, m)
+        if op == "timer_clear":                    # may be a LIVE timer: clear it in both places
+            ENGINE.gw.op("timer_clear", {k: v for k, v in m.items() if k not in ("op", "req")})
+    return ORDER_OPS[op](m)
+
+
 async def run_op(c, loop, op, msg, user):
     try:
-        res = await _in_pool(loop, QUERY_POOL if op in QUERY_OPS else ORDER_POOL, f"op {op}", ORDER_OPS[op], msg)
+        res = await _in_pool(loop, QUERY_POOL if op in QUERY_OPS else ORDER_POOL, f"op {op}", _op_call, op, msg)
     except Exception as e:
         log.exception("order op %s", op)
         res = {"ok": False, "msg": _txt(e)}
@@ -1178,7 +1283,7 @@ async def ws_endpoint(ws: WebSocket):
         c.send_nowait({"t": "status", **ENGINE.status()})
         c.send_nowait(ENGINE.book_msg())
         c.send_nowait({"t": "risk", **ENGINE.risk.state()})
-        c.send_nowait({"t": "timers", "items": ENGINE.timers.view() if ENGINE.timers else []})
+        c.send_nowait({"t": "timers", "items": ENGINE.timers_view()})
         c.send_nowait({"t": "atm", "v": ENGINE.atm_straddles()})
         if ENGINE.news:
             c.send_nowait(ENGINE.news.snapshot())

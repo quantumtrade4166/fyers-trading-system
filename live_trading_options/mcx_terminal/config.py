@@ -104,6 +104,9 @@ globals().update({**_COMMON, **_DESKS[DESK]})
 if os.getenv("TERMINAL_PORT"):             # preview / test copies only: never set on the real engines
     PORT = int(os.getenv("TERMINAL_PORT"))
 DESK_LABEL = f"{DESK} Desk"
+# ORDER GATEWAY (GATEWAY_DESIGN.md): the LIVE order path in its own process. Per desk, off unless
+# MCX_ORDER_GATEWAY=1 / NSE_ORDER_GATEWAY=1 is set where the desk starts. Off = the in-process live book (as before).
+ORDER_GATEWAY = bool(LIVE_ORDERS) and BROKER == "KOTAK" and os.getenv(f"{DESK}_ORDER_GATEWAY", "0") == "1"
 # NEWS button (news.py: public headlines, read-only) - MCX desk only (owner, 12-Nov-2026)
 NEWS = os.getenv("TERMINAL_NEWS", "1" if DESK == "MCX" else "0") == "1"
 # the other desk, for the switch at the top of the screen

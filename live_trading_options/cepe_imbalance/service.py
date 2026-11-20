@@ -225,6 +225,15 @@ def _day_stats(nm):
         if s is None or s["list"] is not h:
             s = _day_run[nm] = {"list": h, "t": None, "last_mtm": None,
                                 "hi": None, "lo": None, "imx": None, "imn": None}
+        if hasattr(h, "extremes"):                      # compact HistBuf: read the columns, build no dicts
+            start = 0 if s["t"] is None else h.index_after(s["t"])
+            hi, lo, imx, imn, t_last, lm, k = h.extremes(start)
+            if k:
+                for key, v, better in (("hi", hi, max), ("lo", lo, min), ("imx", imx, max), ("imn", imn, min)):
+                    if v is not None:
+                        s[key] = v if s[key] is None else better(s[key], v)
+                s["t"], s["last_mtm"] = t_last, lm
+            return {k2: s[k2] for k2 in ("last_mtm", "hi", "lo", "imx", "imn")}
         new = h[:] if s["t"] is None else h[bisect.bisect_right(h, s["t"], key=_t_of):]
         for x in new:
             m, i = x.get("mtm"), x.get("imb")
@@ -393,9 +402,12 @@ def history(name: str, date: str = "", since: float = 0, max_points: int = 0):
         if today and not since and max_points > 0:
             # 17-Nov: the whole-day chart (1 MB) is built once and shared for 2 s - opening a book, a second
             # screen or a reload no longer each rebuild it while the engine is busy with prices
-            return _cached(("hist", nm, date, max_points), 2.0, lambda: _hist_full(nm, date, max_points))
+            # 20-Nov: 10 s (was 2 s) - the page then asks only for samples newer than its last one
+            return _cached(("hist", nm, date, max_points), 10.0, lambda: _hist_full(nm, date, max_points))
         rows = E.hist.get(nm, []) if today else days.history(date, nm)
-        if since:                                         # samples are in time order: jump to the new ones
+        if since and hasattr(rows, "since"):
+            rows = rows.since(since)                      # compact HistBuf: only the new rows become dicts
+        elif since:                                       # samples are in time order: jump to the new ones
             rows = rows[bisect.bisect_right(rows, since, key=_t_of):]
         elif today:
             rows = list(rows)
@@ -406,7 +418,8 @@ def history(name: str, date: str = "", since: float = 0, max_points: int = 0):
 
 
 def _hist_full(nm, date, max_points):
-    rows = days.downsample(list(E.hist.get(nm, [])), max_points)
+    h = E.hist.get(nm, [])
+    rows = days.downsample(h if hasattr(h, "downsample") else list(h), max_points)
     return JSONResponse({"name": nm, "date": date, "rows": rows})
 
 

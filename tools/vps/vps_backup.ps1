@@ -12,6 +12,7 @@
 #                kept 30 days
 #
 # Run every 10 minutes by scheduled task 'VPSBackupToDrive' (hidden, via vps_backup_hidden.vbs).
+# Mon-Fri 08:55-23:40 IST it runs in gentle DAY mode (see below); the full copy runs at night.
 # Google Drive (G:) only exists while Administrator is logged on: close Remote Desktop with
 # the X (disconnect), never "Sign out".
 
@@ -35,6 +36,21 @@ function Save-Status($state) {
 
 $prev = $null
 if (Test-Path $status) { try { $prev = Get-Content $status -Raw | ConvertFrom-Json } catch { } }
+
+# DAY (gentle) mode, Mon-Fri 08:55-23:40 IST while NSE + MCX trade (owner, 19-Nov-2026): the full every-10-min
+# copy kept the disk queue at 200+ for ~7 of every 10 minutes and froze the trading engines 4-14 s (measured
+# 20:01-20:12). By day: every 30 min, 1 copy thread, lowest priority, files <= 5 MB only, big data folders
+# skipped. Everything skipped by day is copied by the NIGHT run (full, every 10 min) - nothing is left out.
+$now = Get-Date
+$dayMode = ($now.DayOfWeek -notin 'Saturday', 'Sunday') -and
+           ($now.TimeOfDay -ge [timespan]'08:55') -and ($now.TimeOfDay -lt [timespan]'23:40')
+if ($dayMode) {
+    if ($prev -and $prev.last_day_run -and (($now - [datetime]$prev.last_day_run).TotalMinutes -lt 28)) { exit 0 }
+    try { [System.Diagnostics.Process]::GetCurrentProcess().PriorityClass = 'Idle' } catch { }   # robocopy inherits it
+}
+$mode = if ($dayMode) { 'day' } else { 'night' }
+$bigDirs = @('liquidity_compare', 'SHRAJAN_OPTIONS', 'Bitcoin options data', 'XAUUSD_1s_Data', 'Dukascopy_1m',
+             'ticks', 'ticks_btc', 'quotes', 'replays', 'chain_archive', '_staging', 'spread_db')
 
 # Self-heal: if the Google Drive app has closed or crashed, start it again and wait for G:.
 # (This task runs inside Administrator's session, which is where Drive has to run.)
@@ -93,9 +109,12 @@ $results = @()
 foreach ($j in $jobs) {
     if (-not (Test-Path $j.Src)) { continue }
     $dst = Join-Path $drive ('Live\' + $j.Name)
-    $rcArgs = @($j.Src, $dst, '/E', '/COPY:DAT', '/DCOPY:T', '/R:2', '/W:5', '/MT:8', '/NFL', '/NDL', '/NP', '/NJH', '/NJS', '/XJ',
+    $mt = if ($dayMode) { '/MT:1' } else { '/MT:8' }
+    $rcArgs = @($j.Src, $dst, '/E', '/COPY:DAT', '/DCOPY:T', '/R:2', '/W:5', $mt, '/NFL', '/NDL', '/NP', '/NJH', '/NJS', '/XJ',
                 '/XF', '*.pyc', '*.tmp', '*.lock')
-    if ($j.XD.Count) { $rcArgs += @('/XD') + $j.XD }
+    if ($dayMode) { $rcArgs += '/MAX:5000000' }
+    $xd = $j.XD + $(if ($dayMode) { $bigDirs } else { @() })
+    if ($xd.Count) { $rcArgs += @('/XD') + $xd }
     & robocopy @rcArgs | Out-Null
     $rc = $LASTEXITCODE
     if ($rc -ge 8) { Log ("{0}: robocopy rc={1}" -f $j.Name, $rc) }
@@ -106,7 +125,7 @@ foreach ($j in $jobs) {
 $today = Get-Date -Format 'yyyy-MM-dd'
 $snapRoot = Join-Path $drive 'Snapshots'
 $snap = Join-Path $snapRoot $today
-if (-not (Test-Path $snap)) {
+if (-not $dayMode -and -not (Test-Path $snap)) {
     foreach ($j in $jobs) {
         if (-not (Test-Path $j.Src)) { continue }
         $rcArgs = @($j.Src, (Join-Path $snap $j.Name), '/E', '/MAXAGE:2', '/COPY:DAT', '/R:2', '/W:5', '/MT:8', '/NFL', '/NDL', '/NP', '/NJH', '/NJS', '/XJ',
@@ -125,7 +144,10 @@ if (Test-Path $shadowLink) { cmd /c rmdir "$shadowLink" | Out-Null }
 if ($shadow) { try { $shadow.Delete() } catch { Log "could not delete shadow copy $($shadow.ID): $_" } }
 
 $allOk = -not ($results | Where-Object { -not $_.ok })
-$state = @{ last_run = (Get-Date).ToString('o'); ok = $allOk; jobs = $results; host = $env:COMPUTERNAME }
+$state = @{ last_run = (Get-Date).ToString('o'); ok = $allOk; jobs = $results; host = $env:COMPUTERNAME; mode = $mode;
+            took_s = [int]((Get-Date) - $now).TotalSeconds }
 if ($allOk) { $state.last_ok = (Get-Date).ToString('o') } elseif ($prev.last_ok) { $state.last_ok = $prev.last_ok }
+if ($dayMode) { $state.last_day_run = $now.ToString('o') } elseif ($prev.last_day_run) { $state.last_day_run = $prev.last_day_run }
+if ($allOk -and -not $dayMode) { $state.last_full_ok = (Get-Date).ToString('o') } elseif ($prev.last_full_ok) { $state.last_full_ok = $prev.last_full_ok }
 Save-Status $state
 if (-not $allOk) { Log 'BACKUP FAILED - see rc values above' }

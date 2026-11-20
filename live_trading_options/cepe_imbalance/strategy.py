@@ -959,7 +959,23 @@ class CePeFlex(CePeImbalance):
             self._sellc[key] = bool(c) and self._px(ctx, kind, k) > 0 and self.spread_ok(ctx, c)[0]
         return self._sellc[key]
 
+    @staticmethod
+    def gaps(side, step) -> int:
+        """Empty strikes between a side's nearest and farthest strike (owner 19-Nov: NO GAPS)."""
+        ks = sorted(k for k in side if (side[k] if isinstance(side, dict) else 1))
+        return 0 if len(ks) < 2 else int(round((ks[-1] - ks[0]) / step)) + 1 - len(ks)
+
+    def gaps_ok(self, old, new, step, atm=None) -> bool:
+        """Owner 19-Nov-2026: strikes on a side stay next to each other - ALWAYS, also on the way back to ATM.
+        A move may not leave either side with MORE empty strikes inside it than it has now (a book that already
+        has a gap may still close it). Getting back to ATM without a gap = "to ATM" rebuilds that side as 3
+        continuous strikes from ATM (moves_atm); ITM push-back already does the same.
+        Replayed 13-19 Nov: gaps only ever formed on paper books (3 of 10 days), about break-even, fewer fills."""
+        return all(self.gaps(new[k], step) <= self.gaps(old[k], step) for k in ("CE", "PE"))
+
     def guards_ok(self, old, new, atm, step, heavy=None) -> bool:
+        if not self.gaps_ok(old, new, step, atm):
+            return False                                                 # 19-Nov: no empty strike inside a side
         for k in ("CE", "PE"):
             if new[k] and len(new[k]) < min(self.MIN_STRIKES, max(len(old[k]), 1)):
                 return False                                             # >= 2 strikes a side
@@ -981,6 +997,14 @@ class CePeFlex(CePeImbalance):
             if sp_new > max(self.MAX_SPAN, sp_old):
                 return False                                             # last strike <= 3 steps from the first
         return True
+
+    def loop_ok(self, ctx, ops, reason) -> bool:
+        legs = self.legs(ctx)
+        if not self.gaps_ok(legs, self.apply_ops(legs, ops), self.step(ctx), ctx.state.get("atm")):
+            self.blocked(ctx, f"{reason}: held - it would leave an empty strike inside a side (no-gaps rule)",
+                         key="no gaps")
+            return False
+        return super().loop_ok(ctx, ops, reason)
 
     # ── move builders ───────────────────────────────────────────────────────
     def moves_out(self, legs, heavy, atm, step, sources=None):
@@ -1019,6 +1043,19 @@ class CePeFlex(CePeImbalance):
         far = max(side, key=lambda k: (abs(k - atm), k if light == "CE" else -k))
         for n in range(1, side[far] + 1):
             yield [(light, far, "BUY", n), (light, atm, "SELL", n)], f"{light} {far:g}->ATM {atm:g} x{n}"
+        # owner 19-Nov (no gaps): when the jump above would leave an empty strike, the side comes back to ATM as
+        # 3 continuous strikes ATM / OTM1 / OTM2 with the same lots (net orders only), like ITM push-back
+        n = sum(side.values())
+        sgn = 1 if light == "CE" else -1
+        ladder = [atm + sgn * i * step for i in range(3)]
+        out = {k: n // 3 for k in ladder}
+        for k in ladder[:n % 3]:
+            out[k] += 1
+        new = {"CE": dict(legs["CE"]), "PE": dict(legs["PE"])}
+        new[light] = {k: v for k, v in out.items() if v}
+        ops = self.op_to(legs, new)
+        if ops and new[light] != side:
+            yield ops, f"{light} to ATM as {','.join(f'{k:g}' for k in ladder)}"
 
     def best_move(self, ctx, legs, cands, imb, band, atm, step, heavy=None):
         best = None

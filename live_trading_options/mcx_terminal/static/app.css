@@ -278,6 +278,8 @@ td.fd2 { animation: fd2 .32s ease-out; }
   padding: 8px 12px; font-size: 12px; max-width: 420px; box-shadow: 0 6px 20px rgba(0, 0, 0, .4);
 }
 .toast.bad { border-left-color: var(--down); }
+.gw-off { position: sticky; top: 0; z-index: 9999; background: #c0313b; color: #fff; font: 700 15px var(--sans);
+  padding: 10px 16px; text-align: center; letter-spacing: .02em; }
 
 @media (max-width: 760px) {
   .dock { height: 40%; }

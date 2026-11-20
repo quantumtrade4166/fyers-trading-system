@@ -1274,6 +1274,16 @@ function onStatus(m) {
   if (!f.authed) setFeed(f.connected ? "authenticating…" : "feed down", "bad");
   $("f-sub").textContent = `subscribed ${f.subscribed ?? 0} · depth ${f.depth ?? 0} · reconnects ${Math.max(0, (f.connects || 1) - 1)}`;
   $("f-msg").textContent = m.error || f.error || "";
+  // order gateway (GATEWAY_DESIGN.md): on but not answering -> red bar across the top, never a silent hang
+  const gw = m.gateway || {};
+  let gb = $("gw-off");
+  if (gw.on && !gw.up) {
+    if (!gb) {
+      gb = document.createElement("div"); gb.id = "gw-off"; gb.className = "gw-off";
+      gb.textContent = "ORDERS OFFLINE - the order program is not answering. LIVE orders are NOT sent. Square off in the Kotak app if needed.";
+      document.body.prepend(gb);
+    }
+  } else if (gb) gb.remove();
 }
 
 // Trading hours (IST), Mon-Fri, per desk (meta.hours). MCX: 09:00 to 23:30, or to 23:55 while US clocks are on
