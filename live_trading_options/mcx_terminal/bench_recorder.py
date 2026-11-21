@@ -77,7 +77,7 @@ def main():
     # feed thread waiting for Kotak). How late does it get to run while the recorder saves heavy
     # 5-second chunks back to back (7,500 ticks each = ~5x the real MCX rate), vs recorder idle?
     import threading
-    sys.setswitchinterval(0.0005)                     # the engine sets the same in server.main()
+    sys.setswitchinterval(0.001)                      # the engine sets the same in server.main()
 
     def probe(seconds):
         """'Tick arrives' -> how long until the waiting thread is running (ms). Same mechanism as the

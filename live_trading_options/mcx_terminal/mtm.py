@@ -45,6 +45,12 @@ class MtmHistory:
         self.lock = threading.Lock()
         self._saved = 0.0
         self._win: dict = {}                         # extremes seen since the last stored point (watch)
+        # query cache (21-Nov-2026): every open screen asks for the same chart every 5 s; on 20-Nov night up to 8
+        # identical queries ran at once and starved the whole program (GIL). Now one computes, the rest reuse it
+        # until a new point is stored.
+        self._ver = 0
+        self._qcache: dict = {}
+        self._qlock = threading.Lock()
         try:
             if self.path.exists():
                 self.pts = json.loads(self.path.read_text(encoding="utf-8"))
@@ -93,6 +99,7 @@ class MtmHistory:
         return False
 
     def _store(self, row):
+        self._ver += 1
         self.pts.append(row)
         for k, v in [("all", row[1])] + list(row[2].items()):
             h = self._hl.setdefault(k, [v, v])
@@ -145,6 +152,7 @@ class MtmHistory:
     def reset(self):
         """Start today's curve again from nothing (paper reset)."""
         with self.lock:
+            self._ver += 1
             self.pts = []
             self._saved = 0.0
             self._win, self._hl = {}, {}
@@ -153,7 +161,21 @@ class MtmHistory:
             tmp.replace(self.path)
 
     def query(self, mins: float = 1, inst: str = "all", kind: str = "pnl") -> dict:
-        """kind "pnl": Session P&L (total or one instrument) · kind "imb": CE/PE imbalance % (+ce/pe premium)."""
+        """kind "pnl": Session P&L (total or one instrument) · kind "imb": CE/PE imbalance % (+ce/pe premium).
+        One query computes at a time; an identical one asked before the next stored point gets the same answer."""
+        key = (float(mins), str(inst), str(kind))
+        with self._qlock:
+            hit = self._qcache.get(key)
+            if hit is not None and hit[0] == self._ver:
+                return hit[1]
+            ver = self._ver
+            res = self._query(mins, inst, kind)
+            if len(self._qcache) > 64:
+                self._qcache.clear()
+            self._qcache[key] = (ver, res)
+            return res
+
+    def _query(self, mins, inst, kind) -> dict:
         step = max(float(mins), 0.1) * 60
         with self.lock:
             pts = list(self.pts)

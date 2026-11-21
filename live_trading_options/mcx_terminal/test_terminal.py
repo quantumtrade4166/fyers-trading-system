@@ -442,6 +442,15 @@ def test_mtm_history_buckets():
     r = h.query(1, "GOLDM")
     check("per-instrument curve", {p[1] for p in r["points"]} == {250.0} and r["hi"][1] == r["lo"][1] == 250.0, r["points"])
     check("saved", mpath.exists())
+    # query cache (21-Nov-2026): the same question before a new point = the same answer, computed once
+    a, b = h.query(1, "all"), h.query(1, "all")
+    check("identical query reuses the answer", a is b)
+    check("a different question is its own answer", h.query(2, "all") is not a)
+    h.sample(pos, lambda t: 480 if t == 1 else None, now=t0 + 100)
+    c = h.query(1, "all")
+    check("a new point gives a fresh answer", c is not a and c["points"][-1][1] == 2250.0, c["points"][-3:])
+    h.reset()
+    check("reset clears the cached curve", h.query(1, "all")["points"] == [])
     mpath.unlink(missing_ok=True)
 
 

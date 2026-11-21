@@ -1056,6 +1056,8 @@ async def _startup():
     asyncio.create_task(_loop_lag_watch())
     threading.Thread(target=_stall_camera, args=(loop, threading.get_ident()), daemon=True,
                      name="StallCamera").start()
+    from live_trading_options.mcx_terminal import cpumeter
+    cpumeter.start()                               # which thread uses the CPU (logs CPU HOT / cpu 1m)
 
 
 @app.get("/")
@@ -1316,7 +1318,10 @@ async def ws_endpoint(ws: WebSocket):
 
 def main():
     _setup_logging()
-    sys.setswitchinterval(0.0005)   # background threads hand the CPU back to the feed / orders within 0.5 ms
+    # 1 ms, NOT 0.5 ms (21-Nov-2026): measured on the VPS, 0.5 ms makes Python thrash between busy threads - with
+    # one busy job the web loop did 66 work chunks/s instead of 414, with eight only 2 (the 20-Nov MCX + NSE freezes).
+    # 1 ms keeps 100-190/s under the same load. The CE/PE engine uses 1 ms too.
+    sys.setswitchinterval(0.001)
     log.info("%s terminal starting on %s:%s (paper + owner-armed live Kotak P orders%s)", C.DESK, C.HOST, C.PORT,
              ", OWN-BOOK: only the desk's own trades" if C.OWN_BOOK else "")
     audit.write("engine", what="terminal started")

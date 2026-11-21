@@ -7,7 +7,7 @@ REM Run by the scheduled task "NseTerminal": at boot and every 5 minutes (a runn
 REM extra start a no-op: the task ignores new instances and port 47682 admits one engine only).
 REM The engine exits itself at 00:05 and 08:45 IST (exit code 3); the next 5-minute start brings a fresh one.
 REM Any OTHER exit = crash -> restarted here with a back-off (10 s, 30 s, 60 s, then 5 min).
-REM Served on 127.0.0.1:47682 -> Cloudflare tunnel -> https://nse.trading.contact (Access + own lock).
+set NSE_ORDER_GATEWAY=1& REM 20-Nov: LIVE orders via run_nse_gateway.bat; delete line to roll back    
 
 setlocal EnableDelayedExpansion
 cd /d C:\trading\fyers_data_pipeline

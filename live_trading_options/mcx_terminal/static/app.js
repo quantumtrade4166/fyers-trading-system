@@ -50,7 +50,7 @@ function connect() {
   const ws = new WebSocket(`${proto}://${location.host}/ws`);
   S.ws = ws;
   S.wsAt = performance.now();
-  ws.onopen = () => { S.wsAt = performance.now(); setFeed("connected", "ok"); };
+  ws.onopen = () => { S.wsAt = performance.now(); S.mtmWait = {}; setFeed("connected", "ok"); };
   ws.onclose = () => { if (S.ws !== ws) return; setFeed("reconnecting…", "bad"); setTimeout(connect, 1000); };
   ws.onmessage = (ev) => {
     if (S.ws !== ws) return;                   // an old socket the watchdog replaced
@@ -70,6 +70,7 @@ function connect() {
       case "timers": onTimers(m.items || []); break;
       case "note": toast(m.msg, !m.ok, m.ok ? "ok" : "bad"); break;    // a live fill / reject after the pop-up
       case "ack":
+        if (m.op === "mtm_hist") (S.mtmWait = S.mtmWait || {})[m.tag || "g"] = 0;                 // answered: the next ask may go
         if (m.op === "mtm_hist" && (m.tag === "gp-pnl" || m.tag === "gp-imb")) onInlineGraph(m);
         else if (m.op === "mtm_hist") onMtm(m);
         else if (m.op === "margin") onMargin(m);
@@ -88,7 +89,7 @@ function connect() {
         else if (m.op === "timer_set" || m.op === "timer_clear") toast(m.msg, !m.ok, m.ok ? "info" : "bad");
         else if (m.op === "paper_reset") {
           toast(m.msg, !m.ok, m.ok ? "ok" : "bad");
-          if (m.ok) { S.gpHist = { "gp-pnl": [], "gp-imb": [] }; askInline(); }
+          if (m.ok) { S.gpHist = { "gp-pnl": [], "gp-imb": [] }; S.mtmWait = {}; askInline(); }
         }
         else if (m.op === "mode_set") toast(m.msg, !m.ok, !m.ok ? "bad" : m.mode === "LIVE" ? "ok" : "info");
         else if (ORDER_ACKS.has(m.op)) {
@@ -1445,6 +1446,7 @@ $("btn-refresh").onclick = () => {
   setTimeout(() => $("btn-refresh").classList.remove("spin"), 4000);
   if (!send({ op: "refresh", req: ++S.req })) { toast("not connected - reconnecting", true); return; }
   requestChain();                                         // fresh chain snapshot
+  S.mtmWait = {};                                         // Refresh: ask the graphs again now
   askInline();                                            // MTM + imbalance graphs
   if (!$("graph").hidden && $("ga-name")) askAtmHist();   // ATM chart if open
 };
@@ -1684,16 +1686,26 @@ if ($("btn-mtm")) $("btn-mtm").onclick = () => {
   $("g-tools").innerHTML = `One point per <select id="g-mins">${[1, 2, 5, 10, 15, 30, 60].map((n) => `<option value="${n}">${n} min</option>`).join("")}</select>` +
     ` <select id="g-inst"><option value="all">All instruments</option></select>`;
   $("g-mins").value = S.g.mins;
-  $("g-mins").onchange = (e) => { S.g.mins = +e.target.value; LS.set("mtmMins", S.g.mins); askMtm(); };
-  $("g-inst").onchange = (e) => { S.g.inst = e.target.value; askMtm(); };
+  $("g-mins").onchange = (e) => { S.g.mins = +e.target.value; LS.set("mtmMins", S.g.mins); (S.mtmWait = S.mtmWait || {}).g = 0; askMtm(); };
+  $("g-inst").onchange = (e) => { S.g.inst = e.target.value; (S.mtmWait = S.mtmWait || {}).g = 0; askMtm(); };
   $("g-body").innerHTML = `<p class="g-note">Loading…</p>`;
   $("g-note").textContent = "";
   $("graph").hidden = false;
+  (S.mtmWait = S.mtmWait || {}).g = 0;
   askMtm();
   clearInterval(S.gTimer);
   S.gTimer = setInterval(askMtm, 5000);
 };
-function askMtm() { send({ op: "mtm_hist", mins: S.g.mins, inst: S.g.inst, req: ++S.req }); }
+// a chart request is not sent again while the last one is unanswered (< 15 s): on 20-Nov a slow engine got a new
+// batch every 5 s on top of the old ones and the pile-up froze it (21-Nov-2026)
+function mtmAsk(tag, msg) {
+  S.mtmWait = S.mtmWait || {};
+  const t = S.mtmWait[tag];
+  if (t && Date.now() - t < 15000) return;
+  S.mtmWait[tag] = Date.now();
+  send(msg);
+}
+function askMtm() { mtmAsk("g", { op: "mtm_hist", mins: S.g.mins, inst: S.g.inst, req: ++S.req }); }
 function onMtm(m) {
   if ($("graph").hidden || !$("g-inst")) return;
   const sel = $("g-inst");
@@ -1752,7 +1764,7 @@ setTimeout(askMargin, 1500);
 S.gpMins = LS.get("gpMins", 1);
 $("gp-mins").innerHTML = [1, 2, 5, 10, 15, 30, 60].map((n) => `<option value="${n}">${n} min</option>`).join("");
 $("gp-mins").value = S.gpMins;
-$("gp-mins").onchange = (e) => { S.gpMins = +e.target.value; LS.set("gpMins", S.gpMins); askInline(); };
+$("gp-mins").onchange = (e) => { S.gpMins = +e.target.value; LS.set("gpMins", S.gpMins); S.mtmWait = {}; askInline(); };
 $("gp-reset").onclick = () => {
   if (S.mode !== "PAPER") return toast("Reset works in PAPER mode only", true, "bad");
   if (!confirm("Reset PAPER?\n\nAll paper positions, orders and today's paper MTM are cleared and P&L starts again from 0.\nPaper stop-losses, the paper MTM guard and paper exit timers are cleared too.\n\nLIVE (Kotak P) is not touched.")) return;
@@ -1760,8 +1772,8 @@ $("gp-reset").onclick = () => {
 };
 function askInline() {
   if (getComputedStyle($("graphpane")).display === "none") return;
-  send({ op: "mtm_hist", mins: S.gpMins, inst: "all", kind: "pnl", tag: "gp-pnl", req: ++S.req });
-  send({ op: "mtm_hist", mins: S.gpMins, inst: "all", kind: "imb", tag: "gp-imb", req: ++S.req });
+  mtmAsk("gp-pnl", { op: "mtm_hist", mins: S.gpMins, inst: "all", kind: "pnl", tag: "gp-pnl", req: ++S.req });
+  mtmAsk("gp-imb", { op: "mtm_hist", mins: S.gpMins, inst: "all", kind: "imb", tag: "gp-imb", req: ++S.req });
 }
 const hmIST = (t) => new Date(t * 1000).toLocaleTimeString("en-GB", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" });
 S.gpHist = { "gp-pnl": [], "gp-imb": [] };
