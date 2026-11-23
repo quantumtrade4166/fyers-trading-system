@@ -60,6 +60,9 @@ def save_settings(name, **fields):
 
 
 def default_auto(name) -> dict:
+    if C.is_syn(name):                                   # owner 23-Nov: synthetic to-and-fro, entry time editable
+        return {"auto_start": C.LIVE_AUTO_DEFAULT if C.is_live(name) else C.AUTO_START_DEFAULT,
+                "auto_time": C.SYN_AUTO_TIME}
     if C.is_live(name):                                  # owner 16-Nov: 09:16, and only while ARMED
         return {"auto_start": C.LIVE_AUTO_DEFAULT, "auto_time": C.LIVE_AUTO_TIME}
     u = C.und_of(name)
@@ -177,6 +180,8 @@ class Runner:
     def __init__(self, name, market, strategy_name=None, date=None, persist=True, book_factory=None):
         self.name = name                    # book name: "NIFTY" or the Supertrend variant "NIFTY_ST"
         self.und = C.und_of(name)
+        if not strategy_name and C.is_syn(name):                     # owner 23-Nov: synthetic to-and-fro
+            strategy_name = "syn_tofro"
         if not strategy_name and C.is_flex(name):                    # owner 17-Nov: NIFTY / SENSEX flex rules
             strategy_name = "cepe_st_flex" if C.is_variant(name) else "cepe_flex"
         strategy_name = strategy_name or ({(True, False): "cepe_st", (False, True): "cepe_new",
@@ -785,6 +790,8 @@ class Engine:
                 row["atm"] = atm
                 if s.get("st") is not None:
                     row["st"], row["st_red"] = s["st"], s.get("trend") == "red"
+            elif C.is_syn(n) and r.state.get("syn") is not None:
+                row["st"] = r.state["syn"]                   # 23-Nov synthetic book: the "st" column = SYNTHETIC
             if atm and e:                                    # ATM premium chart: ATM CE / PE price
                 for kind, f in (("CE", "ace"), ("PE", "ape")):
                     c = self.market.contract(u, e, atm, kind)
@@ -857,7 +864,7 @@ class Engine:
             e = self.market.expiry(u, r.expiry_n)
             rk = self.market.ref_key(u, e)
             rq = self.market.quote(rk) if rk else None
-            out.append({"name": n, "und": u, "variant": "st_new" if C.is_variant(n) and C.is_new_rules(n) else "st" if C.is_variant(n)
+            out.append({"name": n, "und": u, "variant": "syn" if C.is_syn(n) else "st_new" if C.is_variant(n) and C.is_new_rules(n) else "st" if C.is_variant(n)
                         else "new" if C.is_new_rules(n) else "normal",
                         "label": C.label_of(n), "kind": C.UNDERLYINGS[u]["kind"], "ccy": C.ccy_of(n),
                         "date": r.date, "running": r.running,
@@ -874,6 +881,7 @@ class Engine:
                                     "square_off": sq.strftime("%H:%M"), "in_session": o <= now < close},
                         "square_off_done": r.square_off_done, "phase": r.state.get("phase"),
                         "strat_atm": r.state.get("atm"), "blocked": r.state.get("blocked"),
+                        "syn": r.strategy.view(r.ctx) if hasattr(r.strategy, "view") else None,
                         "params": r.params, "step": float(r.params.get("step") or C.STRIKE_STEP.get(u) or 0),
                         "auto_start": r.auto.get("auto_start"), "auto_time": r.auto.get("auto_time"),
                         "auto_done": bool(r.state.get("auto_done")), "live": ({**r.book.live_view(), "busy_s": round(time.time() - self.live_busy[n], 1)

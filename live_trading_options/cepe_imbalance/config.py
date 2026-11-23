@@ -130,7 +130,22 @@ FLEX_BOOKS = ("NIFTY", "SENSEX")
 
 
 def is_flex(name: str) -> bool:
-    return und_of(name) in FLEX_BOOKS and not is_new_rules(name)
+    return und_of(name) in FLEX_BOOKS and not is_new_rules(name) and not is_syn(name)
+
+
+# SYNTHETIC TO-AND-FRO (owner 23-Nov-2026): "{NAME}_SYN" paper + "{NAME}_SYN_LIVE" live (Kotak P), strategy
+# SynToFro (synthetic.py). Moves with the synthetic price ATM + CE - PE (LTP): an ITM short is pushed OUT past
+# the last sold strike, an OTM short pulled IN to ATM, to and fro. The CE/PE imbalance is shown, never traded on.
+# Shown on the MCX terminal's "Algo" tab, not on the CE/PE page.
+SYN_SUFFIX = "_SYN"
+SYN_BOOKS = ("NIFTY", "SENSEX")
+SYN_AUTO_TIME = "09:20"
+
+
+def is_syn(name: str) -> bool:
+    if name.endswith(LIVE_SUFFIX):
+        name = name[:-len(LIVE_SUFFIX)]
+    return name.endswith(SYN_SUFFIX)
 
 
 # SEPARATE LIVE ENGINE (owner 17-Nov-2026): the same program runs as two processes.
@@ -165,7 +180,10 @@ def is_live(name: str) -> bool:
 def und_of(name: str) -> str:
     """Book name -> underlying ("NIFTY_ST" -> "NIFTY", "BTC_NR" -> "BTC", "BTC_NR_ST" -> "BTC", "NIFTY_LIVE" -> "NIFTY")."""
     if name.endswith(LIVE_SUFFIX):
-        return name[:-len(LIVE_SUFFIX)]
+        name = name[:-len(LIVE_SUFFIX)]
+        return name[:-len(SYN_SUFFIX)] if name.endswith(SYN_SUFFIX) else name
+    if name.endswith(SYN_SUFFIX):
+        return name[:-len(SYN_SUFFIX)]
     if name.endswith(VARIANT_SUFFIX):
         name = name[:-len(VARIANT_SUFFIX)]
     if name.endswith(NR_SUFFIX):
@@ -184,7 +202,8 @@ def is_variant(name: str) -> bool:
 
 
 def label_of(name: str) -> str:
-    return UNDERLYINGS[und_of(name)]["label"] + (" · Supertrend" if is_variant(name) else "") +         (" · New rules" if is_new_rules(name) else "") + (" · LIVE Kotak D" if is_live(name) else "")
+    return UNDERLYINGS[und_of(name)]["label"] + (" · Synthetic" if is_syn(name) else "") + (" · Supertrend" if is_variant(name) else "") +         (" · New rules" if is_new_rules(name) else "") + (" · LIVE Kotak D" if is_live(name) else "")
 
 
-ALL_BOOKS = ORDER + tuple(n + VARIANT_SUFFIX for n in ORDER) + tuple(n + NR_SUFFIX for n in NR_BOOKS)     + tuple(n + NR_SUFFIX + VARIANT_SUFFIX for n in NR_BOOKS) + tuple(n + LIVE_SUFFIX for n in LIVE_BOOKS)
+ALL_BOOKS = ORDER + tuple(n + VARIANT_SUFFIX for n in ORDER) + tuple(n + NR_SUFFIX for n in NR_BOOKS)     + tuple(n + NR_SUFFIX + VARIANT_SUFFIX for n in NR_BOOKS) + tuple(n + LIVE_SUFFIX for n in LIVE_BOOKS) \
+    + tuple(n + SYN_SUFFIX for n in SYN_BOOKS) + tuple(n + SYN_SUFFIX + LIVE_SUFFIX for n in SYN_BOOKS)

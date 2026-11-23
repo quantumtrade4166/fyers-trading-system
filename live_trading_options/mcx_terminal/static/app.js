@@ -127,7 +127,9 @@ function setFeed(txt, cls) { $("feedtxt").textContent = txt; $("feed").className
 
 // order pop-up: big + solid colour. kind: "ok" (executed, green) · "wait" (placed, waiting, amber) ·
 // "bad" (error, red) · "info" (small, neutral). Click to dismiss.
-const working = (o) => o.status === "OPEN" || o.status === "SENDING";
+// pos_seen: Kotak's position already shows the fill, its order book is late (23-Nov-2026) -> shown FILLED
+const posFilled = (o) => !!o.pos_seen && (o.status === "OPEN" || o.status === "SENDING");
+const working = (o) => (o.status === "OPEN" || o.status === "SENDING") && !posFilled(o);
 function toast(msg, bad, kind, el) {
   kind = kind || (bad ? "bad" : "info");
   const fresh = !el || !el.isConnected;
@@ -182,7 +184,7 @@ const units = (n) => `${UNIT()}${n === 1 ? "" : "s"}`;
 function paintDesk(m) {
   const d = m.desk || "MCX";
   document.title = m.desk_label || `${d} Desk`;
-  for (const k of ["MCX", "NSE", "BTC"]) {
+  for (const k of ["MCX", "NSE", "BTC", "ALGO"]) {
     const a = $("dk-" + k);
     if (!a) continue;
     a.classList.toggle("on", k === d);
@@ -1219,8 +1221,8 @@ function renderOrders() {
     <td class="side-${o.side}">${o.side === "B" ? "BUY" : "SELL"}</td>
     <td>${o.qty / o.lot} ${units(o.qty / o.lot)}</td><td>${o.filled / o.lot}</td>
     <td>${fp(o.limit)}${o.kind === "MKT" ? " <span class='dim'>mkt</span>" : ""}</td><td>${o.filled ? fp(o.avg) : "—"}</td>
-    <td class="l st-${o.status}">${o.status}</td><td class="detail" title="${(o.reason || "").replace(/"/g, "&quot;")}">${o.reason || ""}</td>
-    <td>${o.status === "OPEN" ? `<button class="btn sm" data-c="${o.id}">Cancel</button>` : ""}</td></tr>`).join("");
+    <td class="l st-${posFilled(o) ? "COMPLETE" : o.status}">${posFilled(o) ? "FILLED" : o.status}</td><td class="detail" title="${(o.reason || "").replace(/"/g, "&quot;")}">${o.reason || ""}</td>
+    <td>${o.status === "OPEN" && !posFilled(o) ? `<button class="btn sm" data-c="${o.id}">Cancel</button>` : ""}</td></tr>`).join("");
 }
 $("ord-rows").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-c]");

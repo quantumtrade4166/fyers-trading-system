@@ -1047,6 +1047,9 @@ class _VersionedStatic(StaticFiles):
 
 
 app.mount("/static", _VersionedStatic(directory=C.STATIC), name="static")
+if C.DESK == "MCX":                               # owner 23-Nov-2026: the Algo tab (synthetic to-and-fro)
+    from live_trading_options.mcx_terminal import algo as _algo
+    _algo.register(app, owner_users)
 
 
 @app.on_event("startup")

@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Synthetic Replay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0a0c0f; --panel: #11151a; --panel-2: #161b22; --line: #222a33; --line-soft: #1a2028;
+  --text: #d9dee5; --muted: #7d8794; --dim: #56606c; --accent: #f5a524; --accent-soft: rgba(245,165,36,.14);
+  --up: #1fc97a; --down: #f2525c; --ce: #f472b6; --pe: #60a5fa;
+  --sans: Inter, system-ui, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {
+  color-scheme: light; --bg: #f4f5f7; --panel: #fff; --panel-2: #f0f2f5; --line: #d9dde3; --line-soft: #e6e9ee;
+  --text: #1c232c; --muted: #5f6b78; --dim: #8a94a0; --accent: #c77c00; --accent-soft: rgba(199,124,0,.12);
+  --up: #0f9a5c; --down: #d63a45; --ce: #c0397f; --pe: #2f6fd6; } }
+* { box-sizing: border-box; }
+*, *::before, *::after { font-feature-settings: "tnum" 1, "zero" 0 !important; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.4 var(--sans); }
+button { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px;
+  padding: 5px 10px; cursor: pointer; }
+button:hover { border-color: var(--muted); }
+button.on { border-color: var(--accent); background: var(--accent-soft); }
+.up { color: var(--up); } .down { color: var(--down); } .mut { color: var(--muted); }
+.ce { color: var(--ce); font-weight: 600; } .pe { color: var(--pe); font-weight: 600; }
+.lbl { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+
+.top { position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); padding: 8px 14px; }
+.row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.title { font-weight: 700; letter-spacing: .04em; }
+.title .mark { color: var(--accent); }
+.clock { font-size: 22px; font-weight: 700; min-width: 108px; }
+.speeds { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.speeds button { padding: 4px 8px; font-size: 12px; }
+#play { min-width: 86px; font-weight: 700; }
+#scrub { flex: 1; min-width: 200px; accent-color: var(--accent); }
+.toast { position: fixed; right: 16px; bottom: 16px; z-index: 9; max-width: min(460px, calc(100vw - 32px));
+  background: var(--panel); border: 1px solid var(--accent); border-radius: 9px; padding: 10px 12px;
+  box-shadow: 0 6px 24px rgba(0,0,0,.35); opacity: 0; transform: translateY(-6px); transition: .25s; pointer-events: none; }
+.toast.show { opacity: 1; transform: none; }
+
+main { padding: 12px 14px 40px; max-width: 1500px; margin: 0 auto; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 10px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; min-width: 0; }
+.big { font-size: 21px; font-weight: 700; margin-top: 2px; }
+.sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(300px, 1fr); gap: 12px; margin-top: 12px; }
+@media (max-width: 980px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; min-width: 0; }
+.box h3 { margin: 0; padding: 8px 12px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
+  border-bottom: 1px solid var(--line-soft); display: flex; gap: 10px; align-items: center; }
+.box h3 .r { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; }
+.chart { height: 250px; } .chart.sm { height: 140px; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th, td { padding: 5px 10px; text-align: right; border-bottom: 1px solid var(--line-soft); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+th:first-child, td:first-child { text-align: left; }
+tr.mid td { text-align: center; color: var(--muted); }
+tr.flash td { animation: fl 1.4s; }
+@keyframes fl { from { background: var(--accent-soft); } to { background: transparent; } }
+.log { max-height: 420px; overflow: auto; }
+.chainw { overflow-x: auto; }
+table.chain th, table.chain td { padding: 4px 8px; text-align: right; }
+table.chain th.c, table.chain td.c { text-align: center; }
+table.chain td.k { text-align: center; font-weight: 700; background: var(--panel-2); }
+table.chain tr.atm td.k { background: var(--accent-soft); color: var(--text); }
+table.chain td.itm { background: rgba(86,140,255,.09); }
+table.chain td.held { font-weight: 700; }
+table.chain td.held.ce-h { box-shadow: inset 3px 0 0 var(--ce); }
+table.chain td.held.pe-h { box-shadow: inset -3px 0 0 var(--pe); }
+table.chain tr.synline td { padding: 0; height: 3px; background: var(--accent); }
+table.chain tr.tot td { font-weight: 700; border-top: 1px solid var(--line); }
+table.chain th.gc { color: var(--ce); } table.chain th.gp { color: var(--pe); }
+td.flash-up { color: var(--up); } td.flash-dn { color: var(--down); }
+.ev { padding: 7px 12px; border-bottom: 1px solid var(--line-soft); cursor: pointer; }
+.ev:hover { background: var(--panel-2); }
+.ev.new { animation: fl 1.6s; }
+.ev .h { display: flex; gap: 8px; align-items: baseline; }
+.ev .tag { font-weight: 700; }
+.ev .f { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
+.future { opacity: .35; }
+</style>
+</head>
+<body>
+<div class="top">
+  <div class="row">
+    <span class="title"><span class="mark">◆</span> <span id="ttl">Synthetic To-and-Fro · replay</span></span>
+    <span class="mut" id="ttlSub"></span>
+    <span style="flex:1"></span>
+    <span class="clock" id="clock">--:--:--</span>
+  </div>
+  <div class="row" style="margin-top:6px">
+    <button id="play">▶ Play</button>
+    <button id="prevAdj" title="Back to the previous adjustment">⏮ adj</button>
+    <button id="nextAdj" title="Jump to just before the next adjustment">adj ⏭</button>
+    <span class="speeds" id="speeds"></span>
+    <label class="mut" title="Keep the whole day so far in view while playing (off = zoom / pan freely)"><input type="checkbox" id="follow" checked> fit day</label>
+    <input type="range" id="scrub" min="0" max="1000" value="0">
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<main>
+  <div class="cards">
+    <div class="card"><div class="lbl">Synthetic</div><div class="big" id="cSyn">–</div><div class="sub" id="cSynSub"></div></div>
+    <div class="card"><div class="lbl">MTM</div><div class="big" id="cMtm">–</div><div class="sub" id="cMtmSub"></div></div>
+    <div class="card"><div class="lbl">Next trigger up</div><div class="big" id="cUp" style="font-size:16px">–</div><div class="sub" id="cUpSub"></div></div>
+    <div class="card"><div class="lbl">Next trigger down</div><div class="big" id="cDn" style="font-size:16px">–</div><div class="sub" id="cDnSub"></div></div>
+    <div class="card"><div class="lbl">CE / PE imbalance (view)</div><div class="big" id="cImb">–</div><div class="sub" id="cImbSub"></div></div>
+    <div class="card"><div class="lbl">Adjustments so far</div><div class="big" id="cAdj">0</div><div class="sub" id="cAdjSub"></div></div>
+  </div>
+
+  <div class="box" style="margin-top:12px">
+    <h3>Option chain · our positions <span class="r mut" id="hChain">shaded = in the money · orange line = synthetic</span></h3>
+    <div class="chainw"><table class="chain" id="tChain"></table></div>
+  </div>
+
+  <div class="grid">
+    <div style="display:grid;gap:12px;min-width:0">
+      <div class="box"><h3>MTM <span class="r mut" id="hMtm">₹, 1 lot</span></h3><div class="chart" id="chMtm"></div></div>
+      <div class="box"><h3>Synthetic · dashed = trigger levels · ▲▼ = adjustments <span class="r mut">grey = index spot</span></h3><div class="chart" id="chSyn"></div></div>
+      <div class="box"><h3>CE / PE imbalance % <span class="r mut">shown only</span></h3><div class="chart sm" id="chImb"></div></div>
+    </div>
+    <div style="display:grid;gap:12px;align-content:start;min-width:0">
+      <div class="box"><h3>Held legs <span class="r mut" id="hLegs"></span></h3><table id="tLegs"></table></div>
+      <div class="box"><h3>Adjustments <span class="r mut">click one to jump there</span></h3><div class="log" id="log"></div></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const FILE = new URLSearchParams(location.search).get('f') || 'syn_timeline_NIFTY_2026-11-17.json';
+const IST = 19800;
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const num = (v, d = 2) => v == null || isNaN(v) ? '–' : Number(v).toLocaleString('en-IN', {minimumFractionDigits: d, maximumFractionDigits: d});
+const rs = v => v == null || isNaN(v) ? '–' : (v < 0 ? '−₹' : '₹') + Math.abs(v).toLocaleString('en-IN', {maximumFractionDigits: 0});
+const cls = v => v > 0 ? 'up' : v < 0 ? 'down' : '';
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const hms = t => new Date((t + IST) * 1000).toISOString().slice(11, 19);
+const ltime = t => Math.floor(t) + IST;
+
+let D, F, EV, T0, T1, T, idx = -1, drawn = -1, playing = false, speed = 60, lastLv = '', shownAdj = 0;
+
+// ── charts ─────────────────────────────────────────────────────────────
+const LW = window.LightweightCharts;
+function mk(el) {
+  return LW.createChart(el, {autoSize: true, layout: {background: {color: 'transparent'}, textColor: css('--muted'), fontFamily: 'Inter, system-ui, sans-serif'},
+    grid: {vertLines: {color: css('--line-soft')}, horzLines: {color: css('--line-soft')}},
+    rightPriceScale: {borderColor: css('--line')}, timeScale: {borderColor: css('--line'), timeVisible: true, secondsVisible: true, rightOffset: 8, minBarSpacing: 0.001},
+    handleScroll: {mouseWheel: false, pressedMouseMove: true}, handleScale: {mouseWheel: false, pinch: true, axisPressedMouseMove: true},
+    crosshair: {mode: 0}, localization: {priceFormatter: p => Number(p).toLocaleString('en-IN', {maximumFractionDigits: 2})}});
+}
+const CH = {mtm: mk($('chMtm')), syn: mk($('chSyn')), imb: mk($('chImb'))};
+const SR = {
+  mtm: CH.mtm.addBaselineSeries({baseValue: {type: 'price', price: 0}, topLineColor: css('--up'), bottomLineColor: css('--down'),
+    topFillColor1: 'rgba(31,201,122,.25)', topFillColor2: 'rgba(31,201,122,.02)', bottomFillColor1: 'rgba(242,82,92,.02)', bottomFillColor2: 'rgba(242,82,92,.25)', lineWidth: 2}),
+  spot: CH.syn.addLineSeries({color: css('--dim'), lineWidth: 1, priceLineVisible: false, lastValueVisible: false}),
+  syn: CH.syn.addLineSeries({color: css('--accent'), lineWidth: 2}),
+  imb: CH.imb.addLineSeries({color: css('--pe'), lineWidth: 1.5}),
+};
+SR.imb.createPriceLine({price: 0, color: css('--dim'), lineWidth: 1, lineStyle: 2, axisLabelVisible: false});
+const charts = Object.values(CH);
+let syncing = false;
+charts.forEach(c => c.timeScale().subscribeVisibleLogicalRangeChange(r => {
+  if (!r || syncing) return; syncing = true; charts.forEach(o => { if (o !== c) o.timeScale().setVisibleLogicalRange(r); }); syncing = false; }));
+let lvLines = [];
+function triggerLines(lv) {
+  const k = JSON.stringify(lv || {}); if (k === lastLv) return; lastLv = k;
+  lvLines.forEach(l => SR.syn.removePriceLine(l)); lvLines = [];
+  if (!lv || lv.call_out == null) return;
+  const add = (p, t, c) => lvLines.push(SR.syn.createPriceLine({price: p, color: c, lineWidth: 1, lineStyle: 2, title: t}));
+  add(lv.call_out, 'call out', css('--ce')); add(lv.put_in, 'put in', css('--pe'));
+  add(lv.put_out, 'put out', css('--pe')); add(lv.call_in, 'call in', css('--ce'));
+}
+
+// ── data → charts ──────────────────────────────────────────────────────
+const pt = (f, k) => ({time: ltime(f.t), value: f[k]});
+function frameAt(t) {                                   // last frame with time <= t (binary search)
+  let lo = 0, hi = F.length - 1, ans = 0;
+  while (lo <= hi) { const m = (lo + hi) >> 1; if (F[m].t <= t) { ans = m; lo = m + 1; } else hi = m - 1; }
+  return ans;
+}
+function rebuild(i) {                                   // seek: redraw everything up to frame i
+  const sl = F.slice(0, i + 1);
+  SR.mtm.setData(sl.map(f => pt(f, 'mtm')));
+  SR.syn.setData(sl.filter(f => f.syn != null).map(f => pt(f, 'syn')));
+  SR.spot.setData(sl.filter(f => f.spot).map(f => pt(f, 'spot')));
+  SR.imb.setData(sl.filter(f => f.imb != null).map(f => pt(f, 'imb')));
+  drawn = i;
+}
+function extend(i) {                                    // play: add frames drawn+1 .. i
+  for (let j = drawn + 1; j <= i; j++) {
+    const f = F[j];
+    SR.mtm.update(pt(f, 'mtm'));
+    if (f.syn != null) SR.syn.update(pt(f, 'syn'));
+    if (f.spot) SR.spot.update(pt(f, 'spot'));
+    if (f.imb != null) SR.imb.update(pt(f, 'imb'));
+  }
+  drawn = i;
+}
+function markers(t) {
+  const ms = EV.filter(e => e.ts <= t).map(e => {
+    const up = /call out|put in/.test(e.action), entry = e.kind === 'entry';
+    return {time: ltime(e.ts), position: entry ? 'inBar' : up ? 'belowBar' : 'aboveBar',
+            color: entry ? css('--accent') : /call/.test(e.action) ? css('--ce') : css('--pe'),
+            shape: entry ? 'circle' : up ? 'arrowUp' : 'arrowDown', text: e.kind};
+  });
+  SR.syn.setMarkers(ms);
+}
+
+// ── render one moment ──────────────────────────────────────────────────
+function render(t, seek) {
+  const i = frameAt(t);
+  if (seek || i < drawn) rebuild(i); else if (i > drawn) extend(i);
+  idx = i;
+  const f = F[i];
+  $('clock').textContent = hms(t);
+  $('scrub').value = Math.round((t - T0) / (T1 - T0) * 1000);
+  $('cSyn').textContent = num(f.syn); $('cSynSub').textContent = `ATM ${num(f.atm, 0)} · spot ${num(f.spot)}`;
+  $('cMtm').className = 'big ' + cls(f.mtm); $('cMtm').textContent = rs(f.mtm);
+  $('cMtmSub').textContent = `booked ${rs(f.real)} · open ${rs(f.mtm - f.real)}`;
+  const lv = f.lv || {};
+  if (lv.call_out != null && f.syn != null) {
+    const up = Math.min(lv.call_out, lv.put_in), upK = up === lv.call_out ? 'Call out' : 'Put in';
+    const dn = Math.max(lv.put_out, lv.call_in), dnK = dn === lv.put_out ? 'Put out' : 'Call in';
+    $('cUp').innerHTML = `${upK} ≥ ${num(up, 0)}`; $('cUpSub').textContent = `+${num(up - f.syn, 1)} pts away`;
+    $('cDn').innerHTML = `${dnK} ≤ ${num(dn, 0)}`; $('cDnSub').textContent = `−${num(f.syn - dn, 1)} pts away`;
+  } else { $('cUp').textContent = $('cDn').textContent = '–'; $('cUpSub').textContent = $('cDnSub').textContent = 'flat'; }
+  const ip = f.imb == null ? null : Math.round(f.imb * 10) / 10 || 0;
+  $('cImb').textContent = ip == null ? '–' : (ip > 0 ? '+' : ip < 0 ? '−' : '') + num(Math.abs(ip), 1) + '%';
+  $('cImbSub').innerHTML = `<span class="ce">CE ${rs(f.ce)}</span> · <span class="pe">PE ${rs(f.pe)}</span>`;
+  triggerLines(f.lv);
+  chain(f);
+  const done = EV.filter(e => e.ts <= t);
+  const adj = done.filter(e => e.kind !== 'entry');
+  $('cAdj').textContent = adj.length;
+  $('cAdjSub').textContent = `${done.reduce((a, e) => a + (e.fills || []).length, 0)} orders so far`;
+  if (done.length !== shownAdj) {
+    if (!seek && done.length > shownAdj) toast(done[done.length - 1]);
+    shownAdj = done.length; markers(t); renderLog(t); legs(f, true);
+  } else legs(f, false);
+}
+const prevPx = {};
+function chain(f) {
+  if (!f.chain || !f.chain.length) { $('tChain').innerHTML = '<tr><td class="mut">no chain in this file</td></tr>'; return; }
+  const open = {}, bk = {};
+  f.legs.forEach(l => { open[l[0] + l[1]] = l; });
+  (f.booked || []).forEach(b => { bk[b[0] + b[1]] = b[2]; });
+  const syn = f.syn, rows = [];
+  let tot = {ceO: 0, ceB: 0, peO: 0, peB: 0};
+  // price tick colour (green up / red down) only at slow speeds - at 30x+ every price moves every frame
+  const flash = (key, v) => { const o = prevPx[key]; prevPx[key] = v;
+    return speed > 10 || o == null || v == null || o === v ? '' : v > o ? 'flash-up' : 'flash-dn'; };
+  const desc = f.chain.slice().sort((a, b) => a[0] - b[0]);              // normal chain order: low strikes on top
+  let lineDone = syn == null;
+  for (const [k, ce, pe] of desc) {
+    if (!lineDone && k > syn) {
+      rows.push(`<tr class="synline"><td colspan="11"></td></tr>`); lineDone = true;
+    }
+    const oc = open['CE' + k], op = open['PE' + k];
+    const bc = bk['CE' + k], bp = bk['PE' + k];
+    if (oc) tot.ceO += oc[5]; if (bc) tot.ceB += bc; if (op) tot.peO += op[5]; if (bp) tot.peB += bp;
+    const ceItm = syn != null && k < syn, peItm = syn != null && k > syn;
+    const ci = ceItm ? 'itm' : '', pi = peItm ? 'itm' : '';
+    const hc = oc ? 'held ce-h' : '', hp = op ? 'held pe-h' : '';
+    rows.push(`<tr class="${f.atm === k ? 'atm' : ''}">
+      <td class="${ci} ${cls(bc)}">${bc ? rs(bc) : ''}</td>
+      <td class="${ci} ${hc}">${oc ? -oc[2] + ' sold' : ''}</td>
+      <td class="${ci}">${oc ? num(oc[3]) : ''}</td>
+      <td class="${ci} ${oc ? cls(oc[5]) : ''}">${oc ? rs(oc[5]) : ''}</td>
+      <td class="${ci} ${hc} ${flash('c' + k, ce)}">${num(ce)}</td>
+      <td class="k">${num(k, 0)}</td>
+      <td class="${pi} ${hp} ${flash('p' + k, pe)}">${num(pe)}</td>
+      <td class="${pi} ${op ? cls(op[5]) : ''}">${op ? rs(op[5]) : ''}</td>
+      <td class="${pi}">${op ? num(op[3]) : ''}</td>
+      <td class="${pi} ${hp}">${op ? -op[2] + ' sold' : ''}</td>
+      <td class="${pi} ${cls(bp)}">${bp ? rs(bp) : ''}</td></tr>`);
+  }
+  if (!lineDone) rows.push(`<tr class="synline"><td colspan="11"></td></tr>`);
+  // positions / bookings outside the shown strikes still count in the totals
+  f.legs.forEach(l => { if (!f.chain.some(c => c[0] === l[1])) { if (l[0] === 'CE') tot.ceO += l[5]; else tot.peO += l[5]; } });
+  (f.booked || []).forEach(b => { if (!f.chain.some(c => c[0] === b[1])) { if (b[0] === 'CE') tot.ceB += b[2]; else tot.peB += b[2]; } });
+  const head = `<tr><th class="gc">Booked</th><th class="gc">Position</th><th class="gc">Sold @</th><th class="gc">Open P&amp;L</th><th class="gc">CE price</th>
+    <th class="c">Strike</th><th class="gp">PE price</th><th class="gp">Open P&amp;L</th><th class="gp">Sold @</th><th class="gp">Position</th><th class="gp">Booked</th></tr>`;
+  const foot = `<tr class="tot"><td class="${cls(tot.ceB)}">${rs(tot.ceB)}</td><td></td><td></td><td class="${cls(tot.ceO)}">${rs(tot.ceO)}</td>
+    <td class="mut">CE ${rs(tot.ceB + tot.ceO)}</td><td class="k ${cls(f.mtm)}">${rs(f.mtm)}</td><td class="mut">PE ${rs(tot.peB + tot.peO)}</td>
+    <td class="${cls(tot.peO)}">${rs(tot.peO)}</td><td></td><td></td><td class="${cls(tot.peB)}">${rs(tot.peB)}</td></tr>`;
+  $('tChain').innerHTML = head + rows.join('') + foot;
+}
+let lastLegs = '';
+function legs(f, changed) {
+  const sig = f.legs.map(l => l[0] + l[1]).join();
+  const fresh = new Set();
+  if (sig !== lastLegs && lastLegs) f.legs.forEach(l => { if (!lastLegs.includes(l[0] + l[1])) fresh.add(l[0] + l[1]); });
+  if (sig !== lastLegs) lastLegs = sig;
+  const row = l => `<tr class="${fresh.has(l[0] + l[1]) ? 'flash' : ''}"><td class="${l[0].toLowerCase()}">${l[0]}</td><td><b>${num(l[1], 0)}</b></td>
+    <td>${-l[2]}</td><td>${num(l[3])}</td><td>${num(l[4])}</td><td class="${cls(l[5])}">${rs(l[5])}</td></tr>`;
+  const ce = f.legs.filter(l => l[0] === 'CE'), pe = f.legs.filter(l => l[0] === 'PE');
+  $('tLegs').innerHTML = `<tr><th>Leg</th><th>Strike</th><th>Sold</th><th>Sold @</th><th>Now</th><th>P&amp;L</th></tr>` +
+    ce.map(row).join('') + `<tr class="mid"><td colspan="6">synthetic ${num(f.syn)} · ATM ${num(f.atm, 0)}</td></tr>` + pe.map(row).join('');
+  $('hLegs').textContent = f.legs.length ? `${ce.length} CE · ${pe.length} PE` : 'flat';
+}
+function renderLog(t) {
+  $('log').innerHTML = EV.slice().reverse().map((e, k) => {
+    const fut = e.ts > t, last = !fut && EV.filter(x => x.ts <= t).slice(-1)[0] === e;
+    const c = e.kind === 'entry' ? '' : /call/.test(e.kind) ? 'ce' : 'pe';
+    return `<div class="ev ${fut ? 'future' : ''} ${last ? 'new' : ''}" data-ts="${e.ts}">
+      <div class="h"><span class="mut">${esc(e.time)}</span><span class="tag ${c}">${esc(e.kind)}</span><span>${esc(e.what)}</span></div>
+      <div class="f">${esc((e.fills || []).join(' · '))}</div></div>`;
+  }).join('');
+  document.querySelectorAll('.ev').forEach(el => el.onclick = () => { pause(); seek(+el.dataset.ts + 1); });
+}
+let toastTimer;
+function toast(e) {
+  const c = e.kind === 'entry' ? '' : /call/.test(e.kind) ? 'ce' : 'pe';
+  $('toast').innerHTML = `<div class="h"><span class="mut">${esc(e.time)}</span> <b class="${c}">${esc(e.kind.toUpperCase())}</b></div>
+    <div>${esc(e.what)}</div><div class="mut" style="font-size:11.5px;margin-top:3px">${esc((e.fills || []).join(' · '))}</div>`;
+  $('toast').classList.add('show'); clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $('toast').classList.remove('show'), Math.max(1200, 3500 - speed * 4));
+}
+
+// ── playback ───────────────────────────────────────────────────────────
+const SPEEDS = [1, 5, 10, 30, 60, 120, 300, 600];
+$('speeds').innerHTML = SPEEDS.map(s => `<button data-s="${s}">${s}×</button>`).join('');
+function paintSpeeds() { document.querySelectorAll('#speeds button').forEach(b => b.classList.toggle('on', +b.dataset.s === speed)); }
+document.querySelectorAll('#speeds button').forEach(b => b.onclick = () => { speed = +b.dataset.s; paintSpeeds(); });
+let lastNow = 0, lastFit = 0, follow = true;
+function tick(now) {
+  if (!playing) return;
+  const dt = lastNow ? (now - lastNow) / 1000 : 0; lastNow = now;
+  T = Math.min(T1, T + dt * speed);
+  render(T, false);
+  if (follow && now - lastFit > 400) { fit(); lastFit = now; }        // keep the whole day so far in view
+  if (T >= T1) { pause(); return; }
+  requestAnimationFrame(tick);
+}
+function play() { if (T >= T1) seek(T0); playing = true; lastNow = 0; $('play').textContent = '❚❚ Pause'; requestAnimationFrame(tick); }
+function pause() { playing = false; $('play').textContent = '▶ Play'; }
+function seek(t) { T = Math.max(T0, Math.min(T1, t)); shownAdj = -1; lastLegs = ''; render(T, true); fit(); }
+function fit() { charts.forEach(c => c.timeScale().fitContent()); }
+$('play').onclick = () => playing ? pause() : play();
+$('follow').onchange = () => { follow = $('follow').checked; if (follow) fit(); };
+$('scrub').oninput = () => { seek(T0 + (T1 - T0) * $('scrub').value / 1000); };
+$('nextAdj').onclick = () => { const e = EV.find(x => x.ts > T + 0.5); if (e) seek(e.ts - 20); };
+$('prevAdj').onclick = () => { const e = EV.filter(x => x.ts < T - 21).slice(-1)[0]; seek(e ? e.ts - 20 : T0); };
+document.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); playing ? pause() : play(); } });
+
+(async function load() {
+  $('ttlSub').textContent = 'loading…';
+  D = await (await fetch(FILE)).json();
+  F = D.frames;
+  T0 = F[0].t; T1 = F[F.length - 1].t; T = T0;
+  EV = (D.events || []).filter(e => e.event === 'adjust').map(e => {
+    const m = /^(entry|call out|call in|put out|put in)/.exec(e.action || '');
+    const kind = m ? m[1] : e.action;
+    const what = (e.action || '').replace(/^(entry|call out|call in|put out|put in)\s*/, '').replace(/^\(|\)$/g, '');
+    return {...e, kind, what};
+  });
+  const s = D.summary || {};
+  $('ttl').textContent = `${s.und || 'NIFTY'} Synthetic To-and-Fro · replay ${s.date || ''}`;
+  $('ttlSub').textContent = `expiry ${D.expiry || ''} · ${s.lots || 1} lot (${s.lot || ''} qty) · end: ${rs(s.gross)} before charges, ${rs(s.net)} after (charges ${rs(s.charges)})`;
+  speed = 60; paintSpeeds();
+  seek(T0);
+})();
+</script>
+</body>
+</html>

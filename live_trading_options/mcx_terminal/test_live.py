@@ -444,6 +444,138 @@ def test_reprice_uses_modify():
     path.unlink(missing_ok=True)
 
 
+def test_position_shows_fill_before_order_book():
+    """23-Nov-2026: Kotak's position showed two MCX sells filled in ~0.1 s while its order book said 'open' for
+    3-7 s -> screen said working, the chaser sent 7 refused modifies. Now the position marks the order filled."""
+    q = {}
+    u, b, k, flag, path = _live("posfill", q)
+    ch = u.products["CRUDEOIL"].chains["2026-11-17"]
+    ce, pe = ch[9300.0]["CE"], ch[9300.0]["PE"]
+    for t in (ce.token, pe.token):
+        q[t] = {"ltp": 500.0, "bid": 499.0, "ask": 500.0, "bq": 100, "aq": 100, "depth": None}
+    b.settings = lambda: {"entry_ref": "touch", "entry_buffer": 0, "entry_unit": "pts", "exit_ref": "touch",
+                          "exit_buffer": 0, "exit_unit": "pts", "reprice": True, "market_after_s": 0,
+                          "product": "NRML", "session": "AUTO"}
+    b.sync_positions()                                     # first read: nothing held
+    stale = {}                                             # oid -> the row Kotak's late order book still shows
+    real_report = k.order_report
+    k.order_report = lambda: {"data": [{**r, **stale.get(r["nOrdNo"], {})} for r in real_report()["data"]]}
+    b.place(ce.token, "S", 100, "MKT")
+    o = b.orders[-1]
+    stale[o["broker_id"]] = {"fldQty": 0, "avgPrc": "0.00", "ordSt": "open"}
+    k.fill(o["broker_id"], 100, 498.5)                     # filled at Kotak, order book late
+    b.sync_positions()
+    check("position change marks the order filled", o.get("pos_seen") and o["status"] == "OPEN", o)
+    check("reason says so", "position shows it" in o["reason"], o["reason"])
+    n = len(k.mods)
+    q[ce.token] = {"ltp": 495.0, "bid": 495.0, "ask": 495.5, "bq": 100, "aq": 100, "depth": None}
+    o["t_rep"] = 0
+    b.housekeep()
+    check("no re-price of a position-filled order", len(k.mods) == n, k.mods[n:])
+    r = L.LiveBook._result([o], "S", 1, ce, 100, o["limit"])
+    check("place() answer = SOLD, price follows", r["state"] == "filled" and "SOLD" in r["msg"], r)
+    stale.clear()                                          # the order book catches up
+    b.poll()
+    check("order book settles it with the real price", o["status"] == "COMPLETE" and o["avg"] == 498.5, o)
+    # the late order-book fill must not count twice: a working BUY of the same size is NOT marked
+    b.place(ce.token, "B", 100, "MKT")
+    ob = b.orders[-1]
+    b.sync_positions()
+    check("late fill not counted twice", not ob.get("pos_seen"), ob)
+    k.cancel_order(ob["broker_id"])
+    b.poll()
+    # two identical working sells, only one fills -> ambiguous, neither is marked
+    b.place(pe.token, "S", 100, "MKT")
+    b.place(pe.token, "S", 100, "MKT")
+    o1, o2 = b.orders[-2], b.orders[-1]
+    for x in (o1, o2):
+        stale[x["broker_id"]] = {"fldQty": 0, "avgPrc": "0.00", "ordSt": "open"}
+    k.fill(o1["broker_id"], 100, 497.0)
+    b.sync_positions()
+    check("ambiguous fill marks neither order", not o1.get("pos_seen") and not o2.get("pos_seen"), (o1, o2))
+    k.fill(o2["broker_id"], 100, 497.0)
+    b.sync_positions()
+    check("the second identical fill is left alone too", not o1.get("pos_seen") and not o2.get("pos_seen"))
+    stale.clear()
+    b.poll()
+    # never confirmed by the order book within POS_SEEN_MAX_S -> working again, re-priced
+    b.place(pe.token, "S", 100, "MKT")
+    o3 = b.orders[-1]
+    o3["pos_seen"], o3["pos_units"] = time.time() - L.POS_SEEN_MAX_S - 1, 100
+    q[pe.token] = {"ltp": 490.0, "bid": 490.0, "ask": 490.5, "bq": 100, "aq": 100, "depth": None}
+    o3["t_rep"] = 0
+    n = len(k.mods)
+    b.housekeep()
+    check("unconfirmed mark expires and the order is chased again", not o3.get("pos_seen") and len(k.mods) == n + 1,
+          (o3, k.mods[n:]))
+    path.unlink(missing_ok=True)
+
+
+def test_position_fill_own_book():
+    """Same rule on the NSE desk's own book (Kotak's positions are only its safety net there)."""
+    q = {}
+    u, b, k, flag, path = _live("posfill_own", q)
+    b.own = True
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[ce.token] = {"ltp": 500.0, "bid": 499.0, "ask": 500.0, "bq": 100, "aq": 100, "depth": None}
+    b.settings = lambda: {"entry_ref": "touch", "entry_buffer": 0, "entry_unit": "pts", "exit_ref": "touch",
+                          "exit_buffer": 0, "exit_unit": "pts", "reprice": False, "market_after_s": 0,
+                          "product": "NRML", "session": "AUTO"}
+    b.sync_positions()
+    stale = {}
+    real_report = k.order_report
+    k.order_report = lambda: {"data": [{**r, **stale.get(r["nOrdNo"], {})} for r in real_report()["data"]]}
+    b.place(ce.token, "S", 100, "MKT")
+    o = b.orders[-1]
+    stale[o["broker_id"]] = {"fldQty": 0, "avgPrc": "0.00", "ordSt": "open"}
+    k.fill(o["broker_id"], 100, 498.0)
+    b.sync_positions()
+    check("own book: position marks it filled", o.get("pos_seen") and o["status"] == "OPEN", o)
+    stale.clear()
+    b.poll()
+    check("own book: order book settles it, desk position from the fill",
+          o["status"] == "COMPLETE" and b.pos[ce.token]["net"] == -100, (o, b.pos.get(ce.token)))
+    b.sync_positions()
+    # the exit: Kotak's position shows it closed before its order book -> no "Kotak holds LESS" warning
+    b.place(ce.token, "B", 100, "MKT")
+    ox = b.orders[-1]
+    stale[ox["broker_id"]] = {"fldQty": 0, "avgPrc": "0.00", "ordSt": "open"}
+    k.fill(ox["broker_id"], 100, 497.0)
+    b.sync_positions()
+    check("own book: exit marked filled by the position", ox.get("pos_seen"), ox)
+    check("own book: no mismatch warning for a leg Kotak already closed", b.mismatch == [], b.mismatch)
+    stale.clear()
+    b.poll()
+    b.sync_positions()
+    check("own book: flat once the order book confirms", ox["status"] == "COMPLETE" and not b.pos[ce.token]["net"]
+          and b.mismatch == [], (ox["status"], b.pos.get(ce.token), b.mismatch))
+    # a real hand-close at Kotak is still reported
+    b.place(ce.token, "S", 100, "MKT")
+    k.fill(b.orders[-1]["broker_id"], 100, 496.0)
+    b.poll()
+    b.sync_positions()
+    # the desk's sell is booked, Kotak's position read does not show it yet (23-Nov 10:56:47) -> not a mismatch
+    stale_pos = k.positions
+    k.positions = lambda: {"stat": "Not_Ok", "stCode": 5203, "errMsg": "No Data"}
+    b.sync_positions()
+    check("own book: a fill Kotak's position has not caught up with is no mismatch", b.mismatch == [], b.mismatch)
+    k.positions = stale_pos
+    b._last_fill[ce.token] = time.time() - L.POS_LAG_S - 1
+    k.hand_trade(ce.symbol, "B", 100, 495.0)
+    b.sync_positions()
+    check("own book: a real close outside the desk is still flagged", len(b.mismatch) == 1, b.mismatch)
+    path.unlink(missing_ok=True)
+
+
+def test_feed_fast_reconnect_after_healthy_session():
+    """23-Nov-2026: feed sessions of ~45 s (Kotak ping/pong timeouts) counted as failures, the wait grew to 10 s."""
+    from live_trading_options.mcx_terminal import feed as F
+    check("streamed 40 s -> fast reconnect", F.KotakFeed.healthy(45.0, 40.0))
+    check("up over a minute -> fast reconnect", F.KotakFeed.healthy(75.0, None))
+    check("never logged in -> back off", not F.KotakFeed.healthy(3.0, None))
+    check("logged in but cut at once -> back off", not F.KotakFeed.healthy(4.0, 2.0))
+
+
 def test_exit_instrument_only_that_instrument():
     q = {}
     u, b, k, flag, path = _live("exitinst", q)
@@ -1310,7 +1442,9 @@ def test_market_price_floor_ticks():
     buy = b._price(c.token, "B", "entry", st)
     check("cheap option: 2% (0.30) lifted to 5 ticks", abs(buy - (15.2 + C.MKT_MIN_TICKS * c.tick)) < 1e-9, (buy, c.tick))
     q[c.token] = {"ltp": 500.0, "bid": 500.0, "ask": 500.0, "bq": 10**6, "aq": 10**6, "depth": None}
-    check("dear option: 2% stays", abs(b._price(c.token, "S", "exit", st) - 490.0) < 1e-9)
+    check("dear option: 2% stays (entry)", abs(b._price(c.token, "S", "entry", st) - 490.0) < 1e-9)
+    check("LIVE exit: capped 6% through the touch", abs(b._price(c.token, "S", "exit", st) - 470.0) < 1e-9,
+          b._price(c.token, "S", "exit", st))
     path.unlink(missing_ok=True)
 
 
@@ -1400,6 +1534,46 @@ def test_exit_all_resends_a_refused_leg():
     check("re-sent with a NEW tag", len({x["tag"] for x in sent_a}) == 2)
     check("EXIT ALL ends FLAT quickly", r["ok"] and "FLAT" in r["msg"] and took < 3.0, (r, took))
     check("the filled leg is never sent twice", len([x for x in k.sent if x["trading_symbol"] == c2.symbol]) == 1)
+    path.unlink(missing_ok=True)
+
+
+def test_exit_wide_cap_and_instant_chase():
+    """23-Nov-2026 17:43: silver fell ~6 % in 2 s, three put buy-backs capped 2 % over the ask rested 1.4 s.
+    Exits are now capped EXIT_MIN_BUFFER_PCT through the touch and re-priced the moment a price shows the
+    market past them."""
+    q = {}
+    u, b, k, flag, path = _live("exitcap", q)
+    pe = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["PE"]
+    q[pe.token] = _q(200.0)                                             # ask 200.5
+    k.carry[(pe.symbol, "NRML")] = [0, 100, 0.0, 20000.0]               # short 1 lot
+    b.sync_positions()
+    r = b.exit_position(pe.token)
+    s = k.sent[-1]
+    check("exit buy capped >= 6 % over the ask", float(s["price"]) >= 200.5 * 1.06 - 1e-9, s["price"])
+    o = b.orders[-1]
+    check("exit order is an exit", o.get("role") == "exit" and o["status"] == "OPEN", o)
+    k.mods.clear()
+    b.housekeep()
+    check("calm market: an exit is never re-priced", not k.mods, k.mods)
+    q[pe.token] = _q(240.0)                                             # spike: ask 240.5, past the cap
+    t0 = time.time()
+    b.on_prices({pe.token})
+    for _ in range(40):
+        if k.mods:
+            break
+        time.sleep(0.01)
+    check("spike: exit re-priced at once", k.mods and time.time() - t0 < 0.3, (k.mods, time.time() - t0))
+    check("re-priced to the cap over the NEW ask", k.mods and float(k.mods[0]["price"]) >= 240.5 * 1.06 - 1e-9, k.mods)
+    n = len(k.mods)
+    b.on_prices({pe.token})
+    b.housekeep()
+    time.sleep(0.05)
+    check("no repeat modify once the cap is past the market", len(k.mods) == n, k.mods)
+    # entries keep the owner's buffer (1 % default here)
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[ce.token] = _q(500.0)
+    b.place(ce.token, "S", 100, "MKT")
+    check("entry still at the owner's buffer", float(k.sent[-1]["price"]) > 499.5 * 0.985, k.sent[-1]["price"])
     path.unlink(missing_ok=True)
 
 

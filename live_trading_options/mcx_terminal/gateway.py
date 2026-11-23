@@ -231,6 +231,10 @@ class Gateway:
                 touched |= tok in held
         if touched:
             self.risk.check()
+            try:
+                self.live.on_prices({t[0] for t in ticks})   # a working exit the market ran past: re-price now
+            except Exception:
+                log.exception("exit chase")
 
     def ltp(self, token):
         t = self.last.get(token)

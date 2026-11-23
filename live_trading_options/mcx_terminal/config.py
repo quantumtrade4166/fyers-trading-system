@@ -113,6 +113,8 @@ NEWS = os.getenv("TERMINAL_NEWS", "1" if DESK == "MCX" else "0") == "1"
 DESK_URLS = {"MCX": os.getenv("MCX_DESK_URL", "https://mcx.trading.contact"),
              "NSE": os.getenv("NSE_DESK_URL", "https://nse.trading.contact"),
              "BTC": os.getenv("BTC_DESK_URL", "https://btc.trading.contact")}
+# Algo tab (owner 23-Nov-2026, algo.py): served by the MCX desk only, linked from every desk's switch
+DESK_URLS["ALGO"] = os.getenv("ALGO_URL", DESK_URLS["MCX"].rstrip("/") + "/algo")
 
 _IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
@@ -143,6 +145,12 @@ MODE = "PAPER"              # start-up mode; LIVE only when the OWNER arms it on
 PAPER_CARRY = False          # paper positions do NOT carry to the next day (daily reset at RESET_AT)
 MKT_BUFFER_PCT = 1.0        # "market" = limit at best ask/bid +/- this % (Kotak takes no MARKET orders; the MCX desk is set to 2% in its settings.json, owner 18-Nov)
 MKT_MIN_TICKS = 5           # ... but never less than this many ticks (0.5 on CRUDEOIL): cheap options still fill
+# EXITS (closing orders, EXIT ALL / row exits): the price cap is never closer than this % through the touch.
+# 23-Nov-2026 17:43: silver fell ~6 % in 2 s, the three put buy-backs (capped 2 % over the ask) rested 1.4 s and
+# filled ~Rs 1.5k worse. A cap is only a ceiling - the exchange still fills at the best price resting there - so a
+# wide cap costs nothing in a calm market and keeps an exit from being left behind in a spike. Entries keep the
+# owner's buffer.
+EXIT_MIN_BUFFER_PCT = 6.0
 
 DATA.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)

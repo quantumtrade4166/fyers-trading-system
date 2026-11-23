@@ -273,6 +273,7 @@ def test_own_book_never_bigger_than_kotak():
     b.poll(); b.sync_positions()
     check("desk short 2 lots", b.pos[pe.token]["net"] == -130, b.pos.get(pe.token))
     k.hand_trade(pe.symbol, "B", 65, 70.0)                      # owner buys back 1 lot by hand
+    b._last_fill.clear()                                        # the desk's own fill is > POS_LAG_S old by now
     b.sync_positions()
     check("shown: Kotak holds less", "LESS" in b.pos_sync["msg"] and pe.symbol in b.pos_sync["msg"], b.pos_sync)
     r = b.place(pe.token, "B", 130, "MKT")

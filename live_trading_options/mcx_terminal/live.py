@@ -80,6 +80,18 @@ WARM_CONNS = 3                     # connections to Kotak's ORDER host kept open
 WARM_EVERY_S = 30.0
 EXIT_RETRIES = 3                   # EXIT ALL: a refused leg is re-sent at most this many times
 TERMINAL = ("COMPLETE", "REJECTED", "CANCELLED", "PART-CANCELLED")
+# filled per Kotak's POSITION before its order book says so (23-Nov-2026: two MCX sells were filled at Kotak in
+# ~0.1 s, but its order book showed them open for 3-7 s; the screen said "working" and the price chaser sent 7
+# modifies Kotak refused). Such an order stays OPEN in the book (the order book still settles it, with the real
+# price), but is shown filled and no longer re-priced. If the order book has not confirmed it after
+# POS_SEEN_MAX_S, the mark is dropped and the order is handled as working again.
+POS_CONFIRM_WINDOW_S = 120.0       # only orders sent this recently can be confirmed by a position change
+POS_SEEN_MAX_S = 15.0
+# an exit the market has run past is re-priced the moment a new price shows it (feed callback + housekeeping +
+# the EXIT ALL loop), at most this often per order, to the exit cap (config.EXIT_MIN_BUFFER_PCT through the touch)
+EXIT_CHASE_S = 0.3
+POS_LAG_S = 3.0                    # own book: a contract the desk filled this recently is not compared with Kotak's
+                                   # position yet (23-Nov 10:56:47: the desk's sell landed 0.15 s before Kotak showed it)
 BROKER_DONE = ("complete", "traded", "rejected", "cancelled")
 
 _OID_KEYS = ("nOrdNo", "orderId", "order_id", "ordNo")
@@ -185,6 +197,8 @@ class LiveBook(PaperBook):
         self.pos_sync = {"ok": False, "msg": "not read yet", "at": None}
         self._pool = ThreadPoolExecutor(max_workers=12, thread_name_prefix="KotakSend")
         self._ext: dict = {}                            # own book: Kotak id -> units already applied (stop-loss fills)
+        self._fills_log: list = []                      # (time, token, signed units) applied from the order book
+        self._last_fill: dict = {}                      # token -> time of the desk's latest fill on it
         super().__init__(universe, quotes, on_change=on_change, path=path or (C.DATA / f"live_book_{today()}.json"),
                          settings=settings)
         self.own = OWN
@@ -246,6 +260,12 @@ class LiveBook(PaperBook):
 
     def _fill(self, o, px, q):
         PaperBook._fill(self, o, px, q)
+        self._last_fill[o["token"]] = time.time()
+        seen = min(q, o.get("pos_units", 0))           # units Kotak's position already showed (not counted twice)
+        if seen:
+            o["pos_units"] -= seen
+        if q - seen:
+            self._fills_log.append((time.time(), o["token"], (q - seen) if o["side"] == "B" else -(q - seen)))
         if self.own:                                    # which product the desk holds it in (exits close the same)
             p = self.pos[o["token"]]
             bp = p.setdefault("by_prod", {})
@@ -309,6 +329,7 @@ class LiveBook(PaperBook):
 
     def sync_positions(self, raise_errors: bool = False) -> bool:
         """Replace the book's positions with Kotak's MCX positions. -> changed?"""
+        t_read = time.time()
         try:
             try:
                 rows = self._pos_rows()
@@ -378,8 +399,12 @@ class LiveBook(PaperBook):
             p["bval"], p["sval"] = round(p["_ba"] * p["mult"], 2), round(p["_sa"] * p["mult"], 2)
             del p["_ba"], p["_sa"]
         if self.own:
-            return self._own_check(new)
+            return self._own_check(new, t_read)
+        marked = []
         with self.lock:
+            if self.pos_sync.get("ok"):                 # never on the first read (a restart): nothing to compare
+                marked = self._confirm_by_position({t: x["net"] for t, x in self.pos.items()},
+                                                   {t: x["net"] for t, x in new.items()}, t_read)
             sig = lambda d: {t: (x["net"], round(x["avg"], 2), round(x["realized"], 2)) for t, x in d.items()}
             old = sig(self.pos)
             changed = old != sig(new)
@@ -399,20 +424,37 @@ class LiveBook(PaperBook):
             audit.write("broker", what="positions readable", open=sum(1 for p in new.values() if p["net"]))
         if changed or not was:
             self.on_change()
+        self._positions_confirmed(marked)
         return changed
 
-    def _own_check(self, broker: dict) -> bool:
+    def _own_check(self, broker: dict, t_read: float | None = None) -> bool:
         """Own book: keep Kotak's positions as the safety net and note where Kotak holds LESS than the desk
         (closed by hand in the Kotak app, MIS squared off by Kotak, ...). -> changed?"""
         bp = {t: {"net": x["net"], "by_prod": dict(x.get("by_prod") or {})} for t, x in broker.items()}
+        marked = []
         with self.lock:
+            if self.pos_sync.get("ok") and t_read is not None:
+                marked = self._confirm_by_position({t: x["net"] for t, x in self.broker_pos.items()},
+                                                   {t: x["net"] for t, x in bp.items()}, t_read)
             mism = []
+            # units Kotak's position already shows filled while its order book is late (pos_seen): the desk will
+            # book them in a moment, so they are no mismatch (23-Nov-2026: a 0.1 s warning on every NSE exit)
+            ahead = {}
+            for o in self.orders:
+                if o.get("pos_seen") and o["status"] not in TERMINAL and o.get("pos_units"):
+                    ahead[o["token"]] = ahead.get(o["token"], 0) + (o["pos_units"] if o["side"] == "B"
+                                                                    else -o["pos_units"])
             for t, p in self.pos.items():
                 if not p.get("net"):
                     continue
+                if t_read is not None and self._last_fill.get(t, 0) > t_read - POS_LAG_S:
+                    continue                            # filled just now: Kotak's position may not show it yet
+                want = p["net"] + ahead.get(t, 0)       # the desk once the late fills are booked
+                if not want:
+                    continue
                 b = (bp.get(t) or {}).get("net", 0)
-                held = b if (b > 0) == (p["net"] > 0) else 0
-                if abs(held) < abs(p["net"]):
+                held = b if (b > 0) == (want > 0) else 0
+                if abs(held) < abs(want):
                     mism.append(f"{p['symbol']} desk {p['net']} / Kotak {b}")
             changed = mism != self.mismatch
             was = self.pos_sync.get("ok")
@@ -428,6 +470,7 @@ class LiveBook(PaperBook):
             audit.write("broker", what="positions readable", open=sum(1 for p in self.pos.values() if p.get("net")))
         if changed or not was:
             self.on_change()
+        self._positions_confirmed(marked)
         return changed
 
     def _broker_held(self, token, prod, sign) -> int:
@@ -436,6 +479,49 @@ class LiveBook(PaperBook):
         n = (b.get("by_prod") or {}).get(prod) if prod else None
         n = b.get("net", 0) if n is None else n
         return abs(n) if n and (n > 0) == (sign > 0) else 0
+
+    def _confirm_by_position(self, old: dict, new: dict, t_read: float) -> list:
+        """(book lock held) old / new: Kotak's net per token before / after this read (taken at t_read).
+        A change that the order book's fills do not explain, and that is EXACTLY the unfilled rest of one
+        recent working order (or of all of them together) on that contract, means Kotak filled it: mark it
+        pos_seen. Anything ambiguous is left alone. -> orders marked."""
+        fills, keep = {}, []
+        for t, tok, q in self._fills_log:
+            if t <= t_read:
+                fills[tok] = fills.get(tok, 0) + q
+            else:
+                keep.append((t, tok, q))
+        self._fills_log = keep
+        now = time.time()
+        marked = []
+        rest = lambda o: (o["qty"] - o["filled"]) * (1 if o["side"] == "B" else -1)
+        for tok in set(old) | set(new):
+            d = new.get(tok, 0) - old.get(tok, 0) - fills.get(tok, 0)
+            if not d:
+                continue
+            cand = [o for o in self.orders
+                    if o["token"] == tok and o.get("live") and o["status"] in ("OPEN", "SENDING")
+                    and not o.get("pos_seen") and o["qty"] > o["filled"]
+                    and o.get("t0", 0) <= t_read and now - o.get("t0", 0) < POS_CONFIRM_WINDOW_S]
+            one = [o for o in cand if rest(o) == d]
+            hit = one if len(one) == 1 else cand if len(cand) > 1 and sum(map(rest, cand)) == d else []
+            # two identical working orders and only one filled = ambiguous -> neither is marked
+            for o in hit or []:
+                o["pos_seen"] = now
+                o["pos_units"] = o["qty"] - o["filled"]
+                o["reason"] = "filled - Kotak's position shows it; its order book is catching up"
+                marked.append(o)
+                log.warning("LIVE order %s %s %s %s: Kotak position shows it filled (order book not yet)",
+                            o.get("broker_id"), o["side"], o["symbol"], o["qty"] - o["filled"])
+                audit.write("fill-pos", what=f"Kotak {o.get('broker_id')} {o['side']} {o['symbol']} "
+                                             f"qty {o['qty'] - o['filled']}: filled per Kotak's position")
+        return marked
+
+    def _positions_confirmed(self, marked):
+        """Outside the lock: wake a waiting place() and repaint the screen."""
+        if marked:
+            self._pushed.set()
+            self.on_change()
 
     def open_entry(self, token) -> float | None:
         """Price of the lots STILL OPEN in `token` (oldest fills closed first), from Kotak's trade list.
@@ -608,7 +694,8 @@ class LiveBook(PaperBook):
         self._burst_until = time.time() + BURST_S
         self._poll_kick.set()
         deadline = time.time() + (VERDICT_WAIT_S if kind == "MKT" else 0.25)  # a short look for the fill
-        while time.time() < deadline and any(o["status"] not in TERMINAL for o in mine if o["broker_id"]):
+        while time.time() < deadline and any(o["status"] not in TERMINAL and not o.get("pos_seen")
+                                             for o in mine if o["broker_id"]):
             self._pushed.clear()
             # 17-Nov: this used to read the order book ITSELF after 0.1 s (a ~250 ms REST call) and stayed blocked
             # in it even when Kotak's fill push arrived meanwhile -> buys answered ~0.25 s late. Now it only
@@ -635,8 +722,11 @@ class LiveBook(PaperBook):
         if rej and not filled and len(rej) == len(mine):
             return {"ok": False, "ids": ids, "state": "rejected",
                     "msg": f"REJECTED {lots} lot{s_} {c.symbol}: {rej[0]['reason']}"}
+        seen = sum(o["qty"] - o["filled"] for o in mine if o.get("pos_seen") and o["status"] not in TERMINAL)
         if filled >= qty:
             state, msg = "filled", f"{word} {lots} lot{s_} {c.symbol} @ {avg:,.2f} (Kotak P LIVE)"
+        elif seen and filled + seen >= qty:              # Kotak's position shows it; the price comes with the order book
+            state, msg = "filled", f"{word} {lots} lot{s_} {c.symbol} (Kotak P LIVE - fill price follows)"
         elif filled:
             state, msg = "partial", (f"{word} {filled // c.lot} of {lots} lots {c.symbol} @ {avg:,.2f} · "
                                      f"rest working at {limit:g} (LIVE)")
@@ -853,6 +943,62 @@ class LiveBook(PaperBook):
         audit.write("modify", what=f"Kotak {o['broker_id']} {o['symbol']} price -> {price:g}", result=err or "sent")
         return err
 
+    def _price(self, token, side, role, st):
+        """LIVE: exits are capped at least config.EXIT_MIN_BUFFER_PCT through the touch (23-Nov-2026). Only a
+        ceiling - Kotak's exchange still fills at the best price resting there. (Paper keeps the owner's buffer:
+        its simulator fills an unmatched rest AT the limit, which a wide cap would make look far worse.)"""
+        px = PaperBook._price(self, token, side, role, st)
+        if role != "exit" or not px:
+            return px
+        c = self.u.by_token[token]
+        q = self.quotes(token) or {}
+        ref = (q.get("ask") if side == "B" else q.get("bid")) or q.get("ltp")
+        if not ref:
+            return px
+        adj = max(ref * C.EXIT_MIN_BUFFER_PCT / 100, C.MKT_MIN_TICKS * c.tick)
+        cap = max(_round_tick(ref + adj if side == "B" else ref - adj, c.tick, side == "B"), c.tick)
+        return max(px, cap) if side == "B" else min(px, cap)
+
+    def _beyond(self, o) -> bool:
+        """Has the market run past this order's limit (it cannot fill where it rests)?"""
+        q = self.quotes(o["token"]) or {}
+        lim = float(o.get("limit") or 0)
+        if o["side"] == "B":
+            ref = q.get("ask") or q.get("ltp")
+            return bool(ref and ref > lim + 1e-9)
+        ref = q.get("bid") or q.get("ltp")
+        return bool(ref and ref < lim - 1e-9)
+
+    @staticmethod
+    def _is_exit(o) -> bool:
+        return o.get("role") == "exit" and o["kind"] == "MKT" and o["status"] == "OPEN" and bool(o.get("broker_id")) \
+            and not o.get("pos_seen")
+
+    def _chase_exit(self, o, st=None, now=None) -> bool:
+        """A working exit the market has run past: re-price it at once to the exit cap. -> modify sent?"""
+        now = now or time.time()
+        if now - o.get("t_chase", 0) < EXIT_CHASE_S or not self._is_exit(o) or not self._beyond(o):
+            return False
+        lim = self._price(o["token"], o["side"], "exit", st or self.settings())
+        if not lim or abs(lim - float(o.get("limit") or 0)) < 1e-9:
+            return False
+        o["t_chase"] = now
+        if self._modify(o, lim):
+            return False
+        o["limit"] = lim                                # the order book confirms it on the next read
+        o["chases"] = o.get("chases", 0) + 1
+        o["t_rep"] = now
+        return True
+
+    def on_prices(self, tokens):
+        """Feed callback (any thread): a new price on a contract with a working exit -> chase it at once,
+        on the order pool (never a Kotak call on the feed thread)."""
+        with self.lock:
+            ex = [o for o in self.orders if o["token"] in tokens and self._is_exit(o)]
+        for o in ex:
+            if time.time() - o.get("t_chase", 0) >= EXIT_CHASE_S and self._beyond(o):
+                self._pool.submit(self._chase_exit, o)
+
     def housekeep(self):
         """Re-price working system orders each second (if set) and push old ones through the book."""
         st = self.settings()
@@ -861,6 +1007,17 @@ class LiveBook(PaperBook):
             work = [o for o in self.orders if o["status"] == "OPEN" and o.get("broker_id")]
         mkt_after = float(st.get("market_after_s") or 0)
         for o in work:
+            if self._is_exit(o):
+                self._chase_exit(o, st, now)            # exits: only ever re-priced when the market is past them
+                continue
+            if o.get("pos_seen"):
+                if now - o["pos_seen"] < POS_SEEN_MAX_S:
+                    continue                            # filled per Kotak's position: never re-price it
+                o.pop("pos_seen", None)                 # the order book never confirmed it: treat as working again
+                o.pop("pos_units", None)
+                o["reason"] = "Kotak's order book still shows it open - working again"
+                log.warning("LIVE order %s %s: position-fill not confirmed by the order book in %.0fs - working again",
+                            o["broker_id"], o["symbol"], POS_SEEN_MAX_S)
             if now - o.get("t_rep", 0) < 1.0:
                 continue
             o["t_rep"] = now
@@ -1037,12 +1194,18 @@ class LiveBook(PaperBook):
             first = False
             time.sleep(0.25)
             self.poll()
+            with self.lock:
+                mine_open = [o for o in self.orders if o["status"] == "OPEN" and o.get("source") == src
+                             and o.get("broker_id")]
+            for o in mine_open:                         # the market ran past an exit: re-price it now, not later
+                if self._chase_exit(o):
+                    pushed.add(o["id"])
             if time.time() - t_sent >= EXIT_PUSH_S:
-                with self.lock:
-                    slow = [o for o in self.orders if o["status"] == "OPEN" and o.get("source") == src
-                            and o.get("broker_id") and o["id"] not in pushed]
+                slow = [o for o in mine_open if o["status"] == "OPEN" and o["id"] not in pushed]
+                st = self.settings()
                 for o in slow:
-                    lim = self._aggressive(o["token"], o["side"]) or self._exit_price_fallback(o["token"], o["side"])
+                    lim = (self._price(o["token"], o["side"], "exit", st)
+                           or self._exit_price_fallback(o["token"], o["side"]))
                     pushed.add(o["id"])
                     if lim:
                         self._pool.submit(self._modify, o, lim)

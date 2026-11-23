@@ -113,6 +113,7 @@ class KotakFeed:
         self.ws = None
         self.connected = False
         self.authed = False
+        self._authed_at = None                     # when this connection logged in (fast-reconnect rule)
         self.ticks = 0
         self.last_tick_at = 0.0
         self.connects = 0
@@ -210,6 +211,14 @@ class KotakFeed:
         log.info("index stream: %s id %s = token %s (ltp %s)", seg, kid, cands[0], ltp)
         return cands[0]
 
+    @staticmethod
+    def healthy(ran_s: float, streamed_s: float | None) -> bool:
+        """A session worth a fast (1 s) reconnect: up over a minute, or logged in and streaming over 10 s.
+        23-Nov-2026: Kotak dropped the feed every ~45 s (ping/pong timeouts) for a few minutes; each of those
+        sessions counted as failed, the wait doubled 1-2-4-8-10 s and prices stood still 5-12 s per drop.
+        Only connects that never get going (refused, cut at once) still back off."""
+        return ran_s > 60 or (streamed_s is not None and streamed_s > 10)
+
     def _run(self):
         backoff = 1.0
         while not self._stop.is_set():
@@ -230,8 +239,10 @@ class KotakFeed:
                 self.connected = True
                 self.on_status(self.status())
                 t0 = time.time()
+                self._authed_at = None
                 self.ws.run_forever(ping_interval=15, ping_timeout=8, sslopt={"context": fastrest.ssl_ctx()})
-                if time.time() - t0 > 60:
+                now = time.time()
+                if self.healthy(now - t0, now - self._authed_at if self._authed_at else None):
                     backoff = 1.0                  # it was a healthy session; retry fast
             except Exception as e:
                 self.last_error = f"{type(e).__name__}: {e}"[:200]
@@ -268,6 +279,7 @@ class KotakFeed:
                 self.div[ex] = v.get("divider", 100) or 100
             if mc == 1117 and not self.authed:
                 self.authed = True
+                self._authed_at = time.time()
                 if j.get("format") != "native_batch":
                     self.last_error = f"server format {j.get('format')} (expected native_batch)"
                     log.error(self.last_error)
