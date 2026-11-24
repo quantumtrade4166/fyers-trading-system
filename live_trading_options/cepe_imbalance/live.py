@@ -54,6 +54,7 @@ QUOTE_FRESH_S = 3.0                           # our tick must be this fresh to p
 WAIT_FIRST_S = 2.0                            # a marketable limit on a NIFTY / SENSEX option fills in ms
 WAIT_RETRY_S = 3.0
 CONFIRM_S = 5.0                               # after a cancel: time to learn the order's final state
+SETTLE_EVERY_S = 2.0                          # unsettled orders: re-read Kotak this often (live worker, 23-Nov fix)
 POLL_S = 0.15                                 # order status poll while waiting
 ATTEMPTS = {"SELL": 3, "BUY": 6}
 ACCOUNT_POLL_S = 3.0                          # Kotak positions + limits
@@ -362,6 +363,7 @@ class KotakLiveBook(PaperBook):
         self._seq = 0
         self._olock = threading.RLock()     # one order sequence at a time
         self._slock = threading.Lock()      # _settle() runs once at a time (exit legs run in parallel)
+        self._last_settle = 0.0             # recheck_unsettled(): last background re-read
         self._pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="CepeLiveExit")
         super().__init__(name, market, date, persist)
 
@@ -629,6 +631,22 @@ class KotakLiveBook(PaperBook):
         """Orders whose state was unknown: read them again; book any fill not booked yet."""
         with self._slock:
             self._settle_locked()
+
+    def recheck_unsettled(self) -> list:
+        """23-Nov-2026 fix: an order Kotak could not confirm used to be re-read ONLY when the next order / exit /
+        Start came. At the 09:15 open Kotak filled a SELL 25950 CE but its order book showed nothing for 7 s; the
+        book halted thinking it held nothing, and the short sat at Kotak for 5 h 20 min until Stop was pressed.
+        Now the live worker calls this every SETTLE_EVERY_S while anything is unsettled. -> trades booked now."""
+        if not self.unsettled or time.time() - self._last_settle < SETTLE_EVERY_S:
+            return []
+        self._last_settle = time.time()
+        n = len(self.trades)
+        try:
+            self._settle()
+        except Exception as e:
+            log.warning("%s re-check of unsettled orders failed: %s", self.name, txt(e)[:160])
+            return []
+        return self.trades[n:]
 
     def _settle_locked(self):
         for k, o in list(self.unsettled.items()):

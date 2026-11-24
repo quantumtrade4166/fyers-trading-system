@@ -52,6 +52,7 @@ def charges(trades, lot, date):
 
 
 LOT_FALLBACK = {"NIFTY": 65, "SENSEX": 20}
+PATH_EVERY_S = 15                  # MTM path sample (summary 'path')
 CHAIN_EACH_SIDE = 8                # replay player option chain: strikes each side of ATM
 
 
@@ -186,7 +187,7 @@ def run_day(und, date, lots=1, buffer=5.0, entry="09:20", exit_="15:15", folder=
                 if mt < lo:
                     lo, lo_t = mt, dt.datetime.fromtimestamp(prev, IST).strftime("%H:%M")
                 hi = max(hi, mt)
-                if not path or prev - path[-1][0] >= 60:
+                if not path or prev - path[-1][0] >= PATH_EVERY_S:
                     path.append((prev, mt, r.state.get("syn")))
                 if timeline is not None and (not timeline or prev - timeline[-1]["t"] >= 1.0):
                     timeline.append(snapshot(r, m, und, prev))

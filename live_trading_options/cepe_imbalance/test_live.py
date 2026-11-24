@@ -292,6 +292,65 @@ def test_unsettled_order_blocks_new_orders(universe):
     assert g.r.book.positions[c.key].lots == -1
 
 
+def _ten_am(r):
+    import datetime as dt
+    return dt.datetime.combine(dt.date.fromisoformat(r.date), dt.time(10, 0), tzinfo=dt.timezone(dt.timedelta(hours=5, minutes=30)))
+
+
+@pytest.mark.parametrize("book", [B, "NIFTY_SYN_LIVE"])
+def test_late_fill_on_halted_book_is_bought_back_by_the_worker(universe, book):
+    """23-Nov-2026 live incident: Kotak FILLED the first entry SELL but its order book showed nothing for 7 s;
+    the book halted thinking it held nothing, and the short sat alone at Kotak until Stop was pressed 5 h later.
+    Now the live worker re-reads the unknown order every few seconds and buys a late fill back at once."""
+    g = Rig(universe)
+    if book != B:
+        g.r = g.eng.runners[book]
+        g.r.ctx.in_session = lambda now=None: True
+        g.r.params["exit_time"] = ""
+        g.ctx.control.set(book, True)
+    atm = g.m.atm(N, g.e)
+    c = g.m.contract(N, g.e, atm, "CE")
+    g.k.no_fill.add(c.symbol)                              # Kotak's order book: still "open" ...
+    g.k.ignore_cancel.add(c.symbol)                        # ... and the cancel goes nowhere
+    g.eng.start(book)
+    b = g.r.book
+    assert b.unsettled and b.fault and g.r.state.get("phase") == "halted"
+    assert not any(p.lots for p in b.positions.values())   # the book thinks it is flat
+    # ... while Kotak had in fact filled it (shows up in its order book later)
+    oid = next(iter(b.unsettled.values()))["oid"]
+    g.k.orders[oid].update(ordSt="complete", fldQty="65", avgPrc="94.05")
+    g.k.no_fill.clear()
+    g.k.ignore_cancel.clear()
+    n_orders = len(g.k.orders)
+    b._last_settle = 0.0
+    g.eng.live_timer(book, g.r, _ten_am(g.r))              # the worker's timer - no button pressed
+    assert not b.unsettled
+    evs = [e["event"] for e in g.r.events]
+    assert "late_fill" in evs and "late_fill_exit" in evs, evs
+    assert len(g.k.orders) == n_orders + 1                 # one BUY back
+    assert not any(p.lots for p in b.positions.values())
+    assert g.broker_net() == {}                            # Kotak flat for this contract
+    assert "LATE FILL" in (g.r.state.get("blocked") or "")
+
+
+def test_unsettled_recheck_is_throttled(universe):
+    g = Rig(universe)
+    atm = g.m.atm(N, g.e)
+    c = g.m.contract(N, g.e, atm, "CE")
+    g.k.no_fill.add(c.symbol)
+    g.k.ignore_cancel.add(c.symbol)
+    g.eng.start(B)
+    b = g.r.book
+    reads = []
+    real = g.k.order_report
+    g.k.order_report = lambda: reads.append(1) or real()
+    b._last_settle = 0.0
+    b.recheck_unsettled()
+    first = len(reads)
+    b.recheck_unsettled()                                  # again at once: skipped (every SETTLE_EVERY_S)
+    assert first > 0 and len(reads) == first and b.unsettled
+
+
 def test_disarmed_never_sells_but_buys_back(universe):
     g = Rig(universe)
     g.eng.start(B)

@@ -758,6 +758,18 @@ class Engine:
         """Live books: retry an unfinished exit; square off at square-off time even if stopped by hand."""
         b = r.book
         try:
+            # 23-Nov fix: orders Kotak could not confirm are re-read every few seconds, not only on the next
+            # order. A fill found on a halted / stopped book is bought back at once (it must never sit alone).
+            late = b.recheck_unsettled() if hasattr(b, "recheck_unsettled") else []
+            if late:
+                r.event("late_fill", fills=[f"{t['side']} {t['lots']:g} {t['symbol']} @{t['price']}" for t in late])
+                log.error("%s LATE FILL found at Kotak: %s", n, [t["symbol"] for t in late])
+                if (not r.running or b.fault or r.state.get("phase") in ("halted", "stopped", "done", "exited"))                         and any(p.lots for p in b.positions.values()):
+                    out = b.exit_all("late fill on a halted book - closed at once")
+                    r.state["blocked"] = (f"LATE FILL at Kotak ({', '.join(t['symbol'] for t in late)}) on a halted book"
+                                          f" - bought back at once")
+                    r.event("late_fill_exit", exits=len(out), pending_exit=bool(b.pending_exit))
+                r.save_state()
             b.retry_exit()
             o, _close, sq = session(n, trading_day(n, now))
             if now >= sq and not r.state.get("live_eod_done") and any(p.lots for p in b.positions.values()):

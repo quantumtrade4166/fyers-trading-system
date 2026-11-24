@@ -28,7 +28,8 @@ html, body { margin: 0; background: var(--bg); color: var(--text); font: 13px/1.
 button, input, select { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
   border-radius: 6px; padding: 5px 10px; }
 button { cursor: pointer; } button:hover { border-color: var(--muted); } button[disabled] { opacity: .4; cursor: not-allowed; }
-input[type=number] { width: 92px; } input[type=time] { width: 112px; }
+input[type=number] { width: 92px; } input.tm { width: 100px; }
+input.bad { border-color: var(--down); }
 .up { color: var(--up); } .down { color: var(--down); } .mut { color: var(--muted); } .acc { color: var(--accent); }
 .lbl { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 
@@ -96,6 +97,19 @@ td.l { text-align: left; white-space: normal; }
 .livebox { padding: 10px 12px; display: grid; gap: 4px; font-size: 12.5px; border-bottom: 1px solid var(--line-soft); }
 .rules { padding: 10px 12px; font-size: 12px; color: var(--muted); line-height: 1.55; }
 .rules b { color: var(--text); }
+.chainw { overflow-x: auto; }
+table.chain th, table.chain td { padding: 4px 8px; text-align: right; }
+table.chain th.c, table.chain td.c { text-align: center; }
+table.chain td.k { text-align: center; font-weight: 700; background: var(--panel-2); }
+table.chain tr.atm td.k { background: var(--accent-soft); color: var(--text); }
+table.chain td.itm { background: rgba(86,140,255,.09); }
+table.chain td.held { font-weight: 700; }
+table.chain td.held.ce-h { box-shadow: inset 3px 0 0 var(--ce); }
+table.chain td.held.pe-h { box-shadow: inset -3px 0 0 var(--pe); }
+table.chain tr.synline td { padding: 0; height: 3px; background: var(--accent); }
+table.chain tr.tot td { font-weight: 700; border-top: 1px solid var(--line); }
+table.chain th.gc { color: var(--ce); } table.chain th.gp { color: var(--pe); }
+table.chain td.sp { color: var(--dim); font-size: 11.5px; }
 </style>
 </head>
 <body>
@@ -128,6 +142,11 @@ td.l { text-align: left; white-space: normal; }
   </div>
   <div class="blocked" id="blocked"></div>
 
+  <div class="box" style="margin-top:12px">
+    <h3>Option chain · our positions <span class="r mut" id="hChain">shaded = in the money · orange line = synthetic</span></h3>
+    <div class="chainw"><table class="chain" id="tChain"></table></div>
+  </div>
+
   <div class="row2">
     <div style="display:grid;gap:12px;min-width:0">
       <div class="box"><h3>MTM <span class="r mut" id="hMtm"></span></h3><div class="chart" id="chMtm"></div></div>
@@ -148,8 +167,8 @@ td.l { text-align: left; white-space: normal; }
           <label><span class="lbl">Lots per strike</span><input type="number" id="pLots" min="1" step="1"></label>
           <label><span class="lbl">Buffer (pts)</span><input type="number" id="pBuf" min="0" step="1"></label>
           <label><span class="lbl">Auto entry</span><select id="aOn"><option value="1">On</option><option value="0">Off</option></select></label>
-          <label><span class="lbl">Entry time</span><input type="time" id="aTime" step="1"></label>
-          <label><span class="lbl">Exit time</span><input type="time" id="pExit" step="1"></label>
+          <label><span class="lbl">Entry time (HH:MM:SS)</span><input type="text" id="aTime" class="tm" placeholder="09:15:20" maxlength="8" inputmode="numeric"></label>
+          <label><span class="lbl">Exit time (HH:MM:SS)</span><input type="text" id="pExit" class="tm" placeholder="15:15:00" maxlength="8" inputmode="numeric"></label>
           <label><span class="lbl">MTM stop ₹ (0 off)</span><input type="number" id="pStop" min="0" step="500"></label>
           <label><span class="lbl">Target ₹ (0 off)</span><input type="number" id="pTgt" min="0" step="500"></label>
           <label><span class="lbl">Lock from ₹</span><input type="number" id="pLkS" min="0" step="500"></label>
@@ -292,6 +311,53 @@ function render(s) {
   $('bStart').disabled = ROW.running || (MODE === 'live' && !(ROW.live && ROW.live.armed));
 }
 let POS = [];
+function chainView(ch) {
+  if (!ch || !ch.rows || !ch.rows.length) { $('tChain').innerHTML = `<tr><td class="mut" style="text-align:left">${esc((ch && ch.error) || 'no chain yet')}</td></tr>`; return; }
+  const open = {}, bk = {};
+  POS.forEach(p => { if (p.expiry !== ch.expiry) return; const k = p.kind + p.strike;
+    if (p.lots) open[k] = p; if (p.realized) bk[k] = (bk[k] || 0) + p.realized; });
+  const syn = ROW && ROW.syn ? ROW.syn.syn : null, atm = ROW && ROW.syn ? ROW.syn.atm : ch.atm;
+  const tot = {ceO: 0, ceB: 0, peO: 0, peB: 0}, rows = [];
+  let lineDone = syn == null;
+  const ba = q => q && q.bid != null && q.ask != null ? `${num(q.bid)} / ${num(q.ask)}` : '';
+  const rowsAsc = ch.rows.slice().sort((a, b) => a.strike - b.strike);     // normal chain order: low strikes on top
+  for (const x of rowsAsc) {
+    const k = x.strike;
+    if (!lineDone && k > syn) { rows.push('<tr class="synline"><td colspan="13"></td></tr>'); lineDone = true; }
+    const oc = open['CE' + k], op = open['PE' + k], bc = bk['CE' + k], bp = bk['PE' + k];
+    if (oc) tot.ceO += oc.unrealized; if (op) tot.peO += op.unrealized; if (bc) tot.ceB += bc; if (bp) tot.peB += bp;
+    const ci = syn != null && k < syn ? 'itm' : '', pi = syn != null && k > syn ? 'itm' : '';
+    const hc = oc ? 'held ce-h' : '', hp = op ? 'held pe-h' : '';
+    rows.push(`<tr class="${k === atm ? 'atm' : ''}">
+      <td class="${ci} ${cls(bc)}">${bc ? rs(bc) : ''}</td>
+      <td class="${ci} ${hc}">${oc ? (oc.lots < 0 ? -oc.lots + ' sold' : oc.lots + ' bought') : ''}</td>
+      <td class="${ci}">${oc ? num(oc.avg) : ''}</td>
+      <td class="${ci} ${oc ? cls(oc.unrealized) : ''}">${oc ? rs(oc.unrealized) : ''}</td>
+      <td class="${ci} sp">${ba(x.CE)}</td>
+      <td class="${ci} ${hc}">${num(x.CE && x.CE.ltp)}</td>
+      <td class="k">${num(k, 0)}</td>
+      <td class="${pi} ${hp}">${num(x.PE && x.PE.ltp)}</td>
+      <td class="${pi} sp">${ba(x.PE)}</td>
+      <td class="${pi} ${op ? cls(op.unrealized) : ''}">${op ? rs(op.unrealized) : ''}</td>
+      <td class="${pi}">${op ? num(op.avg) : ''}</td>
+      <td class="${pi} ${hp}">${op ? (op.lots < 0 ? -op.lots + ' sold' : op.lots + ' bought') : ''}</td>
+      <td class="${pi} ${cls(bp)}">${bp ? rs(bp) : ''}</td></tr>`);
+  }
+  if (!lineDone) rows.push('<tr class="synline"><td colspan="13"></td></tr>');
+  // anything held / booked outside the shown strikes still counts in the totals
+  const shown = new Set(ch.rows.map(x => x.strike));
+  POS.forEach(p => { if (p.expiry !== ch.expiry || shown.has(p.strike)) return;
+    if (p.kind === 'CE') { tot.ceO += p.lots ? p.unrealized : 0; tot.ceB += p.realized || 0; }
+    else { tot.peO += p.lots ? p.unrealized : 0; tot.peB += p.realized || 0; } });
+  const m = ROW && ROW.mtm ? ROW.mtm.total : null;
+  $('tChain').innerHTML = `<tr><th class="gc">Booked</th><th class="gc">Position</th><th class="gc">Sold @</th><th class="gc">Open P&amp;L</th><th class="gc">Bid / Ask</th><th class="gc">CE LTP</th>
+      <th class="c">Strike</th><th class="gp">PE LTP</th><th class="gp">Bid / Ask</th><th class="gp">Open P&amp;L</th><th class="gp">Sold @</th><th class="gp">Position</th><th class="gp">Booked</th></tr>` +
+    rows.join('') +
+    `<tr class="tot"><td class="${cls(tot.ceB)}">${rs(tot.ceB)}</td><td></td><td></td><td class="${cls(tot.ceO)}">${rs(tot.ceO)}</td><td></td>
+      <td class="mut">CE ${rs(tot.ceB + tot.ceO)}</td><td class="k ${cls(m)}">${rs(m)}</td><td class="mut">PE ${rs(tot.peB + tot.peO)}</td><td></td>
+      <td class="${cls(tot.peO)}">${rs(tot.peO)}</td><td></td><td></td><td class="${cls(tot.peB)}">${rs(tot.peB)}</td></tr>`;
+  $('hChain').textContent = `expiry ${ch.expiry} · shaded = in the money · orange line = synthetic`;
+}
 function renderLegs(r) {
   const y = r.syn || {}, atm = y.atm;
   const by = {}; POS.forEach(p => { if (p.lots) by[p.kind + p.strike] = p; });
@@ -331,9 +397,9 @@ function renderRules(r) {
 }
 function fillParams(r) {
   const p = r.params || {};
-  $('pLots').value = p.lots; $('pBuf').value = p.buffer; $('pExit').value = p.exit_time || '';
+  $('pLots').value = p.lots; $('pBuf').value = p.buffer; $('pExit').value = hhmmss(p.exit_time);
   $('pStop').value = p.mtm_stop; $('pTgt').value = p.profit_target; $('pLkS').value = p.lock_start; $('pLkG').value = p.lock_gap;
-  $('aOn').value = r.auto_start ? '1' : '0'; $('aTime').value = r.auto_time || '';
+  $('aOn').value = r.auto_start ? '1' : '0'; $('aTime').value = hhmmss(r.auto_time);
 }
 ['pLots', 'pBuf', 'pExit', 'pStop', 'pTgt', 'pLkS', 'pLkG', 'aOn', 'aTime'].forEach(id =>
   $(id).addEventListener('input', () => { dirty = true; $('pMsg').textContent = 'unsaved'; }));
@@ -395,7 +461,13 @@ $('bStopExit').onclick = () => act('stop_exit', `Stop ${BOOK()} and BUY BACK eve
 $('bReset').onclick = async () => {
   if (!confirm(`Archive today's PAPER ${UND} synthetic book and start a fresh one?`)) return;
   const j = await api(`/reset/${BOOK()}`, {start: false}); if (!j.ok) alert(j.error || 'refused'); histBook = null; refresh(); };
+const hhmmss = v => { const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(v || '').trim()); return m ? `${m[1].padStart(2, '0')}:${m[2]}:${m[3] || '00'}` : (v || ''); };
+const timeOk = v => { const m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(String(v || '').trim()); return !!m && +m[1] < 24 && +m[2] < 60 && +(m[3] || 0) < 60; };
 $('bSave').onclick = async () => {
+  let bad = false;
+  for (const id of ['aTime', 'pExit']) { const ok = timeOk($(id).value); $(id).classList.toggle('bad', !ok); bad = bad || !ok; }
+  if (bad) { $('pMsg').textContent = 'time must be HH:MM:SS, e.g. 09:15:20'; return; }
+  $('aTime').value = hhmmss($('aTime').value); $('pExit').value = hhmmss($('pExit').value);
   const p = {lots: +$('pLots').value, buffer: +$('pBuf').value, exit_time: $('pExit').value.trim(),
              mtm_stop: +$('pStop').value, profit_target: +$('pTgt').value, lock_start: +$('pLkS').value, lock_gap: +$('pLkG').value};
   if (ROW && ROW.book_lots && p.lots !== ROW.book_lots && !confirm(`The open book has ${ROW.book_lots} lot(s) per strike. Change to ${p.lots}? Orders go out NOW to resize every strike.`)) return;
@@ -428,10 +500,11 @@ document.querySelectorAll('#modeSeg button').forEach(b => b.onclick = () => { MO
 async function refresh() {
   if (busy) return; busy = true;
   try {
-    const [s, p] = await Promise.all([api('/state'), api(`/positions/${BOOK()}`)]);
+    const [s, p, ch] = await Promise.all([api('/state'), api(`/positions/${BOOK()}`), api(`/chain/${BOOK()}?n=8`)]);
     if (!s.underlyings) { $('feed').className = 'pill bad'; $('feed').textContent = 'engine offline'; $('blocked').className = 'blocked err'; $('blocked').textContent = s.error || 'strategy engine not reachable'; return; }
     POS = p.positions || [];
     render(s);
+    chainView(ch);
   } catch (e) { $('feed').className = 'pill bad'; $('feed').textContent = 'offline'; }
   finally { busy = false; }
 }
