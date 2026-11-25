@@ -1218,3 +1218,5 @@ DEFAULT = "cepe"
 # Synthetic to-and-fro (owner 23-Nov-2026): its own module, registered here
 from live_trading_options.cepe_imbalance.synthetic import SynToFro  # noqa: E402
 REGISTRY["syn_tofro"] = SynToFro
+from live_trading_options.cepe_imbalance.synthetic import SynToFroV2  # noqa: E402
+REGISTRY["syn_tofro_v2"] = SynToFroV2

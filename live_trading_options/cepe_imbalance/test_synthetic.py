@@ -233,3 +233,112 @@ def test_live_book_rolls_with_real_orders(universe):
     assert [kw["transaction_type"] for kw in placed] == ["B", "S"]          # buy back first, then sell
     assert len(g.k.orders) == n + 2
     assert g.broker_net() == {k: -65 for k, p in g.r.book.positions.items() if p.lots}
+
+
+# ── V2: option-price triggers (owner 25-Nov-2026) ───────────────────────────
+def v2(g):
+    from live_trading_options.cepe_imbalance.synthetic import SynToFroV2
+    g.r.strategy, g.r.strategy_name = SynToFroV2(), "syn_tofro_v2"
+    g.r.params = {**SynToFroV2.params, "exit_time": ""}
+    return g
+
+
+def test_v2_up_and_back(universe):
+    """Toy prices: CE(k+50) = PE(k) exactly at k+25, CE(k) = PE(k) at k. So V2 fires at the half-way / ATM
+    points (no buffer): call out 25025, put in 25050, back down put out 25025->..., call in at the ATM."""
+    g = v2(Rig(universe, 25000))
+    g.start()
+    assert g.legs() == {"CE": [25000, 25050, 25100], "PE": [24900, 24950, 25000]}
+    g.move(25024)
+    assert g.actions() == []                                   # 25050 CE still cheaper than 25000 PE
+    g.move(25026)
+    assert g.legs() == {"CE": [25050, 25100, 25150], "PE": [24900, 24950, 25000]}, g.actions()
+    assert g.actions()[-1].startswith("call out")
+    g.move(25049)
+    assert g.legs()["PE"] == [24900, 24950, 25000]             # 25050 PE still dearer than 25050 CE
+    g.move(25051)
+    assert g.legs() == {"CE": [25050, 25100, 25150], "PE": [24950, 25000, 25050]}, g.actions()
+    assert g.actions()[-1].startswith("put in")
+    g.move(25074)
+    assert len(g.actions()) == 2                               # next call out only at 25075
+    g.move(25024)                                              # PE 25000 >= CE 25050 -> put out
+    assert g.legs()["PE"] == [24900, 24950, 25000], g.actions()
+    assert g.actions()[-1].startswith("put out")
+    g.move(25001)
+    assert g.legs()["CE"] == [25050, 25100, 25150]
+    g.move(24999)                                              # CE 25000 <= PE 25000 -> call in
+    assert g.legs() == {"CE": [25000, 25050, 25100], "PE": [24900, 24950, 25000]}, g.actions()
+    assert g.actions()[-1].startswith("call in")
+    assert len(g.actions()) == 4
+
+
+def test_v2_down_mirror_and_no_early_call_in(universe):
+    """Falling from the start: put out at 24975 (half way), call in only once 24950 is the ATM."""
+    g = v2(Rig(universe, 25000))
+    g.start()
+    g.move(24974)
+    assert g.legs() == {"CE": [25000, 25050, 25100], "PE": [24850, 24900, 24950]}, g.actions()
+    assert [a.split(" (")[0] for a in g.actions()] == ["put out"]
+    g.move(24951)
+    assert len(g.actions()) == 1
+    g.move(24949)
+    assert g.legs() == {"CE": [24950, 25000, 25050], "PE": [24850, 24900, 24950]}, g.actions()
+    g.move(24924)                                              # next put out half way below 24950
+    assert g.legs()["PE"] == [24800, 24850, 24900], g.actions()
+
+
+def test_v2_waits_without_ltp(universe):
+    g = v2(Rig(universe, 25000))
+    g.start()
+    g.m.quotes.pop(g.m.contract("NIFTY", g.e, 25050, "CE").key)
+    g.r.strategy.evaluate(g.r.ctx)
+    assert "V2 waiting for LTP" in (g.r.state.get("blocked") or "")
+
+
+# ── Premium (V2) books, live (owner 25-Nov-2026) ────────────────────────────
+def test_premium_books_use_v2(universe):
+    m = Market(universe)
+    for n in ("NIFTY_SYN2", "SENSEX_SYN2", "NIFTY_SYN2_LIVE", "SENSEX_SYN2_LIVE"):
+        assert Runner(n, m, persist=False).strategy_name == "syn_tofro_v2", n
+        assert C.syn_version(n) == 2 and C.und_of(n) in ("NIFTY", "SENSEX") and "Premium" in C.label_of(n)
+    assert Runner("NIFTY_SYN", m, persist=False).strategy_name == "syn_tofro"
+
+
+def _live_rig(universe, name):
+    from live_trading_options.cepe_imbalance import test_live as TL
+    TL.LV.WAIT_FIRST_S = TL.LV.WAIT_RETRY_S = TL.LV.CONFIRM_S = 0.05
+    TL.LV.POLL_S = TL.LV.POS_AFTER_FILL_S = TL.LV.EXIT_RETRY_S = 0.0
+    g = TL.Rig(universe)
+    g.r = g.eng.runners[name]
+    g.r.ctx.in_session = lambda now=None: True
+    g.r.params["exit_time"] = ""
+    g.ctx.control.set(name, True)
+    return g
+
+
+def test_premium_live_rolls_on_option_prices(universe):
+    g = _live_rig(universe, "NIFTY_SYN2_LIVE")
+    assert g.eng.start("NIFTY_SYN2_LIVE")["ok"]
+    assert g.legs() == {"CE": {25600: 1, 25650: 1, 25700: 1}, "PE": {25500: 1, 25550: 1, 25600: 1}}
+    g.move(25650)                         # 25650 CE >= 25600 PE -> call out (fires half way, test rig moves in 50s)
+    lg = g.legs()
+    assert 25600 not in lg["CE"] and len(lg["CE"]) == 3, lg
+    placed = [kw for t, kw in g.k.calls if t == "place"]
+    assert [kw["transaction_type"] for kw in placed[6:8]] == ["B", "S"]     # buy back first, then sell
+    assert g.broker_net() == {k: -65 for k, p in g.r.book.positions.items() if p.lots}
+
+
+def test_lots_change_in_trade_resizes_live_book(universe):
+    """Owner: lots editable in the live market - 1 -> 2 lots adds on every strike (CE/PE pairs), 2 -> 1 buys back."""
+    g = _live_rig(universe, "NIFTY_SYN_LIVE")
+    g.eng.start("NIFTY_SYN_LIVE")
+    out = g.eng.set_params("NIFTY_SYN_LIVE", {"lots": 2})
+    assert out["ok"] and out.get("resize"), out
+    g.r.strategy.evaluate(g.r.ctx)
+    assert all(v == 2 for side in g.legs().values() for v in side.values()), g.legs()
+    assert g.broker_net() == {k: -130 for k, p in g.r.book.positions.items() if p.lots}
+    g.eng.set_params("NIFTY_SYN_LIVE", {"lots": 1})
+    g.r.strategy.evaluate(g.r.ctx)
+    assert all(v == 1 for side in g.legs().values() for v in side.values()), g.legs()
+    g.move(25650)                         # rolls after a resize move the whole strike (1 lot)
+    assert sum(g.legs()["CE"].values()) == sum(g.legs()["PE"].values()) == 3

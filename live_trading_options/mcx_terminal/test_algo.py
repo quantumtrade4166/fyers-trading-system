@@ -13,13 +13,14 @@ from live_trading_options.mcx_terminal import algo
 def test_allowed():
     ok = lambda m, p: algo._allowed(m, p.split("/"))[0]
     assert ok("GET", "state") and ok("GET", "days") and ok("GET", "day/2026-11-23") and ok("GET", "day/live")
-    for b in ("NIFTY_SYN", "SENSEX_SYN", "NIFTY_SYN_LIVE", "sensex_syn_live"):
+    for b in ("NIFTY_SYN", "SENSEX_SYN", "NIFTY_SYN_LIVE", "sensex_syn_live", "NIFTY_SYN2", "SENSEX_SYN2_LIVE"):
         assert ok("GET", f"history/{b}") and ok("GET", f"positions/{b}") and ok("POST", f"control/{b}")
         assert ok("POST", f"params/{b}") and ok("POST", f"auto/{b}")
     # nothing of the CE/PE books
     for b in ("NIFTY", "NIFTY_LIVE", "SENSEX_ST", "CRUDEOIL", "BTC_NR"):
         assert not ok("GET", f"history/{b}") and not ok("POST", f"control/{b}"), b
-    assert not ok("POST", "live/NIFTY_LIVE/arm") and ok("POST", "live/NIFTY_SYN_LIVE/arm")
+    assert not ok("POST", "live/NIFTY_LIVE/arm") and ok("POST", "live/NIFTY_SYN_LIVE/arm") and ok("POST", "live/SENSEX_SYN2_LIVE/arm")
+    assert not ok("GET", "history/NIFTY_SYN3")
     assert not ok("POST", "live/NIFTY_SYN/arm")                   # paper book has no arm
     assert not ok("POST", "reset/NIFTY_SYN_LIVE") and ok("POST", "reset/NIFTY_SYN")
     assert not ok("POST", "order/NIFTY_SYN_LIVE")

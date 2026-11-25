@@ -1044,6 +1044,47 @@ def test_watched_stop_offered_to_kotak_again():
     path.unlink(missing_ok=True)
 
 
+def test_sl_time_out_reply_is_found_not_doubled():
+    """25-Nov: Kotak can answer 'time out' to an order it DID place. A stop-loss whose reply was unclear is
+    looked up in Kotak's book; it is never placed a second time."""
+    from live_trading_options.mcx_terminal import sl as SL
+    q = {}
+    u, b, k, flag, path = _live("sltout", q)
+    ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+    q[ce.token] = _q(300.0)
+    cfg = {"auto_sl": {"arm_on": "sell", "sl_auto": True, "sl_val": 40, "sl_unit": "%", "qty": "full",
+                       "trail_auto": False, "trail_on": False, "trail_every": 10}}
+    spath = path.with_name("autosl_tout_test.json")
+    spath.unlink(missing_ok=True)
+    m = SL.AutoSL(b, lambda t: (q.get(t) or {}).get("ltp"), lambda: cfg, live=True, path=spath, notify=lambda n: None)
+    m.UNCLEAR_LOOKS = (0.0, 0.0)
+    b.before_reduce, b.before_flatten, b.on_push_other = m.before_reduce, m.before_flatten, m.on_push
+    b.place(ce.token, "S", 100, "MKT")
+    k.fill(b.orders[-1]["broker_id"], 100, 345.0)
+    b.poll()
+    real = k.place_order
+
+    def unclear(**kw):
+        r = real(**kw)
+        return {"Error": "time out"} if kw.get("order_type") == "SL" else r
+    k.place_order = unclear
+    b.sync_positions()
+    m._rows_at = 0.0
+    m.step()
+    r = m.recs[ce.token]
+    sls = [x for x in k.rows.values() if x.get("prcTp") == "SL" and x["ordSt"] == "trigger pending"]
+    check("unclear SL reply: the order Kotak placed is adopted", r.get("oid") and r["state"] == "pending" and len(sls) == 1,
+          (r, sls))
+    r["t_retry"] = 0
+    b.sync_positions()
+    m._rows_at = 0.0
+    m.step()
+    sls = [x for x in k.rows.values() if x.get("prcTp") == "SL" and x["ordSt"] == "trigger pending"]
+    check("unclear SL reply: never a second stop at Kotak", len(sls) == 1, sls)
+    spath.unlink(missing_ok=True)
+    path.unlink(missing_ok=True)
+
+
 def test_sl_modify_refused_by_kotak_is_caught():
     """30-Oct VPS: APPLY moved GOLD 142000CE to 645/677.5, Kotak said Ok, RMS refused (band max 635.46)
     and the order stayed at 483 - the screen showed 645. Now the record is checked against Kotak."""
@@ -1127,6 +1168,27 @@ def test_lost_reply_matched_without_tag():
           o["broker_id"] and str(o["broker_id"]).startswith("26102700") and o["status"] == "OPEN", o)
     check("hand order not taken for ours", not any(str(x.get("broker_id") or "").startswith("MANUAL") for x in b.orders))
     path.unlink(missing_ok=True)
+
+
+def test_time_out_two_words_and_empty_reply_are_not_refusals():
+    """25-Nov: Kotak said 'time out' (and once gave no order id at all) for orders it then FILLED."""
+    for tag, reply in (("tout", {"Error": "time out"}), ("noid", {})):
+        q = {}
+        u, b, k, flag, path = _live(tag, q)
+        ce = u.products["CRUDEOIL"].chains["2026-11-17"][9300.0]["CE"]
+        q[ce.token] = _q(500.0)
+        real = k.place_order
+
+        def lost(reply=reply, **kw):
+            real(**kw)
+            return reply
+        k.place_order = lost
+        b.place(ce.token, "S", 100, "MKT")
+        o = b.orders[-1]
+        check(f"{tag}: kept SENDING (not REJECTED) until Kotak's book is read", o["status"] != "REJECTED", o)
+        b.poll()
+        check(f"{tag}: found in Kotak's order book", bool(o["broker_id"]) and o["status"] != "REJECTED", o)
+        path.unlink(missing_ok=True)
 
 
 def test_goldm_amounts_and_open_entry():
@@ -1271,6 +1333,9 @@ def test_fastrest_shim():
     check("every call gets a timeout", seen.get("timeout") == (FR.CONNECT_TIMEOUT, FR.READ_TIMEOUT), seen)
     check("other requests names still there", sh.exceptions is __import__("requests").exceptions)
     check("timeout text detected", FR.is_timeout("Read timed out. (read timeout=8.0)") and not FR.is_timeout("RMS reject"))
+    check("Kotak's 25-Nov 'time out' wording is unclear, not refused",
+          FR.is_timeout("time out") and FR.is_timeout("Error: 504 Gateway Time-out") and FR.is_timeout("Connection aborted.")
+          and not FR.is_timeout("Order rejected: insufficient margin"))
 
 
 def test_audit_append_only():

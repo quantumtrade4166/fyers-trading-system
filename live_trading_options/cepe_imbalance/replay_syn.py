@@ -119,6 +119,7 @@ def snapshot(r, m, und, t):
                          round(p.unrealized(ltp), 2), q.bid if q else None, q.ask if q else None])
     legs.sort(key=lambda x: (x[0], -x[1]))
     lv = r.strategy.levels(r.ctx) if hasattr(r.strategy, "levels") else None
+    trig = [[x[0], x[1][0], x[1][1], x[2], x[3][0], x[3][1], x[4]] for x in r.strategy.triggers(r.ctx)]         if hasattr(r.strategy, "triggers") else None
     # option chain around ATM (strategy grid, CHAIN_EACH_SIDE strikes each side): [strike, CE, PE] at mark price
     chain, booked = [], []
     step = r.strategy.step(r.ctx)
@@ -135,7 +136,7 @@ def snapshot(r, m, und, t):
     for p in r.book.positions.values():                       # booked (closed) P&L per strike
         if p.realized:
             booked.append([p.kind, p.strike, round(p.realized, 2)])
-    return {"t": round(t, 1), "syn": r.state.get("syn"), "chain": chain, "booked": booked, "spot": m.ref_price(und, r.ctx.expiry), "atm": r.state.get("atm"),
+    return {"t": round(t, 1), "syn": r.state.get("syn"), "chain": chain, "booked": booked, "trig": trig, "spot": m.ref_price(und, r.ctx.expiry), "atm": r.state.get("atm"),
             "mtm": mt["total"], "real": mt["realized"], "imb": im["pct"], "ce": im["ce_value"], "pe": im["pe_value"],
             "legs": legs, "lv": lv}
 
@@ -151,12 +152,15 @@ def run_day(und, date, lots=1, buffer=5.0, entry="09:20", exit_="15:15", folder=
     t0 = dt.datetime.combine(day, dt.time.fromisoformat(entry), IST).timestamp()
     t1 = dt.datetime.combine(day, dt.time.fromisoformat(exit_), IST).timestamp()
     RR.Clock.t = t0 - 600
-    r = EN.Runner(und + (C.SYN_SUFFIX if rules == "syn" else ""), m, persist=False, date=date)
+    r = EN.Runner(und + (C.SYN_SUFFIX if rules in ("syn", "syn2") else ""), m, persist=False, date=date)
+    if rules == "syn2":                                   # V2 (owner 25-Nov): option-price triggers, replay only
+        r.strategy, r.strategy_name = SY.SynToFroV2(), "syn_tofro_v2"
+        r.params = dict(SY.SynToFroV2.params)
     st = r.strategy
     r.ctx.in_session = lambda now=None: True
-    if rules == "syn":
+    if rules in ("syn", "syn2"):
         assert isinstance(st, SY.SynToFro), r.strategy_name
-        r.params.update(lots=lots, buffer=buffer, exit_time="")
+        r.params.update(lots=lots, exit_time="", **({"buffer": buffer} if rules == "syn" else {}))   # V2 has no buffer
     else:
         saved = (EN.load_settings(und).get(und) or {}).get("params") or {}
         r.params.update({k: v for k, v in saved.items() if k in r.params})

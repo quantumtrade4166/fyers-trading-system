@@ -141,6 +141,9 @@ class Gateway:
         self.orderfeed = OrderFeed(self.sessions, self.live.on_push, self.live.on_push_position,
                                    on_reconnect=self.live._poll_kick.set).start()
         self.feed = KotakFeed(self.sessions, self.on_ticks, seg_of=self.seg_of)
+        from live_trading_options.feedlink.kite_assist import desk_dual
+        self.feed = desk_dual(self.feed, self.universe, self.last, self.on_ticks, C.DESK, f"gateway-{C.DESK}",
+                              cap=int(os.getenv("GATEWAY_KITE_CAP", "150")))
         self._resubscribe()
         self.feed.start()
         self.sl.start()
@@ -220,7 +223,10 @@ class Gateway:
         with self._plock:
             for t in ticks:
                 tok = t[0]
-                cur = self.last.get(tok) or [tok] + [None] * 11
+                cur = self.last.get(tok)
+                if cur is not None and t[10] and cur[10] and t[10] < cur[10] - 5 and t[10] < now - 60:
+                    continue                           # 25-Nov: an OLDER price (reconnect replay) never overwrites
+                cur = cur or [tok] + [None] * 11
                 for i in range(1, 12):
                     if t[i] is not None:
                         cur[i] = t[i]

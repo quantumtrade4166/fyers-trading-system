@@ -142,10 +142,18 @@ SYN_BOOKS = ("NIFTY", "SENSEX")
 SYN_AUTO_TIME = "09:20"
 
 
-def is_syn(name: str) -> bool:
+SYN2_SUFFIX = "_SYN2"        # owner 25-Nov-2026: "Premium" = V2 (option-price triggers), same books otherwise
+
+
+def syn_version(name: str) -> int:
+    """0 = not a synthetic book, 1 = Synthetic (V1, "_SYN"), 2 = Premium (V2, "_SYN2")."""
     if name.endswith(LIVE_SUFFIX):
         name = name[:-len(LIVE_SUFFIX)]
-    return name.endswith(SYN_SUFFIX)
+    return 2 if name.endswith(SYN2_SUFFIX) else 1 if name.endswith(SYN_SUFFIX) else 0
+
+
+def is_syn(name: str) -> bool:
+    return syn_version(name) > 0
 
 
 # SEPARATE LIVE ENGINE (owner 17-Nov-2026): the same program runs as two processes.
@@ -181,9 +189,9 @@ def und_of(name: str) -> str:
     """Book name -> underlying ("NIFTY_ST" -> "NIFTY", "BTC_NR" -> "BTC", "BTC_NR_ST" -> "BTC", "NIFTY_LIVE" -> "NIFTY")."""
     if name.endswith(LIVE_SUFFIX):
         name = name[:-len(LIVE_SUFFIX)]
-        return name[:-len(SYN_SUFFIX)] if name.endswith(SYN_SUFFIX) else name
-    if name.endswith(SYN_SUFFIX):
-        return name[:-len(SYN_SUFFIX)]
+    for suf in (SYN2_SUFFIX, SYN_SUFFIX):
+        if name.endswith(suf):
+            return name[:-len(suf)]
     if name.endswith(VARIANT_SUFFIX):
         name = name[:-len(VARIANT_SUFFIX)]
     if name.endswith(NR_SUFFIX):
@@ -202,8 +210,8 @@ def is_variant(name: str) -> bool:
 
 
 def label_of(name: str) -> str:
-    return UNDERLYINGS[und_of(name)]["label"] + (" · Synthetic" if is_syn(name) else "") + (" · Supertrend" if is_variant(name) else "") +         (" · New rules" if is_new_rules(name) else "") + (" · LIVE Kotak D" if is_live(name) else "")
+    return UNDERLYINGS[und_of(name)]["label"] + (" · Premium" if syn_version(name) == 2 else " · Synthetic" if is_syn(name) else "") + (" · Supertrend" if is_variant(name) else "") +         (" · New rules" if is_new_rules(name) else "") + (" · LIVE Kotak D" if is_live(name) else "")
 
 
 ALL_BOOKS = ORDER + tuple(n + VARIANT_SUFFIX for n in ORDER) + tuple(n + NR_SUFFIX for n in NR_BOOKS)     + tuple(n + NR_SUFFIX + VARIANT_SUFFIX for n in NR_BOOKS) + tuple(n + LIVE_SUFFIX for n in LIVE_BOOKS) \
-    + tuple(n + SYN_SUFFIX for n in SYN_BOOKS) + tuple(n + SYN_SUFFIX + LIVE_SUFFIX for n in SYN_BOOKS)
+    + tuple(n + SYN_SUFFIX for n in SYN_BOOKS) + tuple(n + SYN_SUFFIX + LIVE_SUFFIX for n in SYN_BOOKS)     + tuple(n + SYN2_SUFFIX for n in SYN_BOOKS) + tuple(n + SYN2_SUFFIX + LIVE_SUFFIX for n in SYN_BOOKS)

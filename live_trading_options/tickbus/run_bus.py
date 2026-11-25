@@ -46,8 +46,27 @@ def _kite_ticker():
     return KiteTicker(api_key, d.get("access_token", ""))
 
 
+def _night_stop(at=(23, 50)):
+    """25-Nov-2026: the bus runs one trading day (MCX ends 23:30 IST); it ends itself at 23:50 so the next
+    day starts on that day's Kite token (task TickBus, 08:55 Mon-Fri; the launcher retries until the token is
+    today's - Zerodha auto-login runs at 09:00)."""
+    import threading
+    import time
+    ist = dt.timezone(dt.timedelta(hours=5, minutes=30))
+
+    def run():
+        while True:
+            n = dt.datetime.now(ist)
+            if (n.hour, n.minute) >= at:
+                print(f"[tickbus] {n:%H:%M} - end of the trading day, exiting", flush=True)
+                os._exit(0)
+            time.sleep(20)
+    threading.Thread(target=run, daemon=True, name="night-stop").start()
+
+
 def main():
     _load_env()
+    _night_stop()
     hb = REPO / "live_trading_options" / "tickbus" / "data" / "bus_heartbeat.txt"
     hb.parent.mkdir(parents=True, exist_ok=True)
     ticker = _kite_ticker()

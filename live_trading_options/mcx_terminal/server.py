@@ -38,6 +38,7 @@ from live_trading_options.mcx_terminal import config as C
 from live_trading_options.mcx_terminal.access import AccessGuard
 from live_trading_options.mcx_terminal import instruments as I
 from live_trading_options.mcx_terminal.feed import KotakFeed
+from live_trading_options.feedlink.kite_assist import desk_dual
 from live_trading_options.mcx_terminal.kotak_session import SessionHolder
 from live_trading_options.mcx_terminal.paper import PaperBook
 from live_trading_options.mcx_terminal.live import LiveBook, txt as _txt
@@ -99,6 +100,7 @@ def _setup_logging():
     sh.setFormatter(fmt)
     root.addHandler(fh)
     root.addHandler(sh)
+
 
 
 class Engine:
@@ -353,6 +355,7 @@ class Engine:
             idx = [(p.spot.seg, C.SPOT[p.name][3], p.spot.token) for p in self.universe.products.values() if p.spot]
             self.feed = KotakFeed(self.sessions, self.on_ticks, self.on_status, seg_of=self.seg_of,
                                   indices=idx, ref_price=self.ltp)
+            self.feed = desk_dual(self.feed, self.universe, self.last, self.on_ticks, C.DESK, f"desk-{C.DESK}")
         # always-on: every future + the nearest option expiry of each product
         first = []
         for p in self.universe.products.values():
@@ -610,12 +613,15 @@ class Engine:
         rec = self.rec
         rec_last = self._rec_last
         ms = now_ms()
+        now_s = ms / 1000
         with self._plock:
             for t in ticks:
                 tok = t[0]
                 if tok in self._spot_toks and not t[1]:
                     continue                           # an index packet with no price (feed after hours): keep the last
                 cur = self.last.get(tok)
+                if cur is not None and t[10] and cur[10] and t[10] < cur[10] - 5 and t[10] < now_s - 60:
+                    continue                           # 25-Nov: an OLDER price (reconnect replay) never overwrites
                 if cur is None:
                     cur = [tok, None, None, None, None, None, None, None, None, None, None, None]
                 # merge: a lite tick has None for fields it does not carry

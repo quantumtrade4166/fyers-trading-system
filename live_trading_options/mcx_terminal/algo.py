@@ -22,7 +22,7 @@ from live_trading_options.mcx_terminal import audit
 from live_trading_options.mcx_terminal import config as C
 
 ENGINE = os.getenv("CEPE_URL", "http://127.0.0.1:47690")
-BOOK = re.compile(r"^(NIFTY|SENSEX)_SYN(_LIVE)?$")
+BOOK = re.compile(r"^(NIFTY|SENSEX)_SYN2?(_LIVE)?$")       # _SYN = Synthetic (V1), _SYN2 = Premium (V2)
 DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 GET_BOOK = {"history", "positions", "trades", "events", "live", "pnl", "chain"}
 POST_BOOK = {"control", "params", "auto", "reset", "order"}

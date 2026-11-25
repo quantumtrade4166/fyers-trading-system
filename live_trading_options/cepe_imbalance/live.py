@@ -62,6 +62,7 @@ POS_STALE_S = 20.0
 POS_AFTER_FILL_S = 2.5                        # Kotak's positions lag our fill: trust them only after this
 EXIT_RETRY_S = 3.0
 NO_REPLY_GIVE_UP_S = 60.0                     # a sent order with no reply and not in Kotak's book -> never placed
+LOST_WAIT_S = 10.0                            # an order with no clear reply: keep looking for it in Kotak's book
 
 _OID_KEYS = ("nOrdNo", "orderId", "order_id", "OrderNumber", "orderNumber", "ordNo")
 _MARGIN_WORDS = ("margin", "insufficient", "shortfall", "rms reject", "exposure", "limit exceeded", "pwr reject")
@@ -164,9 +165,18 @@ def session_error(r) -> bool:
     return bool(_SESSION_RE.search(text.lower()))
 
 
+_UNCLEAR = ("timeout", "time out", "timed out", "time-out", "read timed", "connection aborted", "connection reset",
+            "connection error", "remote end closed", "remotedisconnected", "max retries", "bad gateway",
+            "gateway time", "service unavailable", "temporarily unavailable", "no response", " 502", " 503", " 504")
+
+
 def is_timeout(text) -> bool:
-    t = str(text).lower()
-    return "timeout" in t or "timed out" in t
+    """An order reply that does NOT say whether Kotak took the order. 25-Nov-2026: Kotak answered two BUYs with
+    "time out" (with a space - the old check only knew "timeout" / "timed out"), the book took that as a refusal
+    and retried, and Kotak had filled all three -> a 3-lot LONG the book never knew about. Such a reply is now
+    UNKNOWN: the order is looked for in Kotak's order book, never re-sent blind."""
+    t = " " + str(text).lower()
+    return any(w in t for w in _UNCLEAR)
 
 
 def is_margin(text) -> bool:
@@ -572,8 +582,10 @@ class KotakLiveBook(PaperBook):
         err, oid = resp_error(r), extract_oid(r)
         if oid and not err:
             o.update(oid=oid, status="OPEN")
-        elif err and is_timeout(err):
-            o["reason"] = f"no reply from Kotak in {o['ms_ack'] / 1000:.0f}s - checking its order book"
+        elif not oid and (not err or is_timeout(err)):
+            # 25-Nov fix: "time out" / no order id = UNKNOWN (Kotak may well have taken it) - stays SENDING and
+            # is looked for in Kotak's order book; nothing is re-sent until it is found or proven absent
+            o["reason"] = f"no clear reply from Kotak ({err or 'no order id'}, {o['ms_ack'] / 1000:.1f}s) - checking its order book"
         else:
             o.update(status="REJECTED", reason=f"Kotak refused: {err or 'no order id'}")
         log.warning("LIVE %s %s %s %d @ %s (try %d, %s) -> %s %s (%d ms)", self.name, side, c.symbol, qty, px,
@@ -693,6 +705,11 @@ class KotakLiveBook(PaperBook):
                 if o["status"] not in TERMINAL:
                     self._cancel(o)
                     self._wait(o, CONFIRM_S)                 # a fill can land while cancelling
+                if o["status"] not in TERMINAL and not o.get("oid"):
+                    self._wait(o, LOST_WAIT_S)               # 25-Nov: no clear reply - keep looking in Kotak's book
+                    if o.get("oid") and o["status"] not in TERMINAL:
+                        self._cancel(o)
+                        self._wait(o, CONFIRM_S)
             got = o["filled"] - o["booked"]
             if got > 0:
                 t = self._book(c, side, got, o["avg"] or px, reason, {"order_ids": [o["oid"]]})

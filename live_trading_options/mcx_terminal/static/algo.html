@@ -54,7 +54,7 @@ input.bad { border-color: var(--down); }
 .badge.paper { color: var(--accent); border-color: var(--accent); }
 .badge.live { color: #fff; background: var(--live); border-color: var(--live); }
 
-main { padding: 12px 14px 40px; max-width: 1500px; margin: 0 auto; }
+main { padding: 12px 14px 40px; margin: 0; }
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; min-width: 0; }
 .big { font-size: 24px; font-weight: 700; margin-top: 2px; }
@@ -66,8 +66,26 @@ main { padding: 12px 14px 40px; max-width: 1500px; margin: 0 auto; }
 .blocked.warn { color: var(--accent); border-color: var(--accent); }
 .blocked.err { color: var(--down); border-color: var(--down); }
 
-.row2 { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(300px, 1fr); gap: 12px; margin-top: 12px; }
-@media (max-width: 980px) { .row2 { grid-template-columns: minmax(0, 1fr); } }
+main { max-width: none; }
+.lay3 { display: grid; grid-template-columns: 470px minmax(0, 1fr) 350px; gap: 12px; align-items: start; margin-bottom: 12px; }
+.colL { position: sticky; top: 62px; min-width: 0; }
+.colM, .colR { display: grid; gap: 12px; align-content: start; min-width: 0; }
+.colM .cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.chart.tall { height: 300px; }
+@media (max-width: 1500px) { .lay3 { grid-template-columns: 440px minmax(0, 1fr) 320px; } .chart.tall { height: 260px; } }
+@media (max-width: 1280px) {
+  .lay3 { grid-template-columns: 440px minmax(0, 1fr); }
+  .colR { grid-column: 2; }
+}
+@media (max-width: 1050px) {
+  .lay3 { grid-template-columns: minmax(0, 1fr); }
+  .colL { position: static; } .colR { grid-column: 1; }
+  .colM .cards { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+}
+.marg { border-color: var(--accent); }
+.marg .big { font-size: 22px; }
+.trg2 { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; font-size: 12px; margin-top: 4px; }
+.trg2 .due { color: var(--accent); font-weight: 700; }
 .box { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; min-width: 0; }
 .box h3 { margin: 0; padding: 8px 12px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
   border-bottom: 1px solid var(--line-soft); display: flex; align-items: center; gap: 10px; }
@@ -98,7 +116,11 @@ td.l { text-align: left; white-space: normal; }
 .rules { padding: 10px 12px; font-size: 12px; color: var(--muted); line-height: 1.55; }
 .rules b { color: var(--text); }
 .chainw { overflow-x: auto; }
-table.chain th, table.chain td { padding: 4px 8px; text-align: right; }
+table.chain { table-layout: fixed; }
+table.chain th, table.chain td { padding: 4px 5px; text-align: right; font-size: 12px; overflow: hidden; text-overflow: ellipsis; }
+table.chain th:nth-child(5) { width: 62px; }
+table.chain th:nth-child(2), table.chain th:nth-child(8) { width: 40px; }
+table.chain td.ltp { cursor: help; }
 table.chain th.c, table.chain td.c { text-align: center; }
 table.chain td.k { text-align: center; font-weight: 700; background: var(--panel-2); }
 table.chain tr.atm td.k { background: var(--accent-soft); color: var(--text); }
@@ -122,8 +144,8 @@ table.chain td.sp { color: var(--dim); font-size: 11.5px; }
     <a class="dk on">ALGO</a>
   </div>
   <span class="seg" id="undSeg"><button data-u="NIFTY">NIFTY</button><button data-u="SENSEX">SENSEX</button></span>
+  <span class="seg" id="verSeg" title="Synthetic = V1 (synthetic level triggers) · Premium = V2 (option-price triggers)"><button data-v="v1">Synthetic</button><button data-v="v2">Premium</button></span>
   <span class="seg" id="modeSeg"><button data-m="paper">PAPER</button><button data-m="live" class="lv">LIVE</button></span>
-  <span class="mut">Synthetic to-and-fro</span>
   <span class="sp"></span>
   <span class="pill" id="feed">connecting…</span>
   <span class="badge paper" id="modeBadge">PAPER</span>
@@ -131,29 +153,31 @@ table.chain td.sp { color: var(--dim); font-size: 11.5px; }
 </header>
 
 <main>
+ <div class="lay3">
+  <div class="colL">
+   <div class="box">
+    <h3>Option chain · our positions <span class="r mut" id="hChain">shaded = in the money · orange line = synthetic</span></h3>
+    <div class="chainw"><table class="chain" id="tChain"></table></div>
+  </div>
+  </div>
+  <div class="colM">
   <div class="cards">
+    <div class="card"><div class="lbl">MTM</div><div class="big" id="cMtm">–</div><div class="sub" id="cMtmSub"></div></div>
+    <div class="card marg"><div class="lbl">Margin used <span class="mut" style="text-transform:none;letter-spacing:0">(this book, Kotak P)</span></div>
+      <div class="big" id="cMarg">–</div><div class="sub" id="cMargSub"></div></div>
     <div class="card"><div class="lbl">Synthetic <span class="mut" style="text-transform:none;letter-spacing:0">(ATM + CE − PE, LTP)</span></div>
       <div class="big" id="cSyn">–</div><div class="sub" id="cSynSub"></div></div>
     <div class="card"><div class="lbl">Next adjustment</div><div class="trig" id="cTrig"></div></div>
-    <div class="card"><div class="lbl">MTM</div><div class="big" id="cMtm">–</div><div class="sub" id="cMtmSub"></div></div>
     <div class="card"><div class="lbl">CE / PE imbalance <span class="mut" style="text-transform:none;letter-spacing:0">(view only)</span></div>
       <div class="big" id="cImb">–</div><div class="sub" id="cImbSub"></div></div>
     <div class="card"><div class="lbl">Status</div><div class="big" id="cPhase" style="font-size:17px">–</div><div class="sub" id="cPhaseSub"></div></div>
   </div>
-  <div class="blocked" id="blocked"></div>
-
-  <div class="box" style="margin-top:12px">
-    <h3>Option chain · our positions <span class="r mut" id="hChain">shaded = in the money · orange line = synthetic</span></h3>
-    <div class="chainw"><table class="chain" id="tChain"></table></div>
-  </div>
-
-  <div class="row2">
-    <div style="display:grid;gap:12px;min-width:0">
-      <div class="box"><h3>MTM <span class="r mut" id="hMtm"></span></h3><div class="chart" id="chMtm"></div></div>
-      <div class="box"><h3>Synthetic · trigger lines <span class="r mut">dashed = next out / in levels</span></h3><div class="chart" id="chSyn"></div></div>
+  <div class="blocked" id="blocked" style="margin:0"></div>
+      <div class="box"><h3>MTM <span class="r mut" id="hMtm"></span></h3><div class="chart tall" id="chMtm"></div></div>
+      <div class="box"><h3>Synthetic <span class="r mut" id="hSynChart">dashed = next out / in levels</span></h3><div class="chart" id="chSyn"></div></div>
       <div class="box"><h3>CE / PE imbalance % <span class="r mut">shown only, never traded on</span></h3><div class="chart sm" id="chImb"></div></div>
-    </div>
-    <div style="display:grid;gap:12px;align-content:start;min-width:0">
+  </div>
+  <div class="colR">
       <div class="box">
         <h3>Controls <span class="r" id="bookName"></span></h3>
         <div class="livebox" id="liveBox" style="display:none"></div>
@@ -164,15 +188,15 @@ table.chain td.sp { color: var(--dim); font-size: 11.5px; }
           <button id="bReset" title="PAPER: archive today's paper book and start fresh">Reset paper</button>
         </div>
         <div class="set">
-          <label><span class="lbl">Lots per strike</span><input type="number" id="pLots" min="1" step="1"></label>
-          <label><span class="lbl">Buffer (pts)</span><input type="number" id="pBuf" min="0" step="1"></label>
+          <label title="Change in trade: the open book is resized at once (CE / PE pairs)"><span class="lbl">Lots per strike (live editable)</span><input type="number" id="pLots" min="1" step="1"></label>
+          <label id="bufBox"><span class="lbl">Buffer (pts)</span><input type="number" id="pBuf" min="0" step="1"></label>
           <label><span class="lbl">Auto entry</span><select id="aOn"><option value="1">On</option><option value="0">Off</option></select></label>
           <label><span class="lbl">Entry time (HH:MM:SS)</span><input type="text" id="aTime" class="tm" placeholder="09:15:20" maxlength="8" inputmode="numeric"></label>
           <label><span class="lbl">Exit time (HH:MM:SS)</span><input type="text" id="pExit" class="tm" placeholder="15:15:00" maxlength="8" inputmode="numeric"></label>
-          <label><span class="lbl">MTM stop ₹ (0 off)</span><input type="number" id="pStop" min="0" step="500"></label>
+          <label><span class="lbl">MTM loss ₹ (0 off)</span><input type="number" id="pStop" min="0" step="500"><span class="mut" id="pStopPct" style="font-size:11px"></span></label>
           <label><span class="lbl">Target ₹ (0 off)</span><input type="number" id="pTgt" min="0" step="500"></label>
-          <label><span class="lbl">Lock from ₹</span><input type="number" id="pLkS" min="0" step="500"></label>
-          <label><span class="lbl">Lock gap ₹</span><input type="number" id="pLkG" min="0" step="500"></label>
+          <label title="Trailing profit lock: once the day's best MTM reaches this, exit if MTM falls back by the trail gap"><span class="lbl">Trail starts at ₹</span><input type="number" id="pLkS" min="0" step="500"></label>
+          <label title="How far MTM may fall below the day's best before exiting (0 = trail off)"><span class="lbl">Trail gap ₹</span><input type="number" id="pLkG" min="0" step="500"><span class="mut" id="pLkInfo" style="font-size:11px"></span></label>
           <div class="msg"><button id="bSave">Save settings</button><span class="mut" id="pMsg"></span></div>
         </div>
       </div>
@@ -184,10 +208,9 @@ table.chain td.sp { color: var(--dim); font-size: 11.5px; }
         <h3>Rules</h3>
         <div class="rules" id="rules"></div>
       </div>
-    </div>
   </div>
-
-  <div class="box" style="margin-top:12px">
+ </div>
+ <div class="box">
     <h3><span class="tabs" id="lowTabs"><button data-t="adj" class="on">Adjustments</button><button data-t="trades">Trades</button>
       <button data-t="orders">Live orders</button><button data-t="events">All events</button><button data-t="days">Daily P&amp;L</button></span>
       <span class="r mut" id="hLow"></span></h3>
@@ -209,7 +232,9 @@ const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).
 
 let UND = lget('algo_und') === 'SENSEX' ? 'SENSEX' : 'NIFTY';
 let MODE = lget('algo_mode') === 'live' ? 'live' : 'paper';
-const BOOK = () => UND + '_SYN' + (MODE === 'live' ? '_LIVE' : '');
+let VER = lget('algo_ver') === 'v2' ? 'v2' : 'v1';                 // v1 = Synthetic, v2 = Premium
+const VNAME = () => VER === 'v2' ? 'Premium' : 'Synthetic';
+const BOOK = () => UND + (VER === 'v2' ? '_SYN2' : '_SYN') + (MODE === 'live' ? '_LIVE' : '');
 let ROW = null, low = 'adj', dirty = false, lastT = 0, histBook = null, busy = false, lvLines = [];
 
 async function api(path, body) {
@@ -245,8 +270,10 @@ function pushRows(list) {
     const t = Math.floor(x.t) + IST;
     if (rows.mtm.length && t <= rows.mtm[rows.mtm.length - 1].time) continue;      // one point per second
     rows.mtm.push({time: t, value: x.mtm ?? 0});
-    if (x.st != null) rows.syn.push({time: t, value: x.st});
-    if (x.imb != null) rows.imb.push({time: t, value: x.imb});
+    // 25-Nov: every chart gets a point at every time (an empty one when the value is missing) - the charts are
+    // kept in step by point index, so a shorter series (no imbalance while the book was flat) froze the others
+    rows.syn.push(x.st != null ? {time: t, value: x.st} : {time: t});
+    rows.imb.push(x.imb != null ? {time: t, value: x.imb} : {time: t});
     lastT = Math.max(lastT, x.t);
   }
 }
@@ -273,9 +300,12 @@ const PHASE = {in: 'In trade', wait_entry: 'Waiting to enter', stopped: 'Stopped
                halted: 'HALTED (order problem)'};
 let lastLv = '';
 function render(s) {
-  const f = s.feed || {};
-  $('feed').className = 'pill ' + (f.authed ? 'ok' : 'bad');
-  $('feed').textContent = f.authed ? `Kotak feed ok · ${f.subscribed ?? ''} subs` : 'feed down';
+  const f = s.feed || {}, kf = f.kite;
+  const kOn = !!(kf && kf.connected);
+  $('feed').className = 'pill ' + (f.authed || kOn ? 'ok' : 'bad');
+  $('feed').textContent = (f.authed ? `Kotak ok · ${f.subscribed ?? ''} subs` : 'Kotak DOWN') +
+    (kf ? (kOn ? ` · Kite ok · ${kf.subscribed ?? ''}` : ' · Kite off') : '');
+  $('feed').title = kf ? `Prices from Kotak + Kite (newest wins). Kite: ${kf.ticks ?? 0} ticks, last ${kf.last_tick_age ?? '-'} s ago` : 'Prices from Kotak';
   ROW = (s.underlyings || []).find(u => u.name === BOOK());
   $('bookName').innerHTML = `<span class="mut">${esc(BOOK())}</span>`;
   if (!ROW) { $('blocked').className = 'blocked err'; $('blocked').textContent = `${BOOK()} is not running in the engine yet (engine restart needed after the deploy).`; return; }
@@ -283,7 +313,11 @@ function render(s) {
   $('cSyn').textContent = syn == null ? '–' : num(syn, 2);
   $('cSynSub').innerHTML = `ATM <b>${y.atm == null ? '–' : num(y.atm, 0)}</b> · from ${y.syn_k == null ? '–' : num(y.syn_k, 0)} CE/PE · index ${num(ROW.ref, 2)}`;
   const d = p => p == null || syn == null ? '' : (p - syn > 0 ? '+' : '') + num(p - syn, 1);
-  $('cTrig').innerHTML = lv.call_out == null ? '<span class="mut">no position</span>' : `
+  if (y.triggers && y.triggers.length) {
+    const T = {}; y.triggers.forEach(t => { T[t.move] = t; });
+    const ln = t => t ? `<span class="${t.due ? 'due' : (/call/.test(t.move) ? 'ce' : 'pe')}">${t.move}</span><span>${t.a} ${num(t.a_ltp)} ${t.op === '>=' ? '≥' : '≤'} ${t.b} ${num(t.b_ltp)}${t.due ? ' ✓' : ''}</span>` : '';
+    $('cTrig').innerHTML = `<div class="trg2">${ln(T['call out'])}${ln(T['put in'])}${ln(T['put out'])}${ln(T['call in'])}</div>`;
+  } else $('cTrig').innerHTML = lv.call_out == null ? '<span class="mut">no position</span>' : `
     <span class="ce">Call out</span><span>≥ ${num(lv.call_out, 0)}</span><span class="d">${d(lv.call_out)}</span>
     <span class="pe">Put in</span><span>≥ ${num(lv.put_in, 0)}</span><span class="d">${d(lv.put_in)}</span>
     <span class="pe">Put out</span><span>≤ ${num(lv.put_out, 0)}</span><span class="d">${d(lv.put_out)}</span>
@@ -297,6 +331,7 @@ function render(s) {
   const ip = im.pct == null ? null : Math.round(im.pct * 10) / 10 || 0;
   $('cImb').textContent = ip == null ? '–' : (ip > 0 ? '+' : ip < 0 ? '−' : '') + num(Math.abs(ip), 1) + '%';
   $('cImbSub').innerHTML = `<span class="ce">CE ${rs(im.ce_value)}</span> · <span class="pe">PE ${rs(im.pe_value)}</span>`;
+  renderMargin(ROW);
   $('cPhase').textContent = (ROW.running ? '● ' : '') + (PHASE[ROW.phase] || (ROW.running ? 'Running' : 'Idle'));
   $('cPhase').className = 'big ' + (ROW.phase === 'halted' ? 'down' : ROW.running ? 'up' : 'mut');
   $('cPhaseSub').textContent = `expiry ${ROW.expiry || '–'} · lot ${ROW.lot} · step ${num(y.step, 0)} · auto ${ROW.auto_start ? ROW.auto_time : 'off'} · ${ROW.session.in_session ? 'market open' : 'market closed'}`;
@@ -323,39 +358,35 @@ function chainView(ch) {
   const rowsAsc = ch.rows.slice().sort((a, b) => a.strike - b.strike);     // normal chain order: low strikes on top
   for (const x of rowsAsc) {
     const k = x.strike;
-    if (!lineDone && k > syn) { rows.push('<tr class="synline"><td colspan="13"></td></tr>'); lineDone = true; }
+    if (!lineDone && k > syn) { rows.push('<tr class="synline"><td colspan="9"></td></tr>'); lineDone = true; }
     const oc = open['CE' + k], op = open['PE' + k], bc = bk['CE' + k], bp = bk['PE' + k];
     if (oc) tot.ceO += oc.unrealized; if (op) tot.peO += op.unrealized; if (bc) tot.ceB += bc; if (bp) tot.peB += bp;
     const ci = syn != null && k < syn ? 'itm' : '', pi = syn != null && k > syn ? 'itm' : '';
     const hc = oc ? 'held ce-h' : '', hp = op ? 'held pe-h' : '';
     rows.push(`<tr class="${k === atm ? 'atm' : ''}">
       <td class="${ci} ${cls(bc)}">${bc ? rs(bc) : ''}</td>
-      <td class="${ci} ${hc}">${oc ? (oc.lots < 0 ? -oc.lots + ' sold' : oc.lots + ' bought') : ''}</td>
-      <td class="${ci}">${oc ? num(oc.avg) : ''}</td>
+      <td class="${ci} ${hc}" title="${oc ? (oc.lots < 0 ? 'sold ' : 'bought ') + Math.abs(oc.lots) + ' @ ' + num(oc.avg) : ''}">${oc ? (oc.lots < 0 ? '−' : '+') + Math.abs(oc.lots) : ''}</td>
       <td class="${ci} ${oc ? cls(oc.unrealized) : ''}">${oc ? rs(oc.unrealized) : ''}</td>
-      <td class="${ci} sp">${ba(x.CE)}</td>
-      <td class="${ci} ${hc}">${num(x.CE && x.CE.ltp)}</td>
+      <td class="${ci} ${hc} ltp" title="${k} CE bid / ask ${ba(x.CE)}">${num(x.CE && x.CE.ltp)}</td>
       <td class="k">${num(k, 0)}</td>
-      <td class="${pi} ${hp}">${num(x.PE && x.PE.ltp)}</td>
-      <td class="${pi} sp">${ba(x.PE)}</td>
+      <td class="${pi} ${hp} ltp" title="${k} PE bid / ask ${ba(x.PE)}">${num(x.PE && x.PE.ltp)}</td>
       <td class="${pi} ${op ? cls(op.unrealized) : ''}">${op ? rs(op.unrealized) : ''}</td>
-      <td class="${pi}">${op ? num(op.avg) : ''}</td>
-      <td class="${pi} ${hp}">${op ? (op.lots < 0 ? -op.lots + ' sold' : op.lots + ' bought') : ''}</td>
+      <td class="${pi} ${hp}" title="${op ? (op.lots < 0 ? 'sold ' : 'bought ') + Math.abs(op.lots) + ' @ ' + num(op.avg) : ''}">${op ? (op.lots < 0 ? '−' : '+') + Math.abs(op.lots) : ''}</td>
       <td class="${pi} ${cls(bp)}">${bp ? rs(bp) : ''}</td></tr>`);
   }
-  if (!lineDone) rows.push('<tr class="synline"><td colspan="13"></td></tr>');
+  if (!lineDone) rows.push('<tr class="synline"><td colspan="9"></td></tr>');
   // anything held / booked outside the shown strikes still counts in the totals
   const shown = new Set(ch.rows.map(x => x.strike));
   POS.forEach(p => { if (p.expiry !== ch.expiry || shown.has(p.strike)) return;
     if (p.kind === 'CE') { tot.ceO += p.lots ? p.unrealized : 0; tot.ceB += p.realized || 0; }
     else { tot.peO += p.lots ? p.unrealized : 0; tot.peB += p.realized || 0; } });
   const m = ROW && ROW.mtm ? ROW.mtm.total : null;
-  $('tChain').innerHTML = `<tr><th class="gc">Booked</th><th class="gc">Position</th><th class="gc">Sold @</th><th class="gc">Open P&amp;L</th><th class="gc">Bid / Ask</th><th class="gc">CE LTP</th>
-      <th class="c">Strike</th><th class="gp">PE LTP</th><th class="gp">Bid / Ask</th><th class="gp">Open P&amp;L</th><th class="gp">Sold @</th><th class="gp">Position</th><th class="gp">Booked</th></tr>` +
+  $('tChain').innerHTML = `<tr><th class="gc">Booked</th><th class="gc" title="lots held (hover: sold price)">Lots</th><th class="gc">Open</th><th class="gc">CE LTP</th>
+      <th class="c">Strike</th><th class="gp">PE LTP</th><th class="gp">Open</th><th class="gp" title="lots held (hover: sold price)">Lots</th><th class="gp">Booked</th></tr>` +
     rows.join('') +
-    `<tr class="tot"><td class="${cls(tot.ceB)}">${rs(tot.ceB)}</td><td></td><td></td><td class="${cls(tot.ceO)}">${rs(tot.ceO)}</td><td></td>
-      <td class="mut">CE ${rs(tot.ceB + tot.ceO)}</td><td class="k ${cls(m)}">${rs(m)}</td><td class="mut">PE ${rs(tot.peB + tot.peO)}</td><td></td>
-      <td class="${cls(tot.peO)}">${rs(tot.peO)}</td><td></td><td></td><td class="${cls(tot.peB)}">${rs(tot.peB)}</td></tr>`;
+    `<tr class="tot"><td class="${cls(tot.ceB)}">${rs(tot.ceB)}</td><td></td><td class="${cls(tot.ceO)}">${rs(tot.ceO)}</td>
+      <td class="mut">CE ${rs(tot.ceB + tot.ceO)}</td><td class="k ${cls(m)}">${rs(m)}</td><td class="mut">PE ${rs(tot.peB + tot.peO)}</td>
+      <td class="${cls(tot.peO)}">${rs(tot.peO)}</td><td></td><td class="${cls(tot.peB)}">${rs(tot.peB)}</td></tr>`;
   $('hChain').textContent = `expiry ${ch.expiry} · shaded = in the money · orange line = synthetic`;
 }
 function renderLegs(r) {
@@ -370,6 +401,27 @@ function renderLegs(r) {
     `<tr><td colspan="6" class="l mut" style="text-align:center">synthetic ${y.syn == null ? '–' : num(y.syn, 2)} · ATM ${atm == null ? '–' : num(atm, 0)}</td></tr>` +
     [...pe].reverse().map(([k, n]) => line('PE', k, n)).join('');
   $('hLegs').textContent = ce.length || pe.length ? `${ce.reduce((a, x) => a + x[1], 0)} CE · ${pe.reduce((a, x) => a + x[1], 0)} PE lots` : 'flat';
+}
+let MARGIN = null;
+function renderMargin(r) {
+  const L = r.live, a = (L && L.account) || {};
+  MARGIN = L && L.book_margin != null && L.book_margin > 0 ? L.book_margin : null;
+  if (MODE !== 'live' || !L) {
+    $('cMarg').textContent = '–'; $('cMarg').className = 'big mut';
+    $('cMargSub').textContent = 'paper book - switch to LIVE for the real Kotak margin';
+  } else {
+    // this book's margin = Kotak margin used now minus what was used just before its entry (other trades on Kotak P
+    // the same day shift it); until that is known, show the whole account's margin used
+    $('cMarg').className = 'big';
+    $('cMarg').textContent = MARGIN != null ? rs(MARGIN) : (r.open_positions ? rs(a.margin_used) + ' (account)' : 'flat');
+    const m = r.mtm ? r.mtm.total : null, pct = MARGIN && m != null ? m / MARGIN * 100 : null;
+    $('cMargSub').innerHTML = `${pct != null ? `MTM <b class="${cls(m)}">${(pct > 0 ? '+' : '') + num(pct, 2)}%</b> of margin · ` : ''}account used ${rs(a.margin_used)} · free ${rs(a.net)}` +
+      (a.limits_age != null && a.limits_age > 30 ? ` · <span class="down">margin ${num(a.limits_age, 0)} s old</span>` : '');
+  }
+  const stop = +($('pStop').value || 0);
+  $('pStopPct').textContent = MARGIN && stop ? `= ${num(stop / MARGIN * 100, 2)}% of margin` : '';
+  const ls = +($('pLkS').value || 0), lg = +($('pLkG').value || 0);
+  $('pLkInfo').textContent = r.lock_floor != null ? `exit below ${rs(r.lock_floor)} (best ${rs(r.mtm_peak)})` : (ls && lg ? `arms at ${rs(ls)}` : 'off');
 }
 function renderLive(r) {
   const L = r.live, box = $('liveBox');
@@ -388,6 +440,18 @@ function renderLive(r) {
 }
 function renderRules(r) {
   const y = r.syn || {}, s = y.step || 50, b = y.buffer ?? 5;
+  $('bufBox').style.display = VER === 'v2' ? 'none' : '';
+  $('hSynChart').textContent = VER === 'v2' ? 'Premium: triggers come from option prices (see Next adjustment)' : 'dashed = next out / in levels';
+  if (VER === 'v2') {
+    $('rules').innerHTML = `<b>Premium</b> (V2): same book and moves as Synthetic - only the trigger differs: option LTPs, every tick, no buffer. K = 1st sold CE, J = 1st sold PE, grid ${s}.<br>
+    <b>Entry</b>: sell CE ATM / +1 / +2 and PE ATM / −1 / −2 at the synthetic ATM.<br>
+    <b>Call out</b>: LTP(CE K+${s}) ≥ LTP(PE K) → 1st CE moves past the last CE.<br>
+    <b>Put out</b>: LTP(PE J−${s}) ≥ LTP(CE J) → 1st PE moves past the last PE.<br>
+    <b>Call in</b>: LTP(CE K−${s}) ≤ LTP(PE K−${s}) → farthest CE moves to K−${s} (new ATM).<br>
+    <b>Put in</b>: LTP(PE J+${s}) ≤ LTP(CE J+${s}) → farthest PE moves to J+${s} (new ATM).<br>
+    <b>Exits</b>: exit time, MTM loss, target, trailing profit lock — each exits all, done for the day.`;
+    return;
+  }
   $('rules').innerHTML = `<b>Synthetic</b> = ATM strike + CE − PE (LTP), every tick. Grid ${s}, buffer ${b}.<br>
     <b>Entry</b>: sell CE ATM / +1 / +2 and PE ATM / −1 / −2 at the synthetic ATM.<br>
     <b>Call out</b>: synthetic ≥ lowest CE + ${s / 2 + b} → that CE moves past the last CE.<br>
@@ -454,8 +518,8 @@ async function act(action, ask) {
   refresh();
 }
 $('bStart').onclick = () => act('start', MODE === 'live'
-  ? `START LIVE ${UND} synthetic to-and-fro on Kotak P?\nIt SELLS CE and PE at ATM/OTM1/OTM2, ${$('pLots').value} lot(s) each, with REAL orders now.`
-  : `Start PAPER ${UND} synthetic to-and-fro now?`);
+  ? `START LIVE ${UND} ${VNAME()} on Kotak P?\nIt SELLS CE and PE at ATM/OTM1/OTM2, ${$('pLots').value} lot(s) each, with REAL orders now.`
+  : `Start PAPER ${UND} ${VNAME()} now?`);
 $('bStop').onclick = () => act('stop', `Stop the rules on ${BOOK()}? Positions are kept.`);
 $('bStopExit').onclick = () => act('stop_exit', `Stop ${BOOK()} and BUY BACK every leg${MODE === 'live' ? ' with REAL orders' : ''}?`);
 $('bReset').onclick = async () => {
@@ -477,7 +541,7 @@ $('bSave').onclick = async () => {
   dirty = false; refresh();
 };
 async function arm() {
-  const t = prompt(`ARM REAL ORDERS for ${BOOK()} on Kotak P.\nOnly one live index/book can be armed at a time.\nType LIVE to arm:`);
+  const t = prompt(`ARM REAL ORDERS for ${UND} ${VNAME()} (${BOOK()}) on Kotak P.\nOnly one live index/book can be armed at a time.\nType LIVE to arm:`);
   if (!t || t.trim().toUpperCase() !== 'LIVE') return;
   const j = await api(`/live/${BOOK()}/arm`, {armed: true, confirm: 'LIVE'}); if (!j.ok) alert(j.error || 'refused'); refresh();
 }
@@ -488,14 +552,16 @@ async function disarm() {
 
 // ── switches + loops ───────────────────────────────────────────────────
 function paintSwitches() {
+  document.querySelectorAll('#verSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === VER));
   document.querySelectorAll('#undSeg button').forEach(b => b.classList.toggle('on', b.dataset.u === UND));
   document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.m === MODE));
   $('modeBadge').className = 'badge ' + (MODE === 'live' ? 'live' : 'paper'); $('modeBadge').textContent = MODE === 'live' ? 'LIVE · Kotak P' : 'PAPER';
-  document.title = `Algo · ${UND} ${MODE === 'live' ? 'LIVE' : 'paper'}`;
+  document.title = `Algo · ${VNAME()} · ${UND} ${MODE === 'live' ? 'LIVE' : 'paper'}`;
 }
 function switched() { dirty = false; histBook = null; lastLv = ''; paintSwitches(); refresh(); loadHistory(true); renderLow(); }
 document.querySelectorAll('#undSeg button').forEach(b => b.onclick = () => { UND = b.dataset.u; lset('algo_und', UND); switched(); });
 document.querySelectorAll('#modeSeg button').forEach(b => b.onclick = () => { MODE = b.dataset.m; lset('algo_mode', MODE); switched(); });
+document.querySelectorAll('#verSeg button').forEach(b => b.onclick = () => { VER = b.dataset.v; lset('algo_ver', VER); switched(); });
 
 async function refresh() {
   if (busy) return; busy = true;

@@ -29,6 +29,7 @@ LIVE: the "{NAME}_LIVE" books send REAL orders to Kotak D (live.py). Everything 
 import bisect
 import datetime as dt
 import json
+import os
 import logging
 import socket
 import sys
@@ -265,7 +266,8 @@ def health():
     f = E.feed.status() if E.feed else {}
     return {"ok": bool(f.get("authed")), "feed": f, "delta_ok": bool((f.get("delta") or {}).get("connected")),
             "universe_date": E.u.file_date, "writer": W.status(), "gc": dict(diag.GC), "role": C.ROLE,
-            "live_engine": _live_last if C.ROLE == "paper" else None}
+            "live_engine": _live_last if C.ROLE == "paper" else None,
+            "rest_backup": E.rest_backup.status() if getattr(E, "rest_backup", None) else None}
 
 
 @app.get("/debug/prof")
@@ -641,6 +643,16 @@ def main():
     E = Engine(u, market, live=live_ctx, role=C.ROLE)
     kotak_feed = MultiFeed(sessions, E.on_ticks)
     feed = kotak_feed if live_role else crypto.CompositeFeed(kotak_feed, crypto.DeltaFeed(E.on_ticks))
+    E.kite = None
+    if os.getenv("CEPE_KITE_ASSIST", "1") == "1":         # 25-Nov: Kite prices too (local tick bus), newest wins
+        try:
+            from live_trading_options.feedlink import kite_assist as KA
+            E.kite = KA.for_cepe(u, market, E.on_ticks, ("NFO", "BFO") if live_role else ("NFO", "BFO", "MCX"),
+                                 cap=int(os.getenv("CEPE_KITE_CAP", "300" if live_role else "900")),
+                                 tag=f"cepe-{C.ROLE}")
+            feed = KA.DualFeed(feed, E.kite)
+        except Exception as e:
+            log.warning("Kite assist off (Kotak only): %s", e)
     E.feed = feed
     E.refresh_subscriptions()                             # spots + futures first; windows once ATM is known
     diag.gc_guard()                                       # everything loaded so far is permanent (see diag.py)
@@ -649,6 +661,10 @@ def main():
         W.start()                                         # paper-book + chart files: written off the hot path
     diag.start_watchdog(E, lambda: kotak_feed)
     feed.start()
+    if live_role:                                         # 25-Nov: REST quotes while Kotak's stream is silent
+        from live_trading_options.cepe_imbalance.rest_backup import RestBackup
+        E.rest_backup = RestBackup(E, kotak_feed, sessions)
+        E.rest_backup.start()
     E.run_timer()
     import threading                                      # past-day digests, so the day table is instant
     if E.runners and not live_role:

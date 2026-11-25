@@ -677,7 +677,7 @@ class LiveBook(PaperBook):
                     early = self._early.pop(str(oid), None)
                     if early is not None:                  # Kotak pushed the fill before its reply came back
                         self._apply_row(o, early)
-                elif err and fastrest.is_timeout(err):
+                elif not oid and (not err or fastrest.is_timeout(err)):   # 25-Nov: no clear refusal
                     # no answer in time: the order MAY be at Kotak -> stay SENDING; the order-book poll
                     # finds it by its tag (or marks it rejected after 60 s if Kotak never had it)
                     o.update(reason=f"no reply from Kotak in {ms / 1000:.0f}s - checking its order book")

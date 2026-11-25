@@ -307,7 +307,7 @@ let VAR = isST(SEL) ? 'st' : 'normal';
 // Paper / Live (owner 16-Nov): Live shows only the "{NAME}_LIVE" books (real orders on Kotak D)
 let MODE = isLive(SEL) ? 'live' : (localGet('cepe_mode') === 'live' ? 'live' : 'paper');
 const bookOf = und => MODE === 'live' ? und + '_LIVE' : VAR === 'st' ? und + '_ST' : und;
-const isSyn = n => /_SYN(_LIVE)?$/.test(n || '');   // 23-Nov: synthetic to-and-fro books are on the MCX terminal's Algo tab
+const isSyn = n => /_SYN2?(_LIVE)?$/.test(n || '');   // 23-Nov: synthetic to-and-fro books are on the MCX terminal's Algo tab
 const inView = n => !isSyn(n) && (MODE === 'live' ? isLive(n) : (!isLive(n) && isST(n) === (VAR === 'st')));
 const plainLabel = l => String(l || '').replace(' · Supertrend', '').replace(' · LIVE Kotak D', '');
 let STATE = null, ROW = null, lowerTab = 'pos', lastT = 0, histName = null;

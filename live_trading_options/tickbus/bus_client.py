@@ -109,6 +109,8 @@ class BusTicker:
             try:
                 s = socket.create_connection((self.host, self.port), timeout=5)
                 s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+                s.settimeout(None)         # 25-Nov: the 5-s CONNECT timeout stayed on reads -> a quiet consumer
+                                           # (no ticks for 5 s) was dropped and reconnected in a loop
                 with self._lock:
                     self._sock = s
                 backoff = 0.5

@@ -99,6 +99,22 @@ def session(name: str, day: dt.date) -> tuple:
     return t(day, o), close, close - dt.timedelta(minutes=C.SQUARE_OFF_BEFORE_MIN[kind])
 
 
+
+LATEST_SYN_EXIT_BEFORE_CLOSE_S = 30          # a Synthetic / Premium book may run to 30 s before the close
+
+
+def square_off_at(name: str, r, sq: dt.datetime, close: dt.datetime) -> dt.datetime:
+    """25-Nov (owner): a Synthetic / Premium book with an exit time AFTER the engine's 15:15 square-off keeps
+    running until that exit time (owner set 15:29 and was squared off at 15:15). Capped 30 s before close."""
+    if not C.is_syn(name):
+        return sq
+    try:
+        t = dt.time.fromisoformat(str((r.params or {}).get("exit_time") or "").strip())
+    except (ValueError, AttributeError):
+        return sq
+    want = dt.datetime.combine(sq.date(), t, sq.tzinfo)
+    return min(max(sq, want), close - dt.timedelta(seconds=LATEST_SYN_EXIT_BEFORE_CLOSE_S))
+
 def trading_day(name: str, now: dt.datetime | None = None) -> dt.date:
     """Calendar date for everything but BTC full expiry, whose day D runs 17:30 (D-1) -> 17:30 D: from
     17:30 its book, files and P&L belong to TOMORROW (the expiry it trades)."""
@@ -173,6 +189,7 @@ class Context:
         """Open <= now < square-off time."""
         now = now or self.now
         o, _close, sq = session(self.name, trading_day(self.name, now))
+        sq = square_off_at(self._r.name, self._r, sq, _close)      # 25-Nov: a Synthetic book's own later exit time
         return o <= now < sq
 
 
@@ -181,7 +198,7 @@ class Runner:
         self.name = name                    # book name: "NIFTY" or the Supertrend variant "NIFTY_ST"
         self.und = C.und_of(name)
         if not strategy_name and C.is_syn(name):                     # owner 23-Nov: synthetic to-and-fro
-            strategy_name = "syn_tofro"
+            strategy_name = "syn_tofro_v2" if C.syn_version(name) == 2 else "syn_tofro"   # 25-Nov: V2 = Premium
         if not strategy_name and C.is_flex(name):                    # owner 17-Nov: NIFTY / SENSEX flex rules
             strategy_name = "cepe_st_flex" if C.is_variant(name) else "cepe_flex"
         strategy_name = strategy_name or ({(True, False): "cepe_st", (False, True): "cepe_new",
@@ -678,6 +695,7 @@ class Engine:
                 if not r.running or r.square_off_done:
                     continue
                 o, close, sq = session(n, trading_day(n, now))
+                sq = square_off_at(n, r, sq, close)
                 if now >= sq:
                     r.square_off_done = True
                     r.event("session_end_square_off")
@@ -721,6 +739,7 @@ class Engine:
                         keys = set()                         # on_start just evaluated on the newest prices
                 if r.running and not r.square_off_done:
                     o, _close, sq = session(n, trading_day(n, now))
+                    sq = square_off_at(n, r, sq, _close)
                     if timer and now >= sq:
                         r.square_off_done = True
                         r.event("session_end_square_off")
@@ -772,6 +791,7 @@ class Engine:
                 r.save_state()
             b.retry_exit()
             o, _close, sq = session(n, trading_day(n, now))
+            sq = square_off_at(n, r, sq, _close)
             if now >= sq and not r.state.get("live_eod_done") and any(p.lots for p in b.positions.values()):
                 r.state["live_eod_done"] = True
                 r.event("live_eod_square_off", running=r.running)
@@ -876,7 +896,7 @@ class Engine:
             e = self.market.expiry(u, r.expiry_n)
             rk = self.market.ref_key(u, e)
             rq = self.market.quote(rk) if rk else None
-            out.append({"name": n, "und": u, "variant": "syn" if C.is_syn(n) else "st_new" if C.is_variant(n) and C.is_new_rules(n) else "st" if C.is_variant(n)
+            out.append({"name": n, "und": u, "variant": ("syn2" if C.syn_version(n) == 2 else "syn") if C.is_syn(n) else "st_new" if C.is_variant(n) and C.is_new_rules(n) else "st" if C.is_variant(n)
                         else "new" if C.is_new_rules(n) else "normal",
                         "label": C.label_of(n), "kind": C.UNDERLYINGS[u]["kind"], "ccy": C.ccy_of(n),
                         "date": r.date, "running": r.running,

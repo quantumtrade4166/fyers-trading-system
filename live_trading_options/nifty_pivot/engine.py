@@ -445,7 +445,7 @@ class Engine:
         self._dirty = True
 
     def on_connect(self, ws, response):
-        self.event("FEED", "Kite ticker connected")
+        self.event("FEED", "price feed connected (Kotak Neo)")
         self.subscribed.clear()             # a reconnect loses subscriptions server-side
         self.subscribe(self.band_tokens())
         if self.core.pos:
@@ -816,8 +816,13 @@ def main():
     eng.restore_or_start()
     eng.write_state()
 
-    from kiteconnect import KiteTicker
-    eng.kws = KiteTicker(kx._API_KEY, kx.access_token())
+    # 25-Nov-2026 (owner): prices from KOTAK NEO (frees a Kite websocket for the desks / ALGO).
+    # To go back: `from kiteconnect import KiteTicker; eng.kws = KiteTicker(kx._API_KEY, kx.access_token())`
+    _repo = str(Path(__file__).resolve().parents[2])
+    if _repo not in sys.path:
+        sys.path.insert(0, _repo)
+    from live_trading_options.feedlink.kotak_ticker import KotakTicker
+    eng.kws = KotakTicker(tag="ndp")
     eng.kws.on_ticks = eng.on_ticks
     eng.kws.on_connect = eng.on_connect
     eng.kws.on_close = eng.on_close

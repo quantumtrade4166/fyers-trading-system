@@ -49,8 +49,17 @@ main { padding: 12px 14px 40px; max-width: 1500px; margin: 0 auto; }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; padding: 9px 12px; min-width: 0; }
 .big { font-size: 21px; font-weight: 700; margin-top: 2px; }
 .sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
-.grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(300px, 1fr); gap: 12px; margin-top: 12px; }
-@media (max-width: 980px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.split { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+.split > .left { position: sticky; top: 92px; }
+.right { display: grid; gap: 12px; min-width: 0; }
+@media (max-width: 1100px) { .split { grid-template-columns: minmax(0, 1fr); } .split > .left { position: static; } }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: transparent; padding: 4px 12px; font-weight: 700; color: var(--muted); }
+.seg button.on { background: var(--accent-soft); color: var(--text); box-shadow: inset 0 -2px 0 var(--accent); }
+.seg button[disabled] { opacity: .35; }
+select { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 4px 8px; }
+.trg { display: grid; grid-template-columns: auto 1fr; gap: 2px 8px; font-size: 12px; margin-top: 3px; font-weight: 500; }
+.trg .due { color: var(--accent); font-weight: 700; }
 .box { background: var(--panel); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; min-width: 0; }
 .box h3 { margin: 0; padding: 8px 12px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted);
   border-bottom: 1px solid var(--line-soft); display: flex; gap: 10px; align-items: center; }
@@ -90,6 +99,8 @@ td.flash-up { color: var(--up); } td.flash-dn { color: var(--down); }
 <div class="top">
   <div class="row">
     <span class="title"><span class="mark">◆</span> <span id="ttl">Synthetic To-and-Fro · replay</span></span>
+    <select id="day" title="Replay day"></select>
+    <span class="seg" id="verSeg" title="V1 = synthetic level triggers - V2 = option-price triggers"><button data-v="v1">V1</button><button data-v="v2">V2</button></span>
     <span class="mut" id="ttlSub"></span>
     <span style="flex:1"></span>
     <span class="clock" id="clock">--:--:--</span>
@@ -106,35 +117,34 @@ td.flash-up { color: var(--up); } td.flash-dn { color: var(--down); }
 <div class="toast" id="toast"></div>
 
 <main>
-  <div class="cards">
-    <div class="card"><div class="lbl">Synthetic</div><div class="big" id="cSyn">–</div><div class="sub" id="cSynSub"></div></div>
-    <div class="card"><div class="lbl">MTM</div><div class="big" id="cMtm">–</div><div class="sub" id="cMtmSub"></div></div>
-    <div class="card"><div class="lbl">Next trigger up</div><div class="big" id="cUp" style="font-size:16px">–</div><div class="sub" id="cUpSub"></div></div>
-    <div class="card"><div class="lbl">Next trigger down</div><div class="big" id="cDn" style="font-size:16px">–</div><div class="sub" id="cDnSub"></div></div>
-    <div class="card"><div class="lbl">CE / PE imbalance (view)</div><div class="big" id="cImb">–</div><div class="sub" id="cImbSub"></div></div>
-    <div class="card"><div class="lbl">Adjustments so far</div><div class="big" id="cAdj">0</div><div class="sub" id="cAdjSub"></div></div>
-  </div>
-
-  <div class="box" style="margin-top:12px">
-    <h3>Option chain · our positions <span class="r mut" id="hChain">shaded = in the money · orange line = synthetic</span></h3>
-    <div class="chainw"><table class="chain" id="tChain"></table></div>
-  </div>
-
-  <div class="grid">
-    <div style="display:grid;gap:12px;min-width:0">
-      <div class="box"><h3>MTM <span class="r mut" id="hMtm">₹, 1 lot</span></h3><div class="chart" id="chMtm"></div></div>
-      <div class="box"><h3>Synthetic · dashed = trigger levels · ▲▼ = adjustments <span class="r mut">grey = index spot</span></h3><div class="chart" id="chSyn"></div></div>
-      <div class="box"><h3>CE / PE imbalance % <span class="r mut">shown only</span></h3><div class="chart sm" id="chImb"></div></div>
-    </div>
-    <div style="display:grid;gap:12px;align-content:start;min-width:0">
-      <div class="box"><h3>Held legs <span class="r mut" id="hLegs"></span></h3><table id="tLegs"></table></div>
-      <div class="box"><h3>Adjustments <span class="r mut">click one to jump there</span></h3><div class="log" id="log"></div></div>
+ <div class="split">
+  <div class="left">
+    <div class="box">
+      <h3>Option chain · our positions <span class="r mut" id="hChain">shaded = in the money · orange line = synthetic</span></h3>
+      <div class="chainw"><table class="chain" id="tChain"></table></div>
     </div>
   </div>
+  <div class="right">
+    <div class="cards">
+      <div class="card"><div class="lbl">Synthetic</div><div class="big" id="cSyn">–</div><div class="sub" id="cSynSub"></div></div>
+      <div class="card"><div class="lbl">MTM</div><div class="big" id="cMtm">–</div><div class="sub" id="cMtmSub"></div></div>
+      <div class="card"><div class="lbl">Next trigger up</div><div class="big" id="cUp" style="font-size:16px">–</div><div class="sub" id="cUpSub"></div></div>
+      <div class="card"><div class="lbl">Next trigger down</div><div class="big" id="cDn" style="font-size:16px">–</div><div class="sub" id="cDnSub"></div></div>
+      <div class="card"><div class="lbl">CE / PE imbalance (view)</div><div class="big" id="cImb">–</div><div class="sub" id="cImbSub"></div></div>
+      <div class="card"><div class="lbl">Adjustments so far</div><div class="big" id="cAdj">0</div><div class="sub" id="cAdjSub"></div></div>
+    </div>
+    <div class="box"><h3>MTM <span class="r mut" id="hMtm">₹, 1 lot</span></h3><div class="chart" id="chMtm"></div></div>
+    <div class="box"><h3>Synthetic · ▲▼ = adjustments <span class="r mut">grey = index spot · dashed = V1 trigger levels</span></h3><div class="chart" id="chSyn"></div></div>
+    <div class="box"><h3>CE / PE imbalance % <span class="r mut">shown only</span></h3><div class="chart sm" id="chImb"></div></div>
+    <div class="box"><h3>Held legs <span class="r mut" id="hLegs"></span></h3><table id="tLegs"></table></div>
+    <div class="box"><h3>Adjustments <span class="r mut">click one to jump there</span></h3><div class="log" id="log"></div></div>
+  </div>
+ </div>
 </main>
 
 <script>
-const FILE = new URLSearchParams(location.search).get('f') || 'syn_timeline_NIFTY_2026-11-17.json';
+const QS = new URLSearchParams(location.search);
+let IDX = [], DAY = QS.get('d') || null, VER = QS.get('v') || 'v2';
 const IST = 19800;
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -231,6 +241,11 @@ function render(t, seek) {
     const dn = Math.max(lv.put_out, lv.call_in), dnK = dn === lv.put_out ? 'Put out' : 'Call in';
     $('cUp').innerHTML = `${upK} ≥ ${num(up, 0)}`; $('cUpSub').textContent = `+${num(up - f.syn, 1)} pts away`;
     $('cDn').innerHTML = `${dnK} ≤ ${num(dn, 0)}`; $('cDnSub').textContent = `−${num(f.syn - dn, 1)} pts away`;
+  } else if (f.trig && f.trig.length) {
+    const TG = {}; f.trig.forEach(x => { TG[x[0]] = x; });
+    const line = x => x ? `<span class="${x[6] ? 'due' : ''}">${x[0]}</span><span>${x[1]} ${num(x[2])} ${x[3] === '>=' ? '≥' : '≤'} ${x[4]} ${num(x[5])}${x[6] ? ' ✓' : ''}</span>` : '';
+    $('cUp').innerHTML = `<div class="trg">${line(TG['call out'])}${line(TG['put in'])}</div>`; $('cUpSub').textContent = 'V2: option prices (LTP)';
+    $('cDn').innerHTML = `<div class="trg">${line(TG['put out'])}${line(TG['call in'])}</div>`; $('cDnSub').textContent = 'V2: option prices (LTP)';
   } else { $('cUp').textContent = $('cDn').textContent = '–'; $('cUpSub').textContent = $('cDnSub').textContent = 'flat'; }
   const ip = f.imb == null ? null : Math.round(f.imb * 10) / 10 || 0;
   $('cImb').textContent = ip == null ? '–' : (ip > 0 ? '+' : ip < 0 ? '−' : '') + num(Math.abs(ip), 1) + '%';
@@ -351,11 +366,15 @@ $('nextAdj').onclick = () => { const e = EV.find(x => x.ts > T + 0.5); if (e) se
 $('prevAdj').onclick = () => { const e = EV.filter(x => x.ts < T - 21).slice(-1)[0]; seek(e ? e.ts - 20 : T0); };
 document.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); playing ? pause() : play(); } });
 
-(async function load() {
+async function loadFile(keepClock) {
+  const ent = IDX.find(x => x.date === DAY && x.v === VER);
+  if (!ent) { $('ttlSub').textContent = `no ${VER.toUpperCase()} replay for ${DAY}`; return; }
+  const clock = keepClock && T0 != null ? T - T0 : 0;
+  pause();
   $('ttlSub').textContent = 'loading…';
-  D = await (await fetch(FILE)).json();
+  D = await (await fetch(ent.file + '?t=' + Date.now())).json();
   F = D.frames;
-  T0 = F[0].t; T1 = F[F.length - 1].t; T = T0;
+  T0 = F[0].t; T1 = F[F.length - 1].t;
   EV = (D.events || []).filter(e => e.event === 'adjust').map(e => {
     const m = /^(entry|call out|call in|put out|put in)/.exec(e.action || '');
     const kind = m ? m[1] : e.action;
@@ -363,10 +382,22 @@ document.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventD
     return {...e, kind, what};
   });
   const s = D.summary || {};
-  $('ttl').textContent = `${s.und || 'NIFTY'} Synthetic To-and-Fro · replay ${s.date || ''}`;
-  $('ttlSub').textContent = `expiry ${D.expiry || ''} · ${s.lots || 1} lot (${s.lot || ''} qty) · end: ${rs(s.gross)} before charges, ${rs(s.net)} after (charges ${rs(s.charges)})`;
+  $('ttl').textContent = `${s.und || 'NIFTY'} Synthetic ${VER.toUpperCase()} · replay ${s.date || ''}`;
+  $('ttlSub').textContent = `${VER === 'v2' ? 'option-price triggers' : 'synthetic level triggers'} · entry ${s.entry_time || ''} · expiry ${D.expiry || ''} · ${s.lots || 1} lot (${s.lot || ''} qty) · end ${rs(s.gross)} before charges, ${rs(s.net)} after · ${s.adjustments ?? ''} adjustments`;
+  lastLv = ''; lastLegs = ''; for (const k in prevPx) delete prevPx[k];
+  document.querySelectorAll('#verSeg button').forEach(b => { b.classList.toggle('on', b.dataset.v === VER); b.disabled = !IDX.some(x => x.date === DAY && x.v === b.dataset.v); });
+  seek(T0 + clock);
+}
+(async function init() {
+  IDX = await (await fetch('index.json?t=' + Date.now())).json();
+  const days = [...new Set(IDX.map(x => x.date))].sort();
+  if (!DAY || !days.includes(DAY)) DAY = days[days.length - 1];
+  if (!IDX.some(x => x.date === DAY && x.v === VER)) VER = IDX.find(x => x.date === DAY).v;
+  $('day').innerHTML = days.map(d => `<option value="${d}" ${d === DAY ? 'selected' : ''}>${d}</option>`).join('');
+  $('day').onchange = () => { DAY = $('day').value; if (!IDX.some(x => x.date === DAY && x.v === VER)) VER = IDX.find(x => x.date === DAY).v; loadFile(false); };
+  document.querySelectorAll('#verSeg button').forEach(b => b.onclick = () => { if (b.disabled || b.dataset.v === VER) return; VER = b.dataset.v; loadFile(true); });
   speed = 60; paintSpeeds();
-  seek(T0);
+  await loadFile(false);
 })();
 </script>
 </body>

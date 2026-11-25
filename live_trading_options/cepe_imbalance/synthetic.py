@@ -182,3 +182,83 @@ class SynToFro(CePeImbalance):
                 "levels": self.levels(ctx, legs),
                 "legs": {k: sorted(([s, n] for s, n in v.items()), key=lambda x: x[0]) for k, v in legs.items()},
                 "step": self.step(ctx), "buffer": float(ctx.params.get("buffer") or 0)}
+
+
+class SynToFroV2(SynToFro):
+    """V2 (owner 25-Nov-2026): the SAME to-and-fro book and moves as V1 - only WHEN a move fires differs.
+    V1 waits for the synthetic to cross a fixed level (strike +- half / one strike + buffer); V2 reads the
+    option prices themselves (LTP, every tick, no buffer). K = 1st (nearest-money) sold CE, J = 1st sold PE.
+
+      CALL OUT  LTP(CE K+1) >= LTP(PE K)      (owner: "2nd call = 1st put")    1st CE -> past the last CE
+      PUT OUT   LTP(PE J-1) >= LTP(CE J)      (mirror)                          1st PE -> past the last PE
+      CALL IN   LTP(CE K-1) <= LTP(PE K-1)    (owner: "ITM call = the ATM put") farthest CE -> K-1 (new ATM)
+      PUT IN    LTP(PE J+1) <= LTP(CE J+1)    (mirror)                          farthest PE -> J+1 (new ATM)
+
+    The put compared with the calls sits at the 1st CALL's strike (and the call at the 1st PUT's strike): the
+    owner's examples are a balanced book where both are the ATM strike. Comparing with the literally held 1st
+    put instead made V2 push calls out twice in a row right after a call out (that put is then one strike behind).
+    So on smooth prices: call out at K + half a strike, put in at J + one strike - V1 with no buffer, read from
+    the option prices. Outs before ins. Backtest / replay only until the owner approves it for live."""
+    params = {**SynToFro.params, "buffer": 0.0}
+
+    def _px(self, ctx, kind, k):
+        return self._ltp(ctx, ctx.contract(k, kind))
+
+    def triggers(self, ctx, legs=None):
+        """[(move, (label, ltp), op, (label, ltp), due)] for the held book - for the screen and the rules."""
+        legs = legs or self.legs(ctx)
+        ce, pe = legs["CE"], legs["PE"]
+        if not ce or not pe:
+            return []
+        s = self.step(ctx)
+        K, J = min(ce), max(pe)
+        rows = []
+
+        def row(move, ak, aK, op, bk, bK):
+            a, b = self._px(ctx, ak, aK), self._px(ctx, bk, bK)
+            due = a is not None and b is not None and (a >= b if op == ">=" else a <= b)
+            rows.append((move, (f"{aK:g} {ak}", a), op, (f"{bK:g} {bk}", b), due))
+        row("call out", "CE", K + s, ">=", "PE", K)
+        row("put out", "PE", J - s, ">=", "CE", J)
+        row("call in", "CE", K - s, "<=", "PE", K - s)
+        row("put in", "PE", J + s, "<=", "CE", J + s)
+        return rows
+
+    def levels(self, ctx, legs=None):
+        return {"call_out": None, "call_in": None, "put_in": None, "put_out": None}
+
+    def candidates(self, ctx, atm):
+        legs, s = self.legs(ctx), self.step(ctx)
+        ce, pe = legs["CE"], legs["PE"]
+        if not ce or not pe:
+            self.blocked(ctx, "one side has no short - the to-and-fro needs both CE and PE", key="side empty")
+            return
+        trig = {t[0]: t for t in self.triggers(ctx, legs)}
+        missing = [f"{t[1][0]} / {t[3][0]}" for t in trig.values() if t[1][1] is None or t[3][1] is None]
+        if missing:
+            self.blocked(ctx, "V2 waiting for LTP of " + ", ".join(missing), key="v2 ltp")
+        kc, kp = min(ce), max(pe)
+        desc = lambda t: f"{t[1][0]} {t[1][1]:g} {t[2]} {t[3][0]} {t[3][1]:g}"
+        outs = []
+        if trig["call out"][4]:
+            outs.append((self._roll("CE", kc, max(ce) + s, ce[kc]),
+                         f"call out ({kc:g} CE -> {max(ce) + s:g}, {desc(trig['call out'])})"))
+        if trig["put out"][4]:
+            outs.append((self._roll("PE", kp, min(pe) - s, pe[kp]),
+                         f"put out ({kp:g} PE -> {min(pe) - s:g}, {desc(trig['put out'])})"))
+        if outs:
+            yield from outs
+            return
+        if trig["put in"][4]:
+            yield (self._roll("PE", min(pe), kp + s, pe[min(pe)]),
+                   f"put in ({min(pe):g} PE -> {kp + s:g}, {desc(trig['put in'])})")
+        if trig["call in"][4]:
+            yield (self._roll("CE", max(ce), kc - s, ce[max(ce)]),
+                   f"call in ({max(ce):g} CE -> {kc - s:g}, {desc(trig['call in'])})")
+
+    def view(self, ctx) -> dict:
+        v = super().view(ctx)
+        v["version"] = 2
+        v["triggers"] = [{"move": t[0], "a": t[1][0], "a_ltp": t[1][1], "op": t[2], "b": t[3][0], "b_ltp": t[3][1],
+                          "due": t[4]} for t in self.triggers(ctx)]
+        return v

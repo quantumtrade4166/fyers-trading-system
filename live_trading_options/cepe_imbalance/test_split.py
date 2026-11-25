@@ -42,7 +42,8 @@ def test_paper_role_has_no_live_books(universe):
 
 def test_live_role_has_only_live_books(universe):
     eng = Engine(universe, Market(universe), persist=False, live=live_ctx(universe), role="live")
-    assert set(eng.runners) == {"NIFTY_LIVE", "SENSEX_LIVE", "NIFTY_SYN_LIVE", "SENSEX_SYN_LIVE"}
+    assert set(eng.runners) == {"NIFTY_LIVE", "SENSEX_LIVE", "NIFTY_SYN_LIVE", "SENSEX_SYN_LIVE",
+                                "NIFTY_SYN2_LIVE", "SENSEX_SYN2_LIVE"}
     assert eng.quotes is None                                  # never writes the paper engine's tick files
 
 

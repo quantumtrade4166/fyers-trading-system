@@ -484,3 +484,52 @@ def test_relogin_at_most_once_a_minute():
     for _ in range(5):
         a.call("positions")
     assert S.n == 1
+
+
+# ── 25-Nov-2026: Kotak answered "time out" but FILLED the order ─────────────
+def test_time_out_reply_is_never_retried_blind(universe, monkeypatch):
+    """Kotak replied {"Error": "time out"} to two BUYs it had in fact filled; the book took them as refused and
+    sent a third -> 3 fills instead of 1 (a 3-lot LONG). Now an unclear reply is looked for in Kotak's order book
+    and nothing is re-sent while it may exist."""
+    monkeypatch.setattr(LV, "LOST_WAIT_S", 0.2)
+    g = Rig(universe)
+    assert g.eng.start(B)["ok"]
+    k = g.k
+    real = k.place_order
+    flaky = {"n": 0}
+
+    def place_order(**kw):
+        r = real(**kw)
+        if kw["transaction_type"] == "B" and flaky["n"] < 2:     # first two BUYs: filled, but the reply is lost
+            flaky["n"] += 1
+            return {"Error": "time out"}
+        return r
+    k.place_order = place_order
+    c = next(p for p in g.r.book.positions.values() if p.lots and p.kind == "CE")
+    con = g.u.by_key[c.key]
+    out = g.r.book.order(con, "BUY", 1, "test buy back")
+    buys = [kw for t, kw in k.calls if t == "place" and kw["transaction_type"] == "B" and kw["trading_symbol"] == con.symbol]
+    assert len(buys) == 1, f"re-sent a BUY after an unclear reply: {len(buys)} sent"
+    assert out["ok"], out                                       # found in Kotak's book -> booked as filled
+    assert g.r.book.positions[c.key].lots == 0
+    assert g.broker_net().get(c.key, 0) == 0                    # Kotak flat on that leg, no long
+
+
+def test_is_timeout_words():
+    for t in ("time out", "Read timed out", "HTTPSConnectionPool: Max retries exceeded", "502 Bad Gateway",
+              "Gateway Time-out", "Remote end closed connection", "timeout"):
+        assert LV.is_timeout(t), t
+    for t in ("RMS:Rule: Check circuit limit", "Insufficient margin", "Invalid price"):
+        assert not LV.is_timeout(t), t
+
+
+def test_reconnect_replay_of_old_prices_is_ignored(universe):
+    """10:07 on 25-Nov: after a reconnect Kotak replayed 09:44 prices; they must not overwrite fresher ones."""
+    from live_trading_options.cepe_imbalance.feed import Tick
+    m = Market(universe)
+    now = time.time()
+    m.apply([Tick("bse_fo|1", 300.0, 299.0, 301.0, 1, 1, None, None, int(now), now)])
+    m.apply([Tick("bse_fo|1", 420.0, 419.0, 421.0, 1, 1, None, None, int(now - 23 * 60), now)])   # 23 min old
+    assert m.quote("bse_fo|1").ltp == 300.0 and m.stale_dropped == 1
+    m.apply([Tick("bse_fo|1", 305.0, 304.0, 306.0, 1, 1, None, None, int(now - 30), now)])          # quiet option: old trade time
+    assert m.quote("bse_fo|1").ltp == 305.0                    # < 60 s old: still taken

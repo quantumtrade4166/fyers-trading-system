@@ -188,7 +188,7 @@ def _on_ticks(ws, ticks):
 
 
 def _on_connect(ws, response):
-    print("  [dn] Kite ticker connected")
+    print("  [dn] price feed connected (Kotak Neo)")
     for index, chain in _chains.items():
         _subscribe(chain.tokens_to_add(), index)
 
@@ -277,7 +277,7 @@ def _write_chain(index: str, date_str: str):
                 "status": leg.status, "qty": leg.qty}
     (STATE_DIR / f"{date_str}_{index}_CHAIN.json").write_text(json.dumps({
         "index": index, "spot": spot, "atm": atm, "rows": rows, "sold": sold,
-        "expiry": str(chain.expiry), "updated": upd, "feed": "kite",
+        "expiry": str(chain.expiry), "updated": upd, "feed": "kotak",
         "written": dt.datetime.now().strftime("%H:%M:%S")}))
 
 
@@ -297,7 +297,7 @@ def main():
         audit_log("SYSTEM", "ENGINE_ABORT", reason=f"kite auth: {e}")
         return
 
-    audit_log("SYSTEM", "ENGINE_START", pid=os.getpid(), feed="kite", user=who)
+    audit_log("SYSTEM", "ENGINE_START", pid=os.getpid(), feed="kotak", user=who)
     date_str = dt.date.today().isoformat()
     build(date_str, kite)
     if not _ctrls:
@@ -305,8 +305,11 @@ def main():
         return
     _seed_spot(kite)
 
-    from kiteconnect import KiteTicker
-    _kws = KiteTicker(kx._API_KEY, kx.access_token())
+    # 25-Nov-2026 (owner): prices from KOTAK NEO (frees a Kite websocket for the desks / ALGO). Orders stay
+    # on Kite. To go back: `from kiteconnect import KiteTicker; _kws = KiteTicker(kx._API_KEY, kx.access_token())`
+    sys.path.insert(0, str(ROOT.parents[1]))
+    from live_trading_options.feedlink.kotak_ticker import KotakTicker
+    _kws = KotakTicker(tag="dn")
     _kws.on_ticks = _on_ticks
     _kws.on_connect = _on_connect
     _kws.on_close = _on_close
@@ -315,7 +318,10 @@ def main():
     threading.Thread(target=_step_loop, daemon=True, name="dn-step").start()
     threading.Thread(target=_writer_loop, args=(date_str,), daemon=True,
                      name="dn-writer").start()
-    _kws.connect()          # blocks, reconnects on its own
+    def _kite_fallback():                   # Kotak login / contract list down at start -> own Kite socket
+        from kiteconnect import KiteTicker
+        return KiteTicker(kx._API_KEY, kx.access_token())
+    _kws.connect(fallback=_kite_fallback)   # blocks; the feed reconnects on its own
 
 
 if __name__ == "__main__":

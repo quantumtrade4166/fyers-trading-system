@@ -14,6 +14,7 @@ Verified on the VPS 2026-11-02 (probe_kotak_universe.py):
 Tick tuple out:  Tick(key, ltp, bid, ask, bid_qty, ask_qty, volume, oi, exch_ts, recv_ts)
 """
 import collections
+import datetime as dt
 import json
 import logging
 import struct
@@ -25,6 +26,8 @@ import websocket                                   # websocket-client
 
 from live_trading_options.cepe_imbalance import config as C
 from live_trading_options.mcx_terminal.feed import EXCH, LITE, MP, ROW
+
+IST = dt.timezone(dt.timedelta(hours=5, minutes=30))
 
 log = logging.getLogger("cepe.feed")
 
@@ -118,11 +121,69 @@ class MultiFeed:
         self.work_s = 0.0
         self._lag_logged = 0.0
         self.busy_since = 0.0                      # when the batch being processed right now began (0 = idle)
+        self._authed_at = 0.0                      # silence watchdog: last (re)auth time
+        self._silent_tries = 0                     # reconnects for silence since the last real tick
+        self._silent_at = 0.0
 
     # ── public ──────────────────────────────────────────────────────────────
     def start(self):
         threading.Thread(target=self._work, daemon=True, name="CepeTicks").start()
         threading.Thread(target=self._run, daemon=True, name="CepeFeed").start()
+        threading.Thread(target=self._watch, daemon=True, name="CepeFeedWatch").start()
+
+    # ── silence watchdog (25-Nov-2026 live incident) ────────────────────────
+    # 09:44:58 IST every Kotak feed on the VPS (both accounts) went silent while the sockets stayed
+    # "connected" (pings still answered) - no price for 7 minutes while SENSEX Premium LIVE held 6 legs;
+    # its rules, MTM stop and trail all sat on 09:44 prices. Only an engine restart (= a fresh socket +
+    # re-subscribe) brought prices back. Now: authed + subscribed + market open + no tick for SILENCE_S ->
+    # close the socket; _run reconnects and re-subscribes everything (no restart, positions untouched).
+    # A day with no prices at all (holiday) backs off: after SILENT_TRIES reconnects without one tick,
+    # retry only every SILENT_BACKOFF_S.
+    SILENCE_S = 20.0
+    SILENT_TRIES = 3
+    SILENT_BACKOFF_S = 300.0
+
+    @staticmethod
+    def market_open(keys, now=None) -> bool:
+        """Is any exchange of these feed keys trading now (IST, Mon-Fri)? NSE / BSE 09:15-15:30, MCX /
+        NSE commodity 09:00-23:30 (MCX may run to 23:55 in US winter; 23:30 keeps the check on the safe side)."""
+        now = now or dt.datetime.now(IST)
+        if now.weekday() >= 5:
+            return False
+        hm = now.strftime("%H:%M")
+        segs = {k.partition("|")[0] for k in keys}
+        if segs & {"nse_fo", "bse_fo", "nse_cm", "bse_cm"} and "09:15" <= hm < "15:30":
+            return True
+        return bool(segs & {"mcx_fo", "nse_com"}) and "09:00" <= hm < "23:30"
+
+    def check_silence(self, now_ts=None, now=None) -> bool:
+        """True if the socket was closed because the feed went silent (called every 2 s by _watch)."""
+        t = now_ts or time.time()
+        with self._lock:
+            keys = list(self.wanted)
+        if not (self.authed and keys and self.market_open(keys, now)):
+            return False
+        since = max(self.last_tick_at, self._authed_at)
+        if not since or t - since < self.SILENCE_S:
+            return False
+        if self._silent_tries >= self.SILENT_TRIES and t - self._silent_at < self.SILENT_BACKOFF_S:
+            return False
+        self._silent_tries += 1
+        self._silent_at = t
+        self.last_error = f"feed silent {t - since:.0f} s while connected - reconnecting"
+        log.warning("%s (try %d)", self.last_error, self._silent_tries)
+        try:
+            self.ws and self.ws.close()
+        except Exception as e:
+            log.warning("close after silence failed: %s", e)
+        return True
+
+    def _watch(self):
+        while not self._stop.wait(2.0):
+            try:
+                self.check_silence()
+            except Exception:
+                log.exception("feed watchdog")
 
     def stop(self):
         self._stop.set()
@@ -229,6 +290,7 @@ class MultiFeed:
                     continue
                 self.ticks += len(batch)
                 self.last_tick_at = time.time()
+                self._silent_tries = 0
                 t0 = time.perf_counter()
                 self.busy_since = time.time()                # read by the stall watchdog (diag.py)
                 try:
@@ -260,6 +322,7 @@ class MultiFeed:
                 self.div[ex] = v.get("divider", 100) or 100
             if mc == 1117 and not self.authed:
                 self.authed = True
+                self._authed_at = time.time()
                 with self._lock:
                     keys = list(self.wanted)
                 self._send(keys)

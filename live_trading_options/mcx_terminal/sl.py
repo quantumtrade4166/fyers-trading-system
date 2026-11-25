@@ -516,7 +516,41 @@ class AutoSL:
         except Exception as e:
             return None, txt(e)
         err, oid = self._err(resp), extract_oid(resp)
-        return (str(oid), None) if oid and not err else (None, err or "no order id")
+        if oid and not err:
+            return str(oid), None
+        from live_trading_options.mcx_terminal import fastrest
+        if not err or fastrest.is_timeout(err):
+            # 25-Nov: an unclear reply ("time out", no order id) can be an order Kotak DID place. Kotak's book has
+            # no tags, so look for it by its fields before calling it refused - a refusal here is retried in
+            # WATCH_RETRY_S, and two resting stops could both fire.
+            found = self._find_unclear(c, r)
+            if found:
+                log.warning("SL %s %s: unclear Kotak reply (%s) but the order IS in its book: %s",
+                            r["side"], c.symbol, err or "no order id", found)
+                return found, None
+        return None, err or "no order id"
+
+    UNCLEAR_LOOKS = (0.5, 1.5, 3.0)        # seconds after the reply to read Kotak's order book
+
+    def _find_unclear(self, c, r):
+        """A working SL order at Kotak for this contract / side / qty / trigger whose id we do not know yet."""
+        known = set(self.placed) | {str(x.get("oid")) for x in self.recs.values() if x.get("oid")}
+        for wait in self.UNCLEAR_LOOKS:
+            time.sleep(wait)
+            try:
+                rows = self.book._rows()
+            except Exception:
+                continue
+            for x in rows:
+                oid = str(x.get("nOrdNo") or "")
+                st = str(x.get("ordSt", "")).lower()
+                if (oid and oid not in known and str(x.get("prcTp", "")).upper().startswith("SL")
+                        and str(x.get("trdSym", "")) == c.symbol and str(x.get("trnsTp", "")).upper()[:1] == r["side"]
+                        and int(_f(x.get("qty")) or 0) == int(r["qty"])
+                        and abs((_f(x.get("trgPrc")) or 0) - float(r["trigger"])) < 0.005
+                        and not any(w in st for w in BROKER_DEAD)):
+                    return oid
+        return None
 
     def _modify(self, r, trigger=None, limit=None, qty=None):
         c = self.u.by_token[r["token"]]

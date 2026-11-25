@@ -143,6 +143,14 @@ def install():
         log.exception("could not install the fast Kotak REST shim (SDK calls stay as they were)")
 
 
+# 25-Nov-2026: Kotak answered "time out" (two words) to two BUY orders that it then FILLED; the old check only
+# knew "timeout" / "timed out", so the CE/PE engine took them as refused and bought again (3 lots instead of
+# 1). Any reply that does not clearly say "refused" means the order MAY be at Kotak.
+_UNCLEAR = ("timeout", "time out", "timed out", "time-out", "read timed", "connection aborted", "connection reset",
+            "connection error", "remote end closed", "remotedisconnected", "max retries", "bad gateway",
+            "gateway time", "service unavailable", "temporarily unavailable", "no response", " 502", " 503", " 504")
+
+
 def is_timeout(text: str) -> bool:
-    t = str(text).lower()
-    return "timeout" in t or "timed out" in t
+    t = " " + str(text).lower()
+    return any(w in t for w in _UNCLEAR)
