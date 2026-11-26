@@ -53,6 +53,9 @@ CUSHION_TICKS = 2
 QUOTE_FRESH_S = 3.0                           # our tick must be this fresh to price attempt 1
 WAIT_FIRST_S = 2.0                            # a marketable limit on a NIFTY / SENSEX option fills in ms
 WAIT_RETRY_S = 3.0
+WAIT_FAST_S = 0.7                             # 26-Nov: fast books (Synthetic / Premium) re-price an unfilled
+                                              # order after this (opening rally: 3 tries x 3 s = 6 s on one leg)
+ATTEMPTS_FAST = {"SELL": 5, "BUY": 8}
 CONFIRM_S = 5.0                               # after a cancel: time to learn the order's final state
 SETTLE_EVERY_S = 2.0                          # unsettled orders: re-read Kotak this often (live worker, 23-Nov fix)
 POLL_S = 0.15                                 # order status poll while waiting
@@ -680,13 +683,13 @@ class KotakLiveBook(PaperBook):
                     self._save(None)
 
     # ── one complete order: send, wait, re-price, until done or out of tries ──
-    def _execute(self, c, side, units, reason):
+    def _execute(self, c, side, units, reason, fast=False):
         """-> (filled units, avg price, error or None, info). Books every fill as it is seen."""
         t_dec = time.time()
         mark_dec = self.market.mark(c.key)
         filled, value, err, oids, tries = 0, 0.0, None, [], []
         freeze = FREEZE.get(C.und_of(self.name), 10 ** 9)
-        attempts = ATTEMPTS[side]
+        attempts = (ATTEMPTS_FAST if fast else ATTEMPTS)[side]
         for a in range(1, attempts + 1):
             rem = units - filled
             if rem <= 0:
@@ -701,7 +704,7 @@ class KotakLiveBook(PaperBook):
                 continue
             o = self._send(c, side, chunk, px, reason, a, src)
             if o["status"] != "REJECTED":
-                self._wait(o, WAIT_FIRST_S if a == 1 else WAIT_RETRY_S)
+                self._wait(o, WAIT_FAST_S if fast else (WAIT_FIRST_S if a == 1 else WAIT_RETRY_S))
                 if o["status"] not in TERMINAL:
                     self._cancel(o)
                     self._wait(o, CONFIRM_S)                 # a fill can land while cancelling
@@ -742,14 +745,14 @@ class KotakLiveBook(PaperBook):
         return filled, avg, (err if filled < units else None), info
 
     # ── the strategy's order entry point ───────────────────────────────────
-    def order(self, contract, side: str, lots, reason: str = "", price=None) -> dict:
+    def order(self, contract, side: str, lots, reason: str = "", price=None, fast: bool = False) -> dict:
         side = str(side).upper()
         if side not in ("BUY", "SELL") or not lots or float(lots) <= 0:
             return {"ok": False, "error": f"bad order {side} {lots}"}
         with self._olock:
-            return self._order(contract, side, float(lots), reason)
+            return self._order(contract, side, float(lots), reason, fast)
 
-    def _order(self, c, side, lots, reason):
+    def _order(self, c, side, lots, reason, fast=False):
         with self.lock:
             p = self.positions.get(c.key)
             cur = p.lots if p else 0
@@ -782,7 +785,7 @@ class KotakLiveBook(PaperBook):
         elif side == "SELL" and not any(x.lots for x in self.positions.values()):
             if self.account.read_limits():                   # margin before this book's entry
                 self.margin_before = self.account.margin_used()
-        filled, avg, err, info = self._execute(c, side, units, reason)
+        filled, avg, err, info = self._execute(c, side, units, reason, fast)
         if err or filled < units:
             msg = f"{side} {c.symbol}: {filled}/{units} filled - {err or 'not filled'}"
             self.fault = self.fault or msg

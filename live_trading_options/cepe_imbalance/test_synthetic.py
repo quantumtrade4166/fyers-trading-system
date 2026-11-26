@@ -342,3 +342,69 @@ def test_lots_change_in_trade_resizes_live_book(universe):
     assert all(v == 1 for side in g.legs().values() for v in side.values()), g.legs()
     g.move(25650)                         # rolls after a resize move the whole strike (1 lot)
     assert sum(g.legs()["CE"].values()) == sum(g.legs()["PE"].values()) == 3
+
+
+# ── 26-Nov-2026: entry fixes (stale opening prices, slow fills, market moving during the entry) ──────────────
+
+def test_entry_waits_until_synthetic_agrees_with_index(universe):
+    """09:15:10 SENSEX: option LTPs still said 83,932 while the index was 84,030 -> sold the wrong ATM."""
+    g = Rig(universe, 25000, spot=25120)                 # options stale (25000), index already 25120
+    g.start()
+    assert g.legs() == {"CE": [], "PE": []}
+    assert "entry: waiting" in (g.r.state.get("blocked") or ""), g.r.state.get("blocked")
+    g.move(25120)                                        # option prices catch up
+    assert g.legs() == {"CE": [25100, 25150, 25200], "PE": [25000, 25050, 25100]}, g.r.events[-3:]
+
+
+def test_entry_recentres_when_the_market_moves_mid_entry(universe):
+    """Remaining entry legs go around the NEW ATM if the market moved a strike while earlier pairs filled."""
+    g = Rig(universe, 25000)
+    st = g.r.strategy
+    real = st.execute
+    calls = []
+
+    def execute(ctx, ops, reason):
+        ok = real(ctx, ops, reason)
+        calls.append(reason)
+        if len(calls) == 1:                              # market runs 100 points while pair 1 fills
+            g.move(25100, run=False)
+        return ok
+    st.execute = execute
+    g.start()
+    assert g.legs() == {"CE": [25000, 25150, 25200], "PE": [24950, 25000, 25050]}, (calls, g.legs())
+    ev = [e for e in g.r.events if e["event"] == "entry_recentre"]
+    assert ev and ev[0]["frm"] == 25000 and ev[0]["to"] == 25100
+    assert g.r.state["phase"] == "in" and not g.r.state.get("entry_left")
+
+
+def test_interrupted_entry_finishes_on_the_next_tick(universe):
+    g = Rig(universe, 25000)
+    st = g.r.strategy
+    real = st.execute
+    n = {"c": 0}
+
+    def execute(ctx, ops, reason):
+        n["c"] += 1
+        if n["c"] == 2:                                  # pair 2 refused once (quote too wide, say)
+            return False
+        return real(ctx, ops, reason)
+    st.execute = execute
+    g.start()
+    assert g.r.state["phase"] == "in" and g.r.state.get("entry_left"), g.r.state
+    assert sum(len(v) for v in g.legs().values()) == 2
+    g.move(25000)
+    assert g.legs() == {"CE": [25000, 25050, 25100], "PE": [24900, 24950, 25000]}, g.legs()
+    assert not g.r.state.get("entry_left")
+
+
+def test_synthetic_books_ask_for_fast_orders(universe):
+    g = Rig(universe, 25000)
+    seen = []
+    real = g.r.book.order
+
+    def order(c, side, lots, reason="", **kw):
+        seen.append(kw)
+        return real(c, side, lots, reason, **kw)
+    g.r.book.order = order
+    g.start()
+    assert seen and all(k.get("fast") for k in seen)

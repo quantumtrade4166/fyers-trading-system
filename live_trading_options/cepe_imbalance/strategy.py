@@ -323,7 +323,7 @@ class CePeImbalance(Strategy):
         before = ctx.book.imbalance()["pct"]
         fills = []
         for c, side, lots in cs:                                    # buy-backs come first in every op list
-            t = ctx.book.order(c, side, lots, reason)
+            t = ctx.book.order(c, side, lots, reason, **({'fast': True} if getattr(self, 'FAST_ORDERS', False) else {}))
             fills.append(f"{side} {lots} {c.symbol} @{t.get('price')}" if t.get("ok") else f"FAILED {c.symbol}")
             if not t.get("ok"):
                 ctx.log("order_failed", reason=reason, error=t.get("error"))

@@ -47,10 +47,31 @@ STALE_TICK_AGE_S = 60  # ... AND this old against our clock is dropped (a quiet 
                        # old last-trade time; a reconnect replay of 23-minute-old prices cannot pass)
 
 
+BEHIND_VOL_FRAC = 0.9  # a tick within 10% below the held volume = same contract, same units, just older
+BEHIND_HOLD_S = 120.0  # only against a quote received in the last 2 min (a new day's volume restarts low)
+
+
+def behind_volume(new_vol, held_vol, held_recv, new_recv) -> bool:
+    """True if this tick is an OLDER snapshot of the contract than the one we hold, judged by the
+    day's cumulative traded volume (it never falls inside a session).
+
+    26-Nov-2026: since the 25-Nov Kite assist the engine gets every option from Kotak AND Kite; one of
+    them ran ~5 s behind, so ~30% of NIFTY/SENSEX option ticks were 5 s old prices (84400 CE flipping
+    231 <-> 241 every few hundred ms). STALE_TICK_* only catches ticks over a minute old, so they went
+    through: paper MTM jumped +/-5k for half a second and Premium triggers saw crossings that weren't there.
+    The 0.9 floor keeps a units mismatch between the sources (lots vs units) from ever dropping a feed."""
+    if not new_vol or not held_vol or new_vol >= held_vol:
+        return False
+    if new_vol < held_vol * BEHIND_VOL_FRAC:
+        return False
+    return bool(held_recv) and (new_recv or time.time()) - held_recv < BEHIND_HOLD_S
+
+
 class Market:
     def __init__(self, universe):
         self.u = universe
         self.stale_dropped = 0
+        self.behind_dropped = 0
         self.quotes: dict[str, Quote] = {}
         self.lock = threading.RLock()
 
@@ -67,6 +88,9 @@ class Market:
                 elif t.exch_ts and q.exch_ts and t.exch_ts < q.exch_ts - STALE_TICK_S                         and t.exch_ts < (t.recv_ts or time.time()) - STALE_TICK_AGE_S:
                     self.stale_dropped += 1              # 25-Nov: an OLDER price than the one we hold
                     continue                             # (Kotak replayed 09:44 prices on a 10:07 reconnect)
+                elif behind_volume(t.volume, q.volume, q.recv_ts, t.recv_ts):
+                    self.behind_dropped += 1             # 26-Nov: the slower of Kotak / Kite (~5 s behind)
+                    continue
                 q.ltp = t.ltp or q.ltp
                 if t.bid is not None or t.ask is not None:
                     q.bid, q.ask, q.bid_qty, q.ask_qty = t.bid, t.ask, t.bid_qty, t.ask_qty

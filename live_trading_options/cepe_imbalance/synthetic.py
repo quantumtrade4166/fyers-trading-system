@@ -54,8 +54,11 @@ class SynToFro(CePeImbalance):
         "max_actions": 12,       # safety: adjustments in one tick (a 150-pt jump = 6)
         "max_spread_pct": 3.0,   # never SELL into a bid-ask gap wider than this % of mid
         "band": 0.0,             # unused here (kept: shared CE/PE code reads it)
+        "entry_gap": 0.0,        # entry waits while |synthetic - index carried to expiry| > this; 0 = 40% of a strike
     }
-    MAX_ADJ_PER_MIN = 20         # loop safety (to-and-fro returns to old legs on purpose: no repeat-book guard)
+    MAX_ADJ_PER_MIN = 20
+    FAST_ORDERS = True           # 26-Nov: live orders re-priced every 0.7 s (not 2-3 s) - see live.WAIT_FAST_S
+    CARRY_PCT_YEAR = 6.5         # index -> forward for the entry check (synthetic sits ~ this much above spot)         # loop safety (to-and-fro returns to old legs on purpose: no repeat-book guard)
 
     # ── synthetic price ─────────────────────────────────────────────────────
     @staticmethod
@@ -141,17 +144,78 @@ class SynToFro(CePeImbalance):
         return True
 
     # ── entry / exits ───────────────────────────────────────────────────────
+    def entry_ready(self, ctx, atm):
+        """26-Nov-2026 (owner): at 09:15:10 SENSEX's synthetic was 83,932 while the index was 84,030 - option
+        LTPs had not traded since the open yet - so the book sold 'ATM' 83900 with the real ATM at 84100 and
+        lost ~Rs 10.5k in the first second. Entry now waits until the synthetic agrees with the index (carried
+        to expiry) within `entry_gap` (default 40% of a strike). -> (ok, why)"""
+        syn = ctx.state.get("syn")
+        ref = ctx.market.ref_price(ctx.name, ctx.expiry)
+        if syn is None or not ref:
+            return False, "no synthetic / index price yet"
+        try:
+            days = max(0, (dt.date.fromisoformat(str(ctx.expiry)) - ctx.now.astimezone(IST).date()).days)
+        except ValueError:
+            days = 0
+        fwd = ref * (1 + self.CARRY_PCT_YEAR / 100 * days / 365)
+        tol = float(ctx.params.get("entry_gap") or 0) or 0.4 * self.step(ctx)
+        gap = syn - fwd
+        if abs(gap) > tol:
+            return False, (f"entry: waiting - synthetic {syn:,.1f} vs index {ref:,.1f} (expected {fwd:,.1f}, "
+                           f"gap {gap:+.0f} > {tol:.0f}): option prices not settled yet")
+        return True, ""
+
     def entry(self, ctx, atm):
         rq = ctx.quote(ctx.market.ref_key(ctx.name, ctx.expiry))
         if rq and rq.recv_ts and time.time() - rq.recv_ts > 60:
             return self.blocked(ctx, "entry: no live price in the last 60 s (market closed?)")
+        ok, why = self.entry_ready(ctx, atm)
+        if not ok:
+            return self.blocked(ctx, why, key="entry gap")
         step, unit = self.step(ctx), max(1, int(ctx.params.get("lots") or 1))
         legs = {"CE": self.clean("CE", atm, step, unit), "PE": self.clean("PE", atm, step, unit)}
         ops = self.paired([(k, st, "SELL", n) for k in ("CE", "PE") for st, n in sorted(legs[k].items())], atm)
-        if self.execute(ctx, ops, f"entry (synthetic {ctx.state.get('syn'):g} -> ATM {atm:g})"):
-            ctx.state["phase"] = "in"
-            ctx.state["entry_atm"] = atm
-            ctx.state["entry_syn"] = ctx.state.get("syn")
+        ctx.state["entry_syn"] = ctx.state.get("syn")
+        self.run_entry(ctx, ops, atm, f"entry (synthetic {ctx.state.get('syn'):g} -> ATM {atm:g})")
+
+    def run_entry(self, ctx, ops, atm, label):
+        """Entry legs go out one CE / PE pair at a time. 26-Nov (owner): before every later pair the ATM is read
+        again - if the market has moved a strike while the first pairs were filling, the remaining legs are
+        placed around the NEW ATM (same distance from it), never at strikes the market has already left.
+        Legs that could not be placed are kept in state 'entry_left' and retried on the next tick."""
+        step = self.step(ctx)
+        pairs = [list(ops[i:i + 2]) for i in range(0, len(ops), 2)]
+        for i in range(len(pairs)):
+            if i or ctx.state.get("phase") == "in":
+                new = self.current_atm(ctx)
+                if new is not None and new != atm:
+                    held = self.legs(ctx)
+                    taken = {k: set(held[k]) for k in ("CE", "PE")}
+                    moved = []
+                    for pr in pairs[i:]:
+                        q = []
+                        for kind, k, side, n in pr:
+                            k2 = k + (new - atm)
+                            out = step if kind == "CE" else -step
+                            while k2 in taken[kind]:          # never double a strike already sold
+                                k2 += out
+                            taken[kind].add(k2)
+                            q.append((kind, k2, side, n))
+                        moved.append(q)
+                    pairs[i:] = moved
+                    ctx.log("entry_recentre", frm=atm, to=new, legs=[f"{o[0]} {o[1]:g}" for pr in moved for o in pr])
+                    atm = new
+            tag = f"{label} [{i + 1}/{len(pairs)}]" if len(pairs) > 1 else label
+            if not self.execute(ctx, pairs[i], tag):
+                left = [list(o) for pr in pairs[i:] for o in pr]
+                ctx.state["entry_left"] = left if ctx.state.get("phase") == "in" else None
+                ctx.state["entry_left_atm"] = atm
+                return False
+            if ctx.state.get("phase") != "in":
+                ctx.state["phase"] = "in"
+                ctx.state["entry_atm"] = atm
+        ctx.state["entry_left"] = None
+        return True
 
     def _exit_time(self, ctx):
         t = str(ctx.params.get("exit_time") or "").strip()
@@ -171,6 +235,13 @@ class SynToFro(CePeImbalance):
             ctx.state["blocked"] = f"exit time {et.strftime('%H:%M:%S')} reached - done for the day"
             ctx.log("exit_time", time=et.strftime("%H:%M:%S"), mtm=ctx.book.mtm()["total"], exits=len(out))
             ctx.save()
+            return
+        if ph == "in" and ctx.state.get("entry_left") and ctx.in_session():   # finish an interrupted entry first
+            atm = self.current_atm(ctx)
+            if atm is not None:
+                left = [tuple(o) for o in ctx.state["entry_left"]]
+                self.run_entry(ctx, left, ctx.state.get("entry_left_atm") or atm, "entry (rest)")
+                ctx.save()
             return
         super()._evaluate(ctx)
 

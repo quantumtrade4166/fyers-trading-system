@@ -533,3 +533,19 @@ def test_reconnect_replay_of_old_prices_is_ignored(universe):
     assert m.quote("bse_fo|1").ltp == 300.0 and m.stale_dropped == 1
     m.apply([Tick("bse_fo|1", 305.0, 304.0, 306.0, 1, 1, None, None, int(now - 30), now)])          # quiet option: old trade time
     assert m.quote("bse_fo|1").ltp == 305.0                    # < 60 s old: still taken
+
+
+def test_fast_orders_reprice_quicker(universe, monkeypatch):
+    """26-Nov: an unfilled Synthetic / Premium order is re-priced after WAIT_FAST_S (not 2-3 s), more tries."""
+    g = Rig(universe)
+    atm = g.m.atm(N, g.e)
+    stuck = g.m.contract(N, g.e, atm, "CE")
+    g.k.no_fill.add(stuck.symbol)
+    monkeypatch.setattr(LV, "WAIT_FAST_S", 0.04)
+    waits = []
+    real = g.r.book._wait
+    g.r.book._wait = lambda o, t: (waits.append(t), real(o, t))[1]
+    g.r.book.order(stuck, "SELL", 1, "test", fast=True)
+    tries = [kw for t, kw in g.k.calls if t == "place" and kw["trading_symbol"] == stuck.symbol]
+    assert len(tries) == LV.ATTEMPTS_FAST["SELL"]
+    assert waits and waits[0] == 0.04                   # the fast wait, not WAIT_FIRST_S

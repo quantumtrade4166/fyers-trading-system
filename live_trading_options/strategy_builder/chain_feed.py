@@ -217,6 +217,9 @@ class ChainFeed:
                     rec["bid"] = b
                 if a is not None:
                     rec["ask"] = a
+                oi = _f(t.get("oi") or t.get("open_interest"))
+                if oi:
+                    rec["oi"] = oi
                 pc = _f(t.get("prev_close_price"))
                 if pc:
                     rec["prev_close"] = pc
@@ -227,8 +230,10 @@ class ChainFeed:
         new = [s for s in syms if s not in self._ws_subscribed]
         if not new or self._ws is None or not self._ws_connected:
             return
-        for i in range(0, len(new), 200):
-            chunk = new[i:i + 200]
+        # Fyers refuses a subscribe call of ~200 symbols ("11011 subscription failed", tested 25-Nov);
+        # 50 per call is accepted and ticks at once.
+        for i in range(0, len(new), 50):
+            chunk = new[i:i + 50]
             try:
                 self._ws.subscribe(symbols=chunk, data_type="SymbolUpdate")
                 self._ws_subscribed.update(chunk)
@@ -238,8 +243,53 @@ class ChainFeed:
     def _wanted_symbols(self) -> set[str]:
         out = set(C.INDEX_SYMBOL.values()) | {C.VIX_SYMBOL}
         for ch in self.chains.values():
-            out.update(ch["by_symbol"].keys())
+            out.update(s for s, r in ch["by_symbol"].items() if not r.get("ws_only"))
         return out
+
+    # ── far strikes: Kite prices through the shared tick bus (tickbus, port 47670) ──
+    # Fyers' socket is capped account-wide; Zerodha's one shared bus socket has room (3,000 / key). KiteAssist
+    # (feedlink) maps each contract to its Kite token by WHAT it is and streams FULL ticks (ltp, bid, ask, OI).
+    KITE_SEG = {"NIFTY": "nse_fo", "SENSEX": "bse_fo"}
+    KITE_CAP = 900
+
+    def _kite_want(self, rows):
+        if getattr(self, "_kite_off", False):
+            return
+        try:
+            if getattr(self, "_kite", None) is None:
+                from live_trading_options.feedlink.kite_master import KiteMaster
+                from live_trading_options.feedlink.kite_assist import KiteAssist
+                self._kmaster = KiteMaster(("NFO", "BFO"), names={"NIFTY", "SENSEX"})
+                self._kinfo = {}
+                self._kite = KiteAssist(self._kite_resolve, self._on_kite, cap=self.KITE_CAP, tag="builder-far")
+                self._kite.start()
+            for r in rows:
+                self._kinfo[r["symbol"]] = r["_k"]
+            self._kite.want([r["symbol"] for r in rows])
+        except Exception as e:
+            self._kite_off = True                     # never let the far-strike feed break the chain
+            self._err(f"far-strike Kite feed off: {type(e).__name__}: {e}")
+
+    def _kite_resolve(self, sym):
+        k = self._kinfo.get(sym)
+        return self._kmaster.token(*k) if k else None
+
+    def _on_kite(self, rows):
+        from live_trading_options.feedlink.kite_assist import best
+        now = time.time()
+        with self._lock:
+            for sym, t in rows:
+                bid, ask, _, _ = best(t)
+                rec = self.live.setdefault(sym, {})
+                rec["ltp"] = float(t["last_price"])
+                if bid:
+                    rec["bid"] = float(bid)
+                if ask:
+                    rec["ask"] = float(ask)
+                if t.get("oi"):
+                    rec["oi"] = float(t["oi"])
+                rec["t"] = now
+                rec["src"] = "kite"
 
     # ── REST ────────────────────────────────────────────────────────────────
     def _err(self, s):
@@ -297,6 +347,18 @@ class ChainFeed:
                    "chg": _f(r.get("ltpch")), "f_iv": _f(g.get("iv")), "f_delta": _f(g.get("delta"))}
             by_symbol[row["symbol"]] = row
             by_strike.setdefault(k, {})[ot] = row
+        # Fyers' chain call stops at 50 strikes each side. The rest of the listed strikes come from the
+        # public contract list; their prices come from Kite over the shared tick bus (no Fyers quota).
+        far = []
+        for k, ot, sym in self._all_strikes(index, expiry):
+            if sym in by_symbol:
+                continue
+            row = {"symbol": sym, "strike": k, "type": ot, "ltp": None, "bid": None, "ask": None, "oi": None,
+                   "oich": None, "volume": None, "chg": None, "f_iv": None, "f_delta": None, "ws_only": True,
+                   "_k": (self.KITE_SEG[index], index, expiry, k, ot)}
+            by_symbol[sym] = row
+            by_strike.setdefault(k, {})[ot] = row
+            far.append(row)
         vixn = data.get("indiavixData") or {}
         with self._lock:
             self.chains[(index, expiry)] = {"by_symbol": by_symbol, "by_strike": by_strike,
@@ -308,7 +370,32 @@ class ChainFeed:
                 self.vix = {"ltp": _f(vixn.get("ltp")), "chg": _f(vixn.get("ltpch"))}
             syms = sorted(self._wanted_symbols())
         self._subscribe(syms)
+        if far:
+            self._kite_want(far)
         self._persist()
+
+    _master_day = None
+    _master: dict = {}
+
+    def _all_strikes(self, index: str, expiry: str) -> list:
+        """Every listed (strike, CE/PE, Fyers symbol) of one expiry, from the Fyers public symbol master
+        (downloaded once a day, cached on disk by the strangle's symbol_master). [] if it can't be read."""
+        try:
+            day = now_ist().date().isoformat()
+            if self._master_day != day:
+                ChainFeed._master, ChainFeed._master_day = {}, day
+            key = (index, expiry)
+            if key not in self._master:
+                import sys as _sys
+                _sys.path.insert(0, str(C.ROOT / "live_trading_options" / "strangle_strategy"))
+                from core import symbol_master as sm
+                o = sm.options(index)
+                o = o[o["expiry"] == dt.date.fromisoformat(expiry)]
+                self._master[key] = [(float(r.strike), r.opt_type, r.symbol) for r in o.itertuples()]
+            return self._master[key]
+        except Exception as e:
+            log.info("symbol master %s %s: %s", index, expiry, e)
+            return []
 
     def _expiry_epoch(self, index, expiry):
         for e in self.expiries.get(index, []):
@@ -431,7 +518,8 @@ class ChainFeed:
                     if r:
                         ltp, bid, ask = self._px(r)
                         rec[ot] = {"symbol": r["symbol"], "ltp": ltp, "bid": bid, "ask": ask,
-                                   "oi": r["oi"], "oich": r["oich"], "volume": r["volume"]}
+                                   "oi": r["oi"] if r["oi"] is not None else (self.live.get(r["symbol"]) or {}).get("oi"),
+                                   "oich": r["oich"], "volume": r["volume"]}
                 rows.append(rec)
             fetched = ch["fetched"]
             as_of = ch.get("as_of")
@@ -525,7 +613,9 @@ class ChainFeed:
 
     def status(self) -> dict:
         with self._lock:
-            return {"rest_calls_today": self.rest_calls, "rest_cap": C.DAILY_REST_CAP, "rest_blocked": self.rest_blocked,
+            k = getattr(self, "_kite", None)
+            return {"far_strikes_kite": k.status() if k else None,
+                    "rest_calls_today": self.rest_calls, "rest_cap": C.DAILY_REST_CAP, "rest_blocked": self.rest_blocked,
                     "ws_connected": self._ws_connected, "subscribed": len(self._ws_subscribed),
                     "watched": [f"{i} {e}" for i, e in self.watch],
                     "last_tick_age": round(time.time() - self.last_tick_at, 1) if self.last_tick_at else None,

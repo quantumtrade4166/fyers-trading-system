@@ -158,11 +158,32 @@ class Account:
                 self.funds = _num(m.get("net"))
             else:
                 r = self.client.limits(segment="ALL", exchange="ALL", product="ALL") or {}
+                if isinstance(r, dict) and (r.get("error") or str(r.get("stat", "")).lower() == "not_ok") \
+                        and self._dead_session(r):
+                    return self._drop_session(r)
                 d = r.get("data") if isinstance(r.get("data"), dict) else r
                 self.funds = next((_num(d.get(k)) for k in ("Net", "net", "CashBal", "cashBal")
                                    if _num(d.get(k)) is not None), None)
         except Exception as e:
             log.info("%s funds read failed: %s", self.id, e)
+            if self._dead_session(e):
+                self._drop_session(e)
+
+    # A session the broker ended mid-day (Kotak logs out API sessions now and then) must not sit "logged in"
+    # until an order fails: the 5-minute funds check notices, drops it, and the login loop logs in again
+    # within ~2 minutes (Kotak: at most KOTAK_MAX_TRIES logins a day). A deploy logs in at once anyway.
+    _DEAD = ("session", "token", "expired", "unauthor", "401", "invalid jwt", "login again", "not logged")
+
+    def _dead_session(self, err) -> bool:
+        m = str(err).lower()
+        return any(k in m for k in self._DEAD)
+
+    def _drop_session(self, why):
+        with self.lock:
+            log.warning("%s session ended by the broker (%s) — logging in again", self.id, str(why)[:160])
+            self.client, self.status = None, "error"
+            self.error = "session ended — logging in again"
+            self.last_try = 0.0
 
     def public(self) -> dict:
         return {"id": self.id, "name": self.name, "kind": self.kind, "status": self.status,

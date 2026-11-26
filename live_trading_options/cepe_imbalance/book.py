@@ -131,7 +131,7 @@ class PaperBook:
         px = (q.ask if side == "BUY" else q.bid) or q.ltp
         return px if px and px > 0 else None
 
-    def order(self, contract, side: str, lots: int, reason: str = "", price: float | None = None) -> dict:
+    def order(self, contract, side: str, lots: int, reason: str = "", price: float | None = None, **_) -> dict:
         """Paper market order. Returns the trade dict, or {'ok': False, 'error': ...}."""
         side = side.upper()
         if side not in ("BUY", "SELL") or int(lots) <= 0:
