@@ -53,7 +53,24 @@ def charges(trades, lot, date):
 
 LOT_FALLBACK = {"NIFTY": 65, "SENSEX": 20}
 PATH_EVERY_S = 15                  # MTM path sample (summary 'path')
-CHAIN_EACH_SIDE = 8                # replay player option chain: strikes each side of ATM
+CHAIN_EACH_SIDE = 8                # replay player option chain: strikes each side of ATM (at least)
+CHAIN_MAX_SIDE = 45                # ... widened to show every held leg, up to this many strikes
+
+
+def apply_change(r, ch):
+    """A settings change during the replay, the way Engine.set_params applies it to a running book
+    (27-Nov: test a lots / strike gap / strikes / Start OTM change in trade)."""
+    st = r.strategy
+    in_trade = any(p.lots for p in r.book.positions.values())
+    old_lots = st.unit(r.ctx) if in_trade else None
+    for k, v in ch.items():
+        r.params[k] = type(st.params[k])(v) if st.params.get(k) is not None else v
+    new_lots = int(r.params.get("lots") or 1)
+    if old_lots and "lots" in ch and new_lots != old_lots:
+        r.state["resize_to"] = new_lots
+    hook = getattr(st, "params_changed", None)
+    out = (hook(r.ctx, ch) or {}) if hook else {}
+    r.event("params", **ch, **out)
 
 
 def meta_of(und, date, folder=None) -> dict:
@@ -125,7 +142,11 @@ def snapshot(r, m, und, t):
     step = r.strategy.step(r.ctx)
     c0 = r.state.get("atm") or (m.atm(und, r.ctx.expiry) if r.ctx.expiry else None)
     if c0:
-        for i in range(-CHAIN_EACH_SIDE, CHAIN_EACH_SIDE + 1):
+        held = [p.strike for p in r.book.positions.values() if p.lots] + [c0]
+        lo = min(c0 - CHAIN_EACH_SIDE * step, min(held) - 3 * step)      # wide books (gap / Start OTM): all legs
+        hi = max(c0 + CHAIN_EACH_SIDE * step, max(held) + 3 * step)
+        lo, hi = max(lo, c0 - CHAIN_MAX_SIDE * step), min(hi, c0 + CHAIN_MAX_SIDE * step)
+        for i in range(int(round((lo - c0) / step)), int(round((hi - c0) / step)) + 1):
             k = c0 + i * step
             px = []
             for kind in ("CE", "PE"):
@@ -141,7 +162,8 @@ def snapshot(r, m, und, t):
             "legs": legs, "lv": lv}
 
 
-def run_day(und, date, lots=1, buffer=5.0, entry="09:20", exit_="15:15", folder=None, rules="syn", params=None, timeline=None):
+def run_day(und, date, lots=1, buffer=5.0, entry="09:20", exit_="15:15", folder=None, rules="syn", params=None, timeline=None,
+            changes=None):
     """rules "syn" = Synthetic To-and-Fro (book {UND}_SYN) · "cepe" = the CE/PE imbalance rules the {UND} paper
     book trades (flex for NIFTY / SENSEX), with that book's saved settings unless `params` overrides them."""
     RR.install_clock()
@@ -171,10 +193,14 @@ def run_day(und, date, lots=1, buffer=5.0, entry="09:20", exit_="15:15", folder=
     started, prev, next_eval = False, None, 0.0
     lo, hi, lo_t, path = 0.0, 0.0, None, []
     syn0 = None
+    todo = sorted(((dt.datetime.combine(day, dt.time.fromisoformat(c["at"]), IST).timestamp(), c["set"])
+                   for c in (changes or [])), key=lambda x: x[0])
     for _m, row in Q.iter_window(date, und, t0 - 900, t1 + 1, folder=folder):
         t = row[0]
         if prev is not None and t != prev and prev >= t0:
             RR.Clock.t = prev
+            while todo and prev >= todo[0][0]:
+                apply_change(r, todo.pop(0)[1])
             if not started:
                 r.running = True
                 st.on_start(r.ctx)
@@ -213,7 +239,8 @@ def run_day(und, date, lots=1, buffer=5.0, entry="09:20", exit_="15:15", folder=
     entry_ev = next((e for e in r.events if e.get("event") == "adjust" and e["action"].startswith("entry")), None)
     if timeline is not None:
         timeline.append(snapshot(r, m, und, t1))
-        timeline.append({"events": [e for e in r.events if e.get("event") in ("adjust", "exit_time", "stop_loss", "blocked")],
+        timeline.append({"events": [e for e in r.events if e.get("event") in ("adjust", "exit_time", "stop_loss", "blocked",
+                                                                               "params", "reshape_skipped", "profit_exit")],
                          "trades": r.book.trades, "expiry": r.ctx.expiry})
     return {"und": und, "date": date, "rules": r.strategy_name, "lots": lots, "lot": lot, "entered": bool(entry_ev),
             "entry_time": entry_ev["time"] if entry_ev else None, "syn_start": syn0, "syn_end": syn1,
@@ -221,7 +248,9 @@ def run_day(und, date, lots=1, buffer=5.0, entry="09:20", exit_="15:15", folder=
             "gross": gross, "charges": ch, "net": round(gross - (ch or 0), 2),
             "mtm_low": round(lo, 2), "mtm_low_at": lo_t, "mtm_high": round(hi, 2),
             "errors": r.errors, "last_error": r.last_error,
-            "params": {k: r.params.get(k) for k in ("band", "normal_band", "normal_trigger", "atm_buffer_pct", "buffer", "mtm_stop", "profit_target", "lock_start", "lock_gap") if k in r.params},
+            "params": {k: r.params.get(k) for k in ("band", "normal_band", "normal_trigger", "atm_buffer_pct", "buffer", "mtm_stop", "profit_target", "lock_start", "lock_gap",
+                                                    "strike_gap", "strikes", "start_otm", "lots") if k in r.params},
+            "changes": changes or [],
             "path": [(dt.datetime.fromtimestamp(a, IST).strftime("%H:%M"), round(b, 2), c) for a, b, c in path]}
 
 
@@ -237,12 +266,16 @@ if __name__ == "__main__":
     ap.add_argument("--json", default="")
     ap.add_argument("--rules", default="syn")
     ap.add_argument("--timeline", default="", help="write a per-second replay file (one date) for the player")
+    ap.add_argument("--params", default="", help='JSON settings, e.g. {"strike_gap": 200, "strikes": 4, "start_otm": 2}')
+    ap.add_argument("--changes", default="", help='JSON [{"at": "10:30", "set": {"strikes": 5}}, ...] applied in trade')
     a = ap.parse_args()
     out = []
     for d in a.dates:
         try:
             tl = [] if a.timeline else None
-            res = run_day(a.und.upper(), d, a.lots, a.buffer, a.entry, a.exit, rules=a.rules, timeline=tl)
+            res = run_day(a.und.upper(), d, a.lots, a.buffer, a.entry, a.exit, rules=a.rules, timeline=tl,
+                          params=json.loads(a.params) if a.params else None,
+                          changes=json.loads(a.changes) if a.changes else None)
             if tl is not None:
                 extra = tl.pop()
                 with open(a.timeline, "w", encoding="utf-8") as f:

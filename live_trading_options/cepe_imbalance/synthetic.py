@@ -172,18 +172,27 @@ class SynToFro(CePeImbalance):
         ok, why = self.entry_ready(ctx, atm)
         if not ok:
             return self.blocked(ctx, why, key="entry gap")
-        step, unit = self.step(ctx), max(1, int(ctx.params.get("lots") or 1))
-        legs = {"CE": self.clean("CE", atm, step, unit), "PE": self.clean("PE", atm, step, unit)}
+        unit = max(1, int(ctx.params.get("lots") or 1))
+        legs = self.layout(ctx, atm, unit)
         ops = self.paired([(k, st, "SELL", n) for k in ("CE", "PE") for st, n in sorted(legs[k].items())], atm)
         ctx.state["entry_syn"] = ctx.state.get("syn")
         self.run_entry(ctx, ops, atm, f"entry (synthetic {ctx.state.get('syn'):g} -> ATM {atm:g})")
+
+    def gap(self, ctx):
+        """Points between two sold strikes on one side (V1: always the strike step)."""
+        return self.step(ctx)
+
+    def layout(self, ctx, atm, unit):
+        """The entry book around `atm`: {'CE': {strike: lots}, 'PE': {...}} (V1: 3 strikes, one step apart)."""
+        step = self.step(ctx)
+        return {"CE": self.clean("CE", atm, step, unit), "PE": self.clean("PE", atm, step, unit)}
 
     def run_entry(self, ctx, ops, atm, label):
         """Entry legs go out one CE / PE pair at a time. 26-Nov (owner): before every later pair the ATM is read
         again - if the market has moved a strike while the first pairs were filling, the remaining legs are
         placed around the NEW ATM (same distance from it), never at strikes the market has already left.
         Legs that could not be placed are kept in state 'entry_left' and retried on the next tick."""
-        step = self.step(ctx)
+        step = self.gap(ctx)
         pairs = [list(ops[i:i + 2]) for i in range(0, len(ops), 2)]
         for i in range(len(pairs)):
             if i or ctx.state.get("phase") == "in":
@@ -270,7 +279,138 @@ class SynToFroV2(SynToFro):
     put instead made V2 push calls out twice in a row right after a call out (that put is then one strike behind).
     So on smooth prices: call out at K + half a strike, put in at J + one strike - V1 with no buffer, read from
     the option prices. Outs before ins. Backtest / replay only until the owner approves it for live."""
-    params = {**SynToFro.params, "buffer": 0.0}
+    params = {**SynToFro.params, "buffer": 0.0,
+              "strike_gap": 0.0,       # points between sold strikes on a side; 0 = the strike step (SENSEX 100)
+              "strikes": 3,            # sold strikes per side, 2..6 (each gets `lots` lots)
+              "start_otm": 0}          # first sold strike = this many strikes OTM from the ATM (0 = at the ATM)
+    MIN_STRIKES, MAX_STRIKES = 2, 6
+
+    # ── book shape (owner 27-Nov-2026) ─────────────────────────────────────
+    # strike gap G (points, a multiple of the strike step s), N strikes per side, Start OTM n (in strikes).
+    # Entry around ATM A: CE at A+n*s, A+n*s+G, ... (N of them); PE mirror. Rolls move one GAP. The price
+    # rules compare the call one gap past the nearest call with the put the same distance on the other side
+    # of the book's centre (call out CE(Kc+G) >= PE(Kc-2ns)), so they fire at the same synthetic as an
+    # ATM book (centre + G/2 out, centre + G in) and Start OTM 0 is exactly the 25-Nov rule.
+    # A shape / lots change while in trade reshapes the open book at once: nearest strikes stay (Start OTM
+    # change: the centre stays), legs bought back / sold to the new layout, buy-backs first, CE/PE pairs.
+    def gap(self, ctx, shape=None):
+        if shape:
+            return shape["gap"]
+        s, g = self.step(ctx), float(ctx.params.get("strike_gap") or 0)
+        return max(1, round(g / s)) * s if g > 0 else s
+
+    def want_shape(self, ctx):
+        """The shape the settings ask for now."""
+        n = int(ctx.params.get("strikes") or 3)
+        return {"gap": self.gap(ctx), "strikes": min(self.MAX_STRIKES, max(self.MIN_STRIKES, n)),
+                "otm": max(0, int(ctx.params.get("start_otm") or 0))}
+
+    def shape(self, ctx):
+        """The shape the OPEN book was built with (a book from before 27-Nov: 3 strikes, one step, at the ATM)."""
+        return ctx.state.get("shape") or {"gap": self.step(ctx), "strikes": 3, "otm": 0}
+
+    def build(self, ctx, centre, unit, shape):
+        s = self.step(ctx)
+        off, g = shape["otm"] * s, shape["gap"]
+        return {"CE": {centre + off + i * g: unit for i in range(shape["strikes"])},
+                "PE": {centre - off - i * g: unit for i in range(shape["strikes"])}}
+
+    def layout(self, ctx, atm, unit):
+        sh = self.want_shape(ctx)
+        ctx.state["shape"] = sh
+        return self.build(ctx, atm, unit, sh)
+
+    @classmethod
+    def unit(cls, ctx) -> int:
+        """Lots per strike of the open book (the most common leg size), else the `lots` setting."""
+        legs = cls.legs(ctx)
+        sizes = list(legs["CE"].values()) + list(legs["PE"].values())
+        if sizes:
+            return max(set(sizes), key=sizes.count)
+        return max(1, int(ctx.params.get("lots") or 1))
+
+    def params_changed(self, ctx, changes) -> dict:
+        """Engine hook after a settings change. In trade, a new strike gap / strikes / Start OTM (or lots)
+        reshapes the open book at once (via the engine's resize path)."""
+        keys = {"strike_gap", "strikes", "start_otm", "lots"}
+        if not keys & set(changes):
+            return {}
+        ctx.state["reshape_target"] = None
+        legs = self.legs(ctx)
+        if not legs["CE"] or not legs["PE"] or ctx.state.get("phase") != "in":
+            return {}
+        target = self.reshape_target(ctx)
+        if target == legs:
+            ctx.state["resize_to"] = None
+            return {}
+        ctx.state["resize_to"] = max(1, int(ctx.params.get("lots") or 1))
+        return {"resize": f"open book -> {self.shape_text(self.want_shape(ctx), ctx.state['resize_to'])}: orders go out now"}
+
+    @staticmethod
+    def shape_text(sh, lots):
+        return f"{sh['strikes']} strikes x {lots} lots, gap {sh['gap']:g}, start OTM {sh['otm']}"
+
+    def reshape_target(self, ctx):
+        legs, s, old = self.legs(ctx), self.step(ctx), self.shape(ctx)
+        new, lots = self.want_shape(ctx), max(1, int(ctx.params.get("lots") or 1))
+        cc, cp = min(legs["CE"]) - old["otm"] * s, max(legs["PE"]) + old["otm"] * s   # centre of each side
+        a, b = self.build(ctx, cc, lots, new), self.build(ctx, cp, lots, new)
+        return {"CE": a["CE"], "PE": b["PE"]}
+
+    def margin_ok(self, ctx, sells):
+        """(ok, why) before NEW sells (entry / more strikes / more lots). Paper: always ok. Live books
+        override this with the broker's free margin (owner: margin short -> warn, skip the orders)."""
+        fn = getattr(ctx.book, "margin_check", None)
+        return fn(sells, ctx) if fn else (True, "")
+
+    def resize(self, ctx, new, atm):
+        """A pending lots / shape change on the open book. True = done / dropped, False = retry next tick."""
+        legs = self.legs(ctx)
+        if not legs["CE"] or not legs["PE"]:
+            ctx.state["resize_to"] = ctx.state["reshape_target"] = None
+            return True
+        tgt = ctx.state.get("reshape_target")
+        if tgt:
+            target = {k: {float(a): int(b) for a, b in tgt[k].items()} for k in ("CE", "PE")}
+        else:
+            target = self.reshape_target(ctx)
+            ctx.state["reshape_target"] = {k: {str(a): b for a, b in target[k].items()} for k in ("CE", "PE")}
+        sh = self.want_shape(ctx)
+        if target == legs:
+            ctx.state["resize_to"] = ctx.state["reshape_target"] = None
+            ctx.state["shape"] = sh
+            return True
+        ops = self.op_to(legs, target)
+        centre = (min(legs["CE"]) + max(legs["PE"])) / 2
+        buys = self.paired([o for o in ops if o[2] == "BUY"], centre)
+        sells = self.paired([o for o in ops if o[2] == "SELL"], centre)
+        lots = int(new)
+        if sells:
+            ok, why = self.margin_ok(ctx, sells)
+            if not ok:
+                ctx.state["resize_to"] = ctx.state["reshape_target"] = None
+                ctx.log("reshape_skipped", why=why)
+                return self.blocked(ctx, f"reshape skipped - margin short: {why}", key="margin") or True
+        cost = self.cost_note(ctx, buys + sells) if hasattr(self, "cost_note") else f"{len(buys + sells)} orders"
+        why = f"reshape -> {self.shape_text(sh, lots)} ({cost})"
+        self._fail = None
+        if self.execute(ctx, buys + sells, why):
+            ctx.state["resize_to"] = ctx.state["reshape_target"] = None
+            ctx.state["shape"] = sh
+            return True
+        if self._fail == "order":
+            ctx.state["resize_to"] = ctx.state["reshape_target"] = None
+        return False
+
+    def entry(self, ctx, atm):
+        if ctx.state.get("phase") == "wait_entry":
+            unit = max(1, int(ctx.params.get("lots") or 1))
+            sh = self.want_shape(ctx)
+            sells = [(k, st, "SELL", n) for k, side in self.build(ctx, atm, unit, sh).items() for st, n in side.items()]
+            ok, why = self.margin_ok(ctx, sells)
+            if not ok:
+                return self.blocked(ctx, f"entry skipped - margin short: {why}", key="margin")
+        return super().entry(ctx, atm)
 
     def _px(self, ctx, kind, k):
         return self._ltp(ctx, ctx.contract(k, kind))
@@ -281,7 +421,8 @@ class SynToFroV2(SynToFro):
         ce, pe = legs["CE"], legs["PE"]
         if not ce or not pe:
             return []
-        s = self.step(ctx)
+        sh = self.shape(ctx)
+        s, w = sh["gap"], 2 * sh["otm"] * self.step(ctx)        # s = one gap, w = CE->PE distance across the centre
         K, J = min(ce), max(pe)
         rows = []
 
@@ -289,17 +430,17 @@ class SynToFroV2(SynToFro):
             a, b = self._px(ctx, ak, aK), self._px(ctx, bk, bK)
             due = a is not None and b is not None and (a >= b if op == ">=" else a <= b)
             rows.append((move, (f"{aK:g} {ak}", a), op, (f"{bK:g} {bk}", b), due))
-        row("call out", "CE", K + s, ">=", "PE", K)
-        row("put out", "PE", J - s, ">=", "CE", J)
-        row("call in", "CE", K - s, "<=", "PE", K - s)
-        row("put in", "PE", J + s, "<=", "CE", J + s)
+        row("call out", "CE", K + s, ">=", "PE", K - w)
+        row("put out", "PE", J - s, ">=", "CE", J + w)
+        row("call in", "CE", K - s, "<=", "PE", K - s - w)
+        row("put in", "PE", J + s, "<=", "CE", J + s + w)
         return rows
 
     def levels(self, ctx, legs=None):
         return {"call_out": None, "call_in": None, "put_in": None, "put_out": None}
 
     def candidates(self, ctx, atm):
-        legs, s = self.legs(ctx), self.step(ctx)
+        legs, s = self.legs(ctx), self.shape(ctx)["gap"]
         ce, pe = legs["CE"], legs["PE"]
         if not ce or not pe:
             self.blocked(ctx, "one side has no short - the to-and-fro needs both CE and PE", key="side empty")
@@ -330,6 +471,7 @@ class SynToFroV2(SynToFro):
     def view(self, ctx) -> dict:
         v = super().view(ctx)
         v["version"] = 2
+        v["shape"], v["shape_wanted"] = self.shape(ctx), self.want_shape(ctx)
         v["triggers"] = [{"move": t[0], "a": t[1][0], "a_ltp": t[1][1], "op": t[2], "b": t[3][0], "b_ltp": t[3][1],
                           "due": t[4]} for t in self.triggers(ctx)]
         return v

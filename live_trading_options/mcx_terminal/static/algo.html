@@ -190,6 +190,9 @@ table.chain td.sp { color: var(--dim); font-size: 11.5px; }
         <div class="set">
           <label title="Change in trade: the open book is resized at once (CE / PE pairs)"><span class="lbl">Lots per strike (live editable)</span><input type="number" id="pLots" min="1" step="1"></label>
           <label id="bufBox"><span class="lbl">Buffer (pts)</span><input type="number" id="pBuf" min="0" step="1"></label>
+          <label class="shapeBox" title="Points between sold strikes on a side. Change in trade: the open book is re-spaced at once"><span class="lbl">Strike gap (pts)</span><select id="pGap"></select></label>
+          <label class="shapeBox" title="Sold strikes per side, each with the lots above. Fewer in trade: the farthest OTM legs are bought back; more: new legs sold further out"><span class="lbl">Strikes / side</span><select id="pStrikes"><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>
+          <label class="shapeBox" title="First sold strike = this many strikes OTM from the ATM. Change in trade: the whole book moves, centre kept"><span class="lbl">Start OTM</span><select id="pOtm"></select></label>
           <label><span class="lbl">Auto entry</span><select id="aOn"><option value="1">On</option><option value="0">Off</option></select></label>
           <label><span class="lbl">Entry time (HH:MM:SS)</span><input type="text" id="aTime" class="tm" placeholder="09:15:20" maxlength="8" inputmode="numeric"></label>
           <label><span class="lbl">Exit time (HH:MM:SS)</span><input type="text" id="pExit" class="tm" placeholder="15:15:00" maxlength="8" inputmode="numeric"></label>
@@ -466,12 +469,15 @@ function renderRules(r) {
   $('bufBox').style.display = VER === 'v2' ? 'none' : '';
   $('hSynChart').textContent = VER === 'v2' ? 'Premium: triggers come from option prices (see Next adjustment)' : 'dashed = next out / in levels';
   if (VER === 'v2') {
-    $('rules').innerHTML = `<b>Premium</b> (V2): same book and moves as Synthetic - only the trigger differs: option LTPs, every tick, no buffer. K = 1st sold CE, J = 1st sold PE, grid ${s}.<br>
-    <b>Entry</b>: sell CE ATM / +1 / +2 and PE ATM / −1 / −2 at the synthetic ATM.<br>
-    <b>Call out</b>: LTP(CE K+${s}) ≥ LTP(PE K) → 1st CE moves past the last CE.<br>
-    <b>Put out</b>: LTP(PE J−${s}) ≥ LTP(CE J) → 1st PE moves past the last PE.<br>
-    <b>Call in</b>: LTP(CE K−${s}) ≤ LTP(PE K−${s}) → farthest CE moves to K−${s} (new ATM).<br>
-    <b>Put in</b>: LTP(PE J+${s}) ≤ LTP(CE J+${s}) → farthest PE moves to J+${s} (new ATM).<br>
+    const sh = y.shape || {gap: s, strikes: 3, otm: 0}, g = sh.gap, w = 2 * sh.otm * s;
+    const wTxt = v => v ? `−${v}` : '', wTxtP = v => v ? `+${v}` : '';
+    $('rules').innerHTML = `<b>Premium</b> (V2): same book and moves as Synthetic - only the trigger differs: option LTPs, every tick, no buffer. K = 1st sold CE, J = 1st sold PE.<br>
+    <b>Book</b>: ${sh.strikes} strikes a side, gap ${g}, start ${sh.otm ? 'OTM ' + sh.otm + ' (' + sh.otm * s + ' pts out)' : 'at the ATM'} — CE ATM${sh.otm ? '+' + sh.otm * s : ''} … , PE mirror.<br>
+    <b>Call out</b>: LTP(CE K+${g}) ≥ LTP(PE K${wTxt(w)}) → 1st CE moves past the last CE.<br>
+    <b>Put out</b>: LTP(PE J−${g}) ≥ LTP(CE J${wTxtP(w)}) → 1st PE moves past the last PE.<br>
+    <b>Call in</b>: LTP(CE K−${g}) ≤ LTP(PE K−${g + w}) → farthest CE moves to K−${g}.<br>
+    <b>Put in</b>: LTP(PE J+${g}) ≤ LTP(CE J+${g + w}) → farthest PE moves to J+${g}.<br>
+    <b>Margin</b> (live): before any new sells, Kotak's 1-lot margin × lots a side vs free margin — short → the orders are skipped and shown here.<br>
     <b>Exits</b>: exit time, MTM loss, target, trailing profit lock — each exits all, done for the day.`;
     return;
   }
@@ -482,14 +488,26 @@ function renderRules(r) {
     <b>Put out</b> / <b>Call in</b>: the mirror on the way down. A big jump repeats one strike at a time.<br>
     <b>Exits</b>: exit time, MTM stop, target, profit lock — each exits all, done for the day.`;
 }
+let gapStep = 0;
+function gapOptions(step) {                            // strike gap choices: 1..6 strikes of this index
+  if (gapStep === step) return;
+  gapStep = step;
+  $('pGap').innerHTML = [1, 2, 3, 4, 5, 6].map(i => `<option value="${i * step}">${i * step}</option>`).join('');
+  $('pOtm').innerHTML = Array.from({length: 11}, (_, i) => `<option value="${i}">${i === 0 ? 'ATM (0)' : 'OTM ' + i}</option>`).join('');
+}
 function fillParams(r) {
   const p = r.params || {};
+  const step = (r.syn && r.syn.step) || (UND === 'SENSEX' ? 100 : 50);
+  gapOptions(step);
+  document.querySelectorAll('.shapeBox').forEach(x => x.style.display = VER === 'v2' ? '' : 'none');
+  if (VER === 'v2') { $('pGap').value = p.strike_gap || step; $('pStrikes').value = p.strikes || 3; $('pOtm').value = p.start_otm || 0; }
   $('pLots').value = p.lots; $('pBuf').value = p.buffer; $('pExit').value = hhmmss(p.exit_time);
   $('pStop').value = p.mtm_stop; $('pTgt').value = p.profit_target; $('pLkS').value = p.lock_start; $('pLkG').value = p.lock_gap;
   $('aOn').value = r.auto_start ? '1' : '0'; $('aTime').value = hhmmss(r.auto_time);
 }
-['pLots', 'pBuf', 'pExit', 'pStop', 'pTgt', 'pLkS', 'pLkG', 'aOn', 'aTime'].forEach(id =>
-  $(id).addEventListener('input', () => { dirty = true; $('pMsg').textContent = 'unsaved'; }));
+['pLots', 'pBuf', 'pExit', 'pStop', 'pTgt', 'pLkS', 'pLkG', 'aOn', 'aTime', 'pGap', 'pStrikes', 'pOtm'].forEach(id => {
+  const f = () => { dirty = true; $('pMsg').textContent = 'unsaved'; };
+  $(id).addEventListener('input', f); $(id).addEventListener('change', f); });
 
 // ── lower tables ───────────────────────────────────────────────────────
 async function renderLow() {
@@ -541,7 +559,7 @@ async function act(action, ask) {
   refresh();
 }
 $('bStart').onclick = () => act('start', MODE === 'live'
-  ? `START LIVE ${UND} ${VNAME()} on Kotak P?\nIt SELLS CE and PE at ATM/OTM1/OTM2, ${$('pLots').value} lot(s) each, with REAL orders now.`
+  ? `START LIVE ${UND} ${VNAME()} on Kotak P?\nIt SELLS ${VER === 'v2' ? $('pStrikes').value + ' CE and ' + $('pStrikes').value + ' PE strikes (gap ' + $('pGap').value + ', start OTM ' + $('pOtm').value + ')' : 'CE and PE at ATM/OTM1/OTM2'}, ${$('pLots').value} lot(s) each, with REAL orders now.\n(Save settings first if you changed them.)`
   : `Start PAPER ${UND} ${VNAME()} now?`);
 $('bStop').onclick = () => act('stop', `Stop the rules on ${BOOK()}? Positions are kept.`);
 $('bStopExit').onclick = () => act('stop_exit', `Stop ${BOOK()} and BUY BACK every leg${MODE === 'live' ? ' with REAL orders' : ''}?`);
@@ -557,7 +575,13 @@ $('bSave').onclick = async () => {
   $('aTime').value = hhmmss($('aTime').value); $('pExit').value = hhmmss($('pExit').value);
   const p = {lots: +$('pLots').value, buffer: +$('pBuf').value, exit_time: $('pExit').value.trim(),
              mtm_stop: +$('pStop').value, profit_target: +$('pTgt').value, lock_start: +$('pLkS').value, lock_gap: +$('pLkG').value};
-  if (ROW && ROW.book_lots && p.lots !== ROW.book_lots && !confirm(`The open book has ${ROW.book_lots} lot(s) per strike. Change to ${p.lots}? Orders go out NOW to resize every strike.`)) return;
+  if (VER === 'v2') Object.assign(p, {strike_gap: +$('pGap').value, strikes: +$('pStrikes').value, start_otm: +$('pOtm').value});
+  const sh = (ROW && ROW.syn && ROW.syn.shape) || null, inTrade = ROW && ROW.book_lots;
+  const shapeChanged = VER === 'v2' && inTrade && sh && (p.strike_gap !== sh.gap || p.strikes !== sh.strikes || p.start_otm !== sh.otm);
+  const lotsChanged = inTrade && p.lots !== ROW.book_lots;
+  if ((shapeChanged || lotsChanged) && !confirm(`The open book: ${sh ? `${sh.strikes} strikes, gap ${sh.gap}, start OTM ${sh.otm}, ` : ''}${ROW.book_lots} lot(s) per strike.\n` +
+      `Change to: ${VER === 'v2' ? `${p.strikes} strikes, gap ${p.strike_gap}, start OTM ${p.start_otm}, ` : ''}${p.lots} lot(s)?\n` +
+      `Orders go out NOW${MODE === 'live' ? ' (REAL orders; skipped if Kotak margin is short)' : ''}.`)) return;
   const j = await api(`/params/${BOOK()}`, p);
   const a = await api(`/auto/${BOOK()}`, {auto_start: $('aOn').value === '1', auto_time: $('aTime').value});
   $('pMsg').textContent = j.ok && a.ok ? `applied ${j.applied_at || ''}${j.resize ? ' · ' + j.resize : ''}` : (j.error || a.error || 'refused');

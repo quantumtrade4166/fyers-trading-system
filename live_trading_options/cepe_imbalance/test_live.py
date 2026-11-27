@@ -549,3 +549,29 @@ def test_fast_orders_reprice_quicker(universe, monkeypatch):
     tries = [kw for t, kw in g.k.calls if t == "place" and kw["trading_symbol"] == stuck.symbol]
     assert len(tries) == LV.ATTEMPTS_FAST["SELL"]
     assert waits and waits[0] == 0.04                   # the fast wait, not WAIT_FIRST_S
+
+
+# ── 27-Nov: margin check before new sells (Premium shape / lots / entry) ────
+def test_margin_check_uses_kotak_free_margin_and_lot_margin(universe):
+    g = Rig(universe)
+    g.k.margin_required = lambda **kw: {"data": {"ordMrgn": "186000.0", "stat": "Ok"}}
+    g.ctx.account.read_limits()                                   # Net 54.3L, used 0
+    bk, ctx = g.r.book, g.r.ctx
+    atm = 25600.0
+    few = [("CE", atm + i * 50, "SELL", 1) for i in range(3)] + [("PE", atm - i * 50, "SELL", 1) for i in range(3)]
+    ok, why = bk.margin_check(few, ctx)
+    assert ok, why                                                # 6 lots x 1.86L = 11.2L < 54.3L
+    many = [("CE", atm, "SELL", 15), ("PE", atm, "SELL", 15)]
+    ok, why = bk.margin_check(many, ctx)
+    assert not ok and "free" in why                               # 30 lots x 1.86L = 55.8L > 54.3L
+    assert bk.margin_check([("CE", atm, "BUY", 5)], ctx) == (True, "")   # buy-backs never checked
+
+
+def test_margin_check_lets_orders_go_when_kotak_cannot_tell(universe):
+    g = Rig(universe)
+    def boom(**kw):
+        raise RuntimeError("timeout")
+    g.k.margin_required = boom
+    g.ctx.account.read_limits()
+    ok, why = g.r.book.margin_check([("CE", 25600.0, "SELL", 2), ("PE", 25600.0, "SELL", 2)], g.r.ctx)
+    assert ok and why == "margin unknown"

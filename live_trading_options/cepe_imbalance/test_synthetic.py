@@ -408,3 +408,88 @@ def test_synthetic_books_ask_for_fast_orders(universe):
     g.r.book.order = order
     g.start()
     assert seen and all(k.get("fast") for k in seen)
+
+
+# ── Premium shape: strike gap / strikes per side / Start OTM (owner 27-Nov-2026) ──
+def shaped(g, **p):
+    g.r.params.update(p)
+    return g
+
+
+def test_v2_gap_and_strikes_entry_and_trigger(universe):
+    """Gap 100, 4 strikes: legs one gap apart; call out half a GAP up (CE 25100 vs PE 25000), roll by one gap."""
+    g = shaped(v2(Rig(universe, 25000)), strike_gap=100.0, strikes=4)
+    g.start()
+    assert g.legs() == {"CE": [25000, 25100, 25200, 25300], "PE": [24700, 24800, 24900, 25000]}
+    g.move(25049)
+    assert g.actions() == []
+    g.move(25051)
+    assert g.legs()["CE"] == [25100, 25200, 25300, 25400], g.actions()
+    assert g.actions()[-1].startswith("call out")
+
+
+def test_v2_start_otm_fires_like_an_atm_book(universe):
+    """Start OTM 2 (NIFTY: 100 points out): calls 25100/25150/25200, puts 24900/24850/24800. Call out at the
+    centre + half a gap (25025), put in at the centre + one gap (25050) - the same moments as an ATM book."""
+    g = shaped(v2(Rig(universe, 25000)), start_otm=2)
+    g.start()
+    assert g.legs() == {"CE": [25100, 25150, 25200], "PE": [24800, 24850, 24900]}
+    g.move(25024)
+    assert g.actions() == []
+    g.move(25026)
+    assert g.legs()["CE"] == [25150, 25200, 25250], g.actions()
+    g.move(25049)
+    assert len(g.actions()) == 1
+    g.move(25051)
+    assert g.legs() == {"CE": [25150, 25200, 25250], "PE": [24850, 24900, 24950]}, g.actions()
+    assert g.actions()[-1].startswith("put in")
+    g.move(25026)                                     # back down: put out at the new centre - half a gap
+    assert g.legs()["PE"] == [24850, 24900, 24950]
+    g.move(25024)
+    assert g.legs()["PE"] == [24800, 24850, 24900], g.actions()
+
+
+def test_v2_reshape_in_trade(universe):
+    g = v2(Rig(universe, 25000))
+    g.start()
+    out = g.eng.set_params(g.r.name, {"strikes": 5})
+    assert "resize" in out, out
+    g.move(25000)
+    assert g.legs() == {"CE": [25000, 25050, 25100, 25150, 25200], "PE": [24800, 24850, 24900, 24950, 25000]}
+    g.eng.set_params(g.r.name, {"strikes": 2})                   # fewer: the farthest OTM legs bought back
+    g.move(25000)
+    assert g.legs() == {"CE": [25000, 25050], "PE": [24950, 25000]}
+    g.eng.set_params(g.r.name, {"strike_gap": 100.0})            # wider gap: nearest stays, the rest re-spaced
+    g.move(25000)
+    assert g.legs() == {"CE": [25000, 25100], "PE": [24900, 25000]}
+    g.eng.set_params(g.r.name, {"start_otm": 1})                 # start OTM: the centre stays
+    g.move(25000)
+    assert g.legs() == {"CE": [25050, 25150], "PE": [24850, 24950]}
+    g.eng.set_params(g.r.name, {"lots": 2})
+    g.move(25000)
+    assert set(g.lots()["CE"].values()) == {2} and set(g.lots()["PE"].values()) == {2}
+    assert g.r.state["shape"] == {"gap": 100, "strikes": 2, "otm": 1}
+    assert sum(1 for e in g.r.events if e["event"] == "adjust" and e["action"].startswith("reshape")) == 5
+    g.move(25101)                                    # new shape's rules: centre 25000, gap 100 -> out + in
+    assert [a.split(" (")[0] for a in g.actions()[-2:]] == ["call out", "put in"], g.actions()
+    assert g.legs() == {"CE": [25150, 25250], "PE": [24950, 25050]}
+
+
+def test_v2_reshape_skipped_when_margin_short(universe):
+    g = v2(Rig(universe, 25000))
+    g.start()
+    g.r.book.margin_check = lambda sells, ctx: (False, "needs Rs 2.1L more")
+    g.eng.set_params(g.r.name, {"strikes": 5})
+    g.move(25000)
+    assert g.legs() == {"CE": [25000, 25050, 25100], "PE": [24900, 24950, 25000]}
+    assert any(e["event"] == "reshape_skipped" for e in g.r.events)
+    assert "margin short" in (g.r.state.get("blocked") or "")
+    assert not g.r.state.get("resize_to")
+
+
+def test_v2_entry_skipped_when_margin_short(universe):
+    g = v2(Rig(universe, 25000))
+    g.r.book.margin_check = lambda sells, ctx: (False, "needs Rs 3L more")
+    g.start()
+    assert g.legs() == {"CE": [], "PE": []}
+    assert "margin short" in (g.r.state.get("blocked") or "")

@@ -586,6 +586,9 @@ class Engine:
                 out["resize"] = f"{old_lots} -> {new_lots} lots on the open book: orders go out now"
             elif "lots" in changes and r.state.get("resize_to"):
                 r.state["resize_to"] = None if new_lots == old_lots else new_lots
+            hook = getattr(r.strategy, "params_changed", None)     # 27-Nov: Premium shape changes in trade
+            if hook:
+                out.update(hook(r.ctx, changes) or {})
             r.event("params", **changes)
             r.save_state()
             if self.persist:

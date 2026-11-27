@@ -38,7 +38,16 @@ button.on { border-color: var(--accent); background: var(--accent-soft); }
 .speeds { display: inline-flex; gap: 4px; flex-wrap: wrap; }
 .speeds button { padding: 4px 8px; font-size: 12px; }
 #play { min-width: 86px; font-weight: 700; }
-#scrub { flex: 1; min-width: 200px; accent-color: var(--accent); }
+#scrub { flex: 1; min-width: 200px; -webkit-appearance: none; appearance: none; height: 18px; background: transparent;
+  --played: 0%; --view: 0%; cursor: pointer; }
+#scrub::-webkit-slider-runnable-track { height: 6px; border-radius: 3px;
+  background: linear-gradient(to right, var(--accent) var(--view), rgba(245,165,36,.35) var(--view), rgba(245,165,36,.35) var(--played), var(--line) var(--played)); }
+#scrub::-moz-range-track { height: 6px; border-radius: 3px;
+  background: linear-gradient(to right, var(--accent) var(--view), rgba(245,165,36,.35) var(--view), rgba(245,165,36,.35) var(--played), var(--line) var(--played)); }
+#scrub::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--accent);
+  margin-top: -4px; border: 2px solid var(--panel); }
+#scrub::-moz-range-thumb { width: 12px; height: 12px; border-radius: 50%; background: var(--accent); border: 2px solid var(--panel); }
+.clock.preview { color: var(--accent); }
 .toast { position: fixed; right: 16px; bottom: 16px; z-index: 9; max-width: min(460px, calc(100vw - 32px));
   background: var(--panel); border: 1px solid var(--accent); border-radius: 9px; padding: 10px 12px;
   box-shadow: 0 6px 24px rgba(0,0,0,.35); opacity: 0; transform: translateY(-6px); transition: .25s; pointer-events: none; }
@@ -93,6 +102,42 @@ td.flash-up { color: var(--up); } td.flash-dn { color: var(--down); }
 .ev .tag { font-weight: 700; }
 .ev .f { color: var(--muted); font-size: 11.5px; margin-top: 2px; }
 .future { opacity: .35; }
+/* backtest panel (owner 27-Nov) */
+.bt { background: var(--panel); border-bottom: 1px solid var(--line); padding: 8px 14px 10px; }
+.bt[hidden] { display: none; }
+.bt .grid { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; }
+.bt label.f { display: grid; gap: 3px; }
+.bt input, .bt select { font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 8px; }
+.bt input[type=number] { width: 78px; } .bt input[type=time] { width: 112px; }
+.bt .chg { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+.bt .chg .item { display: inline-flex; gap: 4px; align-items: center; background: var(--panel-2); border: 1px solid var(--line);
+  border-radius: 7px; padding: 3px 6px; }
+.bt .chg .item button { padding: 1px 6px; }
+.bt .chg .item input[type=number] { width: 64px; }
+#runBtn { font-weight: 700; border-color: var(--accent); background: var(--accent-soft); min-width: 96px; }
+#runBtn[disabled] { opacity: .6; cursor: wait; }
+#runMsg.err { color: var(--down); }
+.shapeOnly[hidden] { display: none; }
+/* live-like simulator (owner 27-Nov) */
+#simBtn { font-weight: 700; border-color: var(--up); background: rgba(31,201,122,.12); }
+.simbar { background: var(--panel-2); border-bottom: 1px solid var(--line); padding: 8px 14px; }
+.simbar[hidden] { display: none; }
+.simbar .grid { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: flex-end; }
+.simbar label.f { display: grid; gap: 3px; }
+.simbar input, .simbar select { font: inherit; color: var(--text); background: var(--panel); border: 1px solid var(--line);
+  border-radius: 6px; padding: 4px 8px; }
+.simbar input[type=number] { width: 84px; } .simbar input[type=time] { width: 112px; }
+#sApply { font-weight: 700; border-color: var(--accent); background: var(--accent-soft); }
+#sEnter { border-color: var(--up); } #sExit { border-color: var(--down); color: var(--down); font-weight: 700; }
+.livepill { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; color: var(--up); }
+.livepill::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--up); }
+.livepill.paused { color: var(--muted); } .livepill.paused::before { background: var(--muted); }
+#simState { font-size: 12.5px; }
+#simState .warn { color: var(--accent); font-weight: 600; }
+body.sim #day, body.sim #verSeg { display: none; }
+#liveBtn { display: none; font-weight: 700; color: var(--up); border-color: var(--up); }
+body.sim.past #liveBtn { display: inline-block; }
 </style>
 </head>
 <body>
@@ -101,6 +146,7 @@ td.flash-up { color: var(--up); } td.flash-dn { color: var(--down); }
     <span class="title"><span class="mark">◆</span> <span id="ttl">Synthetic To-and-Fro · replay</span></span>
     <select id="day" title="Replay day"></select>
     <span class="seg" id="verSeg" title="V1 = synthetic level triggers - V2 = option-price triggers"><button data-v="v1">V1</button><button data-v="v2">V2</button></span>
+    <button id="btToggle" hidden title="Choose settings and run a recorded day through them">⚙ Backtest</button>
     <span class="mut" id="ttlSub"></span>
     <span style="flex:1"></span>
     <span class="clock" id="clock">--:--:--</span>
@@ -112,6 +158,43 @@ td.flash-up { color: var(--up); } td.flash-dn { color: var(--down); }
     <span class="speeds" id="speeds"></span>
     <label class="mut" title="Keep the whole day so far in view while playing (off = zoom / pan freely)"><input type="checkbox" id="follow" checked> fit day</label>
     <input type="range" id="scrub" min="0" max="1000" value="0">
+    <button id="liveBtn" title="Back to the moment the simulation is at now">● Back to live</button>
+  </div>
+</div>
+<div class="bt" id="bt" hidden>
+  <div class="grid">
+    <label class="f"><span class="lbl">Index</span><select id="bUnd"><option>SENSEX</option><option>NIFTY</option></select></label>
+    <label class="f"><span class="lbl">Recorded day</span><select id="bDay"></select></label>
+    <label class="f"><span class="lbl">Rules</span><select id="bRules"><option value="syn2">Premium</option><option value="syn">Synthetic</option></select></label>
+    <label class="f"><span class="lbl">Lots / strike</span><input type="number" id="bLots" min="1" max="50" value="1"></label>
+    <label class="f shapeOnly"><span class="lbl">Strike gap (pts)</span><select id="bGap"></select></label>
+    <label class="f shapeOnly"><span class="lbl">Strikes / side</span><select id="bStrikes"><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select></label>
+    <label class="f shapeOnly"><span class="lbl">Start OTM</span><select id="bOtm"></select></label>
+    <label class="f"><span class="lbl">Entry</span><input type="time" id="bEntry" step="1" value="09:20:00"></label>
+    <label class="f"><span class="lbl">Exit</span><input type="time" id="bExit" step="1" value="15:25:00"></label>
+    <label class="f"><span class="lbl">MTM stop ₹</span><input type="number" id="bStop" min="0" step="500" value="0"></label>
+    <label class="f"><span class="lbl">Profit target ₹</span><input type="number" id="bTgt" min="0" step="500" value="0"></label>
+    <label class="f"><span class="lbl">Start at (sim)</span><input type="time" id="bStart" step="1" value="09:15:00"></label>
+    <button id="simBtn" title="Recorded ticks flow like a live market; change settings while it runs">▶ Simulate live</button>
+    <button id="runBtn" title="Run the whole day at once (settings fixed, or the timed changes below)">▶ Run backtest</button>
+    <span class="mut" id="runMsg"></span>
+  </div>
+  <div class="chg" id="chg"><span class="lbl">Change in trade</span><button id="addChg">+ add change</button></div>
+</div>
+<div class="simbar" id="simbar" hidden>
+  <div class="grid">
+    <span class="livepill" id="simPill">SIMULATOR</span>
+    <label class="f"><span class="lbl">Lots / strike</span><input type="number" id="sLots" min="1" max="50"></label>
+    <label class="f sShape"><span class="lbl">Strike gap</span><select id="sGap"></select></label>
+    <label class="f sShape"><span class="lbl">Strikes / side</span><select id="sStrikes"><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>
+    <label class="f sShape"><span class="lbl">Start OTM</span><select id="sOtm"></select></label>
+    <label class="f"><span class="lbl">MTM stop ₹</span><input type="number" id="sStop" min="0" step="500"></label>
+    <label class="f"><span class="lbl">Target ₹</span><input type="number" id="sTgt" min="0" step="500"></label>
+    <label class="f"><span class="lbl">Exit time</span><input type="time" id="sExitT" step="1"></label>
+    <button id="sApply" title="Apply the changed settings now, at this moment of the recording">Apply changes</button>
+    <button id="sEnter" title="Flat: enter now at the current recording time">Enter now</button>
+    <button id="sExit" title="Buy back everything now">Exit all</button>
+    <span id="simState" class="mut"></span>
   </div>
 </div>
 <div class="toast" id="toast"></div>
@@ -190,33 +273,46 @@ function triggerLines(lv) {
 }
 
 // ── data → charts ──────────────────────────────────────────────────────
-const pt = (f, k) => ({time: ltime(f.t), value: f[k]});
+// a missing value repeats the last one (spot <-> synthetic, imbalance 0 at the start), so every chart has a point
+// for every second and the charts line up exactly
+let LASTV = {};
+const FALL = {syn: f => f.spot || null, spot: f => f.syn, imb: () => 0, mtm: () => 0};
+function pt(f, k) {
+  let v = f[k];
+  if (v == null || (k === 'spot' && !v)) v = LASTV[k] ?? FALL[k](f);
+  if (v == null) return {time: ltime(f.t)};
+  LASTV[k] = v;
+  return {time: ltime(f.t), value: v};
+}
+const SERIES = ['mtm', 'syn', 'spot', 'imb'];
+function perSecond(frames) {                           // one frame per second (the last one), in time order
+  const out = [];
+  for (const f of frames) {
+    if (out.length && ltime(out[out.length - 1].t) === ltime(f.t)) out[out.length - 1] = f; else out.push(f);
+  }
+  return out;
+}
 function frameAt(t) {                                   // last frame with time <= t (binary search)
   let lo = 0, hi = F.length - 1, ans = 0;
   while (lo <= hi) { const m = (lo + hi) >> 1; if (F[m].t <= t) { ans = m; lo = m + 1; } else hi = m - 1; }
   return ans;
 }
 function rebuild(i) {                                   // seek: redraw everything up to frame i
-  const sl = F.slice(0, i + 1);
-  SR.mtm.setData(sl.map(f => pt(f, 'mtm')));
-  SR.syn.setData(sl.filter(f => f.syn != null).map(f => pt(f, 'syn')));
-  SR.spot.setData(sl.filter(f => f.spot).map(f => pt(f, 'spot')));
-  SR.imb.setData(sl.filter(f => f.imb != null).map(f => pt(f, 'imb')));
+  const sl = perSecond(F.slice(0, i + 1));
+  LASTV = {};
+  SERIES.forEach(k => SR[k].setData(sl.map(f => pt(f, k))));
   drawn = i;
 }
 function extend(i) {                                    // play: add frames drawn+1 .. i
   for (let j = drawn + 1; j <= i; j++) {
     const f = F[j];
-    SR.mtm.update(pt(f, 'mtm'));
-    if (f.syn != null) SR.syn.update(pt(f, 'syn'));
-    if (f.spot) SR.spot.update(pt(f, 'spot'));
-    if (f.imb != null) SR.imb.update(pt(f, 'imb'));
+    SERIES.forEach(k => SR[k].update(pt(f, k)));      // same second as the last point: replaces it
   }
   drawn = i;
 }
 function markers(t) {
   const ms = EV.filter(e => e.ts <= t).map(e => {
-    const up = /call out|put in/.test(e.action), entry = e.kind === 'entry';
+    const up = /call out|put in/.test(e.action), entry = !/^(call|put) (out|in)$/.test(e.kind);
     return {time: ltime(e.ts), position: entry ? 'inBar' : up ? 'belowBar' : 'aboveBar',
             color: entry ? css('--accent') : /call/.test(e.action) ? css('--ce') : css('--pe'),
             shape: entry ? 'circle' : up ? 'arrowUp' : 'arrowDown', text: e.kind};
@@ -230,8 +326,10 @@ function render(t, seek) {
   if (seek || i < drawn) rebuild(i); else if (i > drawn) extend(i);
   idx = i;
   const f = F[i];
-  $('clock').textContent = hms(t);
-  $('scrub').value = Math.round((t - T0) / (T1 - T0) * 1000);
+  if (scrubPreview == null) { $('clock').textContent = hms(t); $('clock').classList.remove('preview'); }
+  const tEnd = SIM && SIMST ? SIMST.t_close : T1;
+  if (!scrubHeld) $('scrub').value = Math.round((t - T0) / Math.max(1, tEnd - T0) * 1000);
+  paintBar(t);
   $('cSyn').textContent = num(f.syn); $('cSynSub').textContent = `ATM ${num(f.atm, 0)} · spot ${num(f.spot)}`;
   $('cMtm').className = 'big ' + cls(f.mtm); $('cMtm').textContent = rs(f.mtm);
   $('cMtmSub').textContent = `booked ${rs(f.real)} · open ${rs(f.mtm - f.real)}`;
@@ -253,7 +351,7 @@ function render(t, seek) {
   triggerLines(f.lv);
   chain(f);
   const done = EV.filter(e => e.ts <= t);
-  const adj = done.filter(e => e.kind !== 'entry');
+  const adj = done.filter(e => /^(call|put) (out|in)$/.test(e.kind));
   $('cAdj').textContent = adj.length;
   $('cAdjSub').textContent = `${done.reduce((a, e) => a + (e.fills || []).length, 0)} orders so far`;
   if (done.length !== shownAdj) {
@@ -344,7 +442,7 @@ function toast(e) {
 const SPEEDS = [1, 5, 10, 30, 60, 120, 300, 600];
 $('speeds').innerHTML = SPEEDS.map(s => `<button data-s="${s}">${s}×</button>`).join('');
 function paintSpeeds() { document.querySelectorAll('#speeds button').forEach(b => b.classList.toggle('on', +b.dataset.s === speed)); }
-document.querySelectorAll('#speeds button').forEach(b => b.onclick = () => { speed = +b.dataset.s; paintSpeeds(); });
+document.querySelectorAll('#speeds button').forEach(b => b.onclick = () => { speed = +b.dataset.s; paintSpeeds(); if (SIM) simCmd({cmd: 'speed', v: speed}); });
 let lastNow = 0, lastFit = 0, follow = true;
 function tick(now) {
   if (!playing) return;
@@ -358,13 +456,61 @@ function tick(now) {
 function play() { if (T >= T1) seek(T0); playing = true; lastNow = 0; $('play').textContent = '❚❚ Pause'; requestAnimationFrame(tick); }
 function pause() { playing = false; $('play').textContent = '▶ Play'; }
 function seek(t) { T = Math.max(T0, Math.min(T1, t)); shownAdj = -1; lastLegs = ''; render(T, true); fit(); }
-function fit() { charts.forEach(c => c.timeScale().fitContent()); }
-$('play').onclick = () => playing ? pause() : play();
+function fit() { CH.mtm.timeScale().fitContent(); }    // the sync moves the other two charts with it
+$('play').onclick = () => {
+  if (!SIM) return playing ? pause() : play();
+  if (!SIMST) return;
+  const go = !(SIMST.playing && !SIMST.done);                    // pause also cancels a fast-forward
+  SIMST.playing = go; $('play').textContent = go ? '❚❚ Pause' : '▶ Play';
+  simCmd({cmd: go ? 'play' : 'pause'});
+};
 $('follow').onchange = () => { follow = $('follow').checked; if (follow) fit(); };
-$('scrub').oninput = () => { seek(T0 + (T1 - T0) * $('scrub').value / 1000); };
-$('nextAdj').onclick = () => { const e = EV.find(x => x.ts > T + 0.5); if (e) seek(e.ts - 20); };
-$('prevAdj').onclick = () => { const e = EV.filter(x => x.ts < T - 21).slice(-1)[0]; seek(e ? e.ts - 20 : T0); };
-document.addEventListener('keydown', e => { if (e.code === 'Space') { e.preventDefault(); playing ? pause() : play(); } });
+// player bar in the simulator: drag back = look at that moment (the sim keeps its own clock),
+// release ahead of "now" = fast-forward the sim to there. While the bar is held, polls never move it.
+let scrubHeld = false, scrubPreview = null;
+function paintBar(t) {                                // filled = viewed, light = played so far (sim), grey = not yet
+  const end = SIM && SIMST ? SIMST.t_close : T1, span = Math.max(1, end - T0);
+  const view = scrubPreview ?? t;
+  $('scrub').style.setProperty('--view', Math.max(0, Math.min(100, (view - T0) / span * 100)) + '%');
+  $('scrub').style.setProperty('--played', Math.max(0, Math.min(100, ((SIM ? T1 : T1) - T0) / span * 100)) + '%');
+}
+$('scrub').addEventListener('pointerdown', () => { scrubHeld = true; });
+window.addEventListener('pointerup', () => { if (scrubHeld) { scrubHeld = false; $('scrub').blur(); } });
+function showPreview(t) {                             // dragging ahead of the simulation: the clock follows the bar
+  scrubPreview = t;
+  $('clock').textContent = hms(t); $('clock').classList.add('preview');
+  $('simPill').textContent = `SIMULATOR · release to fast-forward to ${hms(t)}`;
+  paintBar(t);
+}
+const scrubT = () => T0 + (SIMST.t_close - T0) * $('scrub').value / 1000;
+$('scrub').oninput = () => {
+  if (!SIM) return seek(T0 + (T1 - T0) * $('scrub').value / 1000);
+  if (!SIMST || T0 == null) return;
+  const t = scrubT();
+  if (t < T1 - 1) { scrubPreview = null; simView(t); }
+  else if (t > T1 + 1) showPreview(t);
+  else { scrubPreview = null; simLive(); }
+};
+$('scrub').onchange = () => {
+  if (!SIM || !SIMST || T0 == null) return;
+  const t = scrubT();
+  scrubPreview = null;
+  if (t > T1 + 1) { simLive(); simCmd({cmd: 'seek', t}); }
+  else if (t < T1 - 1) { simCmd({cmd: 'seek', t}); $('simPill').textContent = `SIMULATOR · rewinding to ${hms(t)}…`; }
+};
+function simView(t) { SIMPAST = Math.max(T0, Math.min(T1, t)); document.body.classList.add('past'); render(SIMPAST, true); }
+function simLive() { SIMPAST = null; document.body.classList.remove('past'); if (F.length) { render(T1, true); fit(); } }
+$('liveBtn').onclick = simLive;
+$('nextAdj').onclick = () => {
+  if (SIM) return;                                     // the future is not known yet
+  const e = EV.find(x => x.ts > T + 0.5); if (e) seek(e.ts - 20); };
+$('prevAdj').onclick = () => {
+  if (SIM) { const e = EV.filter(x => x.ts < T1 - 21).slice(-1)[0]; simCmd({cmd: 'seek', t: e ? e.ts - 20 : T0}); return; }
+  const e = EV.filter(x => x.ts < T - 21).slice(-1)[0]; seek(e ? e.ts - 20 : T0); };
+document.addEventListener('keydown', e => {
+  const typing = e.target.tagName === 'SELECT' || (e.target.tagName === 'INPUT' && e.target.type !== 'range' && e.target.type !== 'checkbox');
+  if (e.code === 'Space' && !typing) { e.preventDefault(); $('play').click(); }
+});
 
 async function loadFile(keepClock) {
   const ent = IDX.find(x => x.date === DAY && x.v === VER);
@@ -375,26 +521,225 @@ async function loadFile(keepClock) {
   D = await (await fetch(ent.file + '?t=' + Date.now())).json();
   F = D.frames;
   T0 = F[0].t; T1 = F[F.length - 1].t;
-  EV = (D.events || []).filter(e => e.event === 'adjust').map(e => {
-    const m = /^(entry|call out|call in|put out|put in)/.exec(e.action || '');
+  EV = mapEvents(D.events);
+  return loadFileRest(clock);
+}
+function mapEvents(list) {
+  return (list || []).filter(e => e.event === 'adjust' || e.event === 'params' || e.event === 'reshape_skipped' || e.event === 'stop' || e.event === 'enter_now'
+                               || e.event === 'exit_time' || e.event === 'stop_loss' || e.event === 'profit_exit').map(e => {
+    if (e.event === 'stop') return {...e, kind: 'exit all', what: `${e.exited || 0} legs bought back`, fills: []};
+    if (e.event === 'enter_now') return {...e, kind: 'enter now', what: '', fills: []};
+    if (['exit_time', 'stop_loss', 'profit_exit'].includes(e.event)) return {...e, kind: e.event.replace('_', ' '), what: e.why || (e.mtm != null ? 'MTM ' + rs(e.mtm) : ''), fills: []};
+    if (e.event === 'params') {
+      const set = Object.entries(e).filter(([k]) => !['ts', 'time', 'event', 'resize'].includes(k)).map(([k, v]) => `${PNAME[k] || k} ${v}`).join(', ');
+      return {...e, kind: 'settings', what: set + (e.resize ? ' → ' + e.resize : ''), fills: []};
+    }
+    if (e.event === 'reshape_skipped') return {...e, kind: 'skipped', what: e.why || '', fills: []};
+    const m = /^(entry|call out|call in|put out|put in|reshape)/.exec(e.action || '');
     const kind = m ? m[1] : e.action;
-    const what = (e.action || '').replace(/^(entry|call out|call in|put out|put in)\s*/, '').replace(/^\(|\)$/g, '');
+    const what = (e.action || '').replace(/^(entry|call out|call in|put out|put in|reshape)\s*/, '').replace(/^\(|\)$/g, '');
     return {...e, kind, what};
   });
+}
+async function loadFileRest(clock) {
   const s = D.summary || {};
-  $('ttl').textContent = `${s.und || 'NIFTY'} Synthetic ${VER.toUpperCase()} · replay ${s.date || ''}`;
-  $('ttlSub').textContent = `${VER === 'v2' ? 'option-price triggers' : 'synthetic level triggers'} · entry ${s.entry_time || ''} · expiry ${D.expiry || ''} · ${s.lots || 1} lot (${s.lot || ''} qty) · end ${rs(s.gross)} before charges, ${rs(s.net)} after · ${s.adjustments ?? ''} adjustments`;
+  const pr = s.params || {}, shp = pr.strikes ? ` · ${pr.strikes} strikes, gap ${pr.strike_gap || 'step'}, start OTM ${pr.start_otm || 0}` : '';
+  const chg = (s.changes || []).length ? ` · ${(s.changes || []).length} change(s) in trade` : '';
+  $('ttl').textContent = `${s.und || 'NIFTY'} ${VER === 'v2' ? 'Premium' : 'Synthetic'} · replay ${s.date || ''}`;
+  $('ttlSub').textContent = `entry ${s.entry_time || ''} · expiry ${D.expiry || ''} · ${s.lots || 1} lot (${s.lot || ''} qty)${shp}${chg} · end ${rs(s.gross)} before charges, ${rs(s.net)} after · ${s.adjustments ?? ''} adjustments`;
+  $('hMtm').textContent = `₹, ${s.lots || 1} lot${(s.lots || 1) > 1 ? 's' : ''} per strike`;
   lastLv = ''; lastLegs = ''; for (const k in prevPx) delete prevPx[k];
   document.querySelectorAll('#verSeg button').forEach(b => { b.classList.toggle('on', b.dataset.v === VER); b.disabled = !IDX.some(x => x.date === DAY && x.v === b.dataset.v); });
   seek(T0 + clock);
 }
+const PNAME = {lots: 'lots', strikes: 'strikes', strike_gap: 'gap', start_otm: 'start OTM', mtm_stop: 'MTM stop', profit_target: 'target'};
+const runLabel = r => `Run ${r.n} · ${r.und} ${r.date.slice(5)} · ${r.rules === 'syn2' ? 'Premium' : 'Synthetic'} · ${r.lots}L` +
+  (r.rules === 'syn2' ? ` · ${r.params.strikes || 3}× gap ${r.params.strike_gap || 'step'} OTM ${r.params.start_otm || 0}` : '') +
+  ((r.changes || []).length ? ` · ${r.changes.length} chg` : '') + ` · ${rs(r.net)}`;
+async function loadRuns() {
+  try {
+    const r = await fetch('/api/runs');
+    if (!r.ok) return false;
+    const runs = await r.json();
+    IDX = IDX.filter(x => !x.run).concat(runs.map(x => ({date: runLabel(x), v: x.rules === 'syn2' ? 'v2' : 'v1', file: x.file, run: x})));
+    return true;
+  } catch (e) { return false; }
+}
+function fillDays() {
+  const days = [...new Set(IDX.map(x => x.date))];
+  const runs = days.filter(d => d.startsWith('Run ')), saved = days.filter(d => !d.startsWith('Run ')).sort();
+  $('day').innerHTML = (runs.length ? `<optgroup label="Your backtests">${runs.map(d => `<option ${d === DAY ? 'selected' : ''}>${esc(d)}</option>`).join('')}</optgroup>` : '') +
+    `<optgroup label="Saved replays">${saved.map(d => `<option ${d === DAY ? 'selected' : ''}>${esc(d)}</option>`).join('')}</optgroup>`;
+}
+let REC = [];
+function gapOptions() {
+  const und = $('bUnd').value, st = und === 'NIFTY' ? 50 : 100;
+  const keep = +$('bGap').value;
+  $('bGap').innerHTML = [1, 2, 3, 4, 5, 6].map(i => `<option value="${i * st}">${i * st}</option>`).join('');
+  if (keep && [...$('bGap').options].some(o => +o.value === keep)) $('bGap').value = keep;
+  if (!$('bOtm').options.length)
+    $('bOtm').innerHTML = Array.from({length: 11}, (_, i) => `<option value="${i}">${i === 0 ? 'ATM (0)' : 'OTM ' + i}</option>`).join('');
+  $('bDay').innerHTML = REC.filter(d => d.und === und).map(d => `<option value="${d.date}">${d.date} (${d.mb} MB)</option>`).join('');
+}
+function addChange(c = {}) {
+  const el = document.createElement('span');
+  el.className = 'item';
+  el.innerHTML = `at <input type="time" step="1" value="${c.at || '10:30:00'}">
+    <select><option value="lots">lots</option><option value="strikes">strikes</option><option value="strike_gap">gap</option><option value="start_otm">start OTM</option></select>
+    = <input type="number" min="0" value="${c.v ?? 4}"><button title="remove">×</button>`;
+  el.querySelector('button').onclick = () => el.remove();
+  $('chg').insertBefore(el, $('addChg'));
+}
+async function runBacktest() {
+  const rules = $('bRules').value, num0 = id => +$(id).value || 0;
+  const params = {mtm_stop: num0('bStop'), profit_target: num0('bTgt')};
+  if (rules === 'syn2') Object.assign(params, {strike_gap: +$('bGap').value, strikes: +$('bStrikes').value, start_otm: +$('bOtm').value});
+  const changes = [...$('chg').querySelectorAll('.item')].map(el => {
+    const [t, v] = el.querySelectorAll('input'), k = el.querySelector('select').value;
+    return {at: t.value, set: {[k]: +v.value}};
+  });
+  const body = {und: $('bUnd').value, date: $('bDay').value, rules, lots: +$('bLots').value || 1,
+    entry: $('bEntry').value, exit: $('bExit').value, params, changes};
+  $('runBtn').disabled = true; $('runMsg').className = 'mut';
+  const t0 = Date.now(), tm = setInterval(() => { $('runMsg').textContent = `running ${body.und} ${body.date} … ${Math.round((Date.now() - t0) / 1000)} s (usually 30–60 s)`; }, 500);
+  try {
+    const r = await (await fetch('/api/run', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})).json();
+    if (!r.ok) throw new Error(r.error);
+    await loadRuns();
+    SIM = false; clearInterval(simTimer); document.body.classList.remove('sim'); $('simbar').hidden = true;
+    DAY = runLabel(r.run); VER = r.run.rules === 'syn2' ? 'v2' : 'v1';
+    fillDays();
+    clearInterval(tm);
+    $('runMsg').textContent = `done in ${r.run.secs} s · net ${rs(r.run.net)} after charges · ${r.run.adjustments} adjustments`;
+    await loadFile(false);
+  } catch (e) {
+    clearInterval(tm);
+    $('runMsg').className = 'err'; $('runMsg').textContent = 'failed: ' + e.message;
+  } finally { $('runBtn').disabled = false; }
+}
+// ── live-like simulator ─────────────────────────────────────────────────
+let SIM = false, SIMST = null, simTimer = null, simBusy = false, SID = '', SIMPAST = null, EPOCH = 0;
+async function simCmd(c) {
+  const r = await (await fetch('/api/sim/cmd', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({...c, sid: SID})})).json();
+  if (!r.ok) { $('simState').innerHTML = `<span class="warn">${esc(r.error)}</span>`; }
+  setTimeout(simPoll, 120);
+}
+function simFill(st) {
+  const p = st.params || {}, und = st.und, step = und === 'NIFTY' ? 50 : 100;
+  $('sGap').innerHTML = [1, 2, 3, 4, 5, 6].map(i => `<option value="${i * step}">${i * step}</option>`).join('');
+  $('sOtm').innerHTML = Array.from({length: 11}, (_, i) => `<option value="${i}">${i === 0 ? 'ATM (0)' : 'OTM ' + i}</option>`).join('');
+  $('sLots').value = p.lots || 1; $('sGap').value = p.strike_gap || step; $('sStrikes').value = p.strikes || 3;
+  $('sOtm').value = p.start_otm || 0; $('sStop').value = p.mtm_stop || 0; $('sTgt').value = p.profit_target || 0;
+  $('sExitT').value = (p.exit_time || '15:25:00').length === 5 ? p.exit_time + ':00' : (p.exit_time || '15:25:00');
+  document.querySelectorAll('.sShape').forEach(x => x.hidden = st.rules !== 'syn2');
+}
+async function startSim() {
+  const rules = $('bRules').value, num0 = id => +$(id).value || 0;
+  const params = {mtm_stop: num0('bStop'), profit_target: num0('bTgt')};
+  if (rules === 'syn2') Object.assign(params, {strike_gap: +$('bGap').value, strikes: +$('bStrikes').value, start_otm: +$('bOtm').value});
+  let start = $('bStart').value || '09:15:00', entry = $('bEntry').value || start;
+  if (entry < start) entry = start;
+  const body = {und: $('bUnd').value, date: $('bDay').value, rules, lots: +$('bLots').value || 1, start, entry,
+    exit: $('bExit').value, params, speed: speed};
+  $('simBtn').disabled = true; $('runMsg').className = 'mut'; $('runMsg').textContent = 'starting simulator…';
+  try {
+    const r = await (await fetch('/api/sim/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)})).json();
+    if (!r.ok) throw new Error(r.error);
+    pause();
+    SID = r.sid; SIMPAST = null; EPOCH = 0; document.body.classList.remove('past');
+    SIM = true; SIMST = null; document.body.classList.add('sim');
+    F = []; EV = []; D = {summary: {}}; drawn = -1; shownAdj = 0; lastLv = ''; lastLegs = ''; T0 = T1 = T = null;
+    for (const k in prevPx) delete prevPx[k];
+    SR.mtm.setData([]); SR.syn.setData([]); SR.spot.setData([]); SR.imb.setData([]); SR.syn.setMarkers([]);
+    $('log').innerHTML = ''; $('simbar').hidden = false; $('bt').hidden = true;
+    $('runMsg').textContent = `simulator running from ${start} (entry ${entry})`;
+    let filled = false;
+    clearInterval(simTimer);
+    simTimer = setInterval(async () => { await simPoll(); if (!filled && SIMST) { simFill(SIMST); filled = true; } }, 300);
+  } catch (e) {
+    $('runMsg').className = 'err'; $('runMsg').textContent = 'failed: ' + e.message;
+  } finally { $('simBtn').disabled = false; }
+}
+async function simPoll() {
+  if (!SIM || simBusy) return;
+  simBusy = true;
+  try {
+    const st = await (await fetch('/api/sim/state?since=' + F.length + '&sid=' + SID + '&epoch=' + EPOCH)).json();
+    if (st.none) return;
+    if (st.other) {
+      $('simPill').className = 'livepill paused'; $('simPill').textContent = 'SIMULATOR · stopped';
+      $('simState').innerHTML = '<span class="warn">another window started a newer simulation - this one stopped</span>';
+      clearInterval(simTimer); return;
+    }
+    SIMST = st;
+    if (st.epoch !== EPOCH) {                              // rewound: everything after the rewind point is gone
+      EPOCH = st.epoch; F = []; drawn = -1; shownAdj = -1; lastLegs = ''; lastLv = '';
+      SIMPAST = null; document.body.classList.remove('past');
+      if (st.frames && st.frames.length) F.push(...st.frames);
+      if (F.length) { T0 = F[0].t; T1 = T = F[F.length - 1].t; render(T, true); fit(); }
+      EV = mapEvents(st.events);
+    } else if (st.frames && st.frames.length) F.push(...st.frames);
+    EV = mapEvents(st.events);
+    if (!F.length) return;
+    T0 = F[0].t; T1 = F[F.length - 1].t;
+    if (SIMPAST == null) { T = T1; render(T, false); if (follow) fit(); }
+    $('ttl').textContent = `${st.und} ${st.rules === 'syn2' ? 'Premium' : 'Synthetic'} · SIMULATOR ${st.date}`;
+    const p = st.params || {};
+    $('ttlSub').textContent = `${p.lots} lot × ${st.lot} qty · ${st.rules === 'syn2' ? `${p.strikes} strikes, gap ${p.strike_gap || 'step'}, start OTM ${p.start_otm || 0} · ` : ''}` +
+      `net ${rs(st.net)} after charges (${rs(st.gross)} before) · ${st.adjustments} adjustments · ${st.orders} orders`;
+    $('hMtm').textContent = `₹, ${p.lots} lot${p.lots > 1 ? 's' : ''} per strike`;
+    $('play').textContent = st.playing ? '❚❚ Pause' : '▶ Play';
+    $('simPill').className = 'livepill' + (st.playing && !st.done ? '' : ' paused');
+    if (!scrubHeld) $('simPill').textContent = st.done ? 'SIMULATOR · day over' : st.jumping ? 'SIMULATOR · fast-forwarding…'
+      : st.rewinding ? 'SIMULATOR · rewinding…' : st.playing ? `SIMULATOR · ${st.speed}×` : 'SIMULATOR · paused - press Play to go on';
+    if (SIMPAST != null && !scrubHeld) $('simPill').textContent += ` · viewing ${hms(SIMPAST)} (live ${st.clock})`;
+    const ph = st.started ? (st.phase || '') : `waiting for entry ${st.entry_at}`;
+    $('simState').innerHTML = `<b>${esc(ph)}</b>${st.pending ? ' · <span class="warn">change going out…</span>' : ''}` +
+      (st.blocked ? ` · <span class="warn">${esc(st.blocked)}</span>` : '') + (st.error ? ` · <span class="warn">ERROR ${esc(st.error)}</span>` : '');
+    $('sEnter').disabled = !!(st.held && (st.held.CE || st.held.PE));
+  } catch (e) { /* server restarting */ } finally { simBusy = false; }
+}
+function simApply() {
+  const set = {lots: +$('sLots').value || 1, mtm_stop: +$('sStop').value || 0, profit_target: +$('sTgt').value || 0, exit_time: $('sExitT').value};
+  if (SIMST && SIMST.rules === 'syn2') Object.assign(set, {strike_gap: +$('sGap').value, strikes: +$('sStrikes').value, start_otm: +$('sOtm').value});
+  const p = (SIMST && SIMST.params) || {}, diff = {};
+  for (const [k, v] of Object.entries(set)) {
+    const cur = k === 'exit_time' ? String(p[k] || '').padEnd(8, ':00').slice(0, 8) : p[k];
+    if (k === 'exit_time' ? v && v !== cur : +v !== +cur) diff[k] = v;
+  }
+  if (!Object.keys(diff).length) { $('simState').innerHTML = '<span class="warn">nothing changed</span>'; return; }
+  simCmd({cmd: 'set', set: diff});
+}
+async function initBacktest() {
+  try { const r = await fetch('/api/days'); if (!r.ok) return; REC = await r.json(); } catch (e) { return; }
+  $('btToggle').hidden = false; $('bt').hidden = false;
+  $('btToggle').onclick = () => { $('bt').hidden = !$('bt').hidden; };
+  gapOptions();
+  $('bUnd').onchange = gapOptions;
+  $('bRules').onchange = () => document.querySelectorAll('.shapeOnly').forEach(x => x.hidden = $('bRules').value !== 'syn2');
+  $('addChg').onclick = () => addChange();
+  // owner 27-Nov: the screen shows the LAST run / replay, not the panel - say so as soon as a setting changes
+  $('bt').addEventListener('change', e => {
+    if (e.target.id === 'runBtn' || e.target.id === 'simBtn') return;
+    $('runMsg').className = 'err';
+    $('runMsg').textContent = 'Settings changed - press ▶ Run backtest or ▶ Simulate live. The screen still shows: ' + $('ttl').textContent;
+  });
+  $('runBtn').onclick = runBacktest;
+  $('simBtn').onclick = () => { speed = 1; paintSpeeds(); startSim(); };       // live-like: starts at 1x
+  $('sApply').onclick = simApply;
+  $('sEnter').onclick = () => simCmd({cmd: 'enter'});
+  $('sExit').onclick = () => { if (confirm('Exit all positions now?')) simCmd({cmd: 'exit'}); };
+  $('btToggle').onclick = () => { $('bt').hidden = !$('bt').hidden; };
+}
 (async function init() {
   IDX = await (await fetch('index.json?t=' + Date.now())).json();
-  const days = [...new Set(IDX.map(x => x.date))].sort();
-  if (!DAY || !days.includes(DAY)) DAY = days[days.length - 1];
+  await loadRuns();
+  initBacktest();
+  const days = [...new Set(IDX.map(x => x.date))];
+  if (!DAY || !days.includes(DAY)) DAY = days.find(d => d.startsWith('Run ')) || days.sort()[days.length - 1];
   if (!IDX.some(x => x.date === DAY && x.v === VER)) VER = IDX.find(x => x.date === DAY).v;
-  $('day').innerHTML = days.map(d => `<option value="${d}" ${d === DAY ? 'selected' : ''}>${d}</option>`).join('');
-  $('day').onchange = () => { DAY = $('day').value; if (!IDX.some(x => x.date === DAY && x.v === VER)) VER = IDX.find(x => x.date === DAY).v; loadFile(false); };
+  fillDays();
+  $('day').onchange = () => { SIM = false; clearInterval(simTimer); document.body.classList.remove('sim'); $('simbar').hidden = true; DAY = $('day').value; if (!IDX.some(x => x.date === DAY && x.v === VER)) VER = IDX.find(x => x.date === DAY).v; loadFile(false); };
   document.querySelectorAll('#verSeg button').forEach(b => b.onclick = () => { if (b.disabled || b.dataset.v === VER) return; VER = b.dataset.v; loadFile(true); });
   speed = 60; paintSpeeds();
   await loadFile(false);

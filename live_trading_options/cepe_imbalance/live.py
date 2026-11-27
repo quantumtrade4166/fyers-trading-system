@@ -53,6 +53,8 @@ CUSHION_TICKS = 2
 QUOTE_FRESH_S = 3.0                           # our tick must be this fresh to price attempt 1
 WAIT_FIRST_S = 2.0                            # a marketable limit on a NIFTY / SENSEX option fills in ms
 WAIT_RETRY_S = 3.0
+LOT_MARGIN_S = 300.0                          # 27-Nov: Kotak 1-lot SELL margin cache
+LOT_MARGIN_WAIT_S = 3.0                       # first read: wait this long for it
 WAIT_FAST_S = 0.7                             # 26-Nov: fast books (Synthetic / Premium) re-price an unfilled
                                               # order after this (opening rally: 3 tries x 3 s = 6 s on one leg)
 ATTEMPTS_FAST = {"SELL": 5, "BUY": 8}
@@ -323,6 +325,45 @@ class Account:
     def margin_used(self):
         with self.lock:
             return self.limits.get("used") if self.limits.get("at") else None
+
+    def free_margin(self):
+        """Kotak free margin = Net (cash + collateral) - MarginUsed, from a limits read <= 2 min old; else None."""
+        with self.lock:
+            lim = dict(self.limits)
+        if not lim.get("at") or time.time() - lim["at"] > 120:
+            return None
+        return lim.get("net", 0.0) - lim.get("used", 0.0)
+
+    def lot_margin(self, c):
+        """Kotak's own margin to SELL 1 lot of contract c naked (margin_required 'ordMrgn'), cached LOT_MARGIN_S.
+        A stale value is used at once and refreshed in the background (never a wait on the order path once known)."""
+        if not hasattr(self, "_lot_mrg"):
+            self._lot_mrg, self._lot_busy = {}, set()
+        hit = self._lot_mrg.get(c.key)
+        if hit and time.time() - hit[0] < LOT_MARGIN_S:
+            return hit[1]
+
+        def fetch():
+            try:
+                r = self.call("margin_required", exchange_segment=c.seg, price="0", order_type="MKT", product=PRODUCT,
+                              quantity=str(int(c.lot)), instrument_token=str(c.token), transaction_type="S")
+                d = r.get("data") if isinstance(r, dict) and isinstance(r.get("data"), dict) else r
+                v = _f((d or {}).get("ordMrgn")) if isinstance(d, dict) else None
+                if v and v > 0:
+                    self._lot_mrg[c.key] = (time.time(), v)
+            except Exception:
+                log.exception("lot margin")
+            finally:
+                self._lot_busy.discard(c.key)
+
+        if c.key not in self._lot_busy:
+            self._lot_busy.add(c.key)
+            th = threading.Thread(target=fetch, daemon=True, name="CepeLotMargin")
+            th.start()
+            if not hit:
+                th.join(LOT_MARGIN_WAIT_S)                    # first time: wait a little for the answer
+        hit = self._lot_mrg.get(c.key)
+        return hit[1] if hit else None
 
     def _loop(self):
         while True:
@@ -800,6 +841,28 @@ class KotakLiveBook(PaperBook):
                 "ask": q.ask if q else None, "reason": reason, "live": True, **info}
 
     # ── exits: all legs at once, retried until Kotak is flat ────────────────
+    def margin_check(self, sells, ctx):
+        """Owner 27-Nov: before NEW sells (entry / more strikes / more lots / reshape) - margin short -> (False,
+        why): the orders are skipped and the screen warns. Need = Kotak's naked 1-lot margin x ALL new CE + PE sell
+        lots (Kotak margined the 27-Nov entry leg by leg, no strangle benefit), vs Kotak free margin. When Kotak
+        cannot tell us either number the orders go (Kotak itself rejects a real shortfall)."""
+        ce = sum(int(o[3]) for o in sells if o[0] == "CE" and o[2] == "SELL")
+        pe = sum(int(o[3]) for o in sells if o[0] == "PE" and o[2] == "SELL")
+        lots = ce + pe                      # 27-Nov 09:15: Kotak gave ~no strangle benefit (4 legs filled, the
+        if not lots:                        # 5th needed Rs 3.7L more) - every new SELL lot counts in full
+            return True, ""
+        kind, k = sells[0][0], sells[0][1]
+        c = ctx.contract(k, kind)
+        per = self.account.lot_margin(c) if c else None
+        free = self.account.free_margin()
+        if per is None or free is None:
+            log.warning("%s margin check: Kotak margin unknown (per lot %s, free %s) - orders go", self.name, per, free)
+            return True, "margin unknown"
+        need = per * lots
+        if need > free:
+            return False, f"needs ~Rs {need:,.0f} ({lots} new lots x Rs {per:,.0f}), Kotak free Rs {free:,.0f}"
+        return True, f"needs ~Rs {need:,.0f}, free Rs {free:,.0f}"
+
     def exit_all(self, reason: str = "exit all") -> list:
         with self._olock:
             self.last_exit_try = time.time()
